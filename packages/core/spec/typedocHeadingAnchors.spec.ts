@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
-import {
-  keepInlineCodeInHeadingAnchors,
-  load,
-} from '../../../scripts/typedoc-github-heading-anchors.mjs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { Application } from 'typedoc';
+import { keepInlineCodeInHeadingAnchors } from '../../../scripts/typedoc-github-heading-anchors.mjs';
 
 /**
  * OPS-66 — `docs/` pages are read on GitHub and on the TypeDoc-generated site, and the two slug a
@@ -12,13 +13,18 @@ import {
  * `the-ladder-approvals` on GitHub. `docs/DOC-STYLE.md` makes GitHub's slug authoritative and
  * `scripts/typedoc-github-heading-anchors.mjs` configures TypeDoc to match it.
  *
- * `pnpm typedoc` is not a CI job, so nothing else would notice the plugin being dropped from
- * `typedoc.json`, renamed, or quietly turned into a no-op — and the symptom is silent: links keep
- * rendering, they just stop resolving on the site.
+ * `pnpm typedoc` is not a CI job, so this file is the only thing that notices when the plugin stops
+ * working, and the symptom it guards against is silent: links keep rendering, they just stop
+ * resolving on the site. Two kinds of test, because the plugin has two halves that fail
+ * independently:
  *
- * The assertions below are a discriminating pair on the same token stream: the anchor source before
- * the rule runs is the truncated string, after it the full one. A rule that stopped transforming
- * anything would still satisfy the first and fail the second.
+ * - the transform, over a synthetic markdown-it token stream — fast, and each test pairs the case
+ *   it is about with a heading the rule must still change, so a rule that stopped transforming
+ *   anything cannot pass by doing nothing;
+ * - the wiring, over a real `Application` rendering a real one-page site with the plugin list read
+ *   out of `typedoc.json` — the only assertion that can tell a registered plugin from an effective
+ *   one, and the only one that fails when `load()` is left in place but stops reaching the anchor
+ *   generator.
  */
 
 /** markdown-it's token shape, reduced to the fields the rule and TypeDoc's anchor code read. */
@@ -71,7 +77,8 @@ function paragraph(children: FakeToken[]): FakeToken[] {
  * TypeDoc's own `getTokenTextContent` (`typedoc/dist/index.js`), which is the function that decides
  * what a heading's anchor is built from. Reproduced rather than imported because TypeDoc does not
  * export it; it is six lines and its contract — `children` first, then `text` tokens, everything
- * else the empty string — is what the plugin exploits.
+ * else the empty string — is what the plugin exploits. The render test below does not depend on
+ * this copy staying faithful: it reads the id TypeDoc's real anchor code emitted.
  */
 function anchorSource(token: FakeToken): string {
   if (token.children) return token.children.map(anchorSource).join('');
@@ -80,14 +87,14 @@ function anchorSource(token: FakeToken): string {
 }
 
 /** Runs the plugin's core rule over a token stream, the way markdown-it would. */
-function applyRule(tokens: FakeToken[], times = 1): FakeToken[] {
+function applyRule(tokens: FakeToken[]): FakeToken[] {
   const rules: Array<(state: unknown) => void> = [];
   const md = {
     core: { ruler: { push: (_name: string, fn: (state: unknown) => void) => rules.push(fn) } },
   };
   keepInlineCodeInHeadingAnchors(md);
   expect(rules).toHaveLength(1);
-  for (let i = 0; i < times; i++) rules[0]({ tokens, Token: FakeToken });
+  rules[0]({ tokens, Token: FakeToken });
   return tokens;
 }
 
@@ -121,35 +128,109 @@ describe('OPS-66 TypeDoc heading anchors keep inline-code text', () => {
   });
 
   it('ignores code spans outside headings', () => {
-    const tokens = paragraph([text('Set '), codeSpan('approvals'), text(' in your config.')]);
+    // The heading carries the same code span as the paragraph, and is the control: one run of the
+    // rule has to leave the paragraph alone *and* change the heading, so a rule that stopped
+    // matching anything at all fails here rather than passing on the untouched paragraph.
+    const tokens = [
+      ...paragraph([text('Set '), codeSpan('approvals'), text(' in your config.')]),
+      ...heading([text('Set '), codeSpan('approvals')]),
+    ];
     applyRule(tokens);
 
     expect(tokens[1].children![1].children).toBeNull();
     expect(anchorSource(tokens[1])).toBe('Set  in your config.');
+    expect(anchorSource(tokens[4])).toBe('Set approvals');
   });
 
   it('leaves a heading with no code span alone', () => {
-    const tokens = heading([text('Configuration')]);
+    // Same shape: the second heading is the control that a no-op rule cannot satisfy.
+    const tokens = [...heading([text('Configuration')]), ...heading([codeSpan('approvals')])];
     applyRule(tokens);
 
     expect(tokens[1].children!.map((child) => [child.type, child.content, child.children])).toEqual(
       [['text', 'Configuration', null]]
     );
+    expect(anchorSource(tokens[4])).toBe('approvals');
   });
 
   it('is idempotent', () => {
     const tokens = heading([codeSpan('approvals')]);
-    applyRule(tokens, 2);
+    applyRule(tokens);
+    const firstPass = tokens[1].children![0].children;
+    expect(firstPass).toHaveLength(1);
 
-    expect(tokens[1].children![0].children).toHaveLength(1);
+    applyRule(tokens);
+
+    // Identity, not length: the rule *assigns* `children`, so a second pass without the bail-out
+    // would replace the array with a new one of the same length and every count-based assertion
+    // would still hold. This is the only assertion that fails when the bail-out is removed.
+    expect(tokens[1].children![0].children).toBe(firstPass);
     expect(anchorSource(tokens[1])).toBe('approvals');
   });
 
-  it('is registered in typedoc.json and satisfies the plugin contract', () => {
-    const config = JSON.parse(
-      readFileSync(new URL('../../../typedoc.json', import.meta.url), 'utf8')
-    );
-    expect(config.plugin).toContain('./scripts/typedoc-github-heading-anchors.mjs');
-    expect(typeof load).toBe('function');
-  });
+  it('is registered in typedoc.json and reaches the anchors of a real TypeDoc render', async () => {
+    const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
+    const config = JSON.parse(readFileSync(join(repoRoot, 'typedoc.json'), 'utf8'));
+    expect(config.plugin ?? []).toContain('./scripts/typedoc-github-heading-anchors.mjs');
+
+    // `entryPoints` and `projectDocuments` are glob options, and TypeDoc rejects a glob containing
+    // a backslash outright, so these must be POSIX-slashed to work on Windows. `plugin` is not a
+    // glob — an absolute native path is fine there.
+    const posix = (p: string) => p.replace(/\\/g, '/');
+    const dir = mkdtempSync(join(tmpdir(), 'ops66-typedoc-'));
+    try {
+      writeFileSync(join(dir, 'index.ts'), 'export const answer = 42;\n');
+      writeFileSync(
+        join(dir, 'page.md'),
+        [
+          '---',
+          'title: Probe',
+          '---',
+          '',
+          '## The ladder: `approvals`',
+          '',
+          '## Plain heading',
+          '',
+        ].join('\n')
+      );
+      writeFileSync(
+        join(dir, 'tsconfig.json'),
+        JSON.stringify({
+          compilerOptions: { target: 'ES2022', module: 'ESNext', moduleResolution: 'bundler' },
+          include: ['index.ts'],
+        })
+      );
+
+      const out = join(dir, 'out');
+      const app = await Application.bootstrapWithPlugins(
+        {
+          entryPoints: [posix(join(dir, 'index.ts'))],
+          projectDocuments: [posix(join(dir, 'page.md'))],
+          tsconfig: posix(join(dir, 'tsconfig.json')),
+          out: posix(out),
+          // The plugin list is read from typedoc.json rather than hardcoded, so this render is
+          // driven by the same registration the site build uses.
+          plugin: (config.plugin ?? []).map((entry: string) => resolve(repoRoot, entry)),
+          skipErrorChecking: true,
+          logLevel: 'Error',
+        },
+        []
+      );
+      const project = await app.convert();
+      expect(project).toBeDefined();
+      await app.generateDocs(project!, out);
+
+      const html = readFileSync(join(out, 'documents', 'Probe.html'), 'utf8');
+      const headingIds = [...html.matchAll(/<h2 id="([^"]*)"/g)].map((match) => match[1]);
+      // Both slugs are GitHub's, read off GitHub's own renderer. Without the plugin reaching the
+      // anchor generator the first one is `the-ladder`, which is the divergence this node closed;
+      // the plain heading is the control that does not move either way. Compared as the whole
+      // list, so a page that rendered nothing fails here rather than passing vacuously.
+      expect(headingIds).toEqual(['the-ladder-approvals', 'plain-heading']);
+      // ...and the rendered heading itself is untouched: the anchor changed, the markup did not.
+      expect(html).toContain('The ladder: <code>approvals</code>');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
 });
