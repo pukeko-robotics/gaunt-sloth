@@ -31,7 +31,7 @@
     "format": "prettier --write '**/*.{js,mjs,ts,tsx}'",
     "prepare": "echo 'skipping prepare'",
     "typedoc": "typedoc",
-    "//4": "OPS-67: `typedoc` exits 0 with hundreds of warnings, so rendering the site in CI proves nothing on its own. `docs:check` renders it and fails on the render's own errors, on an `anchor does not exist` warning, and on DOC-STYLE rule 8's same-page anchor sweep — the ones TypeDoc reports no warning for at all. It is a step of the `test-and-lint` job in unit-tests.yml.",
+    "//4": "OPS-67: `typedoc` exits 0 with hundreds of warnings, so rendering the site in CI proves nothing on its own. `docs:check` renders it and fails on the render's own errors, on an `anchor does not exist` warning, on a link to a page that does not exist, on markdown copied out as a raw download, and on DOC-STYLE rule 8's same-page anchor sweep — the last two TypeDoc reports no warning for at all. The script's docblock carries what it does NOT cover. It is a step of the `test-and-lint` job in unit-tests.yml, kept there by packages/core/spec/docsRenderGateWired.spec.ts.",
     "docs:check": "node scripts/check-docs-render.mjs",
     "chat": "node packages/app/cli.js",
     "release:bump": "node bump.mjs",

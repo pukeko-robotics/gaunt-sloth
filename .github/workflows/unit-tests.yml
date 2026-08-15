@@ -49,10 +49,12 @@ jobs:
     - name: Run Tests
       run: pnpm test
 
-    # OPS-67: renders the docs site and fails on the defects only a render can see — see the
-    # `docs:check` note in package.json. It must stay AFTER `Run Tests`, which builds: TypeDoc
-    # resolves the cross-package imports through each package's `dist/*.d.ts`, so on an unbuilt tree
-    # the render dies in TS2307 errors instead of checking anything. It runs unconditionally rather
+    # OPS-67: renders the docs site and fails on the render's errors, on a broken anchor, and on a
+    # link that resolves to no page — see the `docs:check` note in package.json for the full list
+    # and its boundary. It must stay AFTER `Run Tests`, which builds: TypeDoc resolves the
+    # cross-package imports through each package's `dist/*.d.ts`, so on an unbuilt tree the render
+    # dies in TS2307 errors instead of checking anything (asserted by
+    # packages/core/spec/docsRenderGateWired.spec.ts). It runs unconditionally rather
     # than gated on docs paths, because a TSDoc comment in `packages/*/src` renders into the site
     # too, and at seven seconds a filter would cost more than it saves.
     - name: Check the docs render

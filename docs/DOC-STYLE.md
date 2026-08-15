@@ -171,9 +171,10 @@ In the browser, confirm:
 
 ### Read the run's warnings, not only the page
 
-`pnpm typedoc` exits 0 with hundreds of warnings, so nothing stops on your page's behalf. Two of
-the lines in that stream are about your page and `grep` finds them; two further failure modes
-produce no line at all:
+`pnpm typedoc` exits 0 with hundreds of warnings, so nothing stops on your page's behalf. What
+stops is `pnpm run docs:check`, which renders and then fails on the lines below; this section is
+how to read what it reports. Two of the lines in that stream are about your page and `grep` finds
+them; two further failure modes produce no line at all:
 
 - **`The glob …/docs/<page>.md did not match any files`** — `projectDocuments` names a path that
   does not exist, so that entry renders nothing. This is how the gate goes quiet: it keeps passing
@@ -211,7 +212,9 @@ node -e 'const fs=require("fs"),walk=(d)=>fs.readdirSync(d,{withFileTypes:true})
 ```
 
 Each line of output is a page and the anchors on it that point at no heading, so find the one you
-changed rather than reading it as a to-do list.
+changed rather than reading it as a to-do list. `pnpm run docs:check` runs this same sweep, over
+the same regexes, and fails on any page it names; reach for the one-liner above when you want the
+sweep without a full render.
 
 ### Pages TypeDoc does not render
 
@@ -290,9 +293,12 @@ only, so an inline code span would contribute nothing and `The ladder: ` + `` `a
 anchor as `#the-ladder` while GitHub anchors it as `#the-ladder-approvals`.
 `scripts/typedoc-github-heading-anchors.mjs` — registered in `typedoc.json`'s `plugin` array and
 covered by `packages/core/spec/typedocHeadingAnchors.spec.ts` — closes that gap by feeding the code
-span's text to the anchor generator, without changing a byte of the rendered heading. `pnpm typedoc`
-is not a CI job, so if you change how docs are built, keep that plugin registered: dropping it
-re-breaks every link into a code-span heading, and the only symptom is a link that stops resolving.
+span's text to the anchor generator, without changing a byte of the rendered heading. If you change
+how docs are built, keep that plugin registered: dropping it re-breaks every link into a code-span
+heading, and the render keeps exiting 0 while it happens. Two things notice, and neither is the
+exit code — `pnpm run docs:check` reds on the anchors that moved (measured: four cross-page
+warnings and four pages, with the plugin registered but no longer applied), and that spec names
+which heading shape broke.
 
 **Where the two still disagree.** The plugin feeds TypeDoc the same heading *text* GitHub slugs; it
 does not give TypeDoc GitHub's slug algorithm, and the two algorithms are different functions.
@@ -323,8 +329,9 @@ beyond letters, digits and single spaces is worth checking on both before you li
 - **When one already exists, leave it alone** (renaming it is the failure above) and simply don't
   deep-link it from a page that has to resolve on both surfaces; link the section above it instead.
 
-**Self-check (must pass before you ship):** `pnpm typedoc` reports no `anchor does not exist`
-warnings, and rule 8's sweep prints no pages — with no exception for a page you did not write. The
+**Self-check (must pass before you ship):** `pnpm run docs:check` passes — it renders, reads the
+warning stream and runs rule 8's sweep, so it is both halves of this check and the one CI runs —
+with no exception for a page you did not write. The
 sweep covers the whole generated tree, API reference pages included, so it can name a generated
 page rather than one of yours; that is a separate defect to raise, and still not something to ship
 past.

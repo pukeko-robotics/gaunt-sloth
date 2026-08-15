@@ -13,10 +13,12 @@ import { keepInlineCodeInHeadingAnchors } from '../../../scripts/typedoc-github-
  * `the-ladder-approvals` on GitHub. `docs/DOC-STYLE.md` makes GitHub's slug authoritative and
  * `scripts/typedoc-github-heading-anchors.mjs` configures TypeDoc to match it.
  *
- * `pnpm typedoc` is not a CI job, so this file is the only thing that notices when the plugin stops
- * working, and the symptom it guards against is silent: links keep rendering, they just stop
- * resolving on the site. Two kinds of test, because the plugin has two halves that fail
- * independently:
+ * The symptom this guards against is silent on the site: links keep rendering, they just stop
+ * resolving. `pnpm run docs:check` — the CI docs render gate — does notice, because the anchors
+ * move and its checks read anchors rather than the exit code; what this file adds is speed and a
+ * name for the defect, failing in milliseconds on the exact heading shape that broke rather than
+ * on the pages that happen to link to one. Two kinds of test, because the plugin has two halves
+ * that fail independently:
  *
  * - the transform, over a synthetic markdown-it token stream — fast, and each test pairs the case
  *   it is about with a heading the rule must still change, so a rule that stopped transforming

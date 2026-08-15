@@ -169,7 +169,9 @@ pnpm run it <provider>
 pnpm run it <provider> xx-small
 ```
 
-See [integration-tests/README.md](./integration-tests/README.md) for details.
+See
+[packages/app/integration-tests/README.md](https://github.com/pukeko-robotics/gaunt-sloth/blob/main/packages/app/integration-tests/README.md)
+for details.
 
 ## Test Conventions
 
