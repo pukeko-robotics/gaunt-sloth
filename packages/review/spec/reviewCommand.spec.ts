@@ -138,7 +138,10 @@ describe('reviewCommand', () => {
       'test.file:\n```\nFILE TO REVIEW\n```',
       expect.objectContaining({}),
       'review',
-      expect.any(Object)
+      expect.any(Object),
+      // No positional argument, so no pull request to bind GitHub-only review tools to; they fall
+      // back to discovering the current branch's PR. CFG-54.
+      { prId: undefined }
     );
   });
 
@@ -160,7 +163,8 @@ describe('reviewCommand', () => {
       'test.file:\n```\nFILE TO REVIEW\n```\n\ntest2.file:\n```\nFILE2 TO REVIEW\n```',
       expect.objectContaining({}),
       'review',
-      expect.any(Object)
+      expect.any(Object),
+      { prId: undefined }
     );
   });
 
@@ -236,7 +240,10 @@ describe('reviewCommand', () => {
         requirementSource: 'jira-legacy',
       }),
       'review',
-      expect.any(Object)
+      expect.any(Object),
+      // `content-id` is literal content under the text source, not a pull request number, so it
+      // must NOT be forwarded as one. CFG-54.
+      { prId: undefined }
     );
   });
 
@@ -280,7 +287,10 @@ describe('reviewCommand', () => {
         contentSource: 'github',
       }),
       'review',
-      expect.any(Object)
+      expect.any(Object),
+      // The diff came from PR 123, so the GitHub-only review tools are bound to PR 123 as well.
+      // CFG-54.
+      { prId: '123' }
     );
   });
 
@@ -317,7 +327,9 @@ describe('reviewCommand', () => {
       '\nProvided git diff follows within git-1234567 block\n<git-1234567>\nLOCAL GIT DIFF\n</git-1234567>\n',
       expect.objectContaining({}),
       'review',
-      expect.any(Object)
+      expect.any(Object),
+      // A ref range is not a pull request id. CFG-54.
+      { prId: undefined }
     );
   });
 
@@ -374,7 +386,8 @@ describe('reviewCommand', () => {
         '</message-1234567>\n',
       expect.objectContaining({}),
       'review',
-      expect.any(Object)
+      expect.any(Object),
+      { prId: undefined }
     );
   });
 
@@ -407,7 +420,8 @@ describe('reviewCommand', () => {
         contentSource: 'github',
       }),
       'review',
-      expect.any(Object)
+      expect.any(Object),
+      { prId: '123' }
     );
   });
 });
