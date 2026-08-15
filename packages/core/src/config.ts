@@ -45,6 +45,7 @@ export * from '#src/config/configDiscovery.js';
  * value it cannot type.
  *
  * - {@link GthOutputHeaderRung} — the type of {@link GthConfig}'s `output.header`.
+ * - {@link GthAcpSessionMode} — the type of {@link GthConfig}'s `acp.mode`.
  * - {@link RawConfigValidationResult} — the interface {@link ConfigLayerValidationReport} extends.
  *
  * These stay declared in `config/schema.ts` on purpose: `config/types.ts` importing the rung from
@@ -56,4 +57,8 @@ export * from '#src/config/configDiscovery.js';
  * re-exported: it is validator internals, reachable at your own risk via the
  * `@gaunt-sloth/core/config/schema.js` deep path.
  */
-export type { GthOutputHeaderRung, RawConfigValidationResult } from '#src/config/schema.js';
+export type {
+  GthAcpSessionMode,
+  GthOutputHeaderRung,
+  RawConfigValidationResult,
+} from '#src/config/schema.js';

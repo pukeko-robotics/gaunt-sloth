@@ -24,6 +24,7 @@ import type { GthConfig } from '@gaunt-sloth/core/config.js';
 import type {
   AgentResolvers,
   GthAgentFactory,
+  GthCommand,
   StatusUpdateCallback,
 } from '@gaunt-sloth/core/core/types.js';
 import { StatusLevel } from '@gaunt-sloth/core/core/types.js';
@@ -114,6 +115,30 @@ export function isSameWorkspace(
 export async function loadConfigForCwd(cwd: string): Promise<GthConfig> {
   process.env.INIT_CWD = cwd;
   return initConfig({});
+}
+
+/**
+ * The command an ACP session is resolved under — `acp.mode`, defaulting to **`code`**.
+ *
+ * An editor connects to get an agent that can do the job. Resolving its sessions under `chat`
+ * hands it `filesystem: 'read'` and, because `filterDevTools` only builds the toolkit for `code`
+ * and `exec`, no shell and no dev tools at all: a read-only agent in a place nobody asked for one.
+ * `code` is the same default the bare `gth` CLI already resolves to.
+ *
+ * **Why `acp.mode` naming an existing command, and not a `commands.acp` block.** `runner.init`
+ * takes a {@link GthCommand}, and two pieces of tool gating branch on that union — `filterDevTools`
+ * (`command !== 'code' && command !== 'exec'`) and `GthDevToolkit`, which resolves the shell
+ * default for the active mode. An `acp` command would have to join the union and every one of
+ * those branches would have to learn the new member, with a silently wrong default wherever one was
+ * missed. A `mode` whose value is an existing command passes something those branches already
+ * handle. `ask --write` is mapped the same way, to `'code'` at the call boundary, rather than
+ * becoming a command of its own. The return type is what enforces it: a mode that is not a
+ * `GthCommand` does not compile.
+ *
+ * **Both dialects call this**, so the v1 and v2 apps cannot drift on the answer.
+ */
+export function resolveAcpSessionCommand(config: GthConfig): GthCommand {
+  return config.acp?.mode ?? 'code';
 }
 
 /**

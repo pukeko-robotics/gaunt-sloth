@@ -67,6 +67,16 @@ command; it needs no arguments.
 there is nothing to configure. v1 is the stable protocol every shipping ACP editor uses today, Zed
 included; v2 is a draft.
 
+**An ACP session runs as a coding session.** It resolves under the `code` command, so it takes its
+filesystem access, approvals posture and tools from your `commands.code` config and can write files
+and run shell commands, gate permitting. For a read-only editor agent, set the mode:
+
+```json
+{ "acp": { "mode": "chat" } }
+```
+
+which resolves the session under `commands.chat` instead — read-only filesystem, no shell.
+
 Files you attach to a message — an @-mention in Zed — reach the agent as a link it can open with its
 file tools. Images and audio are not accepted; if a host sends them anyway the agent says so in its
 reply rather than ignoring them silently.

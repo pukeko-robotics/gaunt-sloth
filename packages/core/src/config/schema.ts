@@ -125,6 +125,17 @@ export const OUTPUT_HEADER_RUNGS = ['none', 'compact', 'debug'] as const;
 export type GthOutputHeaderRung = (typeof OUTPUT_HEADER_RUNGS)[number];
 
 /**
+ * EXT-117 — the commands an ACP (editor) session may be resolved under, as `acp.mode`. Both are
+ * existing members of `GthCommand`, which is the whole point of the key: the value is a command the
+ * tool-gating branches already understand rather than a new one they would each have to learn. The
+ * read-site default is `code` ({@link import('#src/config/types.js').GthConfig.acp}).
+ */
+export const ACP_SESSION_MODES = ['chat', 'code'] as const;
+
+/** The command an ACP session resolves under, as a type. The read-site default is `code`. */
+export type GthAcpSessionMode = (typeof ACP_SESSION_MODES)[number];
+
+/**
  * The message a rejected `output.header` carries.
  *
  * The key was a boolean before it was a ladder, and 2.0 has NO back-compat coercion — a boolean is
@@ -919,6 +930,17 @@ export const rawGthConfigSchema = z.looseObject({
     })
     .optional(),
   commands: commandsSchema.optional(),
+  // EXT-117 — the ACP (editor) surface. `mode` names the EXISTING command an ACP session resolves
+  // under; absent = `code`, so an editor gets an agent that can do the job rather than a read-only
+  // one. `chat` opts back into the read-only posture. Root-level rather than a `commands.acp`
+  // block on purpose — see `resolveAcpSessionCommand` in the agent package. Defaulted at the read
+  // site, not in DEFAULT_CONFIG, so the effective-config snapshot never churns and a user's `acp`
+  // object never has to survive a nested merge.
+  acp: z
+    .object({
+      mode: z.enum(ACP_SESSION_MODES).optional(),
+    })
+    .optional(),
   // GS2-35/EXT-83 — identity used in the `Co-Authored-By` trailer of agent-authored git commits.
   // Optional; when omitted the agent is instructed to co-author as the Gaunt Sloth account, whose
   // default NAME carries the resolved active model — `Gaunt Sloth (provider:model)`, falling back

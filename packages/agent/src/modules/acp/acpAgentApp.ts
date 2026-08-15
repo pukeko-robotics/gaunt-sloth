@@ -67,6 +67,7 @@ import {
   isSameWorkspace,
   loadConfigForCwd,
   promptText,
+  resolveAcpSessionCommand,
 } from '#src/modules/acp/acpCommon.js';
 import type { AcpAgentAppOptions } from '#src/modules/acp/acpCommon.js';
 
@@ -346,9 +347,9 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
           options.resolvers ?? createResolvers(),
           agentFactoryFor(config)
         );
-        // `chat` — an ACP session is an interactive conversation, and the command a run is resolved
-        // under decides its toolset and its approvals posture.
-        await runner.init('chat', config);
+        // The command a run is resolved under decides its toolset, its mode prompt and its
+        // approvals posture. For an editor session that is `acp.mode`, defaulting to `code`.
+        await runner.init(resolveAcpSessionCommand(config), config);
 
         const sessionId = randomUUID();
         sessions.set(sessionId, {

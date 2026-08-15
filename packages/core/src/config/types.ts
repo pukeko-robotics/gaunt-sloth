@@ -8,7 +8,7 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import type { BaseToolkit, StructuredToolInterface } from '@langchain/core/tools';
 import type { StatusLevel } from '#src/core/types.js';
 import type { ApprovalsConfig, BuiltInToolsSetting } from '#src/config/shell-policy.js';
-import type { GthOutputHeaderRung } from '#src/config/schema.js';
+import type { GthAcpSessionMode, GthOutputHeaderRung } from '#src/config/schema.js';
 
 /**
  * GS2-43 — the seven configurable prompt segments. Each maps to a prompt file with a
@@ -397,6 +397,26 @@ export interface GthConfig {
         allowHeaders?: string;
       };
     };
+  };
+  /**
+   * EXT-117 — the ACP (Agent Client Protocol) surface, i.e. a session an editor such as Zed opens.
+   *
+   * `mode` is the command an ACP session is resolved under, and it defaults to **`code`**: an
+   * editor asks for an agent that can do the job, and a read-only one is a worse default than an
+   * occasional prompt. Set `acp: { mode: 'chat' }` for a read-only editor agent.
+   *
+   * The deliberate consequence, because it is what makes this overridable without a second parallel
+   * config surface: the mode names an EXISTING command, so an ACP session is configured by that
+   * command's own block. At the default the session takes its `filesystem`, `approvals`,
+   * `builtInTools` and mode prompt from **{@link GthConfig.commands}`.code`** — the same settings
+   * `gth code` runs under — and at `chat` from `commands.chat`. There is no ACP-only copy of those
+   * knobs to keep in step.
+   *
+   * Defaulted at the read site (not in {@link DEFAULT_CONFIG}) to avoid churning the
+   * effective-config snapshot, à la {@link injectModelContext}.
+   */
+  acp?: {
+    mode?: GthAcpSessionMode;
   };
   /**
    * GS2-35/EXT-83 — identity for the `Co-Authored-By` trailer of agent-authored git commits. Gaunt
