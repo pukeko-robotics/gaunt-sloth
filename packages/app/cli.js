@@ -11,9 +11,10 @@ process.on('warning', (warning) => {
 
 // --- ACP server ------------------------------------------------------------
 // `gaunt-sloth --acp-agent` is the ACP (Agent Client Protocol) door into the fat
-// `gaunt-sloth` package. It serves ACP v2 over stdio through the SAME startup as
-// the standalone `gaunt-sloth-acp` bin, so the two doors cannot behave
-// differently — including the redirect that keeps stdout free for JSON-RPC.
+// `gaunt-sloth` package. It serves ACP over stdio — v1 or v2, whichever the host
+// asks for — through the SAME startup as the standalone `gaunt-sloth-acp` bin, so
+// the two doors cannot behave differently, including the redirect that keeps
+// stdout free for JSON-RPC.
 //
 // The switch is handled here rather than left to fall through to the normal CLI,
 // which would answer an ACP host with a chat session on stdout and hang it.

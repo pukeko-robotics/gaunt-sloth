@@ -63,7 +63,9 @@ For full usage documentation see the [root README](https://github.com/pukeko-rob
 can drive Gaunt Sloth as its coding agent. Point the editor's agent configuration at either
 command; it needs no arguments.
 
-**ACP v2 only.** A host that speaks only ACP v1 cannot connect. Zed speaks v2.
+**Both ACP v1 and ACP v2 are served**, and the version is taken from the host's own `initialize` —
+there is nothing to configure. v1 is the stable protocol every shipping ACP editor uses today, Zed
+included; v2 is a draft.
 
 Files you attach to a message — an @-mention in Zed — reach the agent as a link it can open with its
 file tools. Images and audio are not accepted; if a host sends them anyway the agent says so in its
