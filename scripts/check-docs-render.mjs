@@ -19,7 +19,7 @@
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -28,10 +28,24 @@ const require = createRequire(import.meta.url);
 const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');
 const stripAnsi = (s) => s.replace(ANSI, '');
 
-/** `out` is read from the config rather than repeated here, so the two cannot drift apart. */
+/**
+ * `out` is read from the config rather than repeated here, so the two cannot drift apart.
+ *
+ * The render starts by deleting this directory, so it is never guessed and never a source tree.
+ * TypeDoc's own default when `out` is absent is `./docs`, which in this repo is the tracked
+ * documentation source — a config that stops declaring `out` must stop this script, not empty it.
+ */
 function outputDirectory() {
   const config = JSON.parse(readFileSync(join(repoRoot, 'typedoc.json'), 'utf8'));
-  return resolve(repoRoot, config.out ?? './docs');
+  if (typeof config.out !== 'string' || config.out.trim() === '') {
+    throw new Error('typedoc.json declares no "out" directory; refusing to guess one to delete.');
+  }
+  const outDir = resolve(repoRoot, config.out);
+  const protectedDirs = [repoRoot, join(repoRoot, 'docs'), join(repoRoot, 'packages')];
+  if (!outDir.startsWith(repoRoot + sep) || protectedDirs.includes(outDir)) {
+    throw new Error(`typedoc.json points "out" at ${outDir}; refusing to delete that.`);
+  }
+  return outDir;
 }
 
 /**
