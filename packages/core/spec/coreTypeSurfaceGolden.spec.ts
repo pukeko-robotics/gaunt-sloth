@@ -147,6 +147,36 @@ describe('type-surface golden drift report', () => {
     const drift = describeSurfaceDrift(withUnexported, nowExported);
     expect(drift).toContain('NEWLY EXPORTED');
     expect(drift).toContain('nothing was lost');
+    // The control for the cell below: a gained export modifier on its own IS benign.
+    expect(drift).not.toContain('BOUND DIFFERENTLY');
+  });
+
+  it('does not let a gained export modifier launder a rebinding into an addition', () => {
+    // The same declaration, now exported AND carrying a required type parameter it did not have.
+    // The modifier is benign; the parameter is a break. Reported as a gain alone, the reader is
+    // told to regenerate and the break ships behind a green suite.
+    const drift = describeSurfaceDrift(
+      document([entry('AlphaConfig', 'config/types.d.ts')], [entry('Beta')]),
+      document([entry('AlphaConfig', 'config/types.d.ts'), entry('Beta', undefined, 1)])
+    );
+    expect(drift).toContain('NEWLY EXPORTED');
+    expect(drift).toContain('BOUND DIFFERENTLY (1)');
+    expect(drift).toContain('[arity]');
+    expect(drift).toContain('REQUIRED TYPE PARAMETER');
+    expect(drift).not.toContain('nothing was lost');
+    expect(drift).not.toContain('deliberate API addition');
+  });
+
+  it('leaves a rebinding that arrives with a LOST export modifier on the loss branch', () => {
+    // The twin of the cell above, and it needs no special handling: a lost export modifier is
+    // already the careful branch, and nothing a rebinding adds could make the advice safer.
+    const drift = describeSurfaceDrift(
+      document([entry('AlphaConfig', 'config/types.d.ts'), entry('Beta')]),
+      document([entry('AlphaConfig', 'config/types.d.ts')], [entry('Beta', undefined, 1)])
+    );
+    expect(drift).toContain('NO LONGER EXPORTED');
+    expect(drift).toContain('Investigate before you regenerate');
+    expect(drift).not.toContain('deliberate API addition');
   });
 
   describe('a type that is BOUND DIFFERENTLY — neither lost nor added', () => {

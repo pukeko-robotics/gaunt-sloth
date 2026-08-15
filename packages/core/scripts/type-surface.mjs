@@ -516,27 +516,36 @@ export function describeSurfaceDrift(committed, current) {
       added.push(...is.required, ...is.unexported);
       continue;
     }
+    const side = (group) => [...group.required, ...group.unexported].map(label).join(' + ');
+    const recordRebinding = (fields) => {
+      if (fields.length === 0) return;
+      changed.push({
+        fields,
+        text: `${name} [${fields.map((field) => CHANGED_FIELD_LABEL[field]).join(' + ')}]: ${side(was)} -> ${side(is)}`,
+      });
+    };
+
     if (was.required.length > 0 && is.required.length === 0) {
+      // A lost export modifier is reported as a loss, which is the careful branch already: a
+      // rebinding riding along with it cannot make the advice any less cautious than it is.
       lostExport.push(...is.unexported);
       continue;
     }
     if (was.unexported.length > 0 && is.unexported.length === 0) {
       gainedExport.push(...is.required);
+      // A gained export modifier IS benign, and that is exactly why this line has to be here.
+      // These are the same declarations, now exported; anything else that changed about them did
+      // not become benign by arriving alongside the modifier, and without recording it an arity
+      // break would be handed the "deliberate API addition, regenerate" advice.
+      recordRebinding(differingFields(was.unexported, is.required));
       continue;
     }
-    const fields = [
+    recordRebinding([
       ...new Set([
         ...differingFields(was.required, is.required),
         ...differingFields(was.unexported, is.unexported),
       ]),
-    ];
-    if (fields.length > 0) {
-      const side = (group) => [...group.required, ...group.unexported].map(label).join(' + ');
-      changed.push({
-        fields,
-        text: `${name} [${fields.map((field) => CHANGED_FIELD_LABEL[field]).join(' + ')}]: ${side(was)} -> ${side(is)}`,
-      });
-    }
+    ]);
   }
 
   const names = (entries) => entries.map(label).sort().join(', ');
