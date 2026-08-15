@@ -26,44 +26,73 @@ const UNIT_TESTS_WORKFLOW = new URL('../../../.github/workflows/unit-tests.yml',
 const CHECK_SCRIPT = new URL('../../../scripts/check-docs-render.mjs', import.meta.url);
 
 const GATE_SCRIPT = 'docs:check';
+const GATE_SCRIPT_BODY = 'node scripts/check-docs-render.mjs';
 const GATE_COMMAND = 'pnpm run docs:check';
 const BUILD_AND_TEST_COMMAND = 'pnpm test';
+const GATE_JOB = 'test-and-lint';
+
+/**
+ * A run step, not merely the text of one. `^[ \t]*run:` admits only whitespace before the key, so a
+ * `#`-commented-out step cannot match — which a substring search cannot tell apart from a live
+ * step, and commenting a step out is how a CI step usually gets "temporarily" removed.
+ */
+function runStep(command: string): RegExp {
+  return new RegExp(`^[ \\t]*run:[ \\t]*${command}[ \\t]*$`, 'm');
+}
 
 function rootScripts(): Record<string, string | undefined> {
   const pkg = JSON.parse(readFileSync(ROOT_PACKAGE_JSON, 'utf8'));
   return (pkg.scripts ?? {}) as Record<string, string | undefined>;
 }
 
-function workflow(): string {
-  return readFileSync(UNIT_TESTS_WORKFLOW, 'utf8');
+/**
+ * Only the gate's own job. Ordering is meaningless across jobs — they run in parallel — so a step
+ * that moved to `test-platforms` must read as missing here rather than as "later in the file".
+ */
+function gateJob(): string {
+  const text = readFileSync(UNIT_TESTS_WORKFLOW, 'utf8');
+  const start = text.indexOf(`\n  ${GATE_JOB}:`);
+  if (start === -1) return '';
+  const rest = text.slice(start + 1);
+  const next = rest.search(/\n {2}[A-Za-z][\w-]*:/);
+  return next === -1 ? rest : rest.slice(0, next);
 }
 
 describe('OPS-67 the docs render gate is wired into CI', () => {
-  it('has the script, and it runs the render check', () => {
-    // Anti-vacuity: a renamed script would leave every assertion below matching a command that
-    // exists in the workflow but no longer does anything.
+  it('has the script, and it is exactly the render check', () => {
+    // Exact equality, not `toContain`: an `|| true` suffix, a leading `echo skipped &&`, or a
+    // trailing comment all leave the substring intact while making the command unable to fail —
+    // measured, and the same "registered but not effective" shape OPS-67 exists to stop. Any
+    // legitimate change to this line should update this constant with it.
     const script = rootScripts()[GATE_SCRIPT];
     expect(script, `root package.json is missing the "${GATE_SCRIPT}" script`).toBeDefined();
-    expect(script).toContain('scripts/check-docs-render.mjs');
+    expect(
+      script,
+      `the "${GATE_SCRIPT}" script must be exactly "${GATE_SCRIPT_BODY}" — anything wrapped ` +
+        'around it can swallow the failure and leave CI green on a broken docs render.'
+    ).toBe(GATE_SCRIPT_BODY);
     expect(existsSync(CHECK_SCRIPT), 'scripts/check-docs-render.mjs is missing').toBe(true);
   });
 
-  it('runs that script in the unit-tests workflow', () => {
+  it('runs that script as a step of the unit-tests workflow', () => {
     expect(
-      workflow(),
-      `.github/workflows/unit-tests.yml must run "${GATE_COMMAND}" — without it nothing in CI ` +
-        'renders the docs site, which is the gap OPS-67 closed.'
-    ).toContain(GATE_COMMAND);
+      runStep(GATE_COMMAND).test(gateJob()),
+      `the "${GATE_JOB}" job in .github/workflows/unit-tests.yml must have a step running ` +
+        `"${GATE_COMMAND}" — commented out or moved to another job, nothing in CI renders the ` +
+        'docs site, which is the gap OPS-67 closed.'
+    ).toBe(true);
   });
 
   it('runs it after the build, never before', () => {
-    const text = workflow();
-    const build = text.indexOf(BUILD_AND_TEST_COMMAND);
-    const gate = text.indexOf(GATE_COMMAND);
-    // Control: if either command stopped appearing, the comparison below would silently compare
+    const job = gateJob();
+    const build = job.search(runStep(BUILD_AND_TEST_COMMAND));
+    const gate = job.search(runStep(GATE_COMMAND));
+    // Control: if either step stopped existing, the comparison below would silently compare
     // against -1 and could pass for the wrong reason.
-    expect(build, `"${BUILD_AND_TEST_COMMAND}" is no longer in the workflow`).toBeGreaterThan(-1);
-    expect(gate, `"${GATE_COMMAND}" is no longer in the workflow`).toBeGreaterThan(-1);
+    expect(build, `"${BUILD_AND_TEST_COMMAND}" is no longer a step of ${GATE_JOB}`).toBeGreaterThan(
+      -1
+    );
+    expect(gate, `"${GATE_COMMAND}" is no longer a step of ${GATE_JOB}`).toBeGreaterThan(-1);
     expect(
       gate,
       `"${GATE_COMMAND}" must come after "${BUILD_AND_TEST_COMMAND}": TypeDoc reads each ` +

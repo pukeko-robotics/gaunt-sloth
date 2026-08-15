@@ -31,7 +31,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -44,54 +44,50 @@ const stripAnsi = (s) => s.replace(ANSI, '');
 /**
  * `out` is read from the config rather than repeated here, so the two cannot drift apart.
  *
- * The render begins by deleting this directory, so the question "is this mine to delete?" is
- * answered by a property of the path and never by a list of paths to spare: **git must call it
- * ignored.** An ignored directory holds no tracked content by definition, which is exactly the
- * claim a recursive delete needs, and it stays true through any future rewrite of `typedoc.json` —
- * a list only ever excludes what its author thought of, and here the cost of one omission is a
- * silently deleted source tree. A path outside the repository is not ignored either, so
- * containment comes free.
+ * **This script deletes nothing, deliberately.** TypeDoc empties its own output directory before
+ * writing — measured: a stray file placed in `out` is gone after a successful render — so there is
+ * no delete here to make safe, and therefore no guard around one to get wrong. A guard is a claim
+ * about every input it will ever see; not performing the operation is a fact. Do not re-add an
+ * `rmSync` — it would delete what TypeDoc is about to delete anyway, and it would need a guard
+ * that is only ever as correct as its author's list of paths worth sparing.
  *
- * TypeDoc's own default when `out` is absent is `./docs`, which in this repo is the tracked
- * documentation source: a config that stops declaring `out` must stop this script, not empty it.
+ * Two things are still read out of the config, because the checks below rest on both:
+ *
+ * - **`out` must be declared.** TypeDoc's default is `./docs`, which here is the tracked
+ *   documentation source — it would be emptied and refilled with HTML by the render itself.
+ * - **`cleanOutputDir` must not be off.** Measured: with it off a stray file survives a successful
+ *   render, and the sweep and the "had something to read" check would then be reading a previous
+ *   run's pages — the vacuous pass this whole gate exists to prevent.
+ *
+ * On a *failing* render TypeDoc cleans nothing and the previous tree stays. That run is already red
+ * on `typedoc exits 0` and `the render reports no errors`, so stale pages cannot make it green.
  */
 function outputDirectory(config) {
   if (typeof config.out !== 'string' || config.out.trim() === '') {
-    throw new Error('typedoc.json declares no "out" directory; refusing to guess one to delete.');
-  }
-  const outDir = resolve(repoRoot, config.out);
-  const ignored = spawnSync('git', ['check-ignore', '-q', '--', outDir], { cwd: repoRoot });
-  if (ignored.error || (ignored.status !== 0 && ignored.status !== 1)) {
     throw new Error(
-      `git could not say whether ${outDir} is ignored — this is not a git checkout, or git is ` +
-        'unavailable. That answer is the only thing that makes deleting the directory safe, so ' +
-        'the render does not run here. Use a git checkout of the repository.'
+      'typedoc.json declares no "out" directory. TypeDoc would render into ./docs and empty it ' +
+        'first, and that is the documentation source. Declare "out".'
     );
   }
-  if (ignored.status !== 0) {
+  if (config.cleanOutputDir === false) {
     throw new Error(
-      `typedoc.json points "out" at ${outDir}, which git does not report as ignored. ` +
-        'This script deletes that directory before rendering, so it renders only into a path git ' +
-        'is willing to lose. Point "out" at a gitignored directory, or add that one to .gitignore.'
+      'typedoc.json sets "cleanOutputDir" to false, so a render leaves the previous one in place ' +
+        'and these checks would read stale pages. Remove it, or stop trusting this gate.'
     );
   }
-  return outDir;
+  return resolve(repoRoot, config.out);
 }
 
 /**
  * Runs the real TypeDoc binary — the one `pnpm typedoc` runs — rather than driving the API, so this
  * gate cannot pass on a pipeline that differs from the one contributors and the site are built by.
- *
- * The binary is resolved before the output directory is deleted: nothing destructive happens until
- * everything the render needs is in hand.
  */
-function render(outDir) {
+function render() {
   const typedocPackage = require.resolve('typedoc/package.json');
   const bin = resolve(
     dirname(typedocPackage),
     JSON.parse(readFileSync(typedocPackage, 'utf8')).bin.typedoc
   );
-  rmSync(outDir, { recursive: true, force: true });
   const run = spawnSync(process.execPath, [bin], { cwd: repoRoot, encoding: 'utf8' });
   if (run.error) throw run.error;
   return { status: run.status, output: stripAnsi(`${run.stdout ?? ''}${run.stderr ?? ''}`) };
@@ -137,7 +133,7 @@ function markdownCopiedAsMedia(outDir) {
 
 const config = JSON.parse(readFileSync(join(repoRoot, 'typedoc.json'), 'utf8'));
 const outDir = outputDirectory(config);
-const { status, output } = render(outDir);
+const { status, output } = render();
 process.stdout.write(output.endsWith('\n') || output === '' ? output : `${output}\n`);
 
 const failures = [];

@@ -172,9 +172,11 @@ In the browser, confirm:
 ### Read the run's warnings, not only the page
 
 `pnpm typedoc` exits 0 with hundreds of warnings, so nothing stops on your page's behalf. What
-stops is `pnpm run docs:check`, which renders and then fails on the lines below; this section is
-how to read what it reports. Two of the lines in that stream are about your page and `grep` finds
-them; two further failure modes produce no line at all:
+stops is `pnpm run docs:check`, which renders and then fails on all of the failure modes below
+**except the first** — an unmatched glob leaves it green and reds
+`packages/core/spec/typedocProjectDocuments.spec.ts` instead, in the same CI job. This section is
+how to read what either of them reports. Two of the lines in that stream are about your page and
+`grep` finds them; two further failure modes produce no line at all:
 
 - **`The glob …/docs/<page>.md did not match any files`** — `projectDocuments` names a path that
   does not exist, so that entry renders nothing. This is how the gate goes quiet: it keeps passing
@@ -296,9 +298,8 @@ covered by `packages/core/spec/typedocHeadingAnchors.spec.ts` — closes that ga
 span's text to the anchor generator, without changing a byte of the rendered heading. If you change
 how docs are built, keep that plugin registered: dropping it re-breaks every link into a code-span
 heading, and the render keeps exiting 0 while it happens. Two things notice, and neither is the
-exit code — `pnpm run docs:check` reds on the anchors that moved (measured: four cross-page
-warnings and four pages, with the plugin registered but no longer applied), and that spec names
-which heading shape broke.
+exit code — `pnpm run docs:check` reds on every link into a heading whose anchor moved, and that
+spec names which heading shape broke.
 
 **Where the two still disagree.** The plugin feeds TypeDoc the same heading *text* GitHub slugs; it
 does not give TypeDoc GitHub's slug algorithm, and the two algorithms are different functions.
