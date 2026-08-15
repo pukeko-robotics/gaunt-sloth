@@ -72,9 +72,13 @@ const displayMock = vi.fn();
 const displayInfoMock = vi.fn();
 const displayWarningMock = vi.fn();
 const displayErrorMock = vi.fn();
+// [[EXT-105]] — the readline dialog is written through this one writer, so the opening sentence is
+// read from its first call rather than from the warn channel it used to take.
+const displayDialogLineMock = vi.fn();
 vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => ({
   defaultStatusCallback: vi.fn(),
   display: displayMock,
+  displayDialogLine: displayDialogLineMock,
   displayError: displayErrorMock,
   displayInfo: displayInfoMock,
   displayLaunchBanner: vi.fn(),
@@ -134,10 +138,10 @@ async function readlineHeader(pending: PendingToolInterrupt): Promise<string> {
     await import('@gaunt-sloth/agent/modules/interactiveSessionModule.js');
   await createInteractiveSession(sessionConfig, {});
   expect(capturedApprovalCallback).toBeTypeOf('function');
-  displayWarningMock.mockClear();
+  displayDialogLineMock.mockClear();
   rlQuestionMock.mockResolvedValueOnce('n');
   await capturedApprovalCallback!(pending);
-  const raw = String(displayWarningMock.mock.calls[0]?.[0]);
+  const raw = String(displayDialogLineMock.mock.calls[0]?.[0]);
   expect(raw.startsWith('\n')).toBe(true);
   const line = raw.slice(1);
   expect(line.endsWith(':')).toBe(true);

@@ -135,6 +135,10 @@ Lower levels are more verbose. Valid values for JSON configs:
 }
 ```
 
+The approval prompt is not filtered by this. It is a question rather than a status message, and a
+filter that applied to it line by line would leave you a severity heading with no command under it.
+See [the shell tool and approvals](../guides/shell-tool-and-approvals.md#where-the-prompt-is-written).
+
 ## Colour (useColour, NO_COLOR, FORCE_COLOR)
 
 Turn colour off for a single run, without touching your config:

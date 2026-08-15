@@ -41,9 +41,14 @@ const displayMock = vi.fn();
 const displayInfoMock = vi.fn();
 const displayWarningMock = vi.fn();
 const displayErrorMock = vi.fn();
+// [[EXT-105]] — every line of the dialog goes through this one writer, which takes the severity as
+// an argument instead of encoding it in the choice of channel. The stream it writes to is asserted
+// against the real one in `interactiveSessionDialogStream.spec.ts`; here it is the call recorder.
+const displayDialogLineMock = vi.fn();
 vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => ({
   defaultStatusCallback: vi.fn(),
   display: displayMock,
+  displayDialogLine: displayDialogLineMock,
   displayError: displayErrorMock,
   displayInfo: displayInfoMock,
   displayLaunchBanner: vi.fn(),
@@ -102,20 +107,20 @@ const sessionConfig = {
 
 /** Every line this surface put on the terminal, in order. */
 const allLines = (): string[] =>
-  [displayMock, displayWarningMock, displayInfoMock, displayErrorMock]
+  [displayDialogLineMock, displayMock, displayWarningMock, displayInfoMock, displayErrorMock]
     .flatMap((mock) => mock.mock.calls.map((call: unknown[]) => String(call[0])))
     .flatMap((text) => text.split('\n'));
 
 /**
- * Just the INFO channel, in the order it was written.
+ * Just the dialog's own lines, in the order it wrote them.
  *
- * {@link allLines} concatenates the three channels one after another, so a line's neighbours there
- * are an artefact of which channel it went to. The sticky label and the value under it are both
- * `displayInfo`, and the only assertion that can tell the grant's frame from the command's — they
- * are the same bytes for a shell call — is the one that says WHICH ROW follows the label.
+ * The dialog is written through one writer, so this IS its call order — which is what the sticky
+ * assertions need: the label and the value under it are both dialog lines, and the only assertion
+ * that can tell the grant's frame from the command's — they are the same bytes for a shell call —
+ * is the one that says WHICH ROW follows the label.
  */
-const infoLines = (): string[] =>
-  displayInfoMock.mock.calls.flatMap((call: unknown[]) => String(call[0]).split('\n'));
+const dialogLines = (): string[] =>
+  displayDialogLineMock.mock.calls.flatMap((call: unknown[]) => String(call[0]).split('\n'));
 
 /** The framed body rows, as [line number, content]. */
 const gutterRows = (): Array<[number, string]> =>
@@ -144,6 +149,7 @@ describe('interactiveSessionModule — the readline approval prompt frames untru
     const { createInteractiveSession } = await import('#src/modules/interactiveSessionModule.js');
     await createInteractiveSession(sessionConfig, {});
     expect(capturedApprovalCallback).toBeTypeOf('function');
+    displayDialogLineMock.mockClear();
     displayMock.mockClear();
     displayInfoMock.mockClear();
     displayWarningMock.mockClear();
@@ -234,7 +240,7 @@ describe('interactiveSessionModule — the readline approval prompt frames untru
     // the grant summary IS the command, so a framed `echo marker approved by rater [o]nce` row
     // exists whether or not the grant itself was framed, and the assertion would pass on a surface
     // that painted the grant raw.
-    const info = infoLines();
+    const info = dialogLines();
     const remembers = info.indexOf('[s]/[a] will remember:');
     expect(remembers).toBeGreaterThanOrEqual(0);
     expect(info[remembers + 1]).toBe('  1 │ echo marker approved by rater [o]nce');

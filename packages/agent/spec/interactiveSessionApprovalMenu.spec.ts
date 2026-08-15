@@ -9,9 +9,10 @@ import type { SessionConfig } from '#src/modules/interactiveSessionModule.js';
  *
  * `--no-tui` is a real, supported way to run a session, and the whole of §6 arrives there over the
  * same seam. The half the Ink suite cannot see is the one that matters most here: this surface has
- * no colour of its own, so the CHANNEL a line is written on *is* its colour — `displayError` is
- * red, `displayWarning` is yellow — which makes "catastrophic must not be able to look like
- * destructive" an assertion about which function was called.
+ * no colour of its own, so a line's TONE is its colour — `danger` is red, `warn` is yellow — which
+ * makes "catastrophic must not be able to look like destructive" an assertion about the tone each
+ * was painted in. [[EXT-105]] made the tone an argument rather than a choice of function, so that
+ * the whole dialog can be written to one stream without any severity losing its colour.
  */
 const cp = (codePoint: number): string => String.fromCodePoint(codePoint);
 const LF = cp(0x0a);
@@ -38,9 +39,13 @@ const displayMock = vi.fn();
 const displayInfoMock = vi.fn();
 const displayWarningMock = vi.fn();
 const displayErrorMock = vi.fn();
+// [[EXT-105]] — the dialog's one writer. Its second argument is the severity TONE, which is what
+// this surface's colour is chosen by now that the choice no longer also picks a stream.
+const displayDialogLineMock = vi.fn();
 vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => ({
   defaultStatusCallback: vi.fn(),
   display: displayMock,
+  displayDialogLine: displayDialogLineMock,
   displayError: displayErrorMock,
   displayInfo: displayInfoMock,
   displayLaunchBanner: vi.fn(),
@@ -106,19 +111,40 @@ const sessionConfig = {
   exitMessage: 'exit hint',
 } as unknown as SessionConfig;
 
-/** Lines written to one channel, in order. */
+/** Lines written through one helper, in order. */
 const linesOf = (mock: { mock: { calls: unknown[][] } }): string[] =>
   mock.mock.calls.flatMap((call: unknown[]) => String(call[0]).split(LF));
 
-/** Every line this surface put on the terminal, whichever channel it went to. */
-const allLines = (): string[] =>
-  [displayMock, displayWarningMock, displayInfoMock, displayErrorMock].flatMap((mock) =>
-    linesOf(mock)
-  );
+/**
+ * The dialog lines painted in one TONE, in order.
+ *
+ * [[EXT-105]] moved the whole dialog onto one stream, so the tone argument — not which of four
+ * functions was called — is what says how loud a line is. `plain` is the default, spelled here so a
+ * caller can ask for the untoned rows the same way as any other.
+ */
+const linesInTone = (tone: string): string[] =>
+  displayDialogLineMock.mock.calls
+    .filter((call: unknown[]) => (call[1] ?? 'plain') === tone)
+    .flatMap((call: unknown[]) => String(call[0]).split(LF));
 
-/** The prompt string the human was actually asked with — the menu, as they read it. */
-const asked = (): string =>
-  rlQuestionMock.mock.calls.map((call: unknown[]) => String(call[0])).join(LF);
+/** Every line this surface put on the terminal, whichever helper or tone it went through. */
+const allLines = (): string[] =>
+  [
+    displayDialogLineMock,
+    displayMock,
+    displayWarningMock,
+    displayInfoMock,
+    displayErrorMock,
+  ].flatMap((mock) => linesOf(mock));
+
+/**
+ * The menu, as the human read it.
+ *
+ * [[EXT-105]] — it is a line of the dialog like any other, written to the dialog's stream rather
+ * than handed to `rl.question`, whose output is stdout: the question is the one line it would be
+ * worst to lose from a capture, or to have arrive after the answer to it.
+ */
+const asked = (): string => linesInTone('prompt').join(LF);
 
 describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity', () => {
   beforeEach(() => {
@@ -140,6 +166,7 @@ describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity
     const { createInteractiveSession } = await import('#src/modules/interactiveSessionModule.js');
     await createInteractiveSession(sessionConfig, {});
     expect(capturedApprovalCallback).toBeTypeOf('function');
+    displayDialogLineMock.mockClear();
     displayMock.mockClear();
     displayInfoMock.mockClear();
     displayWarningMock.mockClear();
@@ -175,7 +202,7 @@ describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity
     expect(asked()).toContain('[N]o');
     expect(asked()).not.toContain('[s]ession');
 
-    rlQuestionMock.mockClear();
+    displayDialogLineMock.mockClear();
     await ask('n', { name: 'gth_web_fetch', args: { input: 'https://x/y' } });
     expect(asked()).not.toContain('[d]eny always');
     // Still a menu: the absence above is about the control, not a prompt that collapsed.
@@ -186,7 +213,7 @@ describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity
   it('names what the deny choice records, on the row below its own label', async () => {
     await startSession();
     await ask('n', DENYABLE);
-    const info = linesOf(displayInfoMock);
+    const info = linesInTone('notice');
     const label = info.indexOf('[d] will refuse, for the rest of this session:');
     expect(label).toBeGreaterThanOrEqual(0);
     // Anchored positionally: a shell deny summary is the command byte for byte, so a bare
@@ -265,36 +292,35 @@ describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity
   /**
    * §2.1 — **`catastrophic` must not be able to look like `destructive`**, asserted as a difference
    * between two renders of the same command rather than as "the catastrophic one is red". On this
-   * surface the channel is the colour, so the difference is which function was called — and the
+   * surface the tone is the colour, so the difference is the tone each was painted in — and the
    * words differ too, for the terminal that has no colour at all.
    */
-  it('renders catastrophic differently from destructive, in the channel AND the words', async () => {
+  it('renders catastrophic differently from destructive, in the tone AND the words', async () => {
     await startSession();
     await ask('n', {
       name: 'run_shell_command',
       args: { command: 'rm -rf /var/data' },
       safetyVerdict: { outcome: 'destructive', reason: 'the same reason either way' },
     });
-    const destructiveHeading = linesOf(displayWarningMock).find((line) =>
+    const destructiveHeading = linesInTone('warn').find((line) =>
       line.includes('Auto-rater (destructive)')
     );
     expect(destructiveHeading).toBeDefined();
-    // The yellow channel, and NOT the red one.
-    expect(linesOf(displayErrorMock)).toEqual([]);
+    // The yellow tone, and NOT the red one.
+    expect(linesInTone('danger')).toEqual([]);
 
-    displayWarningMock.mockClear();
-    displayErrorMock.mockClear();
+    displayDialogLineMock.mockClear();
     await ask('n', {
       name: 'run_shell_command',
       args: { command: 'rm -rf /var/data' },
       safetyVerdict: { outcome: 'catastrophic', reason: 'the same reason either way' },
     });
-    const catastrophicHeading = linesOf(displayErrorMock).find((line) =>
+    const catastrophicHeading = linesInTone('danger').find((line) =>
       line.includes('Auto-rater (catastrophic)')
     );
-    // The red channel — a different function, which is this surface's whole colour vocabulary.
+    // The red tone — a different colour, which is this surface's whole colour vocabulary.
     expect(catastrophicHeading).toBeDefined();
-    expect(linesOf(displayWarningMock).some((line) => line.includes('Auto-rater'))).toBe(false);
+    expect(linesInTone('warn').some((line) => line.includes('Auto-rater'))).toBe(false);
     // ...and the sentences differ, saying the consequence rather than repeating the adjective.
     expect(catastrophicHeading).not.toBe(destructiveHeading);
     expect(catastrophicHeading).toContain('OUTSIDE this session');
@@ -312,15 +338,15 @@ describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity
     await startSession();
     await ask('n', { name: 'run_shell_command', args: { command: 'ls -la' } });
     expect(allLines().join(LF)).not.toContain('Auto-rater');
-    expect(linesOf(displayErrorMock)).toEqual([]);
+    expect(linesInTone('danger')).toEqual([]);
   });
 
   /**
-   * §3/§5.4 — the two voices, told apart by channel, across all THREE rounds and in order. The
-   * whole exchange used to be one `displayWarning` call, so the agent's justification and the
-   * rater's answer arrived in the same colour — exactly what §5.4 forbids.
+   * §3/§5.4 — the two voices, told apart by tone, across all THREE rounds and in order. One joined
+   * string cannot express that: the whole exchange would arrive in a single colour, which is what
+   * §5.4 forbids. The rows also NAME their speaker, which is the half a monochrome terminal keeps.
    */
-  it('writes the rater’s turns and the agent’s to different channels, for every round', async () => {
+  it('paints the rater’s turns and the agent’s in different tones, for every round', async () => {
     await startSession();
     await ask('n', {
       name: 'run_shell_command',
@@ -332,8 +358,8 @@ describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity
         reason: `answer ${n}`,
       })),
     });
-    const agentRows = linesOf(displayMock);
-    const raterRows = linesOf(displayWarningMock);
+    const agentRows = linesInTone('plain');
+    const raterRows = linesInTone('warn');
     expect(agentRows).toContain('  Round 1: git reset --hard origin/main');
     expect(agentRows).toContain('  Round 2: git reset --hard origin/main');
     expect(agentRows).toContain('  Round 3 (this request): git reset --hard origin/main');
@@ -351,7 +377,7 @@ describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity
       '    rater answered: destructive — answer 2',
       '    rater answered: destructive — answer 3',
     ]);
-    // ...and the voices really are on different channels: no rater turn arrives on the agent's.
+    // ...and the voices really are in different tones: no rater turn arrives in the agent's.
     expect(agentRows.some((row) => row.includes('rater answered'))).toBe(false);
   });
 
@@ -384,12 +410,12 @@ describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity
       // Five refused attempts; three survived the resets, which is what the surface is handed.
       negotiationAttempts: 5,
     });
-    expect(linesOf(displayInfoMock)).toContain(
+    expect(linesInTone('notice')).toContain(
       'The agent argued with the auto-rater 5 times; the last 3 of them:'
     );
     // ...and the rounds carry their true attempt numbers, so the count and the rounds beneath it
     // cannot describe two different exchanges.
-    const agentRows = linesOf(displayMock);
+    const agentRows = linesInTone('plain');
     expect(agentRows).toContain('  Round 3: git reset --hard');
     expect(agentRows).toContain('  Round 4: git reset --hard');
     expect(agentRows).toContain('  Round 5 (this request): git reset --hard');
@@ -421,9 +447,9 @@ describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity
         },
       ],
     });
-    // The justification is an AGENT turn, so its rows — continuations included — are on the plain
-    // channel. Selecting them by content keeps this about the row that had to wrap.
-    const rows = linesOf(displayMock).filter((row) => row.includes('xxx'));
+    // The justification is an AGENT turn, so its rows — continuations included — are painted
+    // plain. Selecting them by content keeps this about the row that had to wrap.
+    const rows = linesInTone('plain').filter((row) => row.includes('xxx'));
     expect(rows.length).toBeGreaterThan(1);
     // `      ┊ ` — the renderer's continuation gutter, which a terminal's own wrap never produces.
     expect(rows.slice(1).every((row) => row.startsWith('      ┊ '))).toBe(true);
@@ -454,7 +480,7 @@ describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity
       denyPreview: `{ "type": "shell", "matcher": "exact", "pattern": "${command.replace(/\n/gu, '\\n')}" }`,
       denySummary: command,
     });
-    const info = linesOf(displayInfoMock);
+    const info = linesInTone('notice');
     const at = (needle: string): number => {
       const index = info.indexOf(needle);
       expect(index).toBeGreaterThanOrEqual(0);
@@ -476,10 +502,10 @@ describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity
       expect(block.some((row) => row.includes('more rows hidden'))).toBe(true);
     }
     // The command itself is NOT bounded that way: it is the thing being ruled on, and every one of
-    // its lines is numbered in the frame above. Counted on the plain channel, where the command
-    // frame goes — the bounded blocks above are on the info channel and are made of rows of the
-    // same shape, so an unscoped count would be satisfied by their kept heads.
-    expect(linesOf(displayMock).filter((row) => /^ +\d+ │ line \d+ y+$/u.test(row)).length).toBe(
+    // its lines is numbered in the frame above. Counted in the plain tone, where the command frame
+    // goes — the bounded blocks above are painted `notice` and are made of rows of the same shape,
+    // so an unscoped count would be satisfied by their kept heads.
+    expect(linesInTone('plain').filter((row) => /^ +\d+ │ line \d+ y+$/u.test(row)).length).toBe(
       18
     );
   });

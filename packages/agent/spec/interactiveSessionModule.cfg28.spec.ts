@@ -41,16 +41,18 @@ vi.mock('@gaunt-sloth/core/utils/systemUtils.js', () => ({
 // ── @gaunt-sloth/core/utils/consoleUtils.js ───────────────────────────────────
 const displayInfoMock = vi.fn();
 const displayWarningMock = vi.fn();
-/**
- * [[TUI-C26]] §6 — the CHANNEL is this surface's colour, so it is also the observable. A
- * `catastrophic` escalation is written with `displayError` (red) where a `destructive` one is
- * written with `displayWarning` (yellow); captured here so the two can be told apart by assertion
- * rather than by reading.
- */
 const displayErrorMock = vi.fn();
+/**
+ * [[TUI-C26]] §6 / [[EXT-105]] — the dialog's one writer, and its TONE argument is this surface's
+ * colour, so it is also the observable. A `catastrophic` escalation is painted `danger` (red) where
+ * a `destructive` one is painted `warn` (yellow); captured here so the two can be told apart by
+ * assertion rather than by reading.
+ */
+const displayDialogLineMock = vi.fn();
 vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => ({
   defaultStatusCallback: vi.fn(),
   display: vi.fn(),
+  displayDialogLine: displayDialogLineMock,
   displayError: displayErrorMock,
   displayInfo: displayInfoMock,
   displayLaunchBanner: vi.fn(),
@@ -120,13 +122,18 @@ const CATASTROPHIC = {
 };
 const DESTRUCTIVE = { outcome: 'destructive', reason: 'deletes a build directory' };
 
-/** Everything printed by the approval callback, as one string. */
-const printed = (): string =>
-  displayInfoMock.mock.calls.map((call: unknown[]) => String(call[0])).join('\n');
+/** The dialog lines painted in one tone, as one string. */
+const inTone = (tone: string): string =>
+  displayDialogLineMock.mock.calls
+    .filter((call: unknown[]) => (call[1] ?? 'plain') === tone)
+    .map((call: unknown[]) => String(call[0]))
+    .join('\n');
 
-/** Everything WARNED by the approval callback — where the rater and escalate rows go. */
-const warned = (): string =>
-  displayWarningMock.mock.calls.map((call: unknown[]) => String(call[0])).join('\n');
+/** Everything the approval callback printed in the quiet tone — the labels and confirmations. */
+const printed = (): string => inTone('notice');
+
+/** Everything painted `warn` — where the rater and escalate rows go. */
+const warned = (): string => inTone('warn');
 
 describe('interactiveSessionModule CFG-28 — the readline confirmation tells the truth', () => {
   beforeEach(() => {
@@ -148,7 +155,8 @@ describe('interactiveSessionModule CFG-28 — the readline confirmation tells th
     const { createInteractiveSession } = await import('#src/modules/interactiveSessionModule.js');
     await createInteractiveSession(sessionConfig, {});
     expect(capturedApprovalCallback).toBeTypeOf('function');
-    displayInfoMock.mockClear(); // only record what the approval callback itself prints
+    displayDialogLineMock.mockClear(); // only record what the approval callback itself prints
+    displayInfoMock.mockClear();
     displayWarningMock.mockClear();
   };
 
@@ -292,9 +300,11 @@ describe('interactiveSessionModule CFG-28 — the readline confirmation tells th
     expect(printed()).toContain('Command rejected.');
   });
 
-  /** The prompt string this surface actually asked with — the menu, as the human read it. */
-  const asked = (): string =>
-    rlQuestionMock.mock.calls.map((call: unknown[]) => String(call[0])).join('\n');
+  /**
+   * The menu, as the human read it. [[EXT-105]] — it is a dialog line like the rest, written to the
+   * dialog's stream rather than handed to `rl.question`, whose output is stdout.
+   */
+  const asked = (): string => inTone('prompt');
 
   /**
    * EXT-70 §6 — **a sticky control is shown only where a sticky grant is on offer**, and is
@@ -314,7 +324,7 @@ describe('interactiveSessionModule CFG-28 — the readline confirmation tells th
     expect(asked()).toContain('[s]ession');
     expect(asked()).toContain('[a]lways');
 
-    rlQuestionMock.mockClear();
+    displayDialogLineMock.mockClear();
     rlQuestionMock.mockResolvedValueOnce('n');
     await capturedApprovalCallback!({
       name: 'run_shell_command',

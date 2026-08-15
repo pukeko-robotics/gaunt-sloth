@@ -216,6 +216,61 @@ export function formatInputPrompt(message: string): string {
 }
 
 /**
+ * How loud one line of an interactive dialog is — its COLOUR, and nothing else.
+ *
+ * The other `display*` helpers bind a colour to a stream: picking red means picking stdout, picking
+ * yellow means picking stderr. A dialog needs both halves independently, so this names the half that
+ * is about appearance and leaves the stream to {@link displayDialogLine}, which always chooses the
+ * same one.
+ *
+ * `notice`/`warn`/`danger` are the three tones `core/shell/escalationSeverity` grades an escalation
+ * with, so a surface can pass a rater outcome's tone straight through; `plain` is text with no
+ * severity (the framed command, a blank spacer) and `prompt` is the line the human types their
+ * answer after.
+ */
+export type DialogTone = 'plain' | 'notice' | 'warn' | 'danger' | 'prompt';
+
+const DIALOG_TONE_COLOURS: Record<DialogTone, keyof typeof ANSI_COLORS | null> = {
+  plain: null,
+  notice: 'dim',
+  warn: 'yellow',
+  danger: 'red',
+  prompt: 'magenta',
+};
+
+/**
+ * Print one line of an interactive dialog — an approval prompt, an attack banner — **on stderr**.
+ *
+ * ## One dialog, one stream
+ *
+ * A dialog's meaning is carried by the ORDER of its lines: a heading, then whose words the next
+ * lines are, then the words. Two streams cannot promise an order. Only writes to the *same* stream
+ * are delivered in the order they were made — across stdout and stderr nothing is promised, and the
+ * difference is observable the moment the two go to different places: with stdout a pipe or a file
+ * it is block-buffered while stderr is not, so a captured run can carry a rater's answer above the
+ * command it answers. A security dialog whose line order holds only on a terminal is not a gate, so
+ * every line of one goes through here and through nothing else.
+ *
+ * **stderr, because a prompt is not program output.** It is the conventional home for interaction,
+ * it is not block-buffered, and it leaves stdout carrying only what the run produced. The cost is
+ * real and is documented for users: piping stdout (`gth code --no-tui | tee log`) no longer captures
+ * the dialog — the terminal still shows it, `2>` still collects it, and an enabled session log still
+ * records it, because this writes there like every other channel.
+ *
+ * ## Not level-gated, on purpose
+ *
+ * The dialog is a QUESTION, not a status message, and the level filter is per line: gated, a quieted
+ * console prints the parts above its threshold and drops the rest, which is how an approval prompt
+ * comes to show a severity heading with no command under it. Half a dialog is worse than none,
+ * because it still looks like a whole one.
+ */
+export function displayDialogLine(message: string, tone: DialogTone = 'plain'): void {
+  const colour = DIALOG_TONE_COLOURS[tone];
+  writeToSessionLog(message + '\n');
+  su.error(colour ? colorText(message, colour) : message);
+}
+
+/**
  * Display a debug message to the console and log it.
  * This function also integrates with debugUtils to output logs when at debug level.
  * Note: There is also a dedicated debug() function in debugUtils for more detailed logging.

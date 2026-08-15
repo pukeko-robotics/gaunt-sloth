@@ -144,6 +144,29 @@ gate.
   message are painted by one module on both the Ink TUI and the readline session, so two surfaces
   cannot come to disagree about how much of a command a person was shown.
 
+## A dialog is written to ONE stream (DL-4 transparency, DL-7 graceful degradation)
+
+On the readline (`--no-tui`) surface, **every line of the approval dialog and the attack banner goes
+through `displayDialogLine`, which writes to stderr and takes the severity as a `DialogTone`
+argument.** Nothing else may write a line of one.
+
+- **The order of a dialog's lines is load-bearing, and two streams cannot promise it.** Only writes
+  to the same stream are delivered in the order they were made. The ordinary `display*` helpers bind
+  colour to stream — `displayWarning` is yellow AND stderr, `displayError` is red AND stdout — so
+  colouring a dialog with them writes it across both. On a terminal both land in call order; piped
+  or redirected they need not, and a reader can be shown a rater's answer above the command it
+  answers.
+- **stderr, because a prompt is not program output**: it is the conventional home for interaction,
+  it is not block-buffered, and it leaves stdout carrying what the run produced. State the cost
+  where users read about the dialog — piping stdout no longer captures it.
+- **The menu line is part of the dialog**, so it is written like the rest and readline is handed an
+  empty prompt. `rl.question(menu)` would put the question on readline's own output (stdout), which
+  is the worst line to lose from a capture or to have arrive after the answer to it. Readline
+  redraws the line it is editing, so the answer is typed on the row below the menu.
+- **Not level-gated.** A dialog is a question; the level filter is per line, so gating it prints the
+  parts above the threshold and drops the rest — a severity heading with no command under it. Half a
+  dialog is worse than none, because it still looks like a whole one.
+
 ## `/clear` (DL-3 preserve context, DL-5 respect host)
 
 `/clear` resets the session:

@@ -40,8 +40,8 @@ import type { RaterOutcome } from '#src/core/shell/rater.js';
 
 /**
  * How loud a surface should be about an outcome. A surface maps this to its own vocabulary — Ink
- * colours on the TUI, the `display*` channel on the readline prompt — so neither has to hold its
- * own opinion about which outcome is worse than which.
+ * colours on the TUI, a `DialogTone` on the readline prompt — so neither has to hold its own
+ * opinion about which outcome is worse than which.
  */
 export type EscalationTone = 'notice' | 'warn' | 'danger';
 

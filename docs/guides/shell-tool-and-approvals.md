@@ -35,7 +35,7 @@ The agent wants to run a shell command via run_shell_command
   1 │ rm -rf node_modules
     recorded as:
   1 │ { "type": "shell", "matcher": "exact", "pattern": "rm -rf node_modules" }
-Approve?  [o]nce   [s]ession   [a]lways   [N]o   [d]eny always
+Approve? [o]nce / [s]ession / [a]lways / [N]o / [d]eny always:
 ```
 
 The command and the rater's explanation are written by a model, so they are shown inside a numbered
@@ -60,6 +60,20 @@ command that spans twenty lines is shown whole rather than cut down to its first
   gate cannot read (`ls && rm -rf build`) can be refused permanently even though it can never be
   approved permanently, and so can a **catastrophic** one. To refuse something for good, put it in
   `approvals.deny` (below).
+
+### Where the prompt is written
+
+Every line of it goes to **stderr**, including the `Approve?` menu — a prompt is not program output,
+and one written across both streams cannot promise the order its lines arrive in once they are going
+to different places.
+
+The consequence to know about: piping stdout captures the session but **not** the prompt, so
+`gth code --no-tui | tee session.log` leaves the log without the command you were asked about or the
+rating on it. To keep both in one file, redirect stderr as well:
+
+```bash
+gth code --no-tui 2>&1 | tee session.log
+```
 
 ### What the rater can say
 
@@ -141,7 +155,7 @@ The agent wants to run a shell command via run_shell_command
 ⚠ Auto-rater (destructive): this can destroy work or data, but undoing it is possible from inside this session.
     the rater's own words:
   1 │ This command names a host (https://registry.npmjs.ag/lodash) in a fetch or transfer position, so it is never auto-approved.
-Approve?  [o]nce   [s]ession   [a]lways   [N]o   [d]eny always
+Approve? [o]nce / [s]ession / [a]lways / [N]o / [d]eny always:
 ```
 
 (The two lines naming what `[s]`/`[a]` and `[d]` would remember are on that screen too; they are
