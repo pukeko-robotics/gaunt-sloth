@@ -176,6 +176,11 @@ describe('OPS-66 TypeDoc heading anchors keep inline-code text', () => {
     // `entryPoints` and `projectDocuments` are glob options, and TypeDoc rejects a glob containing
     // a backslash outright, so these must be POSIX-slashed to work on Windows. `plugin` is not a
     // glob — an absolute native path is fine there.
+    //
+    // Being globs, they are also matched rather than compared: TypeDoc passes an absolute path
+    // straight through to minimatch without escaping it, so a `[` anywhere in the temp directory
+    // matches nothing and this test fails with `project` undefined. No CI runner's temp dir has
+    // one; a developer machine could.
     const posix = (p: string) => p.replace(/\\/g, '/');
     const dir = mkdtempSync(join(tmpdir(), 'ops66-typedoc-'));
     try {
@@ -212,7 +217,11 @@ describe('OPS-66 TypeDoc heading anchors keep inline-code text', () => {
           // driven by the same registration the site build uses.
           plugin: (config.plugin ?? []).map((entry: string) => resolve(repoRoot, entry)),
           skipErrorChecking: true,
-          logLevel: 'Error',
+          // Warnings stay on deliberately. TypeDoc reports a glob that matched no files at `warn`,
+          // and that is the one line explaining every environment-shaped failure of this test —
+          // silencing it leaves a bare `project` undefined pointing at nothing. `name` is set only
+          // to suppress the benign warning a successful run would otherwise print.
+          name: 'Probe',
         },
         []
       );
