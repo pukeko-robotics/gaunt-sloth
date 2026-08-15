@@ -86,9 +86,12 @@ interface AcpV1Session {
    * awaiting it is always safe. `null` between turns.
    */
   turn: Promise<void> | null;
-  /** Set by `session/close` before anything else, so a turn cannot outlive its teardown unnoticed. */
-  closed: boolean;
-  /** Set when `session/cancel` arrives, so the turn answers `cancelled` rather than `end_turn`. */
+  /**
+   * Set when `session/cancel` arrives, so the turn answers `cancelled` rather than `end_turn`.
+   * `closeSession` sets it too: on v1 this single flag is what stops a turn outliving its teardown,
+   * because `runTurn` is entered synchronously from the `session/prompt` handler and there is no
+   * gap between acknowledging a prompt and starting the turn for a separate closed flag to cover.
+   */
   cancelled: boolean;
 }
 
@@ -241,7 +244,6 @@ export function createAcpV1AgentApp(options: AcpAgentAppOptions = {}): acp.Agent
   };
 
   const closeSession = async (session: AcpV1Session): Promise<void> => {
-    session.closed = true;
     session.cancelled = true;
     session.abort?.abort();
     sessions.delete(session.sessionId);
@@ -312,7 +314,6 @@ export function createAcpV1AgentApp(options: AcpAgentAppOptions = {}): acp.Agent
           client,
           abort: null,
           turn: null,
-          closed: false,
           cancelled: false,
         });
         return { sessionId };

@@ -8,7 +8,7 @@
  * this node is what un-stubs the command — so the spec had to go red and be replaced rather than
  * relaxed. Nothing here is a loosened version of what was there: the properties are strictly
  * stronger. The old spec proved the door existed and refused; this one proves the door exists,
- * speaks ACP v2, and reports the version this build actually is. The one assertion carried over
+ * speaks ACP in both dialects it serves, and reports the version this build actually is. The one assertion carried over
  * unchanged is the one that was never about the stub — **stdout must carry protocol and nothing
  * else** — and it is now the load-bearing one, because there is finally a protocol on it.
  *
