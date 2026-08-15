@@ -1,0 +1,532 @@
+{
+  "$comment": "GENERATED — do not hand-edit. The public type surface derived from packages/core/dist by scripts/type-surface.mjs, and compared against this file by spec/coreBarrelTypeSurface.spec.ts. Regenerate with: pnpm --filter @gaunt-sloth/core run build && pnpm --filter @gaunt-sloth/core run surface:generate",
+  "required": [
+    {
+      "name": "AgentResolvers",
+      "file": "core/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "AgentStreamEvent",
+      "file": "core/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ApprovalEntry",
+      "file": "config/shell-policy.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ApprovalHintPattern",
+      "file": "config/shell-policy.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ApprovalMatcher",
+      "file": "config/shell-policy.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ApprovalRung",
+      "file": "config/shell-policy.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ApprovalSubject",
+      "file": "core/approvals/matcher.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ApprovalsConfig",
+      "file": "config/shell-policy.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ApprovalsObjectConfig",
+      "file": "config/shell-policy.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "AttackHaltAnswer",
+      "file": "core/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "BinaryFormatConfig",
+      "file": "config/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "BinaryFormatType",
+      "file": "config/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "BuiltInToolAccess",
+      "file": "config/tool-descriptions.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "BuiltInToolConfig",
+      "file": "config/shell-policy.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "BuiltInToolsConfig",
+      "file": "config/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "BuiltInToolsSetting",
+      "file": "config/shell-policy.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "CommandLineConfigOverrides",
+      "file": "config/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "CommandToolingConfig",
+      "file": "config/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ConfigDiscoveryDetails",
+      "file": "config/configDiscovery.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ConfigDiscoveryError",
+      "file": "config/configDiscovery.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ConfigLayerValidationReport",
+      "file": "config/loader.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ConfigType",
+      "file": "config/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ConfigValidationReport",
+      "file": "config/loader.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ConsoleLevelInput",
+      "file": "config/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ConversationMeta",
+      "file": "history/historyStore.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ConversationSummary",
+      "file": "history/historyStore.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "CreateProfileResult",
+      "file": "config/profiles.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "CustomCommandConfig",
+      "file": "config/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "CustomCommandParameter",
+      "file": "config/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "CustomToolsConfig",
+      "file": "config/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "DeclaredToolAnnotations",
+      "file": "core/approvals/annotations.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "DescribableTool",
+      "file": "config/tool-descriptions.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "DetectedProvider",
+      "file": "providers/modelDiscovery.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "DiscoveryConfig",
+      "file": "providers/modelDiscovery.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "DiscoveryKind",
+      "file": "providers/modelDiscovery.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "FilesystemToolsConfig",
+      "file": "config/filesystem-tools.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "GhReadFileCommand",
+      "file": "config/shell-policy.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "GrantedToolSummary",
+      "file": "config/tool-descriptions.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "GthAcpSessionMode",
+      "file": "config/schema.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "GthAgentFactory",
+      "file": "core/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "GthAgentInterface",
+      "file": "core/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "GthCommand",
+      "file": "core/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "GthConfig",
+      "file": "config/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "GthDevToolsConfig",
+      "file": "config/shell-policy.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "GthOutputHeaderRung",
+      "file": "config/schema.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "GthRunStats",
+      "file": "core/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "GthToolResult",
+      "file": "core/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "HistoryConfigView",
+      "file": "history/recordSession.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "HistoryInsights",
+      "file": "history/historyStore.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "HistoryStore",
+      "file": "history/historyStore.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "LLMConfig",
+      "file": "config/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "McpApprovalsConfig",
+      "file": "config/shell-policy.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "McpConnectionFailure",
+      "file": "core/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "McpServerAnnotationTrust",
+      "file": "config/shell-policy.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "McpServerApprovalsConfig",
+      "file": "config/shell-policy.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "McpServerInstruction",
+      "file": "core/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "McpToolApprovalEntry",
+      "file": "config/shell-policy.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "McpToolApprovalSubject",
+      "file": "core/approvals/matcher.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "Message",
+      "file": "core/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "MiddlewareCleanup",
+      "file": "core/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "MiddlewareResolver",
+      "file": "core/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "MissingProviderKeyDetails",
+      "file": "config/providerKeys.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "MissingProviderKeyError",
+      "file": "config/providerKeys.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ModelDiscoveryOptions",
+      "file": "providers/modelDiscovery.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ModelDiscoveryResult",
+      "file": "providers/modelDiscovery.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ModelDiscoveryStatus",
+      "file": "providers/modelDiscovery.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ModelInfo",
+      "file": "providers/modelDiscovery.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "OpenHistoryStoreOptions",
+      "file": "history/historyStore.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "PendingAttackHalt",
+      "file": "core/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "PendingToolInterrupt",
+      "file": "core/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "PrCommandConfig",
+      "file": "config/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ProfileScaffoldSeed",
+      "file": "config/profiles.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "PromptSegmentConfig",
+      "file": "config/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "PromptSegmentName",
+      "file": "config/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "PromptSegmentSetting",
+      "file": "config/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "PromptsConfig",
+      "file": "config/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ProviderDescriptor",
+      "file": "providers/modelDiscovery.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ProviderId",
+      "file": "providers/modelDiscovery.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "RaterNegotiationRound",
+      "file": "core/shell/rater.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "RaterOutcome",
+      "file": "core/shell/raterVocabulary.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "RatingConfig",
+      "file": "config/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "RawConfigValidationResult",
+      "file": "config/schema.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "RawGthConfig",
+      "file": "config/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ResolvedApprovals",
+      "file": "config/shell-policy.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ServerTool",
+      "file": "config/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "SessionRecord",
+      "file": "history/historyStore.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "SessionSearchResult",
+      "file": "history/historyStore.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ShellApprovalEntry",
+      "file": "config/shell-policy.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ShellApprovalGateDecision",
+      "file": "config/shell-policy.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ShellApprovalGateNotice",
+      "file": "config/shell-policy.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ShellApprovalSubject",
+      "file": "core/approvals/matcher.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ShellSafetyVerdict",
+      "file": "core/shell/rater.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "StatusLevel",
+      "file": "core/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "StatusUpdateCallback",
+      "file": "core/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "SubagentProfileSpec",
+      "file": "config/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ToolAnnotationHint",
+      "file": "config/shell-policy.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ToolApprovalDecision",
+      "file": "core/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ToolApprovalEntry",
+      "file": "config/shell-policy.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ToolApprovalScope",
+      "file": "core/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ToolApprovalSubject",
+      "file": "core/approvals/matcher.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ToolRejectScope",
+      "file": "core/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ToolsCleanup",
+      "file": "core/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ToolsResolver",
+      "file": "core/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ValidationCheck",
+      "file": "config/types.d.ts",
+      "arity": 0
+    }
+  ],
+  "unexported": [
+    {
+      "name": "ApprovalEntryCommon",
+      "file": "config/shell-policy.d.ts",
+      "arity": 0
+    }
+  ]
+}
