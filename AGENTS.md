@@ -257,6 +257,10 @@ pnpm run lint-n-fix
 # Format code
 pnpm run format
 
+# Render the docs site and check the render (needs a build first; a CI step of test-and-lint).
+# `pnpm typedoc` alone exits 0 with hundreds of warnings — this is what turns a broken anchor red.
+pnpm run docs:check
+
 # Install globally for development
 pnpm install -g ./
 ```

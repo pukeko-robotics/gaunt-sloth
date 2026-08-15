@@ -87,6 +87,7 @@
     "tag": "alpha"
   },
   "devDependencies": {
-    "ajv": "8.20.0"
+    "ajv": "8.20.0",
+    "typedoc": "^0.28.20"
   }
 }

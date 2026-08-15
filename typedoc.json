@@ -14,7 +14,8 @@
     "docs/custom-tool-example-jira-log-work.md",
     "docs/debug-dump.md",
     "docs/MIGRATION.md",
-    "CONTRIBUTING.md"
+    "CONTRIBUTING.md",
+    "CODE_OF_CONDUCT.md"
   ],
   "sourceLinkExternal": true,
   "includeVersion": false,
