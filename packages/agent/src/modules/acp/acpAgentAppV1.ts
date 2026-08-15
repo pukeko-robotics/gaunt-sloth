@@ -48,6 +48,7 @@ import * as acp from '@agentclientprotocol/sdk';
 import { randomUUID } from 'node:crypto';
 import { resolve as resolvePath } from 'node:path';
 import { HumanMessage } from '@langchain/core/messages';
+import { MemorySaver } from '@langchain/langgraph';
 import { GthAgentRunner } from '@gaunt-sloth/core/core/GthAgentRunner.js';
 import { displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { createResolvers } from '#src/resolvers.js';
@@ -305,7 +306,20 @@ export function createAcpV1AgentApp(options: AcpAgentAppOptions = {}): acp.Agent
         );
         // The command a run is resolved under decides its toolset, its mode prompt and its
         // approvals posture. For an editor session that is `acp.mode`, defaulting to `code`.
-        await runner.init(resolveAcpSessionCommand(config), config);
+        //
+        // **The checkpoint saver is not optional here, even though `init` accepts none.** A gated
+        // tool call suspends the graph on a LangGraph interrupt, and an interrupt with nowhere to
+        // checkpoint throws `MISSING_CHECKPOINTER` instead of asking the client for permission — so
+        // without one every shell command in an editor session fails while the ungated built-ins
+        // keep working. `MemorySaver` is the right lifetime as well as the right shape: these
+        // sessions live in one process and die with it, which is also why `loadSession` is not
+        // advertised.
+        //
+        // **Per session, not per process.** Each session owns its runner, its workspace and the
+        // graphs suspended in it, and `sessions` holds several at once; one shared saver would pool
+        // every session's checkpoint threads, so a `session/close` could clear state another
+        // session is still parked on.
+        await runner.init(resolveAcpSessionCommand(config), config, new MemorySaver());
 
         const sessionId = randomUUID();
         sessions.set(sessionId, {
