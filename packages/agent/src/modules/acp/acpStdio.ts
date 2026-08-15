@@ -1,7 +1,7 @@
 /**
  * @packageDocumentation
  * The stdio entry point both ACP doors go through — the standalone `gaunt-sloth-acp` bin and
- * `gaunt-sloth --acp-agent`.
+ * `gaunt-sloth --acp-agent` — serving whichever protocol version the client speaks.
  *
  * **It is one function on purpose.** Two entry points spelling the same startup twice is how the
  * doors drift, and the thing that would drift here is not cosmetic: it is the stdout guarantee
@@ -24,8 +24,9 @@
 
 import { Readable } from 'node:stream';
 import * as acp from '@agentclientprotocol/sdk/experimental/v2';
-import { announceAcpStart, createAcpAgentApp } from '#src/modules/acp/acpAgentApp.js';
-import type { AcpAgentAppOptions } from '#src/modules/acp/acpAgentApp.js';
+import { announceAcpStart } from '#src/modules/acp/acpCommon.js';
+import type { AcpAgentAppOptions } from '#src/modules/acp/acpCommon.js';
+import { createAcpAgentRouter } from '#src/modules/acp/acpRouter.js';
 
 /** Seams for the tests; production passes nothing. */
 export interface AcpStdioOptions extends AcpAgentAppOptions {
@@ -61,7 +62,13 @@ function captureStdoutForProtocol(): WritableStream<Uint8Array> {
 }
 
 /**
- * Serves ACP v2 over stdio until the client disconnects.
+ * Serves ACP over stdio until the client disconnects, in whichever protocol version the client
+ * asks for on its first message.
+ *
+ * The dialect is not chosen here and is not configurable: `acpRouter.ts` reads it off the
+ * `initialize` and hands the connection to the matching app. A flag would be the wrong shape —
+ * an editor spawns this command with no arguments, so a version it had to be told would be a
+ * version it never gets.
  *
  * Resolves when the connection closes, so a bin can `await` it and exit cleanly rather than
  * holding the event loop open on a socket nobody is reading.
@@ -73,8 +80,9 @@ export async function startAcpServer(options: AcpStdioOptions = {}): Promise<voi
   const protocolOut = output ?? captureStdoutForProtocol();
   const protocolIn = input ?? (Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>);
 
-  const app = createAcpAgentApp(appOptions);
-  const connection = app.connect(acp.ndJsonStream(protocolOut, protocolIn));
+  const connection = createAcpAgentRouter(appOptions).connect(
+    acp.ndJsonStream(protocolOut, protocolIn)
+  );
   announceAcpStart();
   await connection.closed;
 }

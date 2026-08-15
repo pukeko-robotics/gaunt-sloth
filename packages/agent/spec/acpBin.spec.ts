@@ -64,6 +64,35 @@ function speak(argv: string[]): { stdout: string; stderr: string; status: number
   return { stdout: result.stdout, stderr: result.stderr, status: result.status };
 }
 
+/**
+ * The v1 `initialize` — the shape every shipping ACP editor sends, Zed included.
+ *
+ * [[EXT-116]]. The distinguishing field is `clientInfo`, which v2 renamed to a required `info`;
+ * a v2-only server rejects this exact request as `-32602 Invalid params` and no session opens.
+ * The captured handshake and the in-process cases live in `acpServerV1.spec.ts`; what only a spawn
+ * can prove is that the BIN — the thing an editor's agent configuration points at — answers it.
+ */
+const INITIALIZE_V1 = `${JSON.stringify({
+  jsonrpc: '2.0',
+  id: 1,
+  method: 'initialize',
+  params: {
+    protocolVersion: 1,
+    clientInfo: { name: 'ext-116-bin-spec', version: '0.0.0' },
+  },
+})}\n`;
+
+/** The same, driven with a v1 handshake instead of a v2 one. */
+function speakV1(argv: string[]): { stdout: string; stderr: string; status: number | null } {
+  const result = spawnSync('node', argv, {
+    input: INITIALIZE_V1,
+    encoding: 'utf8',
+    timeout: 60000,
+  });
+  expect(result.error).toBeUndefined();
+  return { stdout: result.stdout, stderr: result.stderr, status: result.status };
+}
+
 /** Every non-empty stdout line, parsed. Throws — loudly — if anything there is not JSON-RPC. */
 function jsonRpcLines(stdout: string): Array<Record<string, unknown>> {
   return stdout
@@ -106,6 +135,23 @@ describe.each(doors)('the ACP entry point %s', (_name, argv) => {
     expect(stderr).toContain('ACP agent');
     expect(stderr).toContain('protocol v2');
     expect(stdout).not.toContain('ACP agent');
+  });
+
+  it('serves ACP v1 to a v1 host, and says so in its startup notice', () => {
+    const { stdout, stderr, status } = speakV1(argv);
+    const lines = jsonRpcLines(stdout);
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ jsonrpc: '2.0', id: 1 });
+    // v1's response shape: the version the host asked for, and the implementation under
+    // `agentInfo` rather than v2's `info`.
+    expect(lines[0].result).toMatchObject({
+      protocolVersion: 1,
+      agentInfo: { name: 'gaunt-sloth', version: packageVersion },
+    });
+    // The notice names both dialects, because both are served and the host picks.
+    expect(stderr).toContain('protocol v1');
+    expect(status).toBe(0);
   });
 
   it('no longer prints the EXT-114 stub message', () => {

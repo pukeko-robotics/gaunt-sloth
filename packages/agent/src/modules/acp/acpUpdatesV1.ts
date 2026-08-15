@@ -1,28 +1,32 @@
 /**
  * @packageDocumentation
- * Translates the agent runtime's typed {@link AgentStreamEvent} stream into ACP **v2**
- * `session/update` payloads. (`acpUpdatesV1.ts` is the v1 half; both extend the tool-call tracker
- * in `acpToolCalls.ts`, which is where the parts that are not about the dialect live.)
+ * Translates the agent runtime's typed {@link AgentStreamEvent} stream into ACP **v1**
+ * `session/update` payloads. (`acpUpdates.ts` is the v2 half.)
  *
- * Kept as a pure, stateful-but-transport-free mapper rather than inlined in the request handlers
- * for two reasons. It is the half of the ACP surface with real logic — message identity, tool-call
- * upserts, which events open and close a run — so it is the half worth testing without a
- * connection. And the `session/update` **upsert semantics** live here and nowhere else: what the
- * mapper omits is what a client must leave unchanged, so a mapper that re-sent a full replacement
- * on every update would silently erase fields a client had already rendered.
+ * ## Where v1 differs, and why the mapper could not be shared
  *
- * ## The upsert contract this mapper is written against
+ * The two dialects report the same events, but not with the same messages, and each difference
+ * changes what a conforming client ends up rendering:
  *
- * A client applies updates per id, in arrival order: an omitted field leaves the stored value
- * unchanged, `null` clears it, a concrete value replaces it, and a chunk appends. The first
- * `tool_call_update` a client sees for a `toolCallId` CREATES the tool call. So the mapper sends
- * the descriptive fields **once**, on the creating update, and every later update for that call
- * carries only what actually changed — which is what makes a client's rendering of a running tool
- * call correct rather than flickering back to a bare id.
+ * - **v1 has a distinct `tool_call` update that CREATES a tool call**, where v2 folded creation into
+ *   the first `tool_call_update`. Sending only `tool_call_update`s on v1 would leave a client
+ *   patching a call it was never told about.
+ * - **v1 has no `tool_call_content_chunk`.** Its `tool_call_update.content` REPLACES the whole
+ *   collection, so live tool output is streamed by accumulating it here and resending the
+ *   collection — the opposite of v2, where each chunk appends and only a `tool_call_update` replaces.
+ * - **v1 has no `state_update`.** There is nowhere to report `running` / `requires_action` / `idle`,
+ *   and no notification carries the stop reason: the turn's outcome is the `session/prompt`
+ *   RESPONSE. See `acpAgentAppV1.ts`.
+ * - **A prompt turn does not echo the user's message.** v1 reserves replay for `session/load`; a
+ *   client already renders what it sent, so echoing it would draw the message twice.
+ *
+ * What is NOT duplicated is tool-call identity — the kind hint, the argument reassembly, and the
+ * pairing that lets a permission request name the call it is about all come from
+ * {@link AcpToolCallTracker}.
  */
 
 import { randomUUID } from 'node:crypto';
-import type { SessionUpdate } from '@agentclientprotocol/sdk/experimental/v2';
+import type { SessionUpdate, ToolCallContent } from '@agentclientprotocol/sdk';
 import type { AgentStreamEvent } from '@gaunt-sloth/core/core/types.js';
 import { AcpToolCallTracker, toolKindFor } from '#src/modules/acp/acpToolCalls.js';
 
@@ -31,14 +35,20 @@ function textBlock(text: string): { type: 'text'; text: string } {
   return { type: 'text', text };
 }
 
+/** One tool-call content entry wrapping a text block. */
+function toolText(text: string): ToolCallContent {
+  return { type: 'content', content: textBlock(text) };
+}
+
 /**
- * Turns one agent run's event stream into ACP v2 `session/update` payloads.
+ * Turns one agent run's event stream into ACP v1 `session/update` payloads.
  *
  * One instance per prompt turn: it holds the message identity of the assistant text run and of the
- * reasoning run, plus the accumulated argument text per tool call. A fresh instance per turn is
- * what makes a new turn a new `messageId`, which is how a client tells two messages apart.
+ * reasoning run, the accumulated argument text per tool call, and the output accumulated for each
+ * running tool. A fresh instance per turn is what makes a new turn a new `messageId`, which is how
+ * a client tells two messages apart.
  */
-export class AcpUpdateMapper extends AcpToolCallTracker {
+export class AcpV1UpdateMapper extends AcpToolCallTracker {
   /**
    * `messageId` of the assistant text message currently being streamed, or `null` when no text run
    * is open. Cleared whenever something else interrupts the text (a tool call, a reasoning block),
@@ -49,6 +59,15 @@ export class AcpUpdateMapper extends AcpToolCallTracker {
 
   /** `messageId` of the reasoning message currently being streamed, or `null` outside one. */
   private thoughtMessageId: string | null = null;
+
+  /**
+   * Live output accumulated per tool call, because v1 can only REPLACE a tool call's content.
+   *
+   * With no append-a-chunk update in the dialect, the only way to show a tool's output as it
+   * arrives is to resend everything seen so far; keeping the collection here is what makes each
+   * replacement a superset of the last rather than a flicker back to the newest line alone.
+   */
+  private readonly toolOutput = new Map<string, ToolCallContent[]>();
 
   /**
    * The `session/update` payloads one runtime event produces — usually one, sometimes none
@@ -89,11 +108,12 @@ export class AcpUpdateMapper extends AcpToolCallTracker {
         // A tool call ends the open text run: the text that follows the tool is a separate message.
         this.assistantMessageId = null;
         this.trackToolStart(event.id, event.name);
-        // The CREATING update — the first one a client sees for this id. Everything descriptive is
-        // sent here and never resent, because from here on omission means "unchanged".
+        this.toolOutput.set(event.id, []);
+        // v1's CREATE. `title` is required here, and everything descriptive is sent with it; the
+        // later `tool_call_update`s carry only what changed.
         return [
           {
-            sessionUpdate: 'tool_call_update',
+            sessionUpdate: 'tool_call',
             toolCallId: event.id,
             name: event.name,
             title: event.name,
@@ -120,25 +140,27 @@ export class AcpUpdateMapper extends AcpToolCallTracker {
         ];
       }
       case 'tool_output': {
-        // Live output from an executing tool. A CHUNK, not an update: it appends to whatever the
-        // client has for this call, where a `tool_call_update` carrying `content` would replace it.
         if (event.id === undefined) return [];
+        const collected = this.toolOutput.get(event.id) ?? [];
+        collected.push(toolText(event.chunk));
+        this.toolOutput.set(event.id, collected);
+        // The whole collection, because v1 replaces rather than appends. Copied so a later push
+        // cannot mutate an update already handed to the transport.
         return [
-          {
-            sessionUpdate: 'tool_call_content_chunk',
-            toolCallId: event.id,
-            content: { type: 'content', content: textBlock(event.chunk) },
-          },
+          { sessionUpdate: 'tool_call_update', toolCallId: event.id, content: [...collected] },
         ];
       }
       case 'tool_result': {
         this.trackToolSettled(event.id);
+        this.toolOutput.delete(event.id);
+        // The result REPLACES whatever live output was showing — it is the authoritative record of
+        // what the tool produced, and the same thing v2's final update does.
         return [
           {
             sessionUpdate: 'tool_call_update',
             toolCallId: event.id,
             status: event.isError ? 'failed' : 'completed',
-            content: [{ type: 'content', content: textBlock(event.content) }],
+            content: [toolText(event.content)],
           },
         ];
       }

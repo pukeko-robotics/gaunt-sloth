@@ -4,10 +4,11 @@
  * ACP (Agent Client Protocol) server entry.
  * Usage: gaunt-sloth-acp
  *
- * Serves ACP v2 over stdio, for an editor that spawns the agent as a subprocess (Zed, and any
- * other v2 client). The whole startup — including redirecting ordinary console output away from
- * stdout, which the protocol owns — lives in `startAcpServer`, shared with
- * `gaunt-sloth --acp-agent` so the two doors cannot drift.
+ * Serves ACP over stdio, for an editor that spawns the agent as a subprocess (Zed, and any other
+ * ACP client). The protocol version comes from the host's own `initialize` — v1 and v2 are both
+ * served — and the whole startup, including redirecting ordinary console output away from stdout
+ * which the protocol owns, lives in `startAcpServer`, shared with `gaunt-sloth --acp-agent` so the
+ * two doors cannot drift.
  *
  * A failure before the transport is up is written to stderr, never stdout: to a host, stdout is
  * the JSON-RPC framing channel, so prose there is a protocol error rather than a message anyone
