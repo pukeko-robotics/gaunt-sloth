@@ -25,18 +25,19 @@ import { fileURLToPath } from 'node:url';
  * The probe imports `@gaunt-sloth/core` by name, exactly as an embedder writes it, so a green run
  * covers the package `exports` map and the declaration emit as well as the barrel's own re-exports.
  * That resolution is why the probe is written into a temp dir INSIDE the package rather than the
- * system temp dir: the package name resolves from here (through the package's own `exports`, and
- * through the workspace link), and from an unrelated directory it would not resolve at all.
+ * system temp dir: it resolves by SELF-NAME — the compiler walks up to this package's own
+ * `package.json` and matches subpath `.` in its `exports`, and `--traceResolution` shows it never
+ * enters `node_modules`, so no workspace link or symlink takes part. From an unrelated directory
+ * the name would not resolve at all.
  *
  * It needs `dist/` to exist. `pnpm test` builds first — including both CI unit jobs — and a bare
  * `pnpm run unit` on a never-built tree fails here with the message below rather than with a type
  * error, so the cause is named. It reads whatever `dist/` holds: on a tree built before an edit to
  * `src/`, this checks the older declarations, as any artifact probe does.
  *
- * **Windows reads a failure here the same way it reads a real one.** Resolving the package by name
- * from inside the package is what a red cell would break first, and an unresolved import surfaces
- * as the same TS2305/TS2307 a dropped export does. A cell that is red only on Windows is about
- * resolution, not about the barrel.
+ * **Windows reads a failure here the same way it reads a real one.** That self-name walk is what a
+ * red cell would break first, and an unresolved import surfaces as the same TS2305/TS2307 a dropped
+ * export does. A cell that is red only on Windows is about resolution, not about the barrel.
  */
 
 const CORE_DIR = fileURLToPath(new URL('..', import.meta.url));
@@ -47,9 +48,9 @@ const DIST_BARREL = path.join(CORE_DIR, 'dist', 'index.d.ts');
  * `.bin` shim is a shell script there and would not spawn.
  *
  * This is the repo's `typescript` devDependency, which is the JS compiler; the build runs the
- * native one, which publishes no resolvable subpath. Both check the same language, but the flags
- * and the diagnostic text asserted below are this compiler's: moving the pin to another one means
- * re-reading its output rather than assuming these strings survive.
+ * native one. Both check the same language, but the flags and the diagnostic text asserted below
+ * are this compiler's: moving the pin to the native one means re-reading its output rather than
+ * assuming these strings survive.
  */
 const TSC_ENTRY = createRequire(import.meta.url).resolve('typescript/lib/tsc.js');
 
@@ -57,6 +58,14 @@ const TSC_ENTRY = createRequire(import.meta.url).resolve('typescript/lib/tsc.js'
  * The approval and shell types the barrel re-exports for naming. Each is the declared type of
  * something already reachable from the barrel; each is used below in an annotation position, which
  * is the only thing that proves it can be NAMED rather than merely inferred.
+ *
+ * **This list RESTATES the surface rather than deriving it**, so be exact about what it buys.
+ * Nothing here reads what the barrel really exports: the list is compared only against the probe,
+ * in this same file. It therefore catches a name disappearing from the barrel while the list still
+ * asks for it — the regression this spec exists for — and it does NOT catch a coordinated shrink,
+ * where a name leaves this list, the probe and `core/types.ts` in one edit. That leaves all three
+ * tests green with the barrel genuinely narrower than it was. Closing it means deriving the covered
+ * set from the built declarations instead of listing it here.
  */
 const PINNED_TYPE_EXPORTS = [
   'ApprovalSubject',
@@ -224,8 +233,9 @@ describe('@gaunt-sloth/core root barrel type surface', () => {
   }, 120_000);
 
   it('exercises every pinned name in an annotation position', () => {
-    // The probe is the pin; a name quietly dropped from it would shrink the surface being checked
-    // without failing anything.
+    // The probe is the pin, and this is the only test that reads it as text. A name quietly dropped
+    // from the probe would shrink the surface being checked without failing anything — and an empty
+    // probe type-checks clean, so the first test passes on one. This is what catches both.
     for (const name of [...PINNED_TYPE_EXPORTS, ...REACHING_EXPORTS]) {
       expect(PROBE).toContain(`  ${name},\n`);
       expect(PROBE).toContain(`: ${name}`);

@@ -59,11 +59,14 @@ All config keys (providers, prompts, tools, per-command settings) are documented
   `KNOWN_TOP_LEVEL_KEYS`, the deprecation scanners) is validator internals and is not part of the
   root export; reach it through the deep path below if you need it.
 - **The approval and shell types are covered by the same rule, so a typed `ToolApprovalCallback`
-  needs no deep path.** Every type reached through `PendingToolInterrupt` and `GthAgentInterface` is
-  re-exported from the root and from `@gaunt-sloth/core/core/types.js`: `ApprovalSubject` with its
-  `ShellApprovalSubject`, `ToolApprovalSubject` and `McpToolApprovalSubject` variants, the rater's
-  `ShellSafetyVerdict`, `RaterOutcome` and `RaterNegotiationRound`, and `DeclaredToolAnnotations`.
-  They stay declared under `core/approvals/` and `core/shell/`, beside the code that decides them,
+  needs no deep path.** Everything a `PendingToolInterrupt` hands that callback, and the tool
+  annotations `GthAgentInterface` reports, can be named from the root and from
+  `@gaunt-sloth/core/core/types.js`: `ApprovalSubject` with its `ShellApprovalSubject`,
+  `ToolApprovalSubject` and `McpToolApprovalSubject` variants, the rater's `ShellSafetyVerdict`,
+  `RaterOutcome` and `RaterNegotiationRound`, and `DeclaredToolAnnotations`. What
+  `GthAgentInterface` takes beyond those is config and follows the bullet above — `GthConfig` is
+  named from the root, not from that deep path.
+  These stay declared under `core/approvals/` and `core/shell/`, beside the code that decides them,
   and the runtime surface there — the matcher and rater functions, and the closed vocabularies those
   types are derived from — is not part of the root export.
 - `@gaunt-sloth/core/<path>.js` deep paths (e.g. `@gaunt-sloth/core/config.js`,
