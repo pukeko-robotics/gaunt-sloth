@@ -46,16 +46,55 @@ function rootScripts(): Record<string, string | undefined> {
 }
 
 /**
+ * One job's text, from its `<id>:` key to the start of the next job.
+ *
+ * The terminator is `[^\s#]` — the first 2-space-indented line that is neither blank nor a comment
+ * — rather than an identifier pattern. A GitHub job id may begin with `_`, and any YAML key may be
+ * quoted; against `[A-Za-z][\w-]*` both of those run the slice on to end of file, and a step in the
+ * *next* job then satisfies an assertion about this one. Measured: with the gate step moved into a
+ * job renamed `_test_platforms`, all three assertions below passed while `test-and-lint` rendered
+ * no docs at all. Everything inside a job is indented deeper than two spaces, so the class cannot
+ * end the slice early.
+ *
+ * The *start* marker is still a literal `\n  <id>:`, so quoting `test-and-lint` itself yields an
+ * empty slice and reds all three assertions. That is the safe direction: the job this gate belongs
+ * to reads as missing rather than as satisfied from elsewhere.
+ */
+function jobText(workflow: string, jobId: string): string {
+  const start = workflow.indexOf(`\n  ${jobId}:`);
+  if (start === -1) return '';
+  const rest = workflow.slice(start + 1);
+  const next = rest.search(/\n {2}[^\s#]/);
+  return next === -1 ? rest : rest.slice(0, next);
+}
+
+/**
  * Only the gate's own job. Ordering is meaningless across jobs — they run in parallel — so a step
  * that moved to `test-platforms` must read as missing here rather than as "later in the file".
  */
 function gateJob(): string {
-  const text = readFileSync(UNIT_TESTS_WORKFLOW, 'utf8');
-  const start = text.indexOf(`\n  ${GATE_JOB}:`);
-  if (start === -1) return '';
-  const rest = text.slice(start + 1);
-  const next = rest.search(/\n {2}[A-Za-z][\w-]*:/);
-  return next === -1 ? rest : rest.slice(0, next);
+  return jobText(readFileSync(UNIT_TESTS_WORKFLOW, 'utf8'), GATE_JOB);
+}
+
+/** A workflow shaped like the real one, with the gate step in `nextJobId` instead of the gate job. */
+function workflowWithGateStepInNextJob(nextJobId: string): string {
+  return [
+    'name: Tests and Lint',
+    '',
+    'jobs:',
+    `  ${GATE_JOB}:`,
+    '    runs-on: ubuntu-latest',
+    '    steps:',
+    '    - name: Run Tests',
+    `      run: ${BUILD_AND_TEST_COMMAND}`,
+    '',
+    `  ${nextJobId}:`,
+    '    runs-on: windows-latest',
+    '    steps:',
+    '      - name: Check the docs render',
+    `        run: ${GATE_COMMAND}`,
+    '',
+  ].join('\n');
 }
 
 describe('OPS-67 the docs render gate is wired into CI', () => {
@@ -99,4 +138,26 @@ describe('OPS-67 the docs render gate is wired into CI', () => {
         "package's built dist/*.d.ts, so on an unbuilt tree the render dies in TS2307 errors."
     ).toBeGreaterThan(build);
   });
+
+  // The three assertions above are about `test-and-lint` only if the slice ends where that job
+  // does. Both ids below are legal — GitHub allows a leading `_`, YAML allows a quoted key — and
+  // against an identifier-shaped terminator neither matched, so the slice ran to end of file and
+  // the next job's step was read as this job's.
+  it.each(['_test_platforms', '"test-platforms"'])(
+    'ends the job before a next job named %s, rather than reading its steps',
+    (nextJobId) => {
+      const job = jobText(workflowWithGateStepInNextJob(nextJobId), GATE_JOB);
+      // Control: an empty slice would satisfy the assertion after it for the wrong reason, so
+      // prove first that the gate job's own step is in there.
+      expect(
+        runStep(BUILD_AND_TEST_COMMAND).test(job),
+        `the slice for "${GATE_JOB}" lost the job's own steps`
+      ).toBe(true);
+      expect(
+        runStep(GATE_COMMAND).test(job),
+        `the slice for "${GATE_JOB}" ran past the end of the job and picked up a step belonging ` +
+          `to ${nextJobId}, so "moved to another job" would read as still wired in`
+      ).toBe(false);
+    }
+  );
 });
