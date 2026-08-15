@@ -111,14 +111,16 @@ import { fileURLToPath } from 'node:url';
  *   one IN, so no reachable declaration is typed as one and the derivation cannot require it. It
  *   is named in the handwritten probe for exactly that reason.
  *
- * **A reference shape the walk cannot name is a hard red, and it is not a barrel regression.** The
- * resolver takes a heritage clause in whatever form it arrives and counts anything it cannot turn
- * into a name, and {@link assertNonDegenerate} refuses a derivation with any such count — so a
- * future emitter that writes a shape this walk has never met fails every derivation-driven test
- * here at once, with no public type having moved. That is the intended trade: the alternative is a
- * shape skipped in silence, which shrinks the derived surface without shrinking the barrel and is
- * the exact failure this file exists to stop. Read that message as a resolver to teach, not as an
- * export to restore.
+ * **A reference position the walk ENTERS and cannot name is a hard red, and it is not a barrel
+ * regression.** The resolver takes a heritage clause in whatever form it arrives and counts
+ * anything it cannot turn into a name, and {@link assertNonDegenerate} refuses a derivation with
+ * any such count — so a future emitter that writes a shape this walk has never met fails every
+ * derivation-driven test here at once, with no public type having moved. That is the intended
+ * trade: the alternative is a shape skipped in silence, which shrinks the derived surface without
+ * shrinking the barrel and is the exact failure this file exists to stop. Read that message as a
+ * resolver to teach, not as an export to restore. The scoping in that first sentence is exact and
+ * not throat-clearing: a node form the walk does not enter as a reference position at all is
+ * neither named nor counted, which is the standing gap recorded at the import-type branch.
  *
  * It needs `dist/` to exist. `pnpm test` builds first — including both CI unit jobs — and a bare
  * `pnpm run unit` on a never-built tree fails here with the message below rather than with a type
@@ -204,7 +206,12 @@ interface DerivedSurface {
  * returns nothing — a walk that never starts, a resolver that stops seeing this package's own
  * files, a filter inverted — makes every assertion below pass by checking nothing, exactly the way
  * an empty probe type-checks clean. The public surface reaches roughly a hundred named types, so a
- * legitimate API is nowhere near this number, and a broken walk yields zero or a handful.
+ * legitimate API is nowhere near this number, and the breakages this number is chosen against
+ * yield zero or a handful.
+ *
+ * A break that leaves most of the surface behind clears it comfortably and is meant to: measured,
+ * one dropped symbol flag still derives 65. That is a threshold's nature rather than a bug in this
+ * one, and it is stated as a limit in this file's docblock instead of being papered over here.
  */
 const MIN_DERIVED_TYPES = 40;
 
