@@ -68,8 +68,13 @@ there is nothing to configure. v1 is the stable protocol every shipping ACP edit
 included; v2 is a draft.
 
 **An ACP session runs as a coding session.** It resolves under the `code` command, so it takes its
-filesystem access, approvals posture and tools from your `commands.code` config and can write files
-and run shell commands, gate permitting. For a read-only editor agent, set the mode:
+filesystem access, approvals posture and tools from your `commands.code` config: it can run shell
+commands, and it can edit and delete files in the directory the session was opened on.
+
+At the default approvals rung, `assisted`, the gate holds only the **shell** — a command it does not
+clear reaches the editor as a permission request. **File changes are not prompted:** the agent
+rewrites and deletes files in that directory without asking. `"approvals": "manual"` is the rung
+that sends the file tools to the editor as well. For a read-only editor agent instead, set the mode:
 
 ```json
 { "acp": { "mode": "chat" } }

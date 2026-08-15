@@ -270,6 +270,52 @@ async function gatedTurn(
   return { permissionRequests, agent };
 }
 
+/**
+ * The same turn in the v1 dialect, because **v1 is the dialect Zed speaks** — which makes it the one
+ * the "an editor can now approve a shell command" claim is actually about. Asserting it across
+ * dialects from the v2 cell would be an inference: the two apps build their sessions independently,
+ * and only the runner underneath them is shared.
+ *
+ * Simpler than its v2 twin for one protocol reason: v1 has no `state_update`, so there is nothing to
+ * poll for. The `session/prompt` request itself stays open until the turn ends, and awaiting it is
+ * the whole synchronisation.
+ */
+async function gatedTurnV1(
+  cwd: string,
+  model: unknown,
+  answer?: (request: acpV1.RequestPermissionRequest) => acpV1.RequestPermissionOutcome
+): Promise<{ permissionRequests: acpV1.RequestPermissionRequest[]; agent: GatedShellAgent }> {
+  const agent = new GatedShellAgent('echo hi');
+  const permissionRequests: acpV1.RequestPermissionRequest[] = [];
+
+  const agentApp = createAcpV1AgentApp({
+    loadConfig: loadWithRaterModel(model),
+    agentFactory: () => () => agent,
+    resolvers: {},
+  });
+
+  await acpV1
+    .client({ name: 'ext-117-gate-v1-client' })
+    .onRequest(acpV1.CLIENT_METHODS.session_request_permission, async ({ params }) => {
+      permissionRequests.push(params);
+      if (!answer) throw new Error('the client was asked for permission with no answer scripted');
+      return { outcome: answer(params) };
+    })
+    .connectWith(agentApp, async (ctx) => {
+      await ctx.request(acpV1.AGENT_METHODS.initialize, {
+        protocolVersion: acpV1.PROTOCOL_VERSION,
+        clientInfo: { name: 'ext-117-gate-v1-client', version: '0.0.0' },
+      });
+      const created = await ctx.request(acpV1.AGENT_METHODS.session_new, { cwd, mcpServers: [] });
+      await ctx.request(acpV1.AGENT_METHODS.session_prompt, {
+        sessionId: created.sessionId,
+        prompt: [{ type: 'text', text: 'run it' }],
+      });
+    });
+
+  return { permissionRequests, agent };
+}
+
 let priorProjectDir: string | undefined;
 let priorInitCwd: string | undefined;
 
@@ -326,6 +372,10 @@ describe('the command an ACP session resolves under', () => {
 
     expect(agent.seenCommand).toBe('chat');
     expect(agent.toolNames).not.toContain(SHELL_TOOL_NAME);
+    // As in the v2 twin: an EMPTY resolution would satisfy the absence above, so the cell needs
+    // something present to prove tools resolved at all. The root default `filesystem` is `none`;
+    // only the `commands.chat` fold produces read tools, so this also proves the fold ran.
+    expect(agent.toolNames).toContain('read_file');
   });
 });
 
@@ -342,12 +392,45 @@ describe('the approvals gate on an ACP session under default config', () => {
     const { permissionRequests, agent } = await gatedTurn(
       workspaceWith('gate-unrated'),
       raterModel(),
-      () => ({ outcome: 'selected', optionId: 'reject' }) as acpV2.RequestPermissionOutcome
+      () => ({ outcome: 'selected', optionId: 'reject-once' }) as acpV2.RequestPermissionOutcome
     );
 
     expect(permissionRequests).toHaveLength(1);
     expect(JSON.stringify(permissionRequests[0])).toContain('echo hi');
-    expect(agent.decisions[0]?.type).toBe('reject');
+    // `reject-once` is one of the four ids the agent OFFERS, and the message pins which arm of
+    // `decisionForOutcome` ran: its unknown-option fallback also returns `type: 'reject'`, so a
+    // type-only assertion cannot tell "the user said no" from "the client sent a bad id".
+    expect(agent.decisions[0]).toEqual({
+      type: 'reject',
+      message: 'The user rejected this tool call.',
+    });
+  });
+
+  /**
+   * The same arm in **v1**, the dialect Zed speaks — see {@link gatedTurnV1}. Without this the
+   * claim that an editor can now approve or deny a shell command is measured on the draft protocol
+   * and inferred on the shipping one.
+   */
+  it('reaches session/request_permission in the v1 dialect too', async () => {
+    const { permissionRequests, agent } = await gatedTurnV1(
+      workspaceWith('gate-unrated-v1'),
+      raterModel(),
+      () => ({ outcome: 'selected', optionId: 'reject-once' }) as acpV1.RequestPermissionOutcome
+    );
+
+    expect(permissionRequests).toHaveLength(1);
+    expect(JSON.stringify(permissionRequests[0])).toContain('echo hi');
+    // v1 offers the same menu, and the request carries the tool call the client is already drawing.
+    expect(permissionRequests[0].options.map((option) => option.optionId)).toEqual([
+      'allow-once',
+      'allow-always',
+      'reject-once',
+      'reject-always',
+    ]);
+    expect(agent.decisions[0]).toEqual({
+      type: 'reject',
+      message: 'The user rejected this tool call.',
+    });
   });
 
   /**

@@ -1108,6 +1108,36 @@ describe('config schema (GS2-1 B1)', () => {
     });
   });
 
+  /**
+   * EXT-117 — `acp` is a real config key, and the zod entry is what makes it one.
+   *
+   * `rawGthConfigSchema` is a `looseObject`, so the key reaches the read site whether or not zod
+   * declares it — which means the resolution specs in `acpSessionMode.spec.ts` stay green with the
+   * entry deleted, while the loader tells the user their `acp` block is an unknown key that is
+   * "kept as-is but ignored". These two cells are what catch that, as the symptom rather than as a
+   * golden-file mismatch.
+   */
+  describe('acp', () => {
+    it('is a KNOWN top-level key, so a config that sets it warns about nothing', () => {
+      expect(findUnknownTopLevelKeys({ llm: {}, acp: { mode: 'chat' } })).toEqual([]);
+      expect(validateRawGthConfig({ llm: { type: 'anthropic' }, acp: { mode: 'chat' } })).toEqual({
+        ok: true,
+        warnings: [],
+      });
+    });
+
+    it('rejects a mode that is not an ACP session mode, with a path-scoped message', () => {
+      // The reason the schema uses `z.enum` over `z.string`: `exec` is a real `GthCommand`, so only
+      // the enum can say that it is not one an ACP session may be resolved under.
+      const bad = rawGthConfigSchema.safeParse({
+        llm: { type: 'anthropic' },
+        acp: { mode: 'exec' },
+      });
+      expect(bad.success).toBe(false);
+      if (!bad.success) expect(formatConfigValidationError(bad.error)).toContain('acp.mode');
+    });
+  });
+
   describe('JSON Schema generation (golden snapshot)', () => {
     it('matches the committed schema file', () => {
       const generated = generateConfigJsonSchema();
