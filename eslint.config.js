@@ -77,6 +77,11 @@ const globalIgnores = [
   'packages/app/integration-tests/workdir',
   'packages/app/integration-tests/workdir-with-profiles',
   'packages/*/tui-e2e/.tui-test/**',
+  // The scratch dir the core barrel type-surface spec type-checks its probe in. The spec removes
+  // it, but a killed run leaves one behind, and an unignored probe file matches no config block
+  // here at all — zero rules, no parser — so espree reports its TypeScript as a syntax error and
+  // this gate goes red on a file nobody wrote.
+  'packages/*/.type-probe-*/**',
   'docs-generated/**',
   'readonly/**',
   'coverage/**',
