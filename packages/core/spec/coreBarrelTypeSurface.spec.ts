@@ -175,7 +175,21 @@ function deriveSurface(): DerivedSurface {
 
   const unalias = (symbol: any) =>
     symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
-  const insideThisPackage = (file: string) => file.startsWith(DIST_DIR + path.sep);
+  /**
+   * Is this declaration one of ours?
+   *
+   * Asked through `path.relative` rather than by comparing prefixes, because the two paths are
+   * built by different machinery and do not agree on separators: `DIST_DIR` comes from
+   * `fileURLToPath` and `path.join`, which give backslashes on win32, while a `SourceFile.fileName`
+   * is whatever the compiler's own normalizer produced — always forward-slashed. A prefix test
+   * matches nothing there, and the resulting empty derivation is indistinguishable from a broken
+   * walk. `path.relative` resolves both sides first, so it is separator-agnostic, and its result
+   * also rules out a sibling directory whose name merely starts with `dist`.
+   */
+  const insideThisPackage = (file: string) => {
+    const relative = path.relative(DIST_DIR, file);
+    return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+  };
   const NAMED_TYPE =
     ts.SymbolFlags.TypeAlias |
     ts.SymbolFlags.Interface |
