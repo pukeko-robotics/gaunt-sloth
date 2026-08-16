@@ -472,6 +472,29 @@ It follows versioning Model B — **ship the version currently in
 the dispatch inputs (`bump`/`preid`/`explicit_version`) describe the *next*
 version, not the one being published.
 
+### The version in the repo has NOT been published
+
+**It is what the next dispatch will ship.** Post-bump means the pipeline
+publishes the current number and only then writes the following one into
+`main`, so the number you read on `main` is always one release *ahead* of the
+registry. Reason from that in both directions:
+
+- **The newest version on npm is one step behind the repo.** A change that is
+  merged and sitting on `main` is absent from every install elsewhere until a
+  dispatch runs. `npm view gaunt-sloth versions` is the only answer to "what
+  shipped"; `package.json` never is.
+- **A version number on `main` is not evidence a release carrying it exists.**
+  Do not describe it as released, do not tell a user to install it, and do not
+  bump it by hand to make a change look shipped — the post-bump commit belongs
+  to the pipeline, and a hand bump just skips a version.
+
+**A prerelease channel switch costs no extra dispatch, and does not half-ship
+the new channel.** `preid` is chosen on the dispatch that ships the *previous*
+channel's last version, so the post-bump leaves that channel's `.0` — say
+`2.0.0-beta.0` — staged on `main`, unpublished. **The next dispatch is that
+channel's FIRST release, not a second one.** Until it runs, nothing on the new
+channel has shipped and the dist-tag does not exist.
+
 Don't drive the publish steps (`release:bump`, `release:publish`, etc.) by hand;
 use the pipeline. For the full procedure see
 [maintenance/RELEASE-HOWTO.md](./maintenance/RELEASE-HOWTO.md).
