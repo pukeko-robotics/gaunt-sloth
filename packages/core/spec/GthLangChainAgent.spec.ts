@@ -451,6 +451,33 @@ describe('GthLangChainAgent', () => {
       });
 
       /**
+       * GS2-101 §1's provider-only case, pinning what this path does TODAY: a resolved provider
+       * with no model prints on its own.
+       *
+       * It is pinned rather than corrected because the two writers of the header disagree here, and
+       * which one is right is an open UX ruling on CFG-38 — not an implementer's call. The review
+       * document's writer drops a provider-only label outright (`reviewHeading.spec.ts`, "a provider
+       * name would sit exactly where a model name sits and be read as one"), while this one, via
+       * `modelProviderLabel`, prints it. Both spellings are reachable from the same config.
+       *
+       * So this test's job is to make the divergence visible and deliberate: whichever way CFG-38
+       * rules, one of the two pins has to be edited by someone who has read the ruling, instead of
+       * the difference persisting because nothing named it.
+       */
+      it('prints a provider-only label on the compact line, pending the CFG-38 ruling', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback);
+        mcpClientInstanceMock.getTools.mockResolvedValue([]);
+
+        await agent.init('ask', {
+          ...headerConfig({ header: 'compact' }),
+          modelDisplayName: undefined,
+          modelProviderType: 'google-genai',
+        } as unknown as GthConfig);
+
+        expect(infoLines()).toEqual(['Gaunt Sloth · ask · google-genai']);
+      });
+
+      /**
        * The preamble has a fifth line that only a config with an empty allow-list reaches (the
        * tool-loading notice in `init`). It routes through `headerStatus`, so it is preamble by
        * construction — and the acceptance clause is "byte-identical on EVERY command", which the

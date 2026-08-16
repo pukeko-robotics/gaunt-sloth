@@ -29,10 +29,14 @@ describe('PR Command Integration Tests', () => {
     const testreview = fs.readFileSync(path.join(WORKDIR, 'testreview.md'), { encoding: 'utf8' });
     // REL-12 / GS2-101: the report a workflow reads back and posts carries the run header, because
     // the header is emitted after initSessionLogging and the session log captures it. Asserted on
-    // the command half only — the model half is whichever provider this tier was run against. The
-    // Workdir/Model preamble is NOT here: it belongs to the `debug` rung, and an unset
-    // `output.header` resolves to `compact`.
+    // the command half only — the model half is whichever provider this tier was run against.
     expect(testreview).toContain('Gaunt Sloth · pr ·');
+    // GS2-101 §2 — and the preamble is NOT here, because an unset `output.header` resolves to
+    // `compact`. This second assertion is the one that carries the claim: on `pr` the header line
+    // itself comes from `reviewHeadingBlock`, which is gated only on `none`, so it prints at `debug`
+    // too and the assertion above would survive a regression of the default. The absent preamble is
+    // the only thing in this file that distinguishes the two rungs.
+    expect(testreview).not.toContain('Workdir:');
     expect(testreview).toMatch(/(?:PASS|FAIL)\s+\d+\/10/);
   });
 });
