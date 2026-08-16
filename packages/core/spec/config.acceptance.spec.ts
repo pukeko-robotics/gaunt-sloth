@@ -74,4 +74,26 @@ describe('effective-merged acceptance (B2b)', () => {
     };
     expect(effective(fixture)).toMatchSnapshot();
   });
+
+  /**
+   * GS2-101 §2 — the run-header default lives at the READ SITE (`GthAbstractAgent#headerRung`),
+   * never in `DEFAULT_CONFIG`, so `gth config` does not report a key the user never set. The
+   * snapshots above would happily absorb a new `output.header` line on the next re-record, which is
+   * exactly why this is asserted by name instead of left to them.
+   */
+  it('adds no output.header to the effective config of a config that never set it', () => {
+    const resolved = effective({ llm: { type: 'openai', model: 'gpt-5.4' } });
+
+    expect(resolved.output).toBeUndefined();
+    expect(Object.keys(resolved)).not.toContain('output');
+  });
+
+  it('still carries an output.header the user DID set', () => {
+    const resolved = effective({
+      llm: { type: 'openai', model: 'gpt-5.4' },
+      output: { header: 'debug' },
+    });
+
+    expect(resolved.output).toEqual({ header: 'debug' });
+  });
 });

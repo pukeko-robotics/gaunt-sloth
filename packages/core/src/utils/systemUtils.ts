@@ -334,6 +334,15 @@ export function readStdin(program: ProgramLike): Promise<void> {
       });
 
       stdin.on('end', function () {
+        // GS2-101 §3 — close the notice's line BEFORE the command runs. The constructor writes
+        // `reading STDIN` and `indicate()` a dot per chunk; `stop()` is the only thing that writes
+        // the terminating newline, so without this the run header (and whatever else the command
+        // prints first) is appended to the dots: `reading STDIN..Gaunt Sloth · review · …`.
+        //
+        // EXT-53's "always stop it" is about the AUTOMATIC mode's `setInterval` holding the event
+        // loop open. This indicator is manual, so there is no handle and no hang — which is why the
+        // missing call cost only a newline and survived. The line break is the reason here.
+        progressIndicator.stop();
         program.parseAsync(argv).then(() => resolvePromise());
       });
     }

@@ -41,9 +41,20 @@ const processEventMocks = {
 
 // readStdin's blocking-wait path constructs a ProgressIndicator (which writes to stdout); stub it so
 // these tests never touch the real terminal.
+//
+// `stop` is a spy rather than an empty method because GS2-101 §3 pins that the piped path calls it:
+// `stop()` is the only thing that writes the notice's terminating newline (pinned on the real class
+// in `progressIndicator.spec.ts`), so the caller calling it is the whole of the caller's half.
+const progressIndicatorIndicateMock = vi.fn();
+const progressIndicatorStopMock = vi.fn();
 vi.mock('#src/utils/ProgressIndicator.js', () => ({
   ProgressIndicator: class {
-    indicate() {}
+    indicate() {
+      progressIndicatorIndicateMock();
+    }
+    stop() {
+      progressIndicatorStopMock();
+    }
   },
 }));
 
@@ -558,6 +569,59 @@ describe('systemUtils', () => {
       } finally {
         processMock.stdin.isTTY = true;
       }
+    });
+
+    /**
+     * GS2-101 §3 — the run header starts its own line on the piped path.
+     *
+     * The `reading STDIN` notice and its per-chunk dots are written WITHOUT a trailing newline, and
+     * `stop()` is the only thing that writes one. Left uncalled, the first thing the command prints
+     * is appended to the dots and the run opens as
+     * `reading STDIN..Gaunt Sloth · review · claude-opus-5 (anthropic)`.
+     *
+     * Both halves are asserted, because either one alone passes while the defect is present: that
+     * `stop()` is called at all, and that it is called BEFORE `parseAsync` — the newline is only a
+     * fix if it precedes everything the command goes on to write.
+     */
+    it('closes the reading-STDIN notice before the command parses, so the header starts its own line', async () => {
+      processMock.stdin.isTTY = false;
+      try {
+        let endHandler: () => void = () => {};
+        processMock.stdin.on.mockImplementation((event: string, handler: () => void) => {
+          if (event === 'end') endHandler = handler;
+        });
+
+        const { readStdin } = await import('#src/utils/systemUtils.js');
+        const program = makeProgram({});
+
+        const pending = readStdin(program);
+        // Still reading: the notice is a live line and must NOT be terminated yet, or the dots
+        // land on a line of their own below it.
+        expect(progressIndicatorStopMock).not.toHaveBeenCalled();
+
+        endHandler();
+        await pending;
+
+        expect(progressIndicatorStopMock).toHaveBeenCalledTimes(1);
+        expect(progressIndicatorStopMock.mock.invocationCallOrder[0]).toBeLessThan(
+          program.parseAsync.mock.invocationCallOrder[0]
+        );
+      } finally {
+        processMock.stdin.isTTY = true;
+      }
+    });
+
+    // The fast path writes no notice at all, so there is no line to close — and a stop() here would
+    // emit a stray blank line above the header on every TTY run.
+    it('neither writes nor terminates a notice on the fast path', async () => {
+      processMock.stdin.isTTY = true;
+      const { readStdin } = await import('#src/utils/systemUtils.js');
+      const program = makeProgram({});
+
+      await readStdin(program);
+
+      expect(progressIndicatorIndicateMock).not.toHaveBeenCalled();
+      expect(progressIndicatorStopMock).not.toHaveBeenCalled();
     });
   });
 });

@@ -116,12 +116,12 @@ const APPROVAL_RUNG_LIST = APPROVAL_RUNG_VALUES.join(', ');
 /**
  * GS2-93 — the three rungs `output.header` accepts, in increasing verbosity: `none` opens a run
  * with nothing at all (including the review attribution), `compact` with one attribution line, and
- * `debug` with the full technical preamble. `debug` is the default, so an unset key renders exactly
- * what it always has.
+ * `debug` with the full technical preamble. `compact` is the default, so an unset key opens with
+ * the single run-header line and the preamble is opt-in.
  */
 export const OUTPUT_HEADER_RUNGS = ['none', 'compact', 'debug'] as const;
 
-/** The run-header rung, as a type. The read-site default is `debug`. */
+/** The run-header rung, as a type. The read-site default is `compact`. */
 export type GthOutputHeaderRung = (typeof OUTPUT_HEADER_RUNGS)[number];
 
 /**

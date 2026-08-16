@@ -246,6 +246,20 @@ describe('createTuiSession — the full-screen surface (TUI-C48)', () => {
     }
   );
 
+  // GS2-101: the rung an unset key resolves to is `compact`, so "no output block at all" is now the
+  // case that would silently strip the TUI's preamble if the override were ever dropped — and it is
+  // the case almost every real session runs in. The rows above cannot see it: they both set a rung.
+  it('GS2-101: forces the debug run-header rung for the TUI when config sets no output block', async () => {
+    initConfigMock.mockResolvedValue({});
+    const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
+
+    await createTuiSession(sessionConfig, overrides);
+
+    expect(runnerInitMock).toHaveBeenCalledTimes(1);
+    const initConfigArg = runnerInitMock.mock.calls[0][1] as { output?: { header?: string } };
+    expect(initConfigArg.output?.header).toBe('debug');
+  });
+
   // CFG-25 — call-site wiring: createTuiSession must pass sessionConfig.mode into the (real,
   // unmocked) formatConfigSummary so the /config panel prop carries the EFFECTIVE per-command
   // filesystem. If a refactor drops the second argument, the prop reads `Filesystem: none` and

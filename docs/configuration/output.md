@@ -225,18 +225,22 @@ across three rungs:
 
 | rung | what the run opens with |
 | --- | --- |
-| `debug` (default) | The Workdir/Model/Tools/Middleware status lines, plus — in interactive terminal runs — the `Press Escape or Q to interrupt Agent` hint box. |
-| `compact` | One line naming the command you ran and the model that served it: `Gaunt Sloth · ask · gemini-3.1-pro (google-genai)`. On `review` and `pr`, that same line is the [review header](../guides/review-code-and-prs.md#what-a-review-is-labelled-with), emitted with the review document instead of with the preamble, so it never appears twice. |
+| `compact` (default) | One line naming the command you ran and the model that served it: `Gaunt Sloth · ask · gemini-3.1-pro (google-genai)`. On `review` and `pr`, that same line is the [review header](../guides/review-code-and-prs.md#what-a-review-is-labelled-with), emitted with the review document instead of with the preamble, so it never appears twice. |
+| `debug` | The Workdir/Model/Tools/Middleware status lines, plus — in interactive terminal runs — the `Press Escape or Q to interrupt Agent` hint box. |
 | `none` | Nothing — including, on `review` and `pr`, the review header. |
 
-Reach for `compact` when the preamble is noise but you still want to know which model answered —
-which is most of the time. A `gth ask` piped into a review thread reads as an unattributed answer
-without it:
+The default keeps the one thing a reader of the output cannot recover for themselves — which
+command ran and which model answered — and drops the rest. A `gth ask` piped into a review thread
+reads as an unattributed answer without that line.
+
+Set `debug` when you want to see what the run actually loaded — the workdir it resolved, the tools
+and middleware it registered — which is what you need when a tool is missing or a config is not
+taking effect:
 
 ```json
 {
   "output": {
-    "header": "compact"
+    "header": "debug"
   }
 }
 ```

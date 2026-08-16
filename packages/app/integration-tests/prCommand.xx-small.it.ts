@@ -27,7 +27,12 @@ describe('PR Command Integration Tests', () => {
     expect(score).not.toBeNull();
     expect(score).toBeGreaterThanOrEqual(6); // At or above default threshold of 6
     const testreview = fs.readFileSync(path.join(WORKDIR, 'testreview.md'), { encoding: 'utf8' });
-    expect(testreview).toContain('Model:');
+    // REL-12 / GS2-101: the report a workflow reads back and posts carries the run header, because
+    // the header is emitted after initSessionLogging and the session log captures it. Asserted on
+    // the command half only — the model half is whichever provider this tier was run against. The
+    // Workdir/Model preamble is NOT here: it belongs to the `debug` rung, and an unset
+    // `output.header` resolves to `compact`.
+    expect(testreview).toContain('Gaunt Sloth · pr ·');
     expect(testreview).toMatch(/(?:PASS|FAIL)\s+\d+\/10/);
   });
 });

@@ -315,6 +315,17 @@ Gaunt Sloth · exec · claude-haiku-4-5 (anthropic)
   a per-sink capability.
 - **One line and no more.** Everything above the first line of real output pushes it down. No rule,
   box, logo, timestamp, version, or restated repo/branch/PR.
+- **`compact` is the default rung, and it is the header ALONE.** An unset `output.header` resolves
+  to `compact` at the read site (`GthAbstractAgent#headerRung`), so an unconfigured non-TUI text run
+  opens with this one line and nothing else. The Workdir/Model/Tools/Middleware preamble and the
+  interrupt hint belong to `debug`, and every one of them is emitted through `headerStatus`, which
+  is the gate. A new opening line therefore has to declare which rung owns it: emitted through
+  `headerStatus` it is `debug`'s, and emitted any other way it lands on `compact` too, where it is a
+  second line the rung does not have.
+- **The header starts at column 0, on every path.** Anything printed before it closes its own line
+  first — the piped path's `reading STDIN` notice is the one that has to, and `readStdin` stops its
+  `ProgressIndicator` before the command parses for exactly that reason. A notice left unterminated
+  renders as `reading STDIN..Gaunt Sloth · review · …`.
 - **The model half is the launch banner's spelling (DL-6).** `model (provider)`, from the shared
   `modelProviderLabel` in `@gaunt-sloth/core/core/modelLabel.js` (`launchBanner.js` re-exports it) —
   never a second spelling of the same fact on a second surface. The line itself is assembled by the

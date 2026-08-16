@@ -970,10 +970,12 @@ test.describe('gth chat — a config file that turns the TUI off (CFG-37 seam)',
   test('runs the readline session and leaves it in the terminal after exit', async ({
     terminal,
   }) => {
-    // The run header is the readline surface writing straight to stdout. The TUI never prints it
-    // there — it routes those lines into the notice surface inside the frame — so seeing it is
-    // what says which surface started.
-    await expect(terminal.getByText('Workdir:')).toBeVisible();
+    // The run header is the readline surface writing straight to stdout, at column 0, before the
+    // banner. The TUI never prints this line at all — it forces the `debug` rung, whose preamble
+    // it routes into the notice surface inside the frame — so seeing it is what says which surface
+    // started. GS2-101: the rung an unset `output.header` resolves to is `compact`, so on a config
+    // that sets no `output` block this one line IS the header the readline surface writes.
+    await expect(terminal.getByText('Gaunt Sloth · chat · gpt-4o-mini (openai)')).toBeVisible();
     await expect(terminal.getByText('Gaunt Sloth is ready to chat')).toBeVisible();
     // …and the full-screen dock is not on the screen at all.
     await expect(terminal.getByText('chat  ·  turns: 0  ·  ready')).not.toBeVisible();

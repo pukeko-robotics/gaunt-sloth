@@ -76,7 +76,7 @@ The provider half is dropped when a JS config hands Gaunt Sloth an already-built
 there is then no provider name to report; the model is dropped altogether when none resolves,
 leaving the line ending at the command rather than showing a placeholder.
 
-The header belongs to the review document rather than to the technical preamble, so
+The header belongs to the review document rather than to the technical preamble, so the default
 [`output.header: "compact"`](../configuration/output.md#run-header-outputheader) keeps it while
 dropping the Workdir/Model/Tools lines — on a review, this line *is* the compact header. Only
 `output.header: "none"` removes it, for a caller who is piping the review into a template of their

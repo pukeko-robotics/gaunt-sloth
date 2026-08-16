@@ -499,11 +499,11 @@ export interface GthConfig {
    * `output.header` grades what a NON-TUI text run (`--no-tui`, `ask`, `exec`, `eval`, `pr`,
    * `review`, piped/CI) opens with, across three rungs:
    *
-   * - `debug` (the DEFAULT, so an unset key renders what it always has) — the full technical
-   *   preamble: the Workdir/Model/Tools/Middleware status block, the
+   * - `debug` — the full technical preamble: the Workdir/Model/Tools/Middleware status block, the
    *   `Press Escape or Q to interrupt` hint, and their surrounding blank lines.
-   * - `compact` — no preamble, and one attribution line naming the command and the model that
-   *   served it. `review`/`pr` render their existing attribution block instead of this line.
+   * - `compact` (the DEFAULT, so an unset key opens with this) — no preamble, and one attribution
+   *   line naming the command and the model that served it. `review`/`pr` render their existing
+   *   attribution block instead of this line.
    * - `none` — nothing at all, including the review attribution block, for a byte-clean stream a
    *   caller can diff or template.
    *

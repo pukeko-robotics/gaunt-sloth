@@ -249,12 +249,16 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
   }
 
   /**
-   * GS2-93 — the run-header rung in force. Defaulted HERE rather than in `DEFAULT_CONFIG` (the
-   * convention `injectModelContext` and `debugDump.redact` also follow) so the effective-config
-   * snapshot `gth config` prints does not grow a key nobody set.
+   * GS2-101 — the run-header rung in force. An unset `output.header` resolves to `compact`: a run
+   * that was never configured opens with one attribution line and nothing else, and the technical
+   * preamble is opt-in via `output.header: 'debug'`.
+   *
+   * Defaulted HERE rather than in `DEFAULT_CONFIG` (the convention `injectModelContext` and
+   * `debugDump.redact` also follow) so the effective-config snapshot `gth config` prints does not
+   * grow a key nobody set.
    */
   protected get headerRung(): GthOutputHeaderRung {
-    return this.config?.output?.header ?? 'debug';
+    return this.config?.output?.header ?? 'compact';
   }
 
   /**

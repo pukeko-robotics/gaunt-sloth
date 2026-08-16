@@ -228,6 +228,10 @@ describe('GthLangChainAgent', () => {
         ...mockConfig,
         tools: mockTools,
         filesystem: 'none',
+        // `Loaded tools:` is preamble, and preamble belongs to the `debug` rung alone (GS2-101 §2).
+        // Asked for explicitly here because this test is about the LIST, not about which rung shows
+        // it — the rungs themselves are pinned in the output.header block below.
+        output: { header: 'debug' },
       } as GthConfig;
 
       mcpClientInstanceMock.getTools.mockResolvedValue([]);
@@ -291,22 +295,28 @@ describe('GthLangChainAgent', () => {
         expect(infoLines()).toEqual(DEBUG_PREAMBLE);
       });
 
-      it('renders the same preamble when output.header is unset — debug is the default', async () => {
+      /**
+       * GS2-101 §2 — an unset key is `compact`, and this is the whole-array form of that claim: a
+       * run nobody configured opens with the attribution line and NOTHING else. The rung itself is
+       * pinned directly in `GthAbstractAgentHeaderRung.spec.ts`; this pair pins what reaches the
+       * screen at it, which is where a preamble line leaking onto the default would show up.
+       */
+      it('renders one attribution line, and nothing else, when output.header is unset', async () => {
         const agent = new GthLangChainAgent(statusUpdateCallback);
         mcpClientInstanceMock.getTools.mockResolvedValue([]);
 
         await agent.init('ask', headerConfig());
 
-        expect(infoLines()).toEqual(DEBUG_PREAMBLE);
+        expect(infoLines()).toEqual(['Gaunt Sloth · ask · test-model (google-genai)']);
       });
 
-      it('renders the same preamble when output is present but header is unset', async () => {
+      it('does the same when output is present but header is unset', async () => {
         const agent = new GthLangChainAgent(statusUpdateCallback);
         mcpClientInstanceMock.getTools.mockResolvedValue([]);
 
         await agent.init('ask', headerConfig({}));
 
-        expect(infoLines()).toEqual(DEBUG_PREAMBLE);
+        expect(infoLines()).toEqual(['Gaunt Sloth · ask · test-model (google-genai)']);
       });
 
       // With no display name supplied the header falls back to the verb the run was INITIALISED
@@ -499,7 +509,9 @@ describe('GthLangChainAgent', () => {
        * the call happening at all.
        */
       it.each([
-        [undefined, true],
+        // GS2-101: an unset key is `compact`, so the hint box is off out of the box. The row is
+        // kept beside the explicit ones because it is the only cell that reads the DEFAULT.
+        [undefined, false],
         [{ header: 'debug' } as const, true],
         [{ header: 'compact' } as const, false],
         [{ header: 'none' } as const, false],
@@ -665,6 +677,10 @@ describe('GthLangChainAgent', () => {
         ...mockConfig,
         tools: [{ name: 'cfg_tool' } as StructuredToolInterface],
         allowedTools: [],
+        // The notice below is preamble, which belongs to `debug` alone (GS2-101 §2). Asked for
+        // explicitly because this test is about the ALLOW-LIST, not about which rung shows it —
+        // the rung's own behaviour for this line is pinned in the output.header block above.
+        output: { header: 'debug' },
       } as GthConfig;
 
       await agent.init(undefined, config);

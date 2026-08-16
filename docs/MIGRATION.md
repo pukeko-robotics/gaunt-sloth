@@ -58,7 +58,7 @@ these before you upgrade.
 | Change | What breaks | Fix |
 | --- | --- | --- |
 | `rating` is now an object | `rating: false` (or any boolean) is a validation abort: `expected object, received boolean` | `rating: { enabled: false }` |
-| `output.header` is a three-rung enum | A boolean is a validation abort: `output.header: no longer a boolean: it is one of none, compact, debug.` | `"none"` for `false`, `"debug"` for `true` — or `"compact"`, which is new (see section K) |
+| `output.header` is a three-rung enum, defaulting to `compact` | A boolean is a validation abort: `output.header: no longer a boolean: it is one of none, compact, debug.` And a config that never set the key now opens a text run with one attribution line instead of the preamble | `"none"` for `false`, `"debug"` for `true`; `"debug"` also restores the preamble for a config that set nothing (see section K) |
 | Command configs must nest under `commands.*` | A top-level command key (e.g. `pr`) is a validation abort: `Top-level command config "pr" is no longer supported in 2.0. Move it under "commands.pr".` | Move it under `commands.<cmd>` |
 | Per-command `devTools` folded into `builtInTools` | `commands.<cmd>.devTools` is a validation abort: `Config property "devTools" in commands.code is no longer supported in 2.0. Configure tools under "builtInTools" instead.` | Move the dev/shell tools into the `builtInTools` registry (see section G) |
 | Approval knobs moved off `run_shell_command` | `yolo` / `judge` / `allowlist` / `persistAllowlist` on that entry are a validation abort: `Config property "yolo" in builtInTools.run_shell_command is no longer supported in 2.0. Use "approvals": "bypass" instead.` | Move them into the top-level `approvals` setting (see section I) |
@@ -71,8 +71,9 @@ these before you upgrade.
 | The `deep` agent backend removed | `agent.backend: "deep"` is a validation abort: `Agent backend "deep" is no longer supported: Gaunt Sloth ships one agent backend.` | Remove the `agent` block, or set `"backend": "lean"` (see section J) |
 | `@gaunt-sloth/agent` exports removed with the `deep` backend | `import { GthDeepAgent, gthDeepAgentFactory, … } from '@gaunt-sloth/agent'` no longer resolves, and neither do the `@gaunt-sloth/agent/core/GthDeepAgent.js` / `deepAgentPermissions.js` / `gthAcpServer.js` / `modules/acpModule.js` deep paths | Nothing replaces them. `extractDebugRequestExtras` moved to `@gaunt-sloth/agent/core/debugCapture.js`; `startAcpServer` is still a root export and now starts Gaunt Sloth's own ACP server; the rest have no successor (see section J) |
 
-There is also one behaviour change (array merge across config layers) that is not a
-validation error but can change results silently. It is covered in section D below.
+There are also behaviour changes that raise no validation error, so nothing tells you at load time
+that your output or your files have moved: the array merge across config layers (section D), the
+`writeOutputToFile` default (section E), and the `output.header` default (section K).
 
 ---
 
@@ -607,11 +608,32 @@ it — including the line saying who reviewed this and with which model. It is n
   boolean's `false` left in place. This is the one difference in behaviour rather than spelling: if
   you set `false` to keep captured stdout diffable and still want the review labelled, you want
   `"compact"`.
-- `true` → `"debug"` — the full Workdir/Model/Tools/Middleware preamble, unchanged. This is also the
-  default, so a config that never set the key needs no edit and renders exactly what it did before.
+- `true` → `"debug"` — the full Workdir/Model/Tools/Middleware preamble, unchanged.
 
-`"compact"` is the new rung, and for most people it is the one worth moving to: no preamble, and one
-line naming the command and the model — `Gaunt Sloth · ask · gemini-3.1-pro (google-genai)`. See
+### The default moved to `"compact"` — this changes output for configs that set nothing
+
+`"compact"` is the new rung and it is now the default, so **a config that never set `output.header`
+gets different output in 2.0**. A non-TUI text run — `ask`, `exec`, `eval`, `review`, `pr`, anything
+piped or in CI — opens with one line naming the command and the model that served it:
+
+```text
+Gaunt Sloth · ask · gemini-3.1-pro (google-genai)
+```
+
+The Workdir/Model/Tools/Middleware preamble and the `Press Escape or Q to interrupt` hint are no
+longer printed unless you ask for them. Set `output.header: "debug"` to restore them:
+
+```json
+{
+  "output": {
+    "header": "debug"
+  }
+}
+```
+
+Esc/Q interruption stays armed in interactive terminal runs whether or not the hint is shown, and
+the interactive TUI is unaffected — it always renders the full preamble. If you parse or diff
+captured stdout, `"none"` remains the byte-clean rung. See
 [Configuration → Run header](configuration/output.md#run-header-outputheader).
 
 ## Interactive slash commands (renames)
@@ -656,6 +678,7 @@ share one command registry):
    `prompts.review` (H).
 9. Remove `agent.backend: "deep"` (or set it to `"lean"`), and move off the ACP server if you
    were driving Gaunt Sloth from an ACP host (J).
-10. Convert any `output.header: false` / `true` to `"none"` / `"debug"` — and consider `"compact"`,
-    which drops the preamble but keeps the model attribution (K).
+10. Convert any `output.header: false` / `true` to `"none"` / `"debug"`. If you never set the key,
+    check whether you want the new `"compact"` default (one attribution line, no preamble) or
+    `"debug"` to keep the preamble you had (K).
 11. Run `gth config validate` (and optionally `gth config print`) to confirm the result.
