@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { readModePrompt } from '#src/utils/llmUtils.js';
+import type { GthConfig } from '#src/config/types.js';
 
 /**
  * The bundled `review` prompt is what every user without a project prompt of their own receives,
@@ -34,5 +36,15 @@ describe('bundled review prompt', () => {
     expect(reviewPrompt).toContain('requirements');
     expect(reviewPrompt).toContain('✅⚠️❌');
     expect(reviewPrompt).toContain('git diff');
+  });
+
+  // The file assertions above pin the text; this one pins that the text still REACHES a review
+  // run. They fail independently: deleting the line reds the first, and breaking the `review`/`pr`
+  // arm of readModePrompt reds this one while the file stays untouched.
+  it.each(['review', 'pr'] as const)('reaches the composed %s mode prompt', (command) => {
+    const config = { prompts: undefined, identityProfile: undefined, noDefaultPrompts: false };
+    const modePrompt = readModePrompt(command, config as unknown as GthConfig);
+
+    expect(modePrompt).toContain('Do not speculate about version numbers');
   });
 });
