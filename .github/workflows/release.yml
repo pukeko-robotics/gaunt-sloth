@@ -55,7 +55,7 @@ on:
         description: 'Prerelease channel for the POST-bump — only used by the pre*/prerelease verbs'
         type: choice
         required: false
-        default: alpha
+        default: beta
         options:
           - alpha
           - beta
