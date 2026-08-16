@@ -1,6 +1,6 @@
 {
   "name": "@gaunt-sloth/core",
-  "version": "2.0.0-alpha.40",
+  "version": "2.0.0-beta.0",
   "description": "Core utilities and types for Gaunt Sloth",
   "license": "MIT",
   "author": "Andrew Kondratev",
@@ -85,7 +85,7 @@
     ".gsloth.*.md"
   ],
   "publishConfig": {
-    "tag": "alpha"
+    "tag": "beta"
   },
   "devDependencies": {
     "ajv": "8.20.0",
