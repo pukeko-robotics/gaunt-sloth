@@ -185,9 +185,9 @@ export const PROVIDER_DESCRIPTORS: readonly ProviderDescriptor[] = [
     label: 'Google AI Studio (Gemini)',
     apiKeyEnvironmentVariables: ['GOOGLE_API_KEY'],
     // GA-only defaults (Andrew 2026-07-24): the Gemini 3.x Pro tier is preview-only, so the curated
-    // defaults stay on GA flash tiers — gemini-3.6-flash (head, verified live via ListModels +
+    // defaults stay on GA flash tiers — gemini-3.7-flash (head, verified live via ListModels +
     // tool-call probe) and gemini-3.5-flash-lite (the GA routing/summarizing workhorse).
-    preferredModels: ['gemini-3.6-flash', 'gemini-3.5-flash-lite'],
+    preferredModels: ['gemini-3.7-flash', 'gemini-3.5-flash-lite'],
     discovery: {
       kind: 'google',
       // Native ListModels — returns the full current family (incl. the 3.x tier)
@@ -207,7 +207,7 @@ export const PROVIDER_DESCRIPTORS: readonly ProviderDescriptor[] = [
     // assumption was wrong). Verified live 2026-07-24 (Andrew, ADC box): all mirror-genai models
     // resolve, and these GA flash defaults resolve with no extra config (preview models, not used
     // here, are global-location only). Kept exactly in sync with the google-genai GA-only defaults.
-    preferredModels: ['gemini-3.6-flash', 'gemini-3.5-flash-lite'],
+    preferredModels: ['gemini-3.7-flash', 'gemini-3.5-flash-lite'],
     discovery: { kind: 'none' },
     requiresExternalAuth: true,
   },

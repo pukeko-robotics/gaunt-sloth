@@ -686,7 +686,7 @@ describe('modelDiscovery', () => {
       expect(ids).not.toContain('embedding-001');
       expect(ids).not.toContain('models/embedding-001');
       // Mutation guard (strip): ids are bare slugs (no `models/`), in curated ⭐ order.
-      expect(ids).toEqual(['gemini-3.6-flash', 'gemini-3.5-flash']);
+      expect(ids).toEqual(['gemini-3.5-flash', 'gemini-3.6-flash']);
     });
 
     it('status "live" with the ⭐ curated overlay when a key is present and the fetch succeeds', async () => {
@@ -699,7 +699,7 @@ describe('modelDiscovery', () => {
               name: 'models/gemini-experimental-xyz',
               supportedGenerationMethods: ['generateContent'],
             },
-            { name: 'models/gemini-3.6-flash', supportedGenerationMethods: ['generateContent'] },
+            { name: 'models/gemini-3.7-flash', supportedGenerationMethods: ['generateContent'] },
           ],
         })
       );
@@ -708,7 +708,7 @@ describe('modelDiscovery', () => {
       const { models, status } = await discoverModelsWithProvenance('google-genai');
       expect(status).toBe('live');
       // Curated id present in the live catalog → flagged ⭐ preferred and sorted first.
-      expect(models[0]).toEqual({ id: 'gemini-3.6-flash', preferred: true });
+      expect(models[0]).toEqual({ id: 'gemini-3.7-flash', preferred: true });
       // Non-curated live id is kept but not preferred.
       expect(models.find((m) => m.id === 'gemini-experimental-xyz')!.preferred).toBe(false);
     });
