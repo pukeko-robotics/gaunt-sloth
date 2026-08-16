@@ -15,6 +15,7 @@ import { AIMessage, HumanMessage } from '@langchain/core/messages';
 import type { Message } from '#src/core/types.js';
 import { ProgressIndicator } from '#src/utils/ProgressIndicator.js';
 import type { AgentResolvers, GthAgentFactory, GthCommand } from '#src/core/types.js';
+import type { SingleShotOptions } from '#src/runtime/singleShot.js';
 import { recordSessionSafe } from '#src/history/recordSession.js';
 import type { GthRunStats } from '#src/core/types.js';
 import { getProjectDir, stdout } from '#src/utils/systemUtils.js';
@@ -75,6 +76,9 @@ export interface ConversationTurnResult extends GthRunStats {
  * @param command - The originating command (defaults to `ask`); selects the agent mode prompt.
  * @param agentFactory - Optional backend factory (B5); omitted = the runner's lean default, which
  *   is also what the shared backend seam resolves to.
+ * @param options - GS2-95: `displayCommand` names the run in the header when the caller's own name
+ *   differs from the `command` it runs under (`gth eval` runs its conversations in `ask` mode).
+ *   Header only — it never reaches the mode prompt.
  * @returns One {@link ConversationTurnResult} per turn attempted, in turn order.
  */
 export async function runConversation(
@@ -84,7 +88,8 @@ export async function runConversation(
   config: GthConfig,
   resolvers?: AgentResolvers,
   command: GthCommand = 'ask',
-  agentFactory?: GthAgentFactory
+  agentFactory?: GthAgentFactory,
+  options?: SingleShotOptions
 ): Promise<ConversationTurnResult[]> {
   const progressIndicator = config.streamOutput ? undefined : new ProgressIndicator('Thinking.');
   try {
@@ -108,7 +113,9 @@ export async function runConversation(
     const messages: Message[] = [];
 
     try {
-      await runner.init(command, config, new MemorySaver());
+      await runner.init(command, config, new MemorySaver(), {
+        displayCommand: options?.displayCommand,
+      });
 
       for (const userMessage of userMessages) {
         // Rotate to a fresh (empty) checkpointer thread so this turn's replay of the full `messages`

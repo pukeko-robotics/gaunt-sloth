@@ -80,6 +80,11 @@ export interface ProductionRunCellOptions {
   /** The `GthCommand` mode forwarded to `runSingleShot` — selects the agent's mode prompt/behavior
    * (`'exec'` for `batch`, `'ask'` for `eval`). */
   command: GthCommand;
+  /** GS2-95 — the name of the command the USER typed, for the run header (`'batch'`, `'eval'`).
+   * Required, and deliberately separate from {@link command}: these two commands run their cells
+   * under ANOTHER verb's mode prompt, so the header would otherwise call a `gth eval` run `ask`.
+   * Changing {@link command} to fix the header would move the mode prompt with it. */
+  displayCommand: string;
   /** Prefix for `runSingleShot`'s `source` naming (`<prefix>-<cell.id>`), used for output/session
    * file naming — `'BATCH'` for `batch`, `'EVAL'` for `eval`. */
   sourcePrefix: string;
@@ -145,7 +150,8 @@ export async function buildProductionRunCell(
         options.command,
         // batch/eval default to the lean backend, same as exec/ask; an explicit
         // config.agent.backend wins.
-        resolveAgentFactory(cellConfig, 'lean')
+        resolveAgentFactory(cellConfig, 'lean'),
+        { displayCommand: options.displayCommand }
       );
       return { ok, answer, tokensInput, tokensOutput, tools, toolResults };
     } catch (error) {
@@ -217,7 +223,8 @@ export async function buildProductionRunConversation(
         cellConfig,
         resolvers,
         options.command,
-        resolveAgentFactory(cellConfig, 'lean')
+        resolveAgentFactory(cellConfig, 'lean'),
+        { displayCommand: options.displayCommand }
       );
       return turns.map(({ ok, answer, tokensInput, tokensOutput, tools, toolResults, error }) => ({
         ok,
@@ -341,6 +348,8 @@ export function batchCommand(
       const preamble = getExecSystemPrompt(config);
       const runCell = await buildProductionRunCell(config, preamble, commandLineConfigOverrides, {
         command: 'exec',
+        // The header says `batch`; the mode prompt stays `exec`. Do not collapse these two.
+        displayCommand: 'batch',
         sourcePrefix: 'BATCH',
         wrapBlockPrefix: 'script',
         wrapPrefix: 'prompt-executable script',

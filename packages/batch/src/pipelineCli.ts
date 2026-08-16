@@ -288,7 +288,10 @@ async function buildProductionRunCell(
         cellConfig,
         resolvers,
         'exec',
-        resolveAgentFactory(cellConfig, 'lean')
+        resolveAgentFactory(cellConfig, 'lean'),
+        // GS2-95 — the header names the bin the user invoked, not the `exec` mode prompt its cells
+        // run under. Do not collapse these two.
+        { displayCommand: 'gth-batch' }
       );
       return { ok, answer, tokensInput, tokensOutput, tools };
     } catch (error) {

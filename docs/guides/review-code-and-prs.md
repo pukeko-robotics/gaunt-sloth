@@ -59,29 +59,26 @@ gth review --content-source git -r requirements.md -m "focus on security implica
 
 ## What a review is labelled with
 
-By default, every `review` and `pr` run opens its output with a fixed heading and one attribution
-line:
+By default, every `review` and `pr` run opens its output with one line — the same run header every
+Gaunt Sloth command opens with, naming the command you ran and the model that served it:
 
 ```text
-## Gaunt Sloth: Code Review
-
-stateless review · gemini-3.1-pro-preview (google-genai)
+Gaunt Sloth · review · gemini-3.1-pro-preview (google-genai)
 ```
 
-That comes from the CLI itself, so it reaches everywhere the output goes — your terminal, the
-[`writeOutputToFile`](../configuration/output.md#controlling-output-files) report, and any pull
-request comment a workflow posts from that file — with nothing to wire up. A review is usually read
-somewhere the command that produced it is not visible, and an unlabelled AI review sitting under a
-bot avatar gets credited to whichever AI reviewer the reader already knows.
+A `gth pr` run says `pr`. That comes from the CLI itself, so it reaches everywhere the output goes —
+your terminal, the [`writeOutputToFile`](../configuration/output.md#controlling-output-files)
+report, and any pull request comment a workflow posts from that file — with nothing to wire up. A
+review is usually read somewhere the command that produced it is not visible, and an unlabelled AI
+review sitting under a bot avatar gets credited to whichever AI reviewer the reader already knows.
 
-The heading is the same string on every run. The line under it names the review mode and the model
-that served it. The provider half is dropped when a JS config hands Gaunt Sloth an already-built
-model, because there is then no provider name to report; the model is dropped altogether when none
-resolves, leaving `stateless review` on its own rather than a placeholder.
+The provider half is dropped when a JS config hands Gaunt Sloth an already-built model, because
+there is then no provider name to report; the model is dropped altogether when none resolves,
+leaving the line ending at the command rather than showing a placeholder.
 
-The heading belongs to the review document rather than to the technical run header, so
+The header belongs to the review document rather than to the technical preamble, so
 [`output.header: "compact"`](../configuration/output.md#run-header-outputheader) keeps it while
-dropping the Workdir/Model/Tools preamble — on a review, this block *is* the compact header. Only
+dropping the Workdir/Model/Tools lines — on a review, this line *is* the compact header. Only
 `output.header: "none"` removes it, for a caller who is piping the review into a template of their
 own; set that deliberately, because a review posted without it is a review nobody can attribute.
 

@@ -314,10 +314,11 @@ describe('reviewModule', () => {
     expect(consoleUtilsMock.initSessionLogging).toHaveBeenCalled();
 
     // Since streamOutput is true, the model's answer is written through the STREAM channel — the
-    // only thing `display` emits on a review run is the REL-12 heading block, exactly once.
+    // only thing `display` emits on a review run is the REL-12 run header, exactly once.
     expect(consoleUtilsMock.display).toHaveBeenCalledTimes(1);
     expect(consoleUtilsMock.display).toHaveBeenCalledWith(
-      expect.stringContaining('## Gaunt Sloth: Code Review')
+      // This config resolves no model, so the label is dropped and the line ends after the command.
+      expect.stringContaining('Gaunt Sloth · review')
     );
   });
 

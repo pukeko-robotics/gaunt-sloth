@@ -611,7 +611,7 @@ it — including the line saying who reviewed this and with which model. It is n
   default, so a config that never set the key needs no edit and renders exactly what it did before.
 
 `"compact"` is the new rung, and for most people it is the one worth moving to: no preamble, and one
-line naming the command and the model — `Gaunt Sloth: ask · gemini-3.1-pro (google-genai)`. See
+line naming the command and the model — `Gaunt Sloth · ask · gemini-3.1-pro (google-genai)`. See
 [Configuration → Run header](configuration/output.md#run-header-outputheader).
 
 ## Interactive slash commands (renames)

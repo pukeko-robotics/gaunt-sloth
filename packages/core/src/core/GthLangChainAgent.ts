@@ -7,7 +7,7 @@ import {
   resolveInterruptToolNames,
   resolveShellApprovalGate,
 } from '#src/config.js';
-import { GthCommand, StatusLevel } from '#src/core/types.js';
+import { GthAgentInitOptions, GthCommand, StatusLevel } from '#src/core/types.js';
 import { GthAbstractAgent } from '#src/core/GthAbstractAgent.js';
 import { debugLog, debugLogObject } from '#src/utils/debugUtils.js';
 import { buildSystemMessages, formatToolCalls, readModePrompt } from '#src/utils/llmUtils.js';
@@ -334,9 +334,14 @@ export class GthLangChainAgent extends GthAbstractAgent {
   async init(
     command: GthCommand | undefined,
     configIn: GthConfig,
-    checkpointer?: BaseCheckpointSaver | undefined
+    checkpointer?: BaseCheckpointSaver | undefined,
+    options?: GthAgentInitOptions
   ): Promise<void> {
     this.command = command;
+    // GS2-95 — the header's name for this run, when the command supplied one. Read by
+    // `compactHeaderStatus` and by nothing else; it deliberately does NOT feed `this.command`,
+    // which selects the mode prompt.
+    this.displayCommand = options?.displayCommand;
     debugLog(`GthLangChainAgent.init called with command: ${command || 'default'}`);
 
     // Merge command-specific filesystem config if provided

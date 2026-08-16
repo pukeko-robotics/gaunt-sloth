@@ -67,8 +67,8 @@ await review('embedded-review', preamble, diff, config);
 process.exit(process.exitCode ?? 0);
 ```
 
-The review text is written to stdout, opening with a fixed `## Gaunt Sloth: Code Review` heading and
-one line naming the review mode and the model that served the run. An embedder gets that attribution
+The review text is written to stdout, opening with one `Gaunt Sloth · review · <model> (<provider>)`
+header line naming the command and the model that served the run. An embedder gets that attribution
 by default, so anything posting this output identifies its reviewer without adding a header of its
 own; `output.header: "none"` on the config you pass to `review()` is the one setting that removes
 it, for a caller piping the review into a template of their own. With rating enabled, `review()`

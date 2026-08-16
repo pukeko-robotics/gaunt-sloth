@@ -32,6 +32,19 @@ export interface SingleShotResult extends GthRunStats {
   answer: string;
 }
 
+/** Options that qualify a {@link runSingleShot} run without changing how it behaves. */
+export interface SingleShotOptions {
+  /**
+   * GS2-95 — the name of the command the USER typed, for the run header (`eval`, `batch`,
+   * `workflow`, `gth-batch`). Omit it and the header names `command`, which is right for every
+   * caller whose verb IS its name (`ask`, `exec`).
+   *
+   * It is deliberately NOT `command`: that argument selects the agent's mode prompt, so a caller
+   * that renamed itself through it would change which system prompt its runs execute under.
+   */
+  displayCommand?: string;
+}
+
 /**
  * Ask a question and get an answer from the LLM.
  *
@@ -49,6 +62,9 @@ export interface SingleShotResult extends GthRunStats {
  * @param agentFactory - Optional backend factory (B5). When omitted the runner uses its built-in
  *   lean {@link GthLangChainAgent} default. The app layer passes `resolveAgentFactory(config,
  *   'lean')`, which resolves to the same agent through the shared backend seam.
+ * @param options - GS2-95: `displayCommand` names the run in the header when the caller's own name
+ *   differs from the `command` it runs under (`gth eval` runs cases in `ask` mode). Header only —
+ *   it never reaches the mode prompt.
  * @returns A {@link SingleShotResult}: `ok` is `true` when the run completed without error, `false`
  *   when it failed (so callers such as `exec` can set a non-zero exit code); `answer`/`tokensInput`/
  *   `tokensOutput`/`tools` carry the SUT's answer text and run stats for callers that need them
@@ -70,7 +86,8 @@ export async function runSingleShot(
   config: GthConfig,
   resolvers?: AgentResolvers,
   command: GthCommand = 'ask',
-  agentFactory?: GthAgentFactory
+  agentFactory?: GthAgentFactory,
+  options?: SingleShotOptions
 ): Promise<SingleShotResult> {
   const progressIndicator = config.streamOutput ? undefined : new ProgressIndicator('Thinking.');
   try {
@@ -89,7 +106,9 @@ export async function runSingleShot(
     let responseText = '';
     const startedAt = Date.now();
     try {
-      await runner.init(command, config, new MemorySaver());
+      await runner.init(command, config, new MemorySaver(), {
+        displayCommand: options?.displayCommand,
+      });
       responseText = await runner.processMessages(messages);
     } catch (err) {
       succeeded = false;

@@ -288,15 +288,44 @@ the ready message.
   detected (floored at basic 16-colour when it detected none), and never promotes a terminal to a
   depth it did not report.
 
-## Review attribution (DL-4 transparency, DL-6 cross-surface consistency, DL-7 graceful degradation, REL-12)
+## The run header (DL-4 transparency, DL-6 cross-surface consistency, DL-7 graceful degradation, REL-12, GS2-95)
 
-`review` and `pr` open their output with a fixed heading and one attribution line:
+Every command opens with the same one-line run header, in every mode:
 
 ```text
-## Gaunt Sloth: Code Review
-
-stateless review · gemini-3.1-pro-preview (google-genai)
+Gaunt Sloth · review · gemini-3.1-pro-preview (google-genai)
+Gaunt Sloth · exec · claude-haiku-4-5 (anthropic)
 ```
+
+- **The word after the product name is the COMMAND THE USER TYPED.** Not the agent mode the run
+  executes under, and not a title-case label: `review`, not `Code Review`; `eval`, not `ask`. A
+  command that runs its work through another verb's mode prompt (`gth eval` through `ask`,
+  `gth batch` through `exec`, `gth workflow`, `gth-batch`) supplies its own name as a **display
+  label** — a field distinct from the init verb. Never rename a run by moving its init verb: that
+  argument selects the mode prompt, the approvals posture and the command-specific filesystem
+  config, so a copy fix made there silently changes what the agent does.
+- **The agent renders; the command names.** `compactHeaderStatus` (`GthAbstractAgent`) takes the
+  name it was given and never derives one. A label table inside the runtime would be the agent
+  naming a user-facing surface, which is a coordinator decision.
+- **No markdown prefix, in any mode.** The honest condition for a `##` is not "running under GitHub
+  Actions" but "this consumer renders markdown", and those differ in both directions — the Ink TUI
+  renders markdown, a GHA *job log* does not while a GHA *step summary* does. The property belongs
+  to the **sink**, and one run has several at once (TUI on screen, a posted PR comment, a session
+  log on disk), so no single flag can be right for all of them. Formatting a header does not justify
+  a per-sink capability.
+- **One line and no more.** Everything above the first line of real output pushes it down. No rule,
+  box, logo, timestamp, version, or restated repo/branch/PR.
+- **The model half is the launch banner's spelling (DL-6).** `model (provider)`, from the shared
+  `modelProviderLabel` in `@gaunt-sloth/core/core/modelLabel.js` (`launchBanner.js` re-exports it) —
+  never a second spelling of the same fact on a second surface. The line itself is assembled by the
+  shared `runHeaderLine` (`@gaunt-sloth/core/core/runHeader.js`), which is what keeps its two
+  writers from drifting.
+- **Drop rather than mislead (DL-7).** No provider — a JS config hands us an already-built model —
+  prints the bare model, with no `(unknown)` and no empty parentheses. On a review, no model drops
+  the label altogether and the line ends after the command: a provider name would sit exactly where
+  a model name sits and be read as one. Same rule the banner applies to a version that will not fit.
+
+### Where `review` and `pr` emit it
 
 - **The product emits it, never the caller (DL-4).** A review is usually read where the command that
   produced it is not visible — a pull request comment under a bot avatar, a report file attached to a
@@ -305,33 +334,18 @@ stateless review · gemini-3.1-pro-preview (google-genai)
   the terminal, the `writeOutputToFile` report, and any workflow that posts that file, with nothing
   to wire up.
 - **One emission, both surfaces (DL-6).** It goes out through `display` after `initSessionLogging`
-  and before the agent runs, so the session-log capture puts the same two lines in the report file.
-  It is the **first** thing written there: nothing may precede it, because *the review opens with the
-  attribution* is the whole rule, and a line inserted above it is the failure this exists to prevent.
-- **The heading is a constant; the mode is not in it.** `## Gaunt Sloth: Code Review` never varies —
-  its job is to be the same recognisable string to a reader who has never heard of the tool. The mode
-  (`stateless review`) lives on the attribution line, so a second review mode changes that line and
-  leaves the heading alone.
-- **Two lines and no more.** A review is read for its findings, and everything above the first
-  finding pushes that finding down. No rule, box, logo, timestamp, version, or restated
-  repo/branch/PR.
-- **The model half is the launch banner's spelling (DL-6).** `model (provider)`, from the shared
-  `modelProviderLabel` in `@gaunt-sloth/core/core/modelLabel.js` (`launchBanner.js` re-exports it) —
-  never a second spelling of the same fact on a second surface.
-- **Drop rather than mislead (DL-7).** No provider — a JS config hands us an already-built model —
-  prints the bare model, with no `(unknown)` and no empty parentheses. No model drops the label
-  altogether, leaving `stateless review` on its own: a provider name would sit exactly where a model
-  name sits and be read as one. Same rule the banner applies to a version that will not fit.
-- **It is not part of the run header — it is what the run header becomes.** `output.header:
-  "compact"` strips the technical preamble (Workdir/Model/Tools/Middleware) so captured stdout stays
-  diffable, and the attribution survives it: it is the first line of the review document, not
-  preamble, and being emitted outside the agent it is out of `headerStatus`'s reach by construction.
-  On that rung it also serves as the run's attribution, which is why `review`/`pr` are the two verbs
-  the agent emits no `Gaunt Sloth: <verb> · model (provider)` line for — a second model line beside
-  this block would say the same thing twice.
+  and before the agent runs, so the session-log capture puts the same line in the report file. It is
+  the **first** thing written there: nothing may precede it, because *the review opens with the
+  header* is the whole rule, and a line inserted above it is the failure this exists to prevent.
+- **It survives the `compact` rung.** That rung strips the technical preamble
+  (Workdir/Model/Tools/Middleware) so captured stdout stays diffable, and this line is not preamble:
+  it is the first line of the review document, and being emitted outside the agent it is out of
+  `headerStatus`'s reach by construction. It is also why `review`/`pr` are the two commands the
+  agent's own `compactHeaderStatus` stays silent for — both render the same line, so a second
+  emission would print the header twice on one screen.
 - **`output.header: "none"` drops it, and that is intended.** A caller piping a review into their own
   template needs a byte-clean stream, and the rung is opt-in: nobody loses attribution without asking
-  for it. The gate is at the emission site in `reviewModule.ts`; `reviewHeading.ts` builds the block
+  for it. The gate is at the emission site in `reviewModule.ts`; `reviewHeading.ts` builds the line
   and never decides whether it is shown.
 
 ## Tool-call panels (DL-2 progressive disclosure, DL-4 transparency)

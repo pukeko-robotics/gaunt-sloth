@@ -202,6 +202,11 @@
       "arity": 0
     },
     {
+      "name": "GthAgentInitOptions",
+      "file": "core/types.d.ts",
+      "arity": 0
+    },
+    {
       "name": "GthAgentInterface",
       "file": "core/types.d.ts",
       "arity": 0

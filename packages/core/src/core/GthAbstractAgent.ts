@@ -8,6 +8,7 @@ import {
 import {
   AgentResolvers,
   AgentStreamEvent,
+  GthAgentInitOptions,
   GthAgentInterface,
   GthCommand,
   GthCompiledGraph,
@@ -29,6 +30,7 @@ import { collectDeclaredMcpToolAnnotations } from '#src/core/approvals/toolAnnot
 import type { DebugCapture, DebugRequestExtras, LastModelRequest } from '#src/core/debugCapture.js';
 import { modelProviderLabel } from '#src/core/modelLabel.js';
 import { createPlainToolIndication } from '#src/core/plainToolIndication.js';
+import { runHeaderLine } from '#src/core/runHeader.js';
 import { debugLog, debugLogError, debugLogObject } from '#src/utils/debugUtils.js';
 import { ProgressIndicator } from '#src/utils/ProgressIndicator.js';
 import { stopWaitingForEscape, waitForEscape } from '#src/utils/systemUtils.js';
@@ -172,6 +174,19 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
   protected command: GthCommand | undefined = undefined;
 
   /**
+   * GS2-95 — the name of the command the USER typed, as the run header should say it. Set from
+   * {@link GthAgentInitOptions#displayCommand} by the backend's `init`, and read by exactly one
+   * thing: {@link compactHeaderStatus}.
+   *
+   * Separate from {@link command} because that field is not a label — it selects the mode prompt,
+   * the approvals posture and the command-specific filesystem config. Naming the header off it is
+   * why `gth eval` used to open with `ask`, and moving it to fix the header would silently change
+   * which system prompt those runs execute under. Left `undefined` by every command whose init verb
+   * IS its name, which is most of them.
+   */
+  protected displayCommand: string | undefined = undefined;
+
+  /**
    * Opt-in debug sink for the TUI `/debug` panel. Set AFTER {@link init} via
    * `runner.getAgent()`; read lazily inside each backend's `wrapModelCall` capture middleware
    * so that when it is `undefined` (the normal path) the middleware is a transparent
@@ -259,29 +274,32 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
   /**
    * GS2-93 — the `compact` rung's whole output: one line naming the command and the model that
    * served it, in place of the preamble. Called once from the backend's `init`, after the command
-   * and effective config are in place.
+   * and effective config are in place. The string is {@link runHeaderLine}'s, shared with the review
+   * document's opening line so the two writers cannot drift.
+   *
+   * **This renders; it does not decide.** The word after the product name is
+   * {@link displayCommand} when the command supplied one and the init verb otherwise — GS2-93
+   * forbids a label table inside the agent, because naming a user-facing line is the command's call,
+   * not the runtime's.
    *
    * Two runs deliberately emit nothing here:
    *
-   * - **`review` and `pr`** already open with `reviewHeadingBlock`'s attribution, which names the
-   *   same model. A line here as well would be a second model line on the same screen.
-   * - **A run with no command verb** — the `pr` command's discovery sub-agent is the one such
-   *   caller, and it runs inside a `pr` whose attribution is already on screen. The verb is what
-   *   this line names, so with no verb there is nothing to name; inventing a word for it would be
-   *   naming a user-facing surface from inside the agent.
+   * - **`review` and `pr`** already open with `reviewHeadingBlock`, which renders this same line.
+   *   Emitting here as well would print the header twice on one screen.
+   * - **A run with no name at all** — the `pr` command's discovery sub-agent is the one such
+   *   caller, and it runs inside a `pr` whose header is already on screen. The name is what this
+   *   line is for, so with none there is nothing to say; inventing a word for it would be naming a
+   *   user-facing surface from inside the agent.
    *
    * The model half is the shared {@link modelProviderLabel} spelling (DL-6), and it is dropped
-   * rather than faked when nothing resolves (DL-7), leaving the verb on its own.
+   * rather than faked when nothing resolves (DL-7), leaving the command on its own.
    */
   protected compactHeaderStatus(): void {
     if (this.headerRung !== 'compact') return;
-    const command = this.command;
+    const command = this.displayCommand ?? this.command;
     if (!command || command === 'review' || command === 'pr') return;
     const label = modelProviderLabel(this.config?.modelDisplayName, this.config?.modelProviderType);
-    this.statusUpdate(
-      StatusLevel.INFO,
-      label ? `Gaunt Sloth: ${command} · ${label}` : `Gaunt Sloth: ${command}`
-    );
+    this.statusUpdate(StatusLevel.INFO, runHeaderLine(command, label));
   }
 
   /**
@@ -398,7 +416,8 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
   abstract init(
     command: GthCommand | undefined,
     configIn: GthConfig,
-    checkpointer?: BaseCheckpointSaver | undefined
+    checkpointer?: BaseCheckpointSaver | undefined,
+    options?: GthAgentInitOptions
   ): Promise<void>;
 
   /**

@@ -415,11 +415,31 @@ export type AttackHaltCallback = (
   halt: PendingAttackHalt
 ) => Promise<AttackHaltAnswer> | AttackHaltAnswer;
 
+/**
+ * GS2-95 — options for {@link GthAgentInterface#init} that name the run without changing how it
+ * behaves.
+ */
+export interface GthAgentInitOptions {
+  /**
+   * The name of the command the USER typed, for the run header only (`eval`, `batch`, `workflow`,
+   * `gth-batch`). Supplied by the command; the agent never invents it.
+   *
+   * It is a SEPARATE input from `command` because `command` is not a label: it selects the mode
+   * prompt (`readModePrompt`), the per-command approvals posture and the command-specific
+   * filesystem config. A command that runs its work through another verb's prompt — `gth eval`
+   * through `ask`, `gth batch` through `exec` — must be able to say its own name without moving the
+   * prompt it runs under. Omitted, the header falls back to the init verb, which is the right
+   * answer for every command whose verb IS its name.
+   */
+  displayCommand?: string;
+}
+
 export interface GthAgentInterface {
   init(
     command: GthCommand | undefined,
     configIn: GthConfig,
-    checkpointSaver?: BaseCheckpointSaver | undefined
+    checkpointSaver?: BaseCheckpointSaver | undefined,
+    options?: GthAgentInitOptions
   ): Promise<void>;
 
   invoke(messages: Message[], runConfig: RunnableConfig): Promise<string>;

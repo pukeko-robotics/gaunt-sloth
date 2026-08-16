@@ -1,5 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CellResult, MatrixCell, RunCellFn } from '#src/types.js';
+import type { GthConfig } from '@gaunt-sloth/core/config.js';
+
+// The model boundary and the prompt builders, stubbed so the PRODUCTION per-cell adapter (the one
+// `runBatchCli` builds when no `runCell` is injected) can be driven with no live LLM. Every other
+// describe in this file injects its own `runCell` and never reaches any of these.
+const runSingleShot = vi.fn();
+vi.mock('@gaunt-sloth/core/runtime/singleShot.js', () => ({ runSingleShot }));
+
+const cleanupTools = vi.fn();
+const createResolvers = vi.fn(() => ({ cleanupTools }));
+vi.mock('@gaunt-sloth/agent/resolvers.js', () => ({ createResolvers }));
+
+const resolveAgentFactory = vi.fn();
+vi.mock('@gaunt-sloth/agent/core/resolveAgentFactory.js', () => ({ resolveAgentFactory }));
+
+vi.mock('@gaunt-sloth/core/utils/llmUtils.js', () => ({
+  buildSystemMessages: vi.fn(() => [{ content: 'EXEC SYSTEM PROMPT' }]),
+  readExecPrompt: vi.fn(() => 'exec-mode-prompt'),
+  wrapContent: vi.fn((content: string) => content),
+}));
 
 describe('parseArgs', () => {
   beforeEach(() => vi.resetAllMocks());
@@ -353,5 +373,38 @@ describe('runBatchCli', () => {
 
     expect(code).toBe(1);
     expect(err.join('')).toMatch(/disk full/);
+  });
+});
+
+describe('runBatchCli — the production per-cell adapter', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    createResolvers.mockReturnValue({ cleanupTools });
+    resolveAgentFactory.mockReturnValue({ factory: true });
+    runSingleShot.mockResolvedValue({ ok: true, answer: 'CELL ANSWER', tools: [] });
+  });
+
+  /**
+   * GS2-95 — the run header names `gth-batch`, the bin the user invoked, while the mode prompt
+   * stays `exec`. Asserted as a pair on purpose: moving the display name into the `command`
+   * argument to shorten the plumbing would satisfy a header assertion on its own and silently
+   * change which system prompt every pipeline cell runs under.
+   */
+  it('names the run gth-batch in the header while still running cells in exec mode', async () => {
+    const { runBatchCli } = await import('#src/pipelineCli.js');
+
+    const code = await runBatchCli(['script.md'], {
+      readScript: () => 'Do the thing',
+      readStdin: async () => '[{"n":"1"}]',
+      write: () => {},
+      logError: () => {},
+      initConfig: async () => ({ llm: {} }) as unknown as GthConfig,
+    });
+
+    expect(code).toBe(0);
+    expect(runSingleShot).toHaveBeenCalledTimes(1);
+    const [, , , , , command, , options] = runSingleShot.mock.calls[0];
+    expect(command).toBe('exec');
+    expect(options).toEqual({ displayCommand: 'gth-batch' });
   });
 });

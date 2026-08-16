@@ -171,7 +171,10 @@ export async function runWorkflow(
         cellConfig,
         resolvers,
         opts.command ?? 'ask',
-        resolveAgentFactory(cellConfig, 'lean')
+        resolveAgentFactory(cellConfig, 'lean'),
+        // GS2-95 — the header says `workflow`, whatever mode prompt the script asked for. The
+        // script's `opts.command` still selects that prompt; do not collapse these two.
+        { displayCommand: 'workflow' }
       );
       if (!ok) {
         throw new Error('agent run failed');

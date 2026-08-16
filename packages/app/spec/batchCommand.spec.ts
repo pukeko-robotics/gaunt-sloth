@@ -158,12 +158,16 @@ describe('batchCommand', () => {
     await program.parseAsync(['na', 'na', 'batch', 'script.md', '-o', outputDir]);
 
     expect(runSingleShot).toHaveBeenCalledTimes(1);
-    const [source, preamble, content, config, , command, agentFactory] =
+    const [source, preamble, content, config, , command, agentFactory, options] =
       runSingleShot.mock.calls[0];
     expect(source).toEqual('BATCH-cell-0-0');
     expect(preamble).toEqual('EXEC SYSTEM PROMPT');
     expect(content).toContain('Greet {{name}}.');
     expect(command).toEqual('exec');
+    // GS2-95 — the run header says `batch` while the mode prompt stays `exec`. These two are
+    // asserted together on purpose: "simplifying" the display name into the command argument would
+    // silently move which system prompt every batch cell runs under, and this pair is what says so.
+    expect(options).toEqual({ displayCommand: 'batch' });
     expect(config.writeOutputToFile).toBe(false);
     expect(config.canInterruptInferenceWithEsc).toBe(false);
     expect(agentFactory).toBe(resolvedFactory);

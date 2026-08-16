@@ -256,12 +256,16 @@ describe('evalCommand', () => {
     await program.parseAsync(['na', 'na', 'eval', 'suite.yaml', '-o', outputDir]);
 
     expect(runSingleShot).toHaveBeenCalledTimes(1);
-    const [source, preamble, content, config, , command, agentFactory] =
+    const [source, preamble, content, config, , command, agentFactory, options] =
       runSingleShot.mock.calls[0];
     expect(source).toEqual('EVAL-greets-politely');
     expect(preamble).toEqual('BACKSTORY\nGUIDELINES');
     expect(content).toContain('greet the user');
     expect(command).toEqual('ask');
+    // GS2-95 — the run header says `eval` while the mode prompt stays `ask`. These two are asserted
+    // together on purpose: "simplifying" the display name into the command argument would silently
+    // move which system prompt every eval case runs under, and this pair is what says so.
+    expect(options).toEqual({ displayCommand: 'eval' });
     expect(config.writeOutputToFile).toBe(false);
     expect(agentFactory).toBe(resolvedFactory);
 

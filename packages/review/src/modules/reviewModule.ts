@@ -94,15 +94,16 @@ export async function review(
     //
     // Through the ordinary `display` helper, never `headerStatus`: this is not the agent's
     // technical preamble but the first line of the review document, so it survives the `compact`
-    // rung that strips the preamble — and on that rung it IS the attribution, which is why the
-    // agent emits no `Gaunt Sloth: <verb>` line for `review`/`pr`.
+    // rung that strips the preamble — and on that rung it IS the run header, which is why the agent
+    // emits none of its own for `review`/`pr` (GS2-95: both render the same line, so a second
+    // emission would print the header twice on one screen).
     //
     // GS2-93: `none` is the one rung that reaches it, and it silences the block outright. That
     // deliberately reverses REL-12 for a user who asks for it: a caller piping a review into their
     // own template or diffing captured stdout needs a byte-clean stream, and nobody loses
     // attribution without setting this key.
     if (config.output?.header !== 'none') {
-      display(reviewHeadingBlock(config.modelDisplayName, config.modelProviderType));
+      display(reviewHeadingBlock(command, config.modelDisplayName, config.modelProviderType));
     }
 
     const rateConfig = config.commands?.[command]?.rating;

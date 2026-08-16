@@ -144,7 +144,9 @@ describe('GthAgentRunner', () => {
 
       await runner.init(undefined, mockConfig);
 
-      expect(mockAgent.init).toHaveBeenCalledWith(undefined, mockConfig, undefined);
+      expect(mockAgent.init).toHaveBeenCalledWith(undefined, mockConfig, undefined, {
+        displayCommand: undefined,
+      });
     });
 
     it('should initialize with checkpoint saver', async () => {
@@ -153,7 +155,22 @@ describe('GthAgentRunner', () => {
 
       await runner.init(undefined, mockConfig, checkpointSaver);
 
-      expect(mockAgent.init).toHaveBeenCalledWith(undefined, mockConfig, checkpointSaver);
+      expect(mockAgent.init).toHaveBeenCalledWith(undefined, mockConfig, checkpointSaver, {
+        displayCommand: undefined,
+      });
+    });
+
+    // GS2-95 — the run header's name for the run is forwarded to the agent, and it does NOT
+    // become the command: the verb the runner was initialized with is what selects the mode
+    // prompt, and it must arrive unchanged beside a display name that differs from it.
+    it('forwards the display command to the agent without touching the init verb', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+
+      await runner.init('ask', mockConfig, undefined, { displayCommand: 'eval' });
+
+      expect(mockAgent.init).toHaveBeenCalledWith('ask', mockConfig, undefined, {
+        displayCommand: 'eval',
+      });
     });
   });
 

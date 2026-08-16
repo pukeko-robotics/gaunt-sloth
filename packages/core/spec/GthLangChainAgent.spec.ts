@@ -309,14 +309,15 @@ describe('GthLangChainAgent', () => {
         expect(infoLines()).toEqual(DEBUG_PREAMBLE);
       });
 
-      // The verb is the one the run was INITIALISED with — there is no label table, so a new verb
-      // needs no wiring here. That is not always the word the user typed: a command is free to run
-      // its work through a different agent mode, and several do — for example `gth eval` inits
-      // `ask` and `gth batch` inits `exec` — so those runs open with the mode, not their own name.
+      // With no display name supplied the header falls back to the verb the run was INITIALISED
+      // with — right for every command whose verb IS its name, and there is still no label table
+      // here, so a new verb needs no wiring. A command that runs its work through another verb's
+      // mode prompt (`gth eval` inits `ask`, `gth batch` inits `exec`) supplies its own name
+      // instead; the cell below pins that, and pins that supplying one does not move the verb.
       it.each([
-        ['ask', 'Gaunt Sloth: ask · test-model (google-genai)'],
-        ['exec', 'Gaunt Sloth: exec · test-model (google-genai)'],
-        ['chat', 'Gaunt Sloth: chat · test-model (google-genai)'],
+        ['ask', 'Gaunt Sloth · ask · test-model (google-genai)'],
+        ['exec', 'Gaunt Sloth · exec · test-model (google-genai)'],
+        ['chat', 'Gaunt Sloth · chat · test-model (google-genai)'],
       ] as Array<[GthCommand, string]>)(
         'replaces the preamble with one attribution line on compact (%s)',
         async (command, expected) => {
@@ -326,6 +327,41 @@ describe('GthLangChainAgent', () => {
           await agent.init(command, headerConfig({ header: 'compact' }));
 
           expect(infoLines()).toEqual([expected]);
+        }
+      );
+
+      /**
+       * GS2-95 — the defect this node exists for, and the regression it must stay proof against.
+       *
+       * A command that runs its work through another verb's mode prompt supplies its own NAME, and
+       * the two halves are asserted together on purpose: the header says `eval`, and the prompt the
+       * run executes under is still `ask`'s. Splitting these into separate cells would let the
+       * "simplification" this node forbids — moving the name into the init verb to shorten the
+       * plumbing — pass one of them, and that change is a silent switch of system prompt dressed up
+       * as a copy fix.
+       */
+      it.each([
+        ['ask', 'eval'],
+        ['exec', 'batch'],
+      ] as Array<[GthCommand, string]>)(
+        'names the command the user typed (%s run, displayed as %s) without moving the mode prompt',
+        async (command, displayCommand) => {
+          const agent = new GthLangChainAgent(statusUpdateCallback);
+          mcpClientInstanceMock.getTools.mockResolvedValue([]);
+
+          await agent.init(command, headerConfig({ header: 'compact' }), undefined, {
+            displayCommand,
+          });
+
+          expect(infoLines()).toEqual([
+            `Gaunt Sloth · ${displayCommand} · test-model (google-genai)`,
+          ]);
+          // `readModePrompt` is THE seam that selects which mode prompt the run executes under, and
+          // it is asked for the INIT VERB. Both directions are asserted: moving the display name
+          // into the init verb to shorten the plumbing would satisfy the header assertion above and
+          // fail here, which is exactly the substitution this node forbids.
+          expect(readModePromptMock).toHaveBeenCalledWith(command, expect.anything());
+          expect(readModePromptMock).not.toHaveBeenCalledWith(displayCommand, expect.anything());
         }
       );
 
@@ -348,7 +384,7 @@ describe('GthLangChainAgent', () => {
         await agent.init('code', headerConfig({ header: 'compact' }));
 
         expect(infoLines()).toEqual([
-          'Gaunt Sloth: code · test-model (google-genai)',
+          'Gaunt Sloth · code · test-model (google-genai)',
           CODE_APPROVALS_NOTICE,
         ]);
       });
@@ -401,7 +437,7 @@ describe('GthLangChainAgent', () => {
           modelProviderType: undefined,
         } as unknown as GthConfig);
 
-        expect(infoLines()).toEqual(['Gaunt Sloth: ask']);
+        expect(infoLines()).toEqual(['Gaunt Sloth · ask']);
       });
 
       /**
@@ -435,7 +471,7 @@ describe('GthLangChainAgent', () => {
 
       // …and it is preamble, so the quieter rungs must not leak it.
       it.each([
-        [{ header: 'compact' } as const, ['Gaunt Sloth: ask · test-model (google-genai)']],
+        [{ header: 'compact' } as const, ['Gaunt Sloth · ask · test-model (google-genai)']],
         [{ header: 'none' } as const, []],
       ])('drops the empty-allow-list preamble line on %o', async (output, expected) => {
         const agent = new GthLangChainAgent(statusUpdateCallback);

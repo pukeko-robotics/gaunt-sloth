@@ -56,10 +56,13 @@ vi.mock('@gaunt-sloth/core/utils/systemUtils.js', async () => {
   };
 });
 
-const HEADING = '## Gaunt Sloth: Code Review';
+/** The ruled run header for a command, at the model this file's config resolves. */
+const headingFor = (command: 'pr' | 'review'): string =>
+  `Gaunt Sloth · ${command} · gemini-3.1-pro-preview (google-genai)`;
 
-/** How many of `lines` contain the heading — the count is what proves "exactly once". */
-const headingCount = (lines: string[]): number => lines.filter((l) => l.includes(HEADING)).length;
+/** How many of `lines` contain the header — the count is what proves "exactly once". */
+const headingCount = (lines: string[], command: 'pr' | 'review' = 'review'): number =>
+  lines.filter((l) => l.includes(headingFor(command))).length;
 
 describe('REL-12 — the review heading reaches the terminal and the output file', () => {
   let review: typeof import('#src/modules/reviewModule.js').review;
@@ -109,19 +112,19 @@ describe('REL-12 — the review heading reaches the terminal and the output file
    * leaves the whole suite green and puts an advisory at the top of the posted PR comment; this is
    * what notices.
    */
-  const expectHeadingOpensBothSurfaces = (): void => {
-    expect(headingCount(terminalLines())).toBe(1);
-    expect(headingCount(reportLines())).toBe(1);
+  const expectHeadingOpensBothSurfaces = (command: 'pr' | 'review' = 'review'): void => {
+    expect(headingCount(terminalLines(), command)).toBe(1);
+    expect(headingCount(reportLines(), command)).toBe(1);
     expect(
       reportLines()[0],
       'the review must OPEN with the attribution (REL-12 acceptance 1) — if you added a line above the emission, move it below rather than relaxing this'
-    ).toContain(HEADING);
+    ).toContain(headingFor(command));
     // The terminal half pins the first `console.log` write, NOT the first thing on the user's
     // screen: `ProgressIndicator` writes straight to stdout without a newline, so a real
-    // `streamOutput: false` run shows `Reviewing.## Gaunt Sloth: Code Review`. That collision is
+    // `streamOutput: false` run shows `Reviewing.Gaunt Sloth · review · …`. That collision is
     // reported separately and is not this spec's to assert away — if it is ever fixed by routing
     // the indicator through `display`, this line reddens on the fix and should move, not relax.
-    expect(terminalLines()[0]).toContain(HEADING);
+    expect(terminalLines()[0]).toContain(headingFor(command));
   };
 
   beforeEach(async () => {
@@ -153,7 +156,7 @@ describe('REL-12 — the review heading reaches the terminal and the output file
     ['review', {}],
     ['pr', { commands: { pr: { contentSource: 'github' } } }],
   ] as Array<['review' | 'pr', Partial<GthConfig>]>)(
-    'opens %s with the heading and the attribution on the terminal and in the report',
+    'opens %s with the ruled run header on the terminal and in the report',
     async (command, commandConfig) => {
       await review(
         command,
@@ -163,25 +166,26 @@ describe('REL-12 — the review heading reaches the terminal and the output file
         command
       );
 
-      expectHeadingOpensBothSurfaces();
+      expectHeadingOpensBothSurfaces(command);
+      // GS2-95 — the header names the command the user typed, so `pr` says `pr`.
       expect(reportLines().join('')).toContain(
-        'stateless review · gemini-3.1-pro-preview (google-genai)'
+        `Gaunt Sloth · ${command} · gemini-3.1-pro-preview (google-genai)`
       );
       // Emitted before the agent ran. Located by CONTENT here, because this half is about ORDER
       // relative to the run, and reading it off an index would make it depend on the assertion above.
-      const headingAt = reportLines().findIndex((line) => line.includes(HEADING));
+      const headingAt = reportLines().findIndex((line) => line.includes(headingFor(command)));
       expect(writeToLogStreamMock.mock.invocationCallOrder[headingAt]).toBeLessThan(
         leanAgent.invoke.mock.invocationCallOrder[0]
       );
     }
   );
 
-  it('still shows the heading on the compact run-header rung', async () => {
+  it('still shows the header on the compact run-header rung', async () => {
     // GS2-93's `compact` rung strips the agent's technical preamble (Workdir/Model/Tools/
     // Middleware) so captured stdout stays diffable — proven in
-    // `packages/core/spec/GthLangChainAgent.spec.ts`. The Gaunt Sloth heading is not preamble: it is
-    // the first line of the review document, and on this rung it IS the run's attribution, which is
-    // why the agent emits no second `Gaunt Sloth: <verb>` line for review/pr.
+    // `packages/core/spec/GthLangChainAgent.spec.ts`. The Gaunt Sloth header is not preamble: it is
+    // the first line of the review document, and on this rung it IS the run header — which is why
+    // the agent emits none of its own for review/pr, and why "exactly once" is the assertion.
     await review(
       'review',
       '',
@@ -193,14 +197,14 @@ describe('REL-12 — the review heading reaches the terminal and the output file
     expectHeadingOpensBothSurfaces();
   });
 
-  // GS2-93 — `none` is the one rung that reaches the attribution, and it takes the WHOLE block:
-  // heading and line, terminal and report. The report half is the load-bearing one, because that is
-  // the stream a caller pipes into their own template or diffs.
+  // GS2-93 — `none` is the one rung that reaches the header, and it takes the WHOLE line, terminal
+  // and report. The report half is the load-bearing one, because that is the stream a caller pipes
+  // into their own template or diffs.
   it.each([
     ['review', {}],
     ['pr', { commands: { pr: { contentSource: 'github' } } }],
   ] as Array<['review' | 'pr', Partial<GthConfig>]>)(
-    'drops the whole attribution block on the none rung (%s), on both surfaces',
+    'drops the whole header on the none rung (%s), on both surfaces',
     async (command, commandConfig) => {
       await review(
         command,
@@ -214,10 +218,10 @@ describe('REL-12 — the review heading reaches the terminal and the output file
         command
       );
 
-      expect(headingCount(terminalLines())).toBe(0);
-      expect(headingCount(reportLines())).toBe(0);
-      expect(terminalLines().join('')).not.toContain('stateless review');
-      expect(reportLines().join('')).not.toContain('stateless review');
+      expect(headingCount(terminalLines(), command)).toBe(0);
+      expect(headingCount(reportLines(), command)).toBe(0);
+      expect(terminalLines().join('')).not.toContain('Gaunt Sloth');
+      expect(reportLines().join('')).not.toContain('Gaunt Sloth');
     }
   );
 

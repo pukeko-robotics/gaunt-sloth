@@ -219,6 +219,17 @@ export interface GthAgentRunnerInitOptions {
    * Nothing but the wording of a notice reads this.
    */
   owningCommand?: GthCommand;
+
+  /**
+   * GS2-95 — the name of the command the USER typed, for the run header only (`eval`, `batch`,
+   * `workflow`, `gth-batch`). Forwarded verbatim to the agent's own `displayCommand` init option;
+   * the runner reads nothing from it.
+   *
+   * Separate from `command` for the same reason `owningCommand` is, and a distinct field from it:
+   * `owningCommand` says which verb a command-less helper agent serves, this says what to CALL a
+   * run that does have a verb but does not go by its name.
+   */
+  displayCommand?: string;
 }
 
 /**
@@ -700,7 +711,9 @@ export class GthAgentRunner {
 
     // Initialize the agent
     debugLog('Initializing agent...');
-    await this.agent.init(command, configIn, checkpointSaver);
+    await this.agent.init(command, configIn, checkpointSaver, {
+      displayCommand: options?.displayCommand,
+    });
 
     debugLog('Agent initialization complete');
   }
