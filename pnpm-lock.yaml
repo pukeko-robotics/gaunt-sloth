@@ -157,8 +157,8 @@ importers:
         specifier: ^1.1.6
         version: 1.1.6(@langchain/core@1.2.5(openai@6.49.0(ws@8.21.3)(zod@4.4.3))(ws@8.21.3))(ws@8.21.3)
       '@langchain/google':
-        specifier: ^0.2.1
-        version: 0.2.1(@langchain/core@1.2.5(openai@6.49.0(ws@8.21.3)(zod@4.4.3))(ws@8.21.3))
+        specifier: ^0.2.2
+        version: 0.2.2(@langchain/core@1.2.5(openai@6.49.0(ws@8.21.3)(zod@4.4.3))(ws@8.21.3))
       '@langchain/groq':
         specifier: ^1.3.1
         version: 1.3.1(@langchain/core@1.2.5(openai@6.49.0(ws@8.21.3)(zod@4.4.3))(ws@8.21.3))
@@ -561,6 +561,12 @@ packages:
 
   '@langchain/google@0.2.1':
     resolution: {integrity: sha512-9WrE2wnb4mNwK4deGQZDCHdwd5E84rlIu1tHGStI61MqOWnGJe2KApAeG+49kVya+aG0k71LrvtNxoJcOgXP4g==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      '@langchain/core': ^1.2.1
+
+  '@langchain/google@0.2.2':
+    resolution: {integrity: sha512-IRsclnfAAolYYkOx3QmwlYWgz1XcP1yDSPR1D469RfQBfYWWJH9ZHvfPsbmeZmCra6WxAxsu+cWkGeeREn5pHQ==}
     engines: {node: '>=20'}
     peerDependencies:
       '@langchain/core': ^1.2.1
@@ -3107,6 +3113,15 @@ snapshots:
       - ws
 
   '@langchain/google@0.2.1(@langchain/core@1.2.5(openai@6.49.0(ws@8.21.3)(zod@4.4.3))(ws@8.21.3))':
+    dependencies:
+      '@langchain/core': 1.2.5(openai@6.49.0(ws@8.21.3)(zod@4.4.3))(ws@8.21.3)
+      eventsource-parser: 3.1.1
+      google-auth-library: 10.9.1
+      jose: 6.2.8
+    transitivePeerDependencies:
+      - supports-color
+
+  '@langchain/google@0.2.2(@langchain/core@1.2.5(openai@6.49.0(ws@8.21.3)(zod@4.4.3))(ws@8.21.3))':
     dependencies:
       '@langchain/core': 1.2.5(openai@6.49.0(ws@8.21.3)(zod@4.4.3))(ws@8.21.3)
       eventsource-parser: 3.1.1

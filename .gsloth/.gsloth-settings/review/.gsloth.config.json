@@ -1,7 +1,8 @@
 {
   "llm": {
     "type": "google-genai",
-    "model": "gemini-3.1-pro-preview"
+    "thinkingLevel": "high",
+    "model": "gemini-3.7-flash"
   },
   "filesystem": "none",
   "useColour": false,
