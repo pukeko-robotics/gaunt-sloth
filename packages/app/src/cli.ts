@@ -41,6 +41,7 @@ program
       'Consider using debugLog from config.ts for less intrusive debug logging.'
   )
   .option('-c, --config <path>', 'Path to custom configuration file')
+  .option('-g, --global', 'Run with global configuration, bypassing project-level config')
   .option('-i, --identity-profile <identity>', 'Identity profile (separate config and prompts)')
   .option(
     '--profile <name>',
@@ -75,6 +76,9 @@ if (program.getOptionValue('verbose')) {
 if (program.getOptionValue('config')) {
   // Set a custom config path
   cliConfigOverrides.customConfigPath = program.getOptionValue('config');
+}
+if (program.getOptionValue('global')) {
+  cliConfigOverrides.global = true;
 }
 // `--profile` (GS2-33) is the friendly alias of `-i/--identity-profile`: both select a named profile
 // block (`.gsloth/.gsloth-settings/<name>/`). If BOTH are given and disagree, that is a mistake worth

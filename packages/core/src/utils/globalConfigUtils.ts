@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { homedir } from 'node:os';
-import { GSLOTH_DIR, GSLOTH_AUTH } from '#src/constants.js';
+import { GSLOTH_DIR, GSLOTH_SETTINGS_DIR, GSLOTH_AUTH } from '#src/constants.js';
 
 /**
  * Gets the global .gsloth directory path in the user's home directory
@@ -28,16 +28,26 @@ export function ensureGlobalGslothDir(): string {
 
 /**
  * Gets the read path for a global gsloth config file (e.g. `.gsloth.config.json`)
- * inside the global `~/.gsloth` directory. Reuses the same global folder as MCP auth.
+ * inside the global `~/.gsloth` directory (or `~/.gsloth/.gsloth-settings/<identityProfile>/`).
+ * Reuses the same global folder as MCP auth.
  *
  * This is a plain path resolver: it does NOT check for existence and does NOT create
  * the directory. Callers should guard with `existsSync` before reading.
  *
  * @param filename The configuration filename (e.g. `.gsloth.config.json`)
+ * @param identityProfileRaw Optional identity profile subdirectory name within `.gsloth-settings`
  * @returns The resolved path where the global configuration file would live
  */
-export function getGlobalGslothConfigReadPath(filename: string): string {
-  return resolve(getGlobalGslothDir(), filename);
+export function getGlobalGslothConfigReadPath(
+  filename: string,
+  identityProfileRaw?: string
+): string {
+  const globalDir = getGlobalGslothDir();
+  const identityProfile = identityProfileRaw?.trim();
+  if (identityProfile) {
+    return resolve(globalDir, GSLOTH_SETTINGS_DIR, identityProfile, filename);
+  }
+  return resolve(globalDir, filename);
 }
 
 /**
