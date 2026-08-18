@@ -1833,14 +1833,10 @@ export async function validateConfig(
       ...validateRawGthConfig(globalRaw.raw, validationOptions),
     };
 
-    if (
-      commandLineConfigOverrides.global &&
-      layer.ok &&
-      typeof globalRaw.raw.extends === 'string'
-    ) {
+    if (layer.ok && typeof globalRaw.raw.extends === 'string') {
       try {
         await composeExtends(globalRaw.raw, commandLineConfigOverrides.identityProfile, {
-          globalOnly: true,
+          globalOnly: commandLineConfigOverrides.global,
         });
       } catch (e) {
         if (e instanceof ConfigExtendsError || isConfigDiscoveryError(e)) {
