@@ -10,8 +10,14 @@ import {
   getGlobalGslothConfigWritePath,
   getGlobalGslothDir,
   getOAuthStoragePath,
+  resolveGlobalConfigPath,
 } from '#src/utils/globalConfigUtils.js';
-import { GSLOTH_AUTH, GSLOTH_DIR, USER_PROJECT_CONFIG_JSON } from '#src/constants.js';
+import {
+  GSLOTH_AUTH,
+  GSLOTH_DIR,
+  GSLOTH_SETTINGS_DIR,
+  USER_PROJECT_CONFIG_JSON,
+} from '#src/constants.js';
 
 vi.mock('node:fs');
 vi.mock('node:os');
@@ -64,6 +70,36 @@ describe('globalConfigUtils', () => {
     it('should not create the directory (read-only resolver)', () => {
       getGlobalGslothConfigReadPath(USER_PROJECT_CONFIG_JSON);
       expect(mkdirSync).not.toHaveBeenCalled();
+    });
+
+    it('should resolve under .gsloth-settings/<profile>/ when an identity profile is named', () => {
+      const result = getGlobalGslothConfigReadPath(USER_PROJECT_CONFIG_JSON, 'sec');
+      expect(result).toBe(
+        resolve(mockHomeDir, GSLOTH_DIR, GSLOTH_SETTINGS_DIR, 'sec', USER_PROJECT_CONFIG_JSON)
+      );
+    });
+
+    it('should treat a blank identity profile as no profile', () => {
+      expect(getGlobalGslothConfigReadPath(USER_PROJECT_CONFIG_JSON, '   ')).toBe(
+        resolve(mockHomeDir, GSLOTH_DIR, USER_PROJECT_CONFIG_JSON)
+      );
+    });
+
+    it('should trim a padded identity profile name', () => {
+      expect(getGlobalGslothConfigReadPath(USER_PROJECT_CONFIG_JSON, ' sec ')).toBe(
+        resolve(mockHomeDir, GSLOTH_DIR, GSLOTH_SETTINGS_DIR, 'sec', USER_PROJECT_CONFIG_JSON)
+      );
+    });
+  });
+
+  describe('resolveGlobalConfigPath', () => {
+    it('should compose against an arbitrary global dir, with and without a profile', () => {
+      expect(resolveGlobalConfigPath('/elsewhere', USER_PROJECT_CONFIG_JSON)).toBe(
+        resolve('/elsewhere', USER_PROJECT_CONFIG_JSON)
+      );
+      expect(resolveGlobalConfigPath('/elsewhere', USER_PROJECT_CONFIG_JSON, 'sec')).toBe(
+        resolve('/elsewhere', GSLOTH_SETTINGS_DIR, 'sec', USER_PROJECT_CONFIG_JSON)
+      );
     });
   });
 

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
+import { resolve, sep } from 'node:path';
 import { isConfigDiscoveryError } from '#src/config/configDiscovery.js';
 
 const consoleUtilsMock = {
@@ -32,38 +32,30 @@ vi.mock('#src/utils/systemUtils.js', async (importOriginal) => {
   };
 });
 
-// Override getGlobalGslothDir and getGlobalGslothConfigReadPath to a dedicated temp global dir.
-const globalDirMock = {
-  dir: '',
-};
-vi.mock('#src/utils/globalConfigUtils.js', async () => {
-  const actual = await vi.importActual<typeof import('#src/utils/globalConfigUtils.js')>(
-    '#src/utils/globalConfigUtils.js'
-  );
-  return {
-    ...actual,
-    getGlobalGslothDir: () => globalDirMock.dir,
-    getGlobalGslothConfigReadPath: (filename: string, identityProfile?: string) => {
-      const p = identityProfile?.trim();
-      if (p) {
-        return resolve(globalDirMock.dir, '.gsloth-settings', p, filename);
-      }
-      return resolve(globalDirMock.dir, filename);
-    },
-  };
+// The home dir is the ONLY seam faked here, so `getGlobalGslothDir` and
+// `getGlobalGslothConfigReadPath` run for real — including the `.gsloth-settings/<profile>/`
+// segment this node adds. Faking the resolver instead would test a reimplementation of that rule
+// and could not tell the profile-scoped lookup from the plain one.
+const homeDirMock = { dir: '' };
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>();
+  return { ...actual, homedir: () => homeDirMock.dir };
 });
 
 describe('CFG-56: -g / --global flag (bypass project config)', () => {
   let projectRoot: string;
+  let homeRoot: string;
   let globalRoot: string;
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockProjectDir = undefined;
     projectRoot = mkdtempSync(resolve(tmpdir(), 'gsloth-project-'));
-    globalRoot = mkdtempSync(resolve(tmpdir(), 'gsloth-global-'));
+    homeRoot = mkdtempSync(resolve(tmpdir(), 'gsloth-home-'));
     mockCwd = projectRoot;
-    globalDirMock.dir = globalRoot;
+    homeDirMock.dir = homeRoot;
+    globalRoot = resolve(homeRoot, '.gsloth');
+    mkdirSync(globalRoot, { recursive: true });
 
     mkdirSync(resolve(projectRoot, '.git'), { recursive: true });
 
@@ -78,7 +70,7 @@ describe('CFG-56: -g / --global flag (bypass project config)', () => {
 
   afterEach(() => {
     rmSync(projectRoot, { recursive: true, force: true });
-    rmSync(globalRoot, { recursive: true, force: true });
+    rmSync(homeRoot, { recursive: true, force: true });
   });
 
   const writeProjectConfig = (
@@ -205,6 +197,17 @@ describe('CFG-56: -g / --global flag (bypass project config)', () => {
     expect((error as Error).message).toContain('identity profile "project-only" not found');
   });
 
+  it('names the global profile dir with real path separators when a profile is missing', async () => {
+    const { initConfig } = await import('#src/config/loader.js');
+
+    const error = await initConfig({ global: true, identityProfile: 'ghost' }).catch(
+      (e: unknown) => e
+    );
+    expect((error as Error).message).toContain(
+      `${resolve(globalRoot, '.gsloth-settings', 'ghost')}${sep}`
+    );
+  });
+
   it('throws ConfigDiscoveryError when global config does not exist and global is true', async () => {
     writeProjectConfig({ llm: { type: 'vertexai', model: 'project-model' } });
 
@@ -243,5 +246,113 @@ describe('CFG-56: -g / --global flag (bypass project config)', () => {
 
     expect(await loadConfiguredTui({})).toBe(false);
     expect(await loadConfiguredTui({ global: true })).toBe(true);
+  });
+
+  /**
+   * The global layer is profile-scoped ONLY under `--global`. Without it, `-i <name>` selects a
+   * PROJECT directory and the global layer stays the plain `~/.gsloth/.gsloth.config.*` — which is
+   * what a run loads (`applyGlobalConfigBase` reads it with no profile). Every reader that scoped
+   * the global lookup by the profile alone made `-i` runs diverge from the run they describe.
+   */
+  describe('the global layer stays unscoped for an -i run without --global', () => {
+    it('validateConfig(-i) still validates the plain global layer', async () => {
+      writeProjectProfileConfig('reviewer', { llm: { type: 'vertexai', model: 'reviewer' } });
+      writeGlobalConfig({ llm: { type: 'vertexai' }, streamOutput: 'yes' });
+
+      const { validateConfig } = await import('#src/config/loader.js');
+
+      const report = await validateConfig({ identityProfile: 'reviewer' });
+      expect(report.layers).toHaveLength(2);
+      expect(report.layers.map((l) => l.sourceLabel)).toContain('.gsloth.config.json (global)');
+      // The run dies on this same file, so the validator must not report the config as valid.
+      expect(report.ok).toBe(false);
+    });
+
+    it('loadConfiguredTui(-i) inherits tui from the plain global config', async () => {
+      writeProjectProfileConfig('reviewer', { llm: { type: 'vertexai', model: 'reviewer' } });
+      writeGlobalConfig({ llm: { type: 'vertexai' }, tui: true });
+
+      const { loadConfiguredTui } = await import('#src/config/loader.js');
+
+      expect(await loadConfiguredTui({ identityProfile: 'reviewer' })).toBe(true);
+    });
+
+    it('hasAnyConfig(-i) sees a plain global config', async () => {
+      writeGlobalConfig({ llm: { type: 'vertexai' } });
+
+      const { hasAnyConfig } = await import('#src/config/loader.js');
+
+      expect(await hasAnyConfig({ identityProfile: 'reviewer' })).toBe(true);
+    });
+  });
+
+  describe("the global layer's extends is walked exactly where a run walks it", () => {
+    it('is not walked when a project config exists', async () => {
+      // With a project config the run underlays the RAW global config (applyGlobalConfigBase) and
+      // never resolves its `extends`, so a base that resolves nowhere cannot fail that run.
+      writeProjectConfig({ llm: { type: 'vertexai', model: 'project-model' } });
+      writeGlobalConfig({ llm: { type: 'vertexai' }, extends: 'nowhere' });
+
+      const { validateConfig } = await import('#src/config/loader.js');
+
+      const report = await validateConfig({});
+      expect(report.ok).toBe(true);
+    });
+
+    it('is walked when the global config is the only layer', async () => {
+      // No project config: the run loads the global config and DOES resolve its `extends`, so an
+      // unresolvable base is a real failure the validator must report.
+      writeGlobalConfig({ llm: { type: 'vertexai' }, extends: 'nowhere' });
+
+      const { validateConfig } = await import('#src/config/loader.js');
+
+      const report = await validateConfig({});
+      expect(report.ok).toBe(false);
+      expect(report.layers[0].errorMessage).toContain('nowhere');
+    });
+  });
+
+  /**
+   * The `approvals.rater` existence check runs on the LAYER, so it must resolve the named profile
+   * in that layer's scope. Under `--global` that is `~/.gsloth/.gsloth-settings/` — the same scope
+   * `gth -g config validate` reports on.
+   */
+  describe('approvals.rater resolves in the scope of the run', () => {
+    it('accepts a rater profile that exists globally', async () => {
+      writeGlobalProfileConfig('safety', { llm: { type: 'vertexai', model: 'safety-model' } });
+      writeGlobalConfig({
+        llm: { type: 'vertexai', model: 'global-model' },
+        approvals: { rater: 'safety' },
+      });
+
+      const { initConfig, validateConfig } = await import('#src/config/loader.js');
+
+      const report = await validateConfig({ global: true });
+      expect(report.ok).toBe(true);
+
+      const resolved = await initConfig({ global: true });
+      expect(resolved.modelDisplayName).toBe('global-model');
+    });
+
+    it('rejects a rater profile that exists only in the project', async () => {
+      writeProjectProfileConfig('safety', { llm: { type: 'vertexai', model: 'project-safety' } });
+      writeGlobalConfig({
+        llm: { type: 'vertexai', model: 'global-model' },
+        approvals: { rater: 'safety' },
+      });
+
+      const { initConfig, validateConfig } = await import('#src/config/loader.js');
+
+      const report = await validateConfig({ global: true });
+      expect(report.ok).toBe(false);
+
+      const error = await initConfig({ global: true }).catch((e: unknown) => e);
+      expect(isConfigDiscoveryError(error)).toBe(true);
+      expect((error as Error).message).toContain('identity profile "safety" not found');
+      // The message must name the directory that was actually searched, not the project one.
+      expect((error as Error).message).toContain(
+        `${resolve(globalRoot, '.gsloth-settings', 'safety')}${sep}`
+      );
+    });
   });
 });

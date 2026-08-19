@@ -1721,10 +1721,14 @@ export function findApprovalsRaterProfiles(raw: Record<string, unknown>): RaterP
  * loader (which hard-exits a real run) and {@link validateRawGthConfig} (which backs
  * `gth config validate`), so the validator can never green-light a config the runtime refuses.
  */
-export function unresolvedRaterProfileMessage(ref: RaterProfileRef): string {
+export function unresolvedRaterProfileMessage(ref: RaterProfileRef, searchedDir?: string): string {
+  // `searchedDir` is what the CALLER actually looked in. It is a parameter rather than a constant
+  // because a `--global` run searches `~/.gsloth/.gsloth-settings/<name>/`, and this module knows
+  // nothing of the filesystem; naming the project dir there would send the user to the wrong place.
+  const dir = searchedDir ?? `${GSLOTH_DIR}/${GSLOTH_SETTINGS_DIR}/${ref.profile}/`;
   return (
     `identity profile "${ref.profile}" not found ` +
-    `(checked ${GSLOTH_DIR}/${GSLOTH_SETTINGS_DIR}/${ref.profile}/). ` +
+    `(checked ${dir}). ` +
     'Create it with `gth config profile create`, or omit approvals.rater to rate ' +
     'with the main model.'
   );
@@ -1761,6 +1765,12 @@ export interface RawConfigValidationOptions {
    * `approvals.rater.profile` existence check.
    */
   resolveProfile?: (profile: string) => boolean;
+  /**
+   * Renders the directory {@link resolveProfile} searched, for the failure message. Supplied by the
+   * loader, which alone knows whether this layer's profiles resolve in the project tree or under
+   * `~/.gsloth`; `undefined` (from the hook or the field) means the project location.
+   */
+  describeProfileDir?: (profile: string) => string | undefined;
 }
 
 export interface RawConfigValidationResult {
@@ -1843,7 +1853,10 @@ export function validateRawGthConfig(
         ok: false,
         warnings,
         errorMessage: formatIssueLines(
-          unresolved.map((ref) => ({ path: ref.path, message: unresolvedRaterProfileMessage(ref) }))
+          unresolved.map((ref) => ({
+            path: ref.path,
+            message: unresolvedRaterProfileMessage(ref, options.describeProfileDir?.(ref.profile)),
+          }))
         ),
       };
     }

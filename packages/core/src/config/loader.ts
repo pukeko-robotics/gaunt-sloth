@@ -52,7 +52,7 @@ import { resolveUseMouse } from '#src/config/mouse.js';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, resolve } from 'node:path';
+import { dirname, resolve, sep } from 'node:path';
 import { DEFAULT_CONFIG } from '#src/config/defaults.js';
 import type {
   CommandLineConfigOverrides,
@@ -61,6 +61,44 @@ import type {
   LLMConfig,
   RawGthConfig,
 } from '#src/config/types.js';
+
+/**
+ * CFG-56 — where a profile NAMED FROM INSIDE a config layer (`extends`, `approvals.rater.profile`)
+ * is allowed to resolve. `globalOnly` restricts the lookup to
+ * `~/.gsloth/.gsloth-settings/<name>/`, which is what a `--global` run must do: resolving such a
+ * name up-tree would readmit the project config that `--global` exists to bypass. Absent/false
+ * keeps the ordinary up-tree project walk.
+ *
+ * Spelled inline (not by this name) in the module's EXPORTED signatures, so the package's public
+ * type surface gains no name for what is an internal scoping detail.
+ */
+interface ProfileScopeOptions {
+  globalOnly?: boolean;
+}
+
+/**
+ * CFG-56 — the identity profile the GLOBAL layer is read under, which is NOT simply
+ * `identityProfile`: only a `--global` run relocates the global layer into
+ * `~/.gsloth/.gsloth-settings/<name>/`. Without `--global`, `-i <name>` selects a PROJECT-layer
+ * directory and the global layer stays the plain `~/.gsloth/.gsloth.config.*` — which is exactly
+ * what a run does ({@link applyGlobalConfigBase} reads it with no profile). Every reader of the
+ * global layer goes through this so the diagnostics (`gth config validate`, the `tui` reader,
+ * first-run detection) cannot scope it differently from the run.
+ */
+function globalLayerProfile(
+  commandLineConfigOverrides: CommandLineConfigOverrides
+): string | undefined {
+  return commandLineConfigOverrides.global ? commandLineConfigOverrides.identityProfile : undefined;
+}
+
+/**
+ * The `~/.gsloth/.gsloth-settings/<profile>/` directory as shown to a user in an error message or
+ * a layer label. Composed with the path helpers, so a Windows home dir does not surface as a
+ * mixed-separator `C:\Users\x\.gsloth/.gsloth-settings/sec/`.
+ */
+function globalProfileDirLabel(profile: string): string {
+  return `${resolve(getGlobalGslothDir(), GSLOTH_SETTINGS_DIR, profile)}${sep}`;
+}
 
 /**
  * Validate (and normalize) a freshly loaded raw config layer (global or project)
@@ -97,9 +135,14 @@ import type {
  *
  * @param raw The freshly loaded config layer (read-only here).
  * @param sourceLabel Human-readable source name for messages (e.g. the filename).
+ * @param options Profile-resolution scope for this layer — see {@link ProfileScopeOptions}.
  * @throws ConfigDiscoveryError when the layer carries a hard configuration error.
  */
-function validateRawConfigLayer<T extends Record<string, unknown>>(raw: T, sourceLabel: string): T {
+function validateRawConfigLayer<T extends Record<string, unknown>>(
+  raw: T,
+  sourceLabel: string,
+  options?: ProfileScopeOptions
+): T {
   // Only an object config can carry deprecated/unknown keys; a null/array/primitive config skips
   // the scans (they'd throw a raw TypeError) and falls to safeParse, which emits a clean
   // "expected object" error + exit — never a coercion to {} (which would wrongly pass).
@@ -146,12 +189,21 @@ function validateRawConfigLayer<T extends Record<string, unknown>>(raw: T, sourc
   // resolve to a real profile config is a hard error, never a silent fallback to the main model.
   // Checked HERE rather than in the zod schema on purpose — resolution needs the filesystem and
   // `schema.ts` must stay pure (it also feeds `z.toJSONSchema`).
+  //
+  // CFG-56 — the resolution SCOPE travels with the layer. Under `--global` a rater profile must
+  // resolve under `~/.gsloth/.gsloth-settings/`, exactly as `validateConfig`'s `resolveProfile`
+  // hook resolves it: an unscoped check here would accept a project profile in a run whose whole
+  // purpose is to bypass project config, and reject a global one that `gth -g config validate`
+  // just called valid.
   if (isRecordConfig(raw)) {
     for (const ref of findApprovalsRaterProfiles(raw)) {
-      if (!resolveIdentityProfileConfigPath(ref.profile)) {
+      if (!resolveIdentityProfileConfigPath(ref.profile, options)) {
         throw new ConfigDiscoveryError(
           `Invalid configuration in ${sourceLabel}:\n` +
-            `  - ${ref.path}: ${unresolvedRaterProfileMessage(ref)}`,
+            `  - ${ref.path}: ${unresolvedRaterProfileMessage(
+              ref,
+              options?.globalOnly ? globalProfileDirLabel(ref.profile) : undefined
+            )}`,
           { sourceLabel, identityProfile: ref.profile }
         );
       }
@@ -328,6 +380,8 @@ export function findProjectConfigPath(
  * as "no profile" → `undefined`.
  *
  * @param identityProfile The explicitly-requested identity profile name.
+ * @param options CFG-56 — `globalOnly` searches `~/.gsloth/.gsloth-settings/<name>/` INSTEAD of
+ * the up-tree project walk, for a `--global` run.
  * @returns The resolved profile config path, or `undefined` when the profile has no config.
  */
 export function resolveIdentityProfileConfigPath(
@@ -390,7 +444,7 @@ function findUnresolvedExplicitProfile(
 /** The message both paths report for {@link findUnresolvedExplicitProfile}'s failure. */
 function identityProfileNotFoundMessage(profile: string, isGlobal = false): string {
   const base = isGlobal
-    ? `${getGlobalGslothDir()}/${GSLOTH_SETTINGS_DIR}/${profile}/`
+    ? globalProfileDirLabel(profile)
     : `${GSLOTH_DIR}/${GSLOTH_SETTINGS_DIR}/${profile}/`;
   return (
     `identity profile "${profile}" not found: no config file in ` +
@@ -414,11 +468,17 @@ function identityProfileNotFoundMessage(profile: string, isGlobal = false): stri
  * NOTE: secrets (API keys) may live in this file; this function must never log its
  * contents. Only non-sensitive diagnostics (the resolved path / parse failure) are emitted.
  *
+ * @param options CFG-56 — `identityProfile` relocates the lookup to
+ * `~/.gsloth/.gsloth-settings/<name>/` and `globalOnly` scopes the profile names this layer refers
+ * to. Both are set ONLY for a `--global` run; see {@link globalLayerProfile}.
  * @returns The raw global config object, or `undefined` when no global config exists.
  */
-export async function loadGlobalRawConfig(
-  identityProfile?: string
-): Promise<Partial<RawGthConfig> | undefined> {
+export async function loadGlobalRawConfig(options?: {
+  identityProfile?: string;
+  globalOnly?: boolean;
+}): Promise<Partial<RawGthConfig> | undefined> {
+  const identityProfile = options?.identityProfile;
+  const scope: ProfileScopeOptions = { globalOnly: options?.globalOnly };
   // JSON/JSONC first (the must-have formats; `.json` wins when both exist — GS2-69).
   for (const filename of JSON_CONFIG_FILENAMES) {
     const jsonPath = getGlobalGslothConfigReadPath(filename, identityProfile);
@@ -428,7 +488,7 @@ export async function loadGlobalRawConfig(
         : `${filename} (global)`;
       try {
         const parsed = parseJsonc(readFileSync(jsonPath, 'utf8'), label) as Record<string, unknown>;
-        return validateRawConfigLayer(parsed, label) as Partial<RawGthConfig>;
+        return validateRawConfigLayer(parsed, label, scope) as Partial<RawGthConfig>;
       } catch (e) {
         // CFG-36 — this catch exists to treat an UNREADABLE global as absent. A global that read
         // fine and is MALFORMED is a hard configuration error (it used to `exit(1)` from inside
@@ -456,7 +516,8 @@ export async function loadGlobalRawConfig(
         const configured = await imported.configure();
         return validateRawConfigLayer(
           configured as Record<string, unknown>,
-          label
+          label,
+          scope
         ) as Partial<RawGthConfig>;
       } catch (e) {
         // CFG-36 — see the JSON branch above: a malformed global is a hard error, not an absent one.
@@ -586,7 +647,7 @@ export async function resolveConfigExtends(
 async function composeExtends(
   rawConfig: Record<string, unknown>,
   profileLabel: string | undefined,
-  options?: { globalOnly?: boolean }
+  options?: ProfileScopeOptions
 ): Promise<Record<string, unknown>> {
   const seed = profileLabel?.trim();
   return resolveExtendsChain(rawConfig, seed ? [seed] : [], options);
@@ -604,7 +665,7 @@ async function composeExtends(
 async function resolveExtendsChain(
   rawConfig: Record<string, unknown>,
   chain: string[],
-  options?: { globalOnly?: boolean }
+  options?: ProfileScopeOptions
 ): Promise<Record<string, unknown>> {
   const baseName = typeof rawConfig.extends === 'string' ? rawConfig.extends.trim() : undefined;
   if (!baseName) {
@@ -633,7 +694,7 @@ async function resolveExtendsChain(
   if (!basePath) {
     const from = chain.length > 0 ? ` (referenced from "${chain[chain.length - 1]}")` : '';
     const baseDir = options?.globalOnly
-      ? `${getGlobalGslothDir()}/${GSLOTH_SETTINGS_DIR}/${baseName}/`
+      ? globalProfileDirLabel(baseName)
       : `${GSLOTH_DIR}/${GSLOTH_SETTINGS_DIR}/${baseName}/`;
     throw new ConfigExtendsError(
       `Profile "${baseName}" referenced by "extends"${from} was not found: no config file in ` +
@@ -651,7 +712,7 @@ async function resolveExtendsChain(
 
   // Validate the base layer exactly as the project layer is validated (deprecated-shape reject,
   // unknown-key warn, type-mismatch fail) so a broken base surfaces loudly rather than silently.
-  const validatedBase = validateRawConfigLayer(baseRaw, `${baseName} (extends base)`);
+  const validatedBase = validateRawConfigLayer(baseRaw, `${baseName} (extends base)`, options);
 
   // Resolve the base's OWN extends first (base-of-base first), THEN merge this profile's delta on
   // top via the existing GS2-1 deep-merge (child = source, so it wins; additive-array fields at the
@@ -700,7 +761,12 @@ export async function hasAnyConfig(
   if (hasProjectConfig(commandLineConfigOverrides)) {
     return true;
   }
-  return (await loadGlobalRawConfig(commandLineConfigOverrides.identityProfile)) !== undefined;
+  return (
+    (await loadGlobalRawConfig({
+      identityProfile: globalLayerProfile(commandLineConfigOverrides),
+      globalOnly: commandLineConfigOverrides.global,
+    })) !== undefined
+  );
 }
 
 /**
@@ -740,7 +806,7 @@ export async function loadConfiguredTui(
     return projectTui;
   }
   const globalRaw = await loadGlobalRawConfigUnvalidated(
-    commandLineConfigOverrides.identityProfile
+    globalLayerProfile(commandLineConfigOverrides)
   );
   const globalTui = globalRaw?.raw.tui;
   return typeof globalTui === 'boolean' ? globalTui : undefined;
@@ -872,13 +938,16 @@ export async function initConfig(
     // consulted at all (see above), because gating it on `!discovered` missed the case where a
     // plain project config exists. A run with no profile reaches the global fallback below exactly
     // as before.
-    const globalRawConfig = await loadGlobalRawConfig(commandLineConfigOverrides.identityProfile);
+    const globalRawConfig = await loadGlobalRawConfig({
+      identityProfile: globalLayerProfile(commandLineConfigOverrides),
+      globalOnly: commandLineConfigOverrides.global,
+    });
     if (globalRawConfig) {
       let resolvedRawConfig = globalRawConfig;
       if (typeof resolvedRawConfig.extends === 'string') {
         resolvedRawConfig = (await resolveConfigExtends(
           resolvedRawConfig as Record<string, unknown>,
-          commandLineConfigOverrides.identityProfile,
+          globalLayerProfile(commandLineConfigOverrides),
           { globalOnly: commandLineConfigOverrides.global }
         )) as Partial<RawGthConfig>;
       }
@@ -894,8 +963,9 @@ export async function initConfig(
       // and unusable", the same class CFG-36 converted: raise it, let the caller choose the exit
       // code. The message is the one this branch has always printed, so the CLI's top-level guard
       // reproduces the previous output exactly.
-      const sourceLabel = commandLineConfigOverrides.identityProfile
-        ? `${GSLOTH_SETTINGS_DIR}/${commandLineConfigOverrides.identityProfile}/${USER_PROJECT_CONFIG_JSON} (global)`
+      const globalProfile = globalLayerProfile(commandLineConfigOverrides);
+      const sourceLabel = globalProfile
+        ? `${GSLOTH_SETTINGS_DIR}/${globalProfile}/${USER_PROJECT_CONFIG_JSON} (global)`
         : `${USER_PROJECT_CONFIG_JSON} (global)`;
       throw new ConfigDiscoveryError(
         'Global configuration found but it is not in valid format. Should at least define llm.type',
@@ -1736,20 +1806,29 @@ export interface ConfigValidationReport {
  * GS2-73 — for the PROJECT layer it also walks the GS2-41 profile `extends` chain (via the SAME
  * {@link composeExtends}/{@link resolveExtendsChain} the run path uses), so a cycle or a missing
  * base — which fail a real run — is reported here as a not-ok layer instead of passing OK and only
- * failing at run time. The GLOBAL layer is NOT walked, mirroring the run (`resolveConfigExtends`
- * runs on the project/profile layer only).
+ * failing at run time. The GLOBAL layer is walked on exactly the branch a run walks it: when NO
+ * project layer was discovered, so the global config is what `initConfig` loads and resolves
+ * `extends` on. With a project layer present the run underlays the raw global config
+ * ({@link applyGlobalConfigBase}) and never resolves its `extends`, so neither does this.
  */
 export async function validateConfig(
   commandLineConfigOverrides: CommandLineConfigOverrides
 ): Promise<ConfigValidationReport> {
   const layers: ConfigLayerValidationReport[] = [];
 
-  const validationOptions = {
+  // CFG-26 — the fs-backed `approvals.rater` hook, so this validator enforces the SAME existence
+  // rule the loader hard-fails on (`schema.ts` stays pure; the filesystem knowledge lives here).
+  // CFG-56 — built PER LAYER, because the run resolves a rater profile in the scope of the layer
+  // that named it: the project layer walks up-tree, and the global layer walks
+  // `~/.gsloth/.gsloth-settings/` only under `--global`. One shared hook would answer for the
+  // wrong scope on one of the two layers, which is precisely the validate-vs-run split this
+  // function exists to close.
+  const rawConfigValidationOptions = (scope: ProfileScopeOptions) => ({
     resolveProfile: (profile: string): boolean =>
-      resolveIdentityProfileConfigPath(profile, {
-        globalOnly: commandLineConfigOverrides.global,
-      }) !== undefined,
-  };
+      resolveIdentityProfileConfigPath(profile, scope) !== undefined,
+    describeProfileDir: (profile: string): string | undefined =>
+      scope.globalOnly ? globalProfileDirLabel(profile) : undefined,
+  });
 
   // CFG-36 — mirror the run's STRICT named-profile rule before anything is read. `initConfig`
   // refuses outright when an explicitly-named profile has no config of its own, so a validator that
@@ -1761,7 +1840,7 @@ export async function validateConfig(
   const unresolvedProfile = findUnresolvedExplicitProfile(commandLineConfigOverrides);
   if (unresolvedProfile) {
     const sourceLabel = commandLineConfigOverrides.global
-      ? `${getGlobalGslothDir()}/${GSLOTH_SETTINGS_DIR}/${unresolvedProfile}/`
+      ? globalProfileDirLabel(unresolvedProfile)
       : `${GSLOTH_DIR}/${GSLOTH_SETTINGS_DIR}/${unresolvedProfile}/`;
     return {
       // `found: true` so the caller renders THIS message. `found: false` means "nothing to
@@ -1790,7 +1869,7 @@ export async function validateConfig(
     const raw = await readRawConfigAtPath(discovered.path);
     const layer: ConfigLayerValidationReport = {
       sourceLabel: discovered.path,
-      ...validateRawGthConfig(raw, validationOptions),
+      ...validateRawGthConfig(raw, rawConfigValidationOptions({})),
     };
 
     // GS2-73 — mirror the run's `extends` resolution. GS2-41's `resolveConfigExtends` walks the
@@ -1825,19 +1904,27 @@ export async function validateConfig(
   // loadGlobalRawConfig in the no-project path), so the diagnostic must validate it too — this is
   // the layer the previous single-layer validateConfig skipped whenever a project config existed.
   const globalRaw = await loadGlobalRawConfigUnvalidated(
-    commandLineConfigOverrides.identityProfile
+    globalLayerProfile(commandLineConfigOverrides)
   );
   if (globalRaw) {
+    const globalScope: ProfileScopeOptions = { globalOnly: commandLineConfigOverrides.global };
     const layer: ConfigLayerValidationReport = {
       sourceLabel: globalRaw.label,
-      ...validateRawGthConfig(globalRaw.raw, validationOptions),
+      ...validateRawGthConfig(globalRaw.raw, rawConfigValidationOptions(globalScope)),
     };
 
-    if (layer.ok && typeof globalRaw.raw.extends === 'string') {
+    // The global layer's `extends` is walked ONLY when there is no project layer, because that is
+    // the only case in which a run walks it: `initConfig`'s no-project branch resolves `extends` on
+    // the global config, while `applyGlobalConfigBase` (the branch taken whenever a project config
+    // exists) deep-merges the raw global config WITHOUT resolving it. Walking it unconditionally
+    // reported a missing base that the run it mirrors never looks for.
+    if (!discovered && layer.ok && typeof globalRaw.raw.extends === 'string') {
       try {
-        await composeExtends(globalRaw.raw, commandLineConfigOverrides.identityProfile, {
-          globalOnly: commandLineConfigOverrides.global,
-        });
+        await composeExtends(
+          globalRaw.raw,
+          globalLayerProfile(commandLineConfigOverrides),
+          globalScope
+        );
       } catch (e) {
         if (e instanceof ConfigExtendsError || isConfigDiscoveryError(e)) {
           layer.ok = false;

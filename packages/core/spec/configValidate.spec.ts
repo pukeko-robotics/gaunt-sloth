@@ -14,7 +14,8 @@ import { resolve } from 'node:path';
 // globalConfigUtils and triggers the factory during module evaluation, before a plain top-level
 // const would be initialized).
 const { getGlobalGslothConfigReadPathMock, displayWarningMock } = vi.hoisted(() => ({
-  getGlobalGslothConfigReadPathMock: vi.fn<(_filename: string) => string>(),
+  getGlobalGslothConfigReadPathMock:
+    vi.fn<(_filename: string, _identityProfile?: string) => string>(),
   displayWarningMock: vi.fn<(_message: string) => void>(),
 }));
 vi.mock('#src/utils/globalConfigUtils.js', async (importOriginal) => {
@@ -38,7 +39,7 @@ describe('validateConfig (GS2-1 `gth config validate`)', () => {
   let globalDir: string;
   const origInitCwd = process.env.INIT_CWD;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.resetAllMocks(); // AGENTS.md — reset first; re-apply the read-path impl below.
     root = mkdtempSync(resolve(tmpdir(), 'gsloth-validate-'));
     // A dedicated, EMPTY global dir per test: `getGlobalGslothConfigReadPath('<name>')` resolves
@@ -46,8 +47,11 @@ describe('validateConfig (GS2-1 `gth config validate`)', () => {
     // single-layer behaviour). Tests opt into a global layer via `global(...)`.
     globalDir = resolve(root, '__global__');
     mkdirSync(globalDir, { recursive: true });
-    getGlobalGslothConfigReadPathMock.mockImplementation((filename: string) =>
-      resolve(globalDir, filename)
+    // Redirect the global dir ONLY; the profile-segment rule stays production code, so a
+    // profile-scoped global lookup cannot silently resolve to the unscoped path here.
+    const { resolveGlobalConfigPath } = await import('#src/utils/globalConfigUtils.js');
+    getGlobalGslothConfigReadPathMock.mockImplementation((filename, identityProfile) =>
+      resolveGlobalConfigPath(globalDir, filename, identityProfile)
     );
   });
 

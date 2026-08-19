@@ -27,6 +27,27 @@ export function ensureGlobalGslothDir(): string {
 }
 
 /**
+ * Composes the path a global config file would occupy inside an ARBITRARY global dir:
+ * `<globalDir>/<filename>`, or `<globalDir>/.gsloth-settings/<identityProfile>/<filename>` when a
+ * profile is named. Split out of {@link getGlobalGslothConfigReadPath} so the dir and the
+ * profile-segment rule are separable — a caller (or a test seam) that must substitute the global
+ * dir gets the real composition rule instead of reimplementing it and drifting from it.
+ *
+ * A blank/whitespace-only profile name counts as "no profile".
+ */
+export function resolveGlobalConfigPath(
+  globalDir: string,
+  filename: string,
+  identityProfileRaw?: string
+): string {
+  const identityProfile = identityProfileRaw?.trim();
+  if (identityProfile) {
+    return resolve(globalDir, GSLOTH_SETTINGS_DIR, identityProfile, filename);
+  }
+  return resolve(globalDir, filename);
+}
+
+/**
  * Gets the read path for a global gsloth config file (e.g. `.gsloth.config.json`)
  * inside the global `~/.gsloth` directory (or `~/.gsloth/.gsloth-settings/<identityProfile>/`).
  * Reuses the same global folder as MCP auth.
@@ -42,12 +63,7 @@ export function getGlobalGslothConfigReadPath(
   filename: string,
   identityProfileRaw?: string
 ): string {
-  const globalDir = getGlobalGslothDir();
-  const identityProfile = identityProfileRaw?.trim();
-  if (identityProfile) {
-    return resolve(globalDir, GSLOTH_SETTINGS_DIR, identityProfile, filename);
-  }
-  return resolve(globalDir, filename);
+  return resolveGlobalConfigPath(getGlobalGslothDir(), filename, identityProfileRaw);
 }
 
 /**
