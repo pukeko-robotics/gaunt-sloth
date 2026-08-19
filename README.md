@@ -5,7 +5,7 @@ Gaunt Sloth (`gth`) is a command-line AI assistant for code review, PR analysis,
 interactive coding sessions. It runs on your machine against whatever model you point it at, with
 every prompt in plain markdown and no vendor lock-in.
 
-![GSloth Banner](assets/gaunt-sloth-logo.png)
+![GSloth Banner](assets/banner-v2.jpg)
 
 Based on [LangChain.js](https://github.com/langchain-ai/langchainjs).
 
