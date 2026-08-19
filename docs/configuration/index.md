@@ -83,10 +83,10 @@ chain.
 
 ### Run under the global config only
 
-`-g`/`--global` drops the project layer instead: discovery does not walk up from the working
-directory, and the run resolves from `~/.gsloth/` alone. Use it when you are working inside someone
-else's repository — or a machine-generated one — and want your own provider, model and approvals
-rather than whatever that project configures:
+`-g`/`--global` drops the project layer instead: config discovery does not walk up from the working
+directory, and configuration resolves from `~/.gsloth/` alone. Use it when you want a run to use
+your own configuration — provider, model, tools, approvals — rather than whatever the repository
+you are standing in configures:
 
 ```bash
 gth -g review
@@ -100,8 +100,10 @@ project's, and fails if you have no global `devops` profile:
 gth -g -i devops pr 42
 ```
 
-Prompt files ([guidelines, review checklist and the rest](prompts.md)) are unaffected by `-g`: they
-resolve from the working directory as usual, and fall back to the built-in defaults.
+`-g` scopes **configuration** only; it is not a boundary around the project directory. Prompt files
+([guidelines, review checklist and the rest](prompts.md)) still resolve from the working directory
+as usual, falling back to the built-in defaults — so a project's own guidelines or review prompt are
+read into the prompt under `-g` just as they are without it.
 
 `-g` and `-c` cannot be combined: both choose where configuration comes from, so passing the pair
 is rejected rather than silently honouring one of them.
