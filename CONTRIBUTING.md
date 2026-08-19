@@ -231,7 +231,7 @@ Open a GitHub Issue describing:
 API documentation is generated from the TypeScript sources with TypeDoc:
 
 ```bash
-pnpm typedoc
+pnpm run typedoc
 ```
 
 The generated output is published through the [gauntsloth.app](https://gauntsloth.app/) site (docs at https://gauntsloth.app/docs/).
