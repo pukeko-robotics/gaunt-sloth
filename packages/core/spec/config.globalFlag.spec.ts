@@ -354,5 +354,31 @@ describe('CFG-56: -g / --global flag (bypass project config)', () => {
         `${resolve(globalRoot, '.gsloth-settings', 'safety')}${sep}`
       );
     });
+
+    it("names the global profile directory in validateConfig's own rater message", async () => {
+      // The case above asserts on the message initConfig throws. `validateConfig` builds its own
+      // rater message through the schema's `describeProfileDir` hook, so the directory it names is
+      // a separate code path — and the one `gth -g config validate` prints. Without the hook it
+      // falls back to the PROJECT directory and sends the user to a place nothing searched.
+      writeProjectProfileConfig('safety', { llm: { type: 'vertexai', model: 'project-safety' } });
+      writeGlobalConfig({
+        llm: { type: 'vertexai', model: 'global-model' },
+        approvals: { rater: 'safety' },
+      });
+
+      const { validateConfig } = await import('#src/config/loader.js');
+
+      const report = await validateConfig({ global: true });
+      expect(report.ok).toBe(false);
+      // Under `--global` the project layer is skipped, so the global layer is the only one.
+      const globalLayer = report.layers.find((layer) => layer.sourceLabel.includes('(global)'));
+      expect(globalLayer).toBeDefined();
+      expect(globalLayer!.errorMessage).toContain('identity profile "safety" not found');
+      // An absolute path under the fake home: the project fallback `.gsloth/.gsloth-settings/
+      // safety/` is a suffix of it, so only the home-rooted form can satisfy this.
+      expect(globalLayer!.errorMessage).toContain(
+        `${resolve(globalRoot, '.gsloth-settings', 'safety')}${sep}`
+      );
+    });
   });
 });

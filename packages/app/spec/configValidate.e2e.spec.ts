@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -81,8 +81,7 @@ describe('gth config validate — process exit code (e2e)', () => {
     expect(status).not.toBe(0);
   });
 
-  it('bypasses a broken project config and validates global config when -g is passed', async () => {
-    const { mkdirSync } = await import('node:fs');
+  it('bypasses a broken project config and validates global config when -g is passed', () => {
     // Project dir with a malformed/invalid config
     const projDir = fixture('proj', '');
     rmSync(projDir, { recursive: true, force: true });
@@ -118,7 +117,14 @@ describe('gth config validate — process exit code (e2e)', () => {
 
   it('refuses -g together with -c instead of silently ignoring one of them', () => {
     const cfg = fixture('named.json', '{"llm":{"type":"openai"}}');
-    const { status, stdout, stderr } = runCli(['-g', '-c', cfg, 'config', 'validate']);
+    // Faked home like its neighbour: the conflict guard fires before any config is read, so the
+    // runner's real ~/.gsloth is never consulted today — but a spawned `-g` run must not depend on
+    // the machine it runs on for that to stay true.
+    const homeDir = resolve(dir, 'conflict-home');
+    mkdirSync(resolve(homeDir, '.gsloth'), { recursive: true });
+    const { status, stdout, stderr } = runCli(['-g', '-c', cfg, 'config', 'validate'], {
+      env: { HOME: homeDir, USERPROFILE: homeDir },
+    });
     expect(status).not.toBe(0);
     const output = `${stdout}${stderr}`;
     expect(output).toContain('--global');
