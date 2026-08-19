@@ -17,7 +17,7 @@ the old package first:
 
 ```bash
 npm rm -g gaunt-sloth-assistant
-npm i -g gaunt-sloth@beta
+npm i -g gaunt-sloth
 gth --version
 ```
 

@@ -13,7 +13,7 @@ Report Processing and generic JUnit readers.
 It ships with the CLI — `gaunt-sloth` depends on it, so there is nothing extra to install:
 
 ```bash
-npm install -g gaunt-sloth@alpha
+npm install -g gaunt-sloth
 gth eval prompts.eval.yaml --reporter junit
 ```
 

@@ -40,8 +40,8 @@ regardless of platform:
 
 ```bash
 npm rm -g gaunt-sloth-assistant
-npm i  -g gaunt-sloth@alpha
-gth --version   # should now report the 2.x version, e.g. 2.0.0-alpha.18
+npm i -g gaunt-sloth
+gth --version   # should now report a 2.x version
 ```
 
 Remove the old package **first**, then install the new one — do not install `gaunt-sloth`
@@ -641,8 +641,8 @@ captured stdout, `"none"` remains the byte-clean rung. See
 Inside `chat`/`code` sessions (both the TUI and the plain `--no-tui` readline surface, which now
 share one command registry):
 
-- `/tools` renamed to `/verbose` — same tool-detail toggle. `/tools` is removed (no alias; 2.0
-  is still in alpha).
+- `/tools` renamed to `/verbose` — same tool-detail toggle. `/tools` is removed (no alias; 2.0 is
+  a deliberate break, and every retired spelling is named with its replacement rather than aliased).
 - `/mode` removed — its output is folded into `/status`.
 - `/quit` added as an alias of `/exit`.
 - `/yolo`, `/auto-approve` and `/bypass-approve` are **removed** (no aliases). `/approvals <mode>`

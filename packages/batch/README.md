@@ -14,7 +14,7 @@ case passes ("pytest for prompts"). The commands run on `@gaunt-sloth/batch`, bu
 `gaunt-sloth` app, so that is what you install:
 
 ```bash
-npm install -g gaunt-sloth@alpha
+npm install -g gaunt-sloth
 ```
 
 Write `prompts.eval.yaml`:

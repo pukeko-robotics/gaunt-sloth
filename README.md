@@ -28,7 +28,7 @@ configuration-driven CLI.
 ## Get started
 
 ```bash
-npm install -g gaunt-sloth@alpha
+npm install -g gaunt-sloth
 gth init anthropic        # scaffold .gsloth.config.json and pick a provider
 export ANTHROPIC_API_KEY="sk-ant-..."
 gth ask "what does this project do?" -f README.md
@@ -101,13 +101,13 @@ themselves.
 Requires Node.js 24+ (see the `engines` field in `package.json`).
 
 ```bash
-npm install -g gaunt-sloth@alpha
+npm install -g gaunt-sloth
 ```
 
-The 2.0 line is still prerelease, published under `@alpha`/`@beta`/`@rc` tags rather than `@latest`
-— a bare `npm install -g gaunt-sloth` currently installs the 1.x bridge release, so use
-`gaunt-sloth@alpha` (or `@beta`/`@rc`) to get 2.0. Upgrading from the old `gaunt-sloth-assistant`
-package? See
+`latest` follows the 2.0 line. Every release is published to its channel tag first (`@beta` while
+2.0 is in beta), and a version that has proven itself is then promoted to `latest` — so the bare
+name gives you the newest release we have blessed, and `gaunt-sloth@beta` the newest one we have
+built. Upgrading from the old `gaunt-sloth-assistant` package? See
 [Upgrading from `gaunt-sloth-assistant` (1.x)?](docs/MIGRATION.md#upgrading-from-gaunt-sloth-assistant-1x)
 first.
 

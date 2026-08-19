@@ -9,7 +9,7 @@ don't want to pay for one).
 ## 1. Install
 
 ```bash
-npm install -g gaunt-sloth@alpha
+npm install -g gaunt-sloth
 ```
 
 This gives you the `gth` command (with `gsloth` and `gaunt-sloth` as aliases — use whichever you
