@@ -80,9 +80,21 @@ libraries are published for embedding.
 | `@gaunt-sloth/agent` | Agent runtime (`packages/agent`): AG-UI server, A2A client, MCP utilities, filesystem and custom tools, middleware registry. |
 | `@gaunt-sloth/review` | Review and Q&A modules (`packages/review`) with content sources (GitHub, Jira). Ships the `gaunt-sloth-review` binary for lightweight CI — no dependency on `commander`, MCP, or A2A. |
 | `@gaunt-sloth/core` | Config system, agent infrastructure, LLM provider wrappers, and shared utilities (`packages/core`). |
+| `@gaunt-sloth/batch` | Batch matrix runtime (`packages/batch`) behind `gth batch` and `gth eval`: runs a prompt-executable over a matrix of models and/or content-bound inputs. Ships the `gth-batch` binary and the `EvalReporter` contract reporters implement. |
+| `@gaunt-sloth/eval-reporter-junit` | JUnit XML (Ant-JUnit flavour) reporter for `gth eval` (`packages/eval-reporter-junit`). Ships with the CLI as the built-in `junit` reporter. |
+| `@gaunt-sloth/eval-reporter-teamcity` | Live TeamCity service-message reporter for `gth eval` (`packages/eval-reporter-teamcity`). Not bundled — install it and register it under [`reporters`](docs/configuration/output.md#custom-eval-reporters-reporters). |
 
-The dependency chain is `@gaunt-sloth/core` ← `@gaunt-sloth/agent` ← `gaunt-sloth`;
-`@gaunt-sloth/review` depends only on `@gaunt-sloth/core`.
+The two `eval-reporter-*` plugins are optional add-ons with their own release cadence, so they sit on
+a version line of their own; the other five are version-locked and released together.
+
+What each package declares as its in-workspace dependencies: `@gaunt-sloth/core` depends on none of
+them; `@gaunt-sloth/agent` and `@gaunt-sloth/review` depend on `@gaunt-sloth/core`;
+`@gaunt-sloth/batch` depends on `@gaunt-sloth/agent` and `@gaunt-sloth/core`; and the `gaunt-sloth`
+app depends on `@gaunt-sloth/core`, `@gaunt-sloth/agent`, `@gaunt-sloth/review`,
+`@gaunt-sloth/batch`, and `@gaunt-sloth/eval-reporter-junit`. Both `eval-reporter-*` packages take
+`@gaunt-sloth/batch` as a peer dependency rather than a runtime one, and nothing in the workspace
+depends on `@gaunt-sloth/eval-reporter-teamcity` — it is published for consumers to install
+themselves.
 
 ## Installation
 
