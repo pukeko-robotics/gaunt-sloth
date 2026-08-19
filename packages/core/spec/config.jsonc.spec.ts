@@ -15,7 +15,8 @@ import { resolve } from 'node:path';
 // - the vertexai provider module → initConfig's tryJsonConfig would otherwise build a real LLM;
 // - systemUtils.exit → throws instead of killing the vitest worker if an error path is hit.
 const { getGlobalGslothConfigReadPathMock, exitMock, processJsonConfigMock } = vi.hoisted(() => ({
-  getGlobalGslothConfigReadPathMock: vi.fn<(_filename: string) => string>(),
+  getGlobalGslothConfigReadPathMock:
+    vi.fn<(_filename: string, _identityProfile?: string) => string>(),
   exitMock: vi.fn<(_code?: number) => never>(),
   processJsonConfigMock: vi.fn(),
 }));
@@ -59,8 +60,11 @@ describe('.gsloth.config.jsonc support (GS2-69)', () => {
     root = mkdtempSync(resolve(tmpdir(), 'gsloth-jsonc-'));
     globalDir = resolve(root, '__global__');
     mkdirSync(globalDir, { recursive: true });
-    getGlobalGslothConfigReadPathMock.mockImplementation((filename: string) =>
-      resolve(globalDir, filename)
+    // Redirect the global dir ONLY; the profile-segment rule stays production code, so a
+    // profile-scoped global lookup cannot silently resolve to the unscoped path here.
+    const { resolveGlobalConfigPath } = await import('#src/utils/globalConfigUtils.js');
+    getGlobalGslothConfigReadPathMock.mockImplementation((filename, identityProfile) =>
+      resolveGlobalConfigPath(globalDir, filename, identityProfile)
     );
     exitMock.mockImplementation((code?: number) => {
       throw new Error(`exit(${code}) called`);

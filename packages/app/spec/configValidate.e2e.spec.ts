@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,11 +14,20 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const cliEntry = resolve(here, '../cli.js'); // packages/app/cli.js (sets install dir, loads dist)
 
-function runCli(args: string[]): { status: number | null; stdout: string; stderr: string } {
+function runCli(
+  args: string[],
+  options?: { cwd?: string; env?: Record<string, string> }
+): { status: number | null; stdout: string; stderr: string } {
+  const targetCwd = options?.cwd ?? tmpdir();
+  const env = { ...process.env, ...options?.env };
+  if (!options?.env?.INIT_CWD) {
+    delete env.INIT_CWD;
+  }
   const result = spawnSync('node', [cliEntry, '--nopipe', ...args], {
     encoding: 'utf8',
     // Absolute --config paths make cwd irrelevant; a temp cwd keeps any incidental writes contained.
-    cwd: tmpdir(),
+    cwd: targetCwd,
+    env,
   });
   return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
 }
@@ -70,5 +79,57 @@ describe('gth config validate — process exit code (e2e)', () => {
     const cfg = fixture('broken.json', '{"llm": {"type": "openai" ');
     const { status } = runCli(['-c', cfg, 'config', 'validate']);
     expect(status).not.toBe(0);
+  });
+
+  it('bypasses a broken project config and validates global config when -g is passed', () => {
+    // Project dir with a malformed/invalid config
+    const projDir = fixture('proj', '');
+    rmSync(projDir, { recursive: true, force: true });
+    mkdirSync(projDir, { recursive: true });
+    writeFileSync(
+      resolve(projDir, '.gsloth.config.json'),
+      '{"llm":{"type":"openai"},"streamOutput":"yes"}'
+    );
+
+    // Global dir in fake HOME
+    const homeDir = fixture('home', '');
+    rmSync(homeDir, { recursive: true, force: true });
+    const globalGsloth = resolve(homeDir, '.gsloth');
+    mkdirSync(globalGsloth, { recursive: true });
+    writeFileSync(resolve(globalGsloth, '.gsloth.config.json'), '{"llm":{"type":"openai"}}');
+
+    // `os.homedir()` reads HOME on POSIX and USERPROFILE on win32, so a fake home must set BOTH
+    // or the spawned CLI resolves ~/.gsloth to the real profile dir on the Windows CI cells.
+    const fakeHome = { HOME: homeDir, USERPROFILE: homeDir };
+
+    // Without -g: validates project config and fails
+    const failRes = runCli(['config', 'validate'], { cwd: projDir, env: fakeHome });
+    expect(failRes.status).not.toBe(0);
+
+    // With -g: validates global config only and succeeds (exit 0)
+    const successRes = runCli(['-g', 'config', 'validate'], {
+      cwd: projDir,
+      env: fakeHome,
+    });
+    expect(successRes.status).toBe(0);
+    expect(`${successRes.stdout}${successRes.stderr}`).toContain('Configuration is valid');
+  });
+
+  it('refuses -g together with -c instead of silently ignoring one of them', () => {
+    const cfg = fixture('named.json', '{"llm":{"type":"openai"}}');
+    // Faked home like its neighbour: the conflict guard fires before any config is read, so the
+    // runner's real ~/.gsloth is never consulted today — but a spawned `-g` run must not depend on
+    // the machine it runs on for that to stay true.
+    const homeDir = resolve(dir, 'conflict-home');
+    mkdirSync(resolve(homeDir, '.gsloth'), { recursive: true });
+    const { status, stdout, stderr } = runCli(['-g', '-c', cfg, 'config', 'validate'], {
+      env: { HOME: homeDir, USERPROFILE: homeDir },
+    });
+    expect(status).not.toBe(0);
+    const output = `${stdout}${stderr}`;
+    expect(output).toContain('--global');
+    expect(output).toContain('--config');
+    // The named file must not have been loaded and reported valid.
+    expect(output).not.toContain('Configuration is valid');
   });
 });

@@ -22,7 +22,8 @@ const loadInkMock = { isInkAvailable: vi.fn() };
 vi.mock('#src/tui/loadInk.js', () => loadInkMock);
 
 const { getGlobalGslothConfigReadPathMock } = vi.hoisted(() => ({
-  getGlobalGslothConfigReadPathMock: vi.fn<(_filename: string) => string>(),
+  getGlobalGslothConfigReadPathMock:
+    vi.fn<(_filename: string, _identityProfile?: string) => string>(),
 }));
 vi.mock('@gaunt-sloth/core/utils/globalConfigUtils.js', async (importOriginal) => {
   const actual =
@@ -59,8 +60,12 @@ describe('startSession reads the tui config key off disk (CFG-37 wiring)', () =>
     projectDir = resolve(root, 'proj');
     mkdirSync(resolve(projectDir, '.git'), { recursive: true });
     process.env.INIT_CWD = projectDir;
-    getGlobalGslothConfigReadPathMock.mockImplementation((filename: string) =>
-      resolve(globalDir, filename)
+    // Redirect the global dir ONLY; the profile-segment rule stays production code, so a
+    // profile-scoped global lookup cannot silently resolve to the unscoped path here.
+    const { resolveGlobalConfigPath } =
+      await import('@gaunt-sloth/core/utils/globalConfigUtils.js');
+    getGlobalGslothConfigReadPathMock.mockImplementation((filename, identityProfile) =>
+      resolveGlobalConfigPath(globalDir, filename, identityProfile)
     );
 
     // Declare the terminal rather than inherit the runner's: systemUtils re-exports the live

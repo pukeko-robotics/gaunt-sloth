@@ -46,7 +46,10 @@ export async function startSession(
     // Imported lazily so the first-run dialog (and its provider-discovery/Ink deps) never
     // load on the normal configured path.
     const { runFirstRunDialog } = await import('#src/commands/firstRunDialog.js');
-    await runFirstRunDialog();
+    // CFG-56 — under `--global` the session reads global config only, so the dialog must write
+    // there. Left to its project default it would write a config this run cannot see, fail the
+    // re-check below, and report incomplete setup on every retry.
+    await runFirstRunDialog({}, false, commandLineConfigOverrides.global ? 'global' : undefined);
     if (!(await hasAnyConfig(commandLineConfigOverrides))) {
       // The user aborted the dialog without writing a config; nothing to run.
       displayWarning('Setup was not completed. Re-run gth once a configuration exists.');

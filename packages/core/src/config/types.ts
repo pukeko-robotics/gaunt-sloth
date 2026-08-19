@@ -812,4 +812,11 @@ export interface CommandLineConfigOverrides {
    * to re-target its model.
    */
   model?: string;
+  /**
+   * Run with global configuration only, bypassing project-level configuration.
+   * When true, up-tree project config discovery is bypassed, loading configuration
+   * solely from ~/.gsloth/ (merged over default fallbacks).
+   * If paired with an identity profile, resolves under ~/.gsloth/.gsloth-settings/<name>/.
+   */
+  global?: boolean;
 }

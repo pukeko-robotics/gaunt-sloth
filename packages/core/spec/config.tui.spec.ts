@@ -14,7 +14,8 @@ import { resolve } from 'node:path';
 // Every path here is built with resolve() rather than a POSIX literal, so the assertions mean the
 // same thing on the Windows CI cell.
 const { getGlobalGslothConfigReadPathMock, exitMock, processJsonConfigMock } = vi.hoisted(() => ({
-  getGlobalGslothConfigReadPathMock: vi.fn<(_filename: string) => string>(),
+  getGlobalGslothConfigReadPathMock:
+    vi.fn<(_filename: string, _identityProfile?: string) => string>(),
   exitMock: vi.fn<(_code?: number) => never>(),
   processJsonConfigMock: vi.fn(),
 }));
@@ -56,8 +57,11 @@ describe('tui config key (CFG-37)', () => {
     mkdirSync(resolve(projectDir, '.git'), { recursive: true });
     process.env.INIT_CWD = projectDir;
 
-    getGlobalGslothConfigReadPathMock.mockImplementation((filename: string) =>
-      resolve(globalDir, filename)
+    // Redirect the global dir ONLY; the profile-segment rule stays production code, so a
+    // profile-scoped global lookup cannot silently resolve to the unscoped path here.
+    const { resolveGlobalConfigPath } = await import('#src/utils/globalConfigUtils.js');
+    getGlobalGslothConfigReadPathMock.mockImplementation((filename, identityProfile) =>
+      resolveGlobalConfigPath(globalDir, filename, identityProfile)
     );
     exitMock.mockImplementation((code?: number) => {
       throw new Error(`exit(${code}) called`);

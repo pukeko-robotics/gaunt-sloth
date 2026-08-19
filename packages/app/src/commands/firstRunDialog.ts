@@ -255,7 +255,8 @@ export function makeDefaultProgress(): <T>(label: string, run: () => Promise<T>)
  */
 export async function runFirstRunDialog(
   overrides: Partial<FirstRunDialogDeps> = {},
-  force = false
+  force = false,
+  forcedScope?: ConfigScope
 ): Promise<void> {
   // The readline interface is created LAZILY, only when a readline prompt is actually needed
   // (the non-TTY number-menu fallback, or free-text model entry). On the Ink-select path it is
@@ -335,15 +336,18 @@ export async function runFirstRunDialog(
           .id;
     }
 
-    // 3. Scope.
+    // 3. Scope. CFG-56 — a caller that has already committed to a scope (`gth -g`, which reads
+    //    global config only) does not ask: the project default would write a file the run then
+    //    refuses to look at, and the user would be told setup did not complete.
     const scope: ConfigScope =
-      (await deps.select(
+      forcedScope ??
+      ((await deps.select(
         'Where should this configuration be stored?',
         ['This project only (.gsloth/.gsloth-settings/)', 'Globally for all projects (~/.gsloth/)'],
         0
       )) === 1
         ? 'global'
-        : 'project';
+        : 'project');
 
     // 4. Overwrite guard. If a config already exists at the chosen scope's path and the user did
     //    not pass --force, ask whether to overwrite (default No). On No we keep the existing file

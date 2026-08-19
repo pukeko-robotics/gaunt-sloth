@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { homedir } from 'node:os';
-import { GSLOTH_DIR, GSLOTH_AUTH } from '#src/constants.js';
+import { GSLOTH_DIR, GSLOTH_SETTINGS_DIR, GSLOTH_AUTH } from '#src/constants.js';
 
 /**
  * Gets the global .gsloth directory path in the user's home directory
@@ -27,17 +27,43 @@ export function ensureGlobalGslothDir(): string {
 }
 
 /**
+ * Composes the path a global config file would occupy inside an ARBITRARY global dir:
+ * `<globalDir>/<filename>`, or `<globalDir>/.gsloth-settings/<identityProfile>/<filename>` when a
+ * profile is named. Split out of {@link getGlobalGslothConfigReadPath} so the dir and the
+ * profile-segment rule are separable — a caller (or a test seam) that must substitute the global
+ * dir gets the real composition rule instead of reimplementing it and drifting from it.
+ *
+ * A blank/whitespace-only profile name counts as "no profile".
+ */
+export function resolveGlobalConfigPath(
+  globalDir: string,
+  filename: string,
+  identityProfileRaw?: string
+): string {
+  const identityProfile = identityProfileRaw?.trim();
+  if (identityProfile) {
+    return resolve(globalDir, GSLOTH_SETTINGS_DIR, identityProfile, filename);
+  }
+  return resolve(globalDir, filename);
+}
+
+/**
  * Gets the read path for a global gsloth config file (e.g. `.gsloth.config.json`)
- * inside the global `~/.gsloth` directory. Reuses the same global folder as MCP auth.
+ * inside the global `~/.gsloth` directory (or `~/.gsloth/.gsloth-settings/<identityProfile>/`).
+ * Reuses the same global folder as MCP auth.
  *
  * This is a plain path resolver: it does NOT check for existence and does NOT create
  * the directory. Callers should guard with `existsSync` before reading.
  *
  * @param filename The configuration filename (e.g. `.gsloth.config.json`)
+ * @param identityProfileRaw Optional identity profile subdirectory name within `.gsloth-settings`
  * @returns The resolved path where the global configuration file would live
  */
-export function getGlobalGslothConfigReadPath(filename: string): string {
-  return resolve(getGlobalGslothDir(), filename);
+export function getGlobalGslothConfigReadPath(
+  filename: string,
+  identityProfileRaw?: string
+): string {
+  return resolveGlobalConfigPath(getGlobalGslothDir(), filename, identityProfileRaw);
 }
 
 /**

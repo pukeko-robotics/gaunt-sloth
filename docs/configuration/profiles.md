@@ -86,6 +86,13 @@ back to some other config — not to your global `~/.gsloth` config, and not to 
 plain `.gsloth.config.*` either, which is the fallback you would otherwise get and the surprising
 one. A mistyped `-i` therefore tells you so, instead of running under a model you did not choose.
 
+**Where a profile is looked up.** By default, in the project: `.gsloth/.gsloth-settings/<name>/`,
+searched from the working directory up to the repository root. Add
+[`-g`/`--global`](index.md#run-under-the-global-config-only) and the same name is looked up in
+`~/.gsloth/.gsloth-settings/<name>/` instead — your own profiles, in a repository that knows nothing
+about them. The two are separate namespaces: a profile that exists only in the project is not found
+under `-g`, and vice versa.
+
 ### Creating a profile
 
 `gth config profile create <name>` scaffolds a new profile directory
