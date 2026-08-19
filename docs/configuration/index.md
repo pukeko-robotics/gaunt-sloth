@@ -81,6 +81,31 @@ and neither `-c`/`--config` nor `-i`/`--identity-profile` (`--profile`) bypasses
 [Identity profiles](profiles.md#identity-profiles) for where a profile sits in the full precedence
 chain.
 
+### Run under the global config only
+
+`-g`/`--global` drops the project layer instead: discovery does not walk up from the working
+directory, and the run resolves from `~/.gsloth/` alone. Use it when you are working inside someone
+else's repository — or a machine-generated one — and want your own provider, model and approvals
+rather than whatever that project configures:
+
+```bash
+gth -g review
+```
+
+With `-i`/`--profile`, the named profile's config is resolved globally too, from
+`~/.gsloth/.gsloth-settings/<name>/` — so this reads your own `devops` config and never the
+project's, and fails if you have no global `devops` profile:
+
+```bash
+gth -g -i devops pr 42
+```
+
+Prompt files ([guidelines, review checklist and the rest](prompts.md)) are unaffected by `-g`: they
+resolve from the working directory as usual, and fall back to the built-in defaults.
+
+`-g` and `-c` cannot be combined: both choose where configuration comes from, so passing the pair
+is rejected rather than silently honouring one of them.
+
 To see what a run actually resolves to, print the effective merged config; to find which file to fix
 when a key is wrong, validate each layer on its own:
 

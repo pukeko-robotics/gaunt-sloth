@@ -11,6 +11,7 @@ Gaunt Sloth provides several commands to help with code review, analysis, and in
 Every command supports these shared flags:
 
 - `--config <path>` – load a specific configuration file (without changing directories); accepts any supported config format (`.json`, `.jsonc`, `.js`, `.mjs`)
+- `-g, --global` – run under `~/.gsloth/` only, ignoring the project's config (see [The global config and your project config](configuration/index.md#the-global-config-and-your-project-config)); cannot be combined with `--config`
 - `-i, --identity-profile <name>` – use prompts/configs from `.gsloth/.gsloth-settings/<name>/`
 - `-w, --write-output-to-file <value>` – control output files (`false` by default, pass `true` for standard names, `-wn`/`-w0` for false, or a relative filename)
 - `--verbose` – enable verbose LangChain/LangGraph logs for troubleshooting
