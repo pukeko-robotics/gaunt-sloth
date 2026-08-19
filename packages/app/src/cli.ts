@@ -77,7 +77,17 @@ if (program.getOptionValue('config')) {
   // Set a custom config path
   cliConfigOverrides.customConfigPath = program.getOptionValue('config');
 }
+// CFG-56 — `-g/--global` and `-c/--config` both choose WHERE configuration comes from, and
+// honouring either one makes the other a silent no-op. Refuse the pair here, before anything is
+// read, rather than quietly loading one source while the user watches for the other.
 if (program.getOptionValue('global')) {
+  if (cliConfigOverrides.customConfigPath) {
+    displayError(
+      '--global and --config select conflicting configuration sources ' +
+        '(the global config in ~/.gsloth versus the named file). Pass only one.'
+    );
+    exit(1);
+  }
   cliConfigOverrides.global = true;
 }
 // `--profile` (GS2-33) is the friendly alias of `-i/--identity-profile`: both select a named profile

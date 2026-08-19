@@ -154,6 +154,28 @@ describe('startSession dispatcher', () => {
     expect(interactiveSessionMock.createInteractiveSession).not.toHaveBeenCalled();
   });
 
+  it('CFG-56: pins the dialog to the global scope under --global', async () => {
+    // Left to the dialog's project default, `gth -g` would write a config the run cannot see, fail
+    // the re-check below and report incomplete setup on every retry.
+    configMock.hasAnyConfig.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    loadInkMock.isInkAvailable.mockResolvedValue(false);
+
+    const { startSession } = await import('#src/modules/startSession.js');
+    await startSession(sessionConfig, { global: true }, undefined);
+
+    expect(firstRunDialogMock.runFirstRunDialog).toHaveBeenCalledWith({}, false, 'global');
+  });
+
+  it('CFG-56: leaves the scope to the user without --global', async () => {
+    configMock.hasAnyConfig.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    loadInkMock.isInkAvailable.mockResolvedValue(false);
+
+    const { startSession } = await import('#src/modules/startSession.js');
+    await startSession(sessionConfig, {}, undefined);
+
+    expect(firstRunDialogMock.runFirstRunDialog).toHaveBeenCalledWith({}, false, undefined);
+  });
+
   it('CFG-16: does NOT run the dialog (no auto-launch) on a non-TTY (piped) run', async () => {
     systemUtilsMock.stdin.isTTY = false;
     configMock.hasAnyConfig.mockResolvedValue(false);

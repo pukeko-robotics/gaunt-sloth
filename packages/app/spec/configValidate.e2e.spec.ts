@@ -99,16 +99,31 @@ describe('gth config validate — process exit code (e2e)', () => {
     mkdirSync(globalGsloth, { recursive: true });
     writeFileSync(resolve(globalGsloth, '.gsloth.config.json'), '{"llm":{"type":"openai"}}');
 
+    // `os.homedir()` reads HOME on POSIX and USERPROFILE on win32, so a fake home must set BOTH
+    // or the spawned CLI resolves ~/.gsloth to the real profile dir on the Windows CI cells.
+    const fakeHome = { HOME: homeDir, USERPROFILE: homeDir };
+
     // Without -g: validates project config and fails
-    const failRes = runCli(['config', 'validate'], { cwd: projDir, env: { HOME: homeDir } });
+    const failRes = runCli(['config', 'validate'], { cwd: projDir, env: fakeHome });
     expect(failRes.status).not.toBe(0);
 
     // With -g: validates global config only and succeeds (exit 0)
     const successRes = runCli(['-g', 'config', 'validate'], {
       cwd: projDir,
-      env: { HOME: homeDir },
+      env: fakeHome,
     });
     expect(successRes.status).toBe(0);
     expect(`${successRes.stdout}${successRes.stderr}`).toContain('Configuration is valid');
+  });
+
+  it('refuses -g together with -c instead of silently ignoring one of them', () => {
+    const cfg = fixture('named.json', '{"llm":{"type":"openai"}}');
+    const { status, stdout, stderr } = runCli(['-g', '-c', cfg, 'config', 'validate']);
+    expect(status).not.toBe(0);
+    const output = `${stdout}${stderr}`;
+    expect(output).toContain('--global');
+    expect(output).toContain('--config');
+    // The named file must not have been loaded and reported valid.
+    expect(output).not.toContain('Configuration is valid');
   });
 });

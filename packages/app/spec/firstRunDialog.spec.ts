@@ -212,6 +212,29 @@ describe('runFirstRunDialog', () => {
     });
   });
 
+  it('writes global config without asking about scope when the caller forces it', async () => {
+    // CFG-56 — `gth -g` reads global config only. Asking the scope question there offers a project
+    // default that writes a file the run will not look at, and the session then reports that setup
+    // did not complete — on every retry.
+    deps.detectProviders = vi
+      .fn()
+      .mockResolvedValue([
+        provider({ id: 'openai', available: true, apiKeyEnvironmentVariable: 'OPENAI_API_KEY' }),
+      ]);
+    deps.fetchModels = vi
+      .fn()
+      .mockResolvedValue({ models: [model('gpt-4o', true)], status: 'live' });
+    // provider + model only; a scope prompt would consume a third entry and desynchronise this.
+    const select = vi.fn(scriptedSelect([0, undefined]));
+    deps.select = select;
+
+    await runFirstRunDialog(deps, false, 'global');
+
+    expect(select).toHaveBeenCalledTimes(2);
+    expect(ensureGslothDir).not.toHaveBeenCalled();
+    expect(writeConfig.mock.calls[0][0]).toBe('global');
+  });
+
   it('still writes config for an unavailable provider so the user can fill in the key', async () => {
     deps.detectProviders = vi
       .fn()
