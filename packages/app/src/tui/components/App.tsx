@@ -32,6 +32,7 @@ import { extractActiveChecklist } from '#src/tui/viewModel.js';
 import { StatusBar } from '#src/tui/components/StatusBar.js';
 import { NoticeBar, McpFailureBar } from '#src/tui/components/NoticeBar.js';
 import { PromptInput, type PromptInputHandle } from '#src/tui/components/PromptInput.js';
+import type { EditorState } from '#src/tui/lineEditor.js';
 import { Rule } from '#src/tui/components/Rule.js';
 import { BlankRow } from '#src/tui/components/BlankRow.js';
 import { ClearBanner } from '#src/tui/components/ClearBanner.js';
@@ -61,6 +62,7 @@ import { findMatches, scrollOffsetForLine, stepMatch } from '#src/tui/debugSearc
 import { useTranscriptScroll } from '#src/tui/useTranscriptScroll.js';
 import { isComposingKeystroke, WHEEL_ROWS_PER_NOTCH } from '#src/tui/transcriptScroll.js';
 import { TUI_HINT_SUFFIX, TUI_KEY_BINDINGS } from '#src/tui/keyBindings.js';
+import { isTypedText, typedText } from '#src/tui/keyGuards.js';
 
 /** Rows of clipping viewport in the docked debug panel (default / restored size). */
 const DEBUG_VIEWPORT_HEIGHT = 8;
@@ -199,6 +201,12 @@ export function App(props: TuiAppProps): React.ReactElement {
   // first rung asks the buffer to scrap itself through this; everything else about the buffer stays
   // inside <PromptInput>, where it lives.
   const promptHandleRef = useRef<PromptInputHandle | null>(null);
+  // TUI-C51 — the one thing about the prompt that has to outlive it: the message a command was
+  // dispatched beside. The prompt is unmounted in four states below, and one of them (`/approvals`
+  // opening its picker) is entered by a command dispatched FROM the prompt — so the draft is put
+  // here, where nothing unmounts, and the prompt takes it back when it returns. It stays a slot
+  // rather than state: nothing here renders it, and the prompt empties it as soon as it has it.
+  const promptDraftCarryRef = useRef<EditorState | null>(null);
   // TUI-C79 — set the moment a teardown starts, so a second `quit()` can tell "leaving" from
   // "already leaving" and skip straight to the unmount. See `quit()`.
   const quittingRef = useRef(false);
@@ -870,6 +878,17 @@ export function App(props: TuiAppProps): React.ReactElement {
       // reports as names, and control characters are refused outright rather than escaped: this
       // buffer is compared against one exact phrase, so anything it cannot match is better dropped
       // than repaired — and neutralising is the framing renderer's job, not a text field's.
+      //
+      // **This is the one text buffer that deliberately refuses the whole EVENT, and it does not
+      // share `keyGuards.ts`'s answer for that reason.** Everywhere else a pasted chunk keeps its
+      // text and loses its control characters, because dropping a paste over one character in it
+      // destroys what the user wrote. Here the opposite is true: a terminal delivers a pasted line
+      // as one chunk carrying its trailing `\r`, that chunk is not the Enter key, and the phrase
+      // matcher trims before it compares — so filtering the character out would leave exactly
+      // `run anyway` in the buffer, one Enter away from an irreversible command the human never
+      // typed the phrase for. A paste is the one input someone can be talked into producing
+      // without reading it, and this field's whole job is to be un-producible by accident
+      // (`spec/tui/AttackBanner.spec.tsx`, [[TUI-C68]] §1).
       if (!chord && input.length > 0 && !/[\p{Cc}]/u.test(input)) {
         attackTypedRef.current += input;
         setAttackTyped(attackTypedRef.current);
@@ -989,11 +1008,15 @@ export function App(props: TuiAppProps): React.ReactElement {
         ) {
           return;
         }
-        // A chord belongs to whoever bound it, never to a text buffer — the same four modifiers the
-        // attack-banner phrase and the prompt's own editor refuse, so every buffer in the TUI reads
-        // a chord the same way. `shift` is excluded deliberately: it is how a capital is typed.
-        if (input && !key.ctrl && !key.meta && !key.super && !key.hyper) {
-          setDebugSearch(debugSearchQueryRef.current + input);
+        // A chord belongs to whoever bound it, never to a text buffer — and neither does a bare
+        // control byte, which carries no modifier for a four-modifier guard to see. The predicate
+        // is the shared one every buffer in the TUI reads its input through (`keyGuards.ts`), so
+        // this pane and the prompt cannot disagree about what a keystroke is. What extends the
+        // query is the event's TEXT: bracketed-paste mode is off while this pane has focus (the
+        // prompt owns `usePaste` and is unmounted here), so a pasted search term arrives as one
+        // event, and a term copied off a line brings that line's newline with it.
+        if (isTypedText(input, key)) {
+          setDebugSearch(debugSearchQueryRef.current + typedText(input, key));
         }
         return;
       }
@@ -1359,6 +1382,7 @@ export function App(props: TuiAppProps): React.ReactElement {
                     slashMenuActiveRef.current = active;
                   }}
                   handleRef={promptHandleRef}
+                  draftCarryRef={promptDraftCarryRef}
                 />
                 <BlankRow />
               </>

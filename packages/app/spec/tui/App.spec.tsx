@@ -41,6 +41,11 @@ const PAGE_UP = '\x1b[5~'; // PageUp CSI sequence
 const ARROW_DOWN = '\x1b[B'; // Down-arrow CSI sequence
 const ARROW_UP = '\x1b[A'; // Up-arrow CSI sequence
 const SHIFT_TAB = '\x1b[Z'; // Shift+Tab (back-tab) CSI sequence
+// TUI-C51 — the chord that opens the slash menu over an unfinished message, and the byte `Ctrl+/`
+// sends where it sends anything at all. Both are raw bytes for the same reason every other key here
+// is: `Ctrl+/` in particular only matters BECAUSE of how Ink decodes it.
+const CTRL_G = '\x07';
+const CTRL_SLASH = '\x1f';
 
 describe('tui <App>', () => {
   beforeEach(() => {
@@ -2150,5 +2155,234 @@ describe('tui <App>', () => {
 
       unmount();
     });
+  });
+});
+
+/**
+ * TUI-C51 — the chord's menu wired into the whole app, which is where the claims the component
+ * spec cannot make live: that it ships on with no configuration, that a command dispatched from it
+ * reaches the same mid-turn gate every other dispatch reaches, and that the control byte `Ctrl+/`
+ * carries cannot land in the OTHER text buffer this surface has.
+ */
+describe('tui <App> — the slash menu over an unfinished message (TUI-C51)', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  /** A turn that streams a line and then blocks until aborted, so the prompt stays mounted. */
+  const blockingAgent = (): TuiAgent =>
+    ({
+      async *runTurn(_input: string, signal: AbortSignal) {
+        yield { type: 'text', delta: 'working' };
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) return resolve();
+          signal.addEventListener('abort', () => resolve());
+        });
+      },
+    }) as unknown as TuiAgent;
+
+  it('is live on a default launch — no config, no flag, nothing set', async () => {
+    // `baseProps` is the whole of it: no resolvedConfig, no configSummary, no advisories, no
+    // opt-in of any kind. Asserted rather than assumed, because "ships on by default" is a claim
+    // about what a user who has configured nothing gets.
+    const agent = scriptedAgent([]);
+    const { stdin, lastFrame, unmount } = render(<App {...baseProps} agent={agent} />);
+    await vi.waitFor(() => expect(lastFrame()).toContain('ready to chat'));
+
+    stdin.write('please refactor the fo');
+    await vi.waitFor(() => expect(lastFrame()).toContain('> please refactor the fo'));
+    // Nothing about that buffer can open the menu the typed way — it starts with a letter and it
+    // holds spaces.
+    expect(lastFrame() ?? '').not.toMatch(/❯/);
+
+    stdin.write(CTRL_G);
+    await vi.waitFor(() => expect(lastFrame()).toMatch(/❯/));
+
+    // Narrow the list before reading the prompt row. The menu is as tall as it has matches — the
+    // same as the typed menu (TUI-C10) — and an unfiltered registry is sixteen rows, which is most
+    // of a default 24-row terminal. Filtering is what a user does here anyway.
+    stdin.write('stat');
+    await vi.waitFor(() => {
+      const frame = lastFrame() ?? '';
+      expect(frame).toContain('/status');
+      // The filter really narrowed: `/clear` was in the list a moment ago and is not now. (`/help`
+      // cannot be used for this — the always-on hint row names it.)
+      expect(frame).not.toContain('/clear');
+      // …with the message still there, unchanged, and no `g` typed into it.
+      expect(frame).toContain('> please refactor the fo');
+      expect(frame).not.toContain('> please refactor the fog');
+    });
+
+    unmount();
+  });
+
+  it('dispatches mid-turn through the SAME gate: a run-safe command runs, another is refused', async () => {
+    const { stdin, frames, lastFrame, unmount } = render(
+      <App {...baseProps} agent={blockingAgent()} initialMessage="go" />
+    );
+    await vi.waitFor(() => expect(lastFrame()).toContain('Thinking'));
+
+    // A message composed while the turn streams — the exact situation the node is about.
+    stdin.write('a draft worth keeping');
+    await vi.waitFor(() => expect(lastFrame()).toContain('> a draft worth keeping'));
+
+    // /verbose is availableDuringRun, so it runs and the draft comes back under it.
+    stdin.write(CTRL_G);
+    await vi.waitFor(() => expect(lastFrame()).toMatch(/❯/));
+    stdin.write('verbose');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/verbose'));
+    stdin.write('\r');
+    await vi.waitFor(() => expect(frames.join('\n')).toContain('Tool details: on'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('> a draft worth keeping'));
+
+    // /clear is not, and it is refused with the same notice a typed dispatch gets — the menu is a
+    // second door onto `handleSubmit`, not a second set of rules.
+    stdin.write(CTRL_G);
+    await vi.waitFor(() => expect(lastFrame()).toMatch(/❯/));
+    stdin.write('clear');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/clear'));
+    stdin.write('\r');
+    await vi.waitFor(() =>
+      expect(frames.join('\n')).toContain('not available while the agent is working')
+    );
+    // Refused, so the transcript is still there — and so is the draft.
+    await vi.waitFor(() => {
+      const frame = lastFrame() ?? '';
+      expect(frame).toContain('working');
+      expect(frame).toContain('> a draft worth keeping');
+    });
+
+    stdin.write(ESC); // end the run cleanly
+    unmount();
+  });
+
+  /** A session that can actually answer `/approvals`, so the command opens its picker. */
+  const pickerAgent = (): TuiAgent =>
+    ({
+      async *runTurn() {
+        yield { type: 'text', delta: 'ok' };
+      },
+      getApprovals: () => ({
+        approvals: { rung: 'write', rater: undefined, allow: [], deny: [], escalate: [] },
+        allowlist: { session: 0, always: undefined },
+        deny: [],
+      }),
+      setApprovalRung: (next: string) => ({ rung: next, rater: undefined, allow: [], deny: [] }),
+    }) as unknown as TuiAgent;
+
+  it('gives the message back after a command that REPLACES the prompt (/approvals)', async () => {
+    // The class of command the restore cannot reach on its own: `/approvals` opens the posture
+    // picker, and the prompt is not rendered while a picker is up — so a draft put back into this
+    // component's own state after the dispatch is put into something that is about to stop
+    // existing. It is the command the mid-turn notice offers as its example, and the one the
+    // user guide lists first. The scripted agent here supplies `setApprovalRung`, without which
+    // `/approvals` only prints "unavailable" and the picker never opens at all.
+    const LEFT = '\x1b[D';
+    const { stdin, frames, lastFrame, unmount } = render(
+      <App {...baseProps} agent={pickerAgent()} />
+    );
+    await vi.waitFor(() => expect(lastFrame()).toContain('ready to chat'));
+
+    stdin.write('please refactor the fo');
+    await vi.waitFor(() => expect(lastFrame()).toContain('> please refactor the fo'));
+    // Park the caret away from the end, so a restore that merely re-typed the text is visible.
+    stdin.write(LEFT);
+    stdin.write(LEFT);
+
+    stdin.write(CTRL_G);
+    await vi.waitFor(() => expect(lastFrame()).toMatch(/❯/));
+    stdin.write('approvals');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/approvals'));
+    stdin.write('\r');
+
+    // The picker is up — and the prompt really is gone while it is, which is the whole hazard.
+    await vi.waitFor(() => expect(lastFrame()).toContain('Choose an approvals mode:'));
+    expect(lastFrame()).not.toContain('> please refactor the fo');
+
+    stdin.write(ESC);
+    await vi.waitFor(() => expect(lastFrame()).not.toContain('Choose an approvals mode:'));
+    // Back, with the caret where it was: typing lands two characters from the end.
+    await vi.waitFor(() => expect(lastFrame()).toContain('> please refactor the fo'));
+    stdin.write('XY');
+    await vi.waitFor(() => expect(lastFrame()).toContain('> please refactor the XYfo'));
+    stdin.write('\r');
+    await vi.waitFor(() => expect(frames.join('\n')).toContain('please refactor the XYfo'));
+
+    unmount();
+  });
+
+  it('keeps Ctrl+/’s byte out of the debug pane’s search query', async () => {
+    // The OTHER text buffer on this surface, and the one the prompt cannot protect: the pane is
+    // focused, so the prompt is unmounted and nothing here opens a menu — but the byte still
+    // arrives, with no modifier flag on it.
+    const longResult = Array.from({ length: 40 }, (_, i) => `line-${i}`).join('\n');
+    const agent = scriptedAgent([
+      { type: 'tool_start', id: 's1', name: 'task' },
+      { type: 'tool_args', id: 's1', delta: '{"subagent_type":"worker","description":"big"}' },
+      { type: 'tool_end', id: 's1' },
+      { type: 'tool_result', id: 's1', content: longResult },
+      { type: 'text', delta: 'ok' },
+    ]);
+    const { stdin, lastFrame, unmount } = render(
+      <App {...baseProps} agent={agent} initialMessage="go" />
+    );
+    await vi.waitFor(() => expect(lastFrame()).toContain('turns: 1'));
+    stdin.write('/debug');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/debug'));
+    stdin.write('\r');
+    await vi.waitFor(() => expect(lastFrame()).toContain('worker'));
+    stdin.write(TAB);
+    await vi.waitFor(() => expect(lastFrame()).toContain('Tab: section'));
+
+    // Open the search, then the discriminating pair, one input event at a time: the control byte
+    // first, the digits after it. An invisible byte in the query is unassertable directly — what
+    // says it was refused is that the query still MATCHES, which `\x1f30` could not.
+    stdin.write('/');
+    stdin.write(CTRL_SLASH);
+    stdin.write('3');
+    stdin.write('0');
+    await vi.waitFor(() => {
+      const frame = lastFrame() ?? '';
+      expect(frame).toContain('line-30'); // the viewport jumped to the match
+      expect(frame).toContain('1/1'); // …and there is exactly one
+    });
+
+    unmount();
+  });
+
+  it('takes a search term pasted with the newline the copy brought with it', async () => {
+    // The other half of the same guard, at the same buffer, and the one that needs no unusual
+    // terminal: bracketed-paste mode is OFF while the pane has focus, because the prompt is what
+    // asks for it and the prompt is unmounted here. So a pasted term arrives as one keystroke
+    // event with whatever the copy included — copying a whole line includes its line ending — and
+    // dropping the event over that character loses the search with nothing on screen to say so.
+    const longResult = Array.from({ length: 40 }, (_, i) => `line-${i}`).join('\n');
+    const agent = scriptedAgent([
+      { type: 'tool_start', id: 's1', name: 'task' },
+      { type: 'tool_args', id: 's1', delta: '{"subagent_type":"worker","description":"big"}' },
+      { type: 'tool_end', id: 's1' },
+      { type: 'tool_result', id: 's1', content: longResult },
+      { type: 'text', delta: 'ok' },
+    ]);
+    const { stdin, lastFrame, unmount } = render(
+      <App {...baseProps} agent={agent} initialMessage="go" />
+    );
+    await vi.waitFor(() => expect(lastFrame()).toContain('turns: 1'));
+    stdin.write('/debug');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/debug'));
+    stdin.write('\r');
+    await vi.waitFor(() => expect(lastFrame()).toContain('worker'));
+    stdin.write(TAB);
+    await vi.waitFor(() => expect(lastFrame()).toContain('Tab: section'));
+
+    stdin.write('/');
+    stdin.write('line-30\n'); // one event, exactly as a paste arrives on this channel
+    await vi.waitFor(() => {
+      const frame = lastFrame() ?? '';
+      expect(frame).toContain('line-30');
+      expect(frame).toContain('1/1'); // the term matched, so the newline did not join it
+    });
+
+    unmount();
   });
 });

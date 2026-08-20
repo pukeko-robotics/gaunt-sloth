@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Box, useInput, usePaste } from 'ink';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Box, Text, useInput, usePaste } from 'ink';
 import { PromptEditor } from '#src/tui/components/PromptEditor.js';
 import { SlashCommandMenu } from '#src/tui/components/SlashCommandMenu.js';
 import {
@@ -16,12 +16,36 @@ import {
   type KillResult,
 } from '#src/tui/lineEditor.js';
 import { normalizePastedText } from '#src/tui/pasteParser.js';
+import { isTypedText, opensCommandMenu, typedText } from '#src/tui/keyGuards.js';
 
 /** The prompt buffer, with the monotonic serial of the edits that produced it. */
 interface PromptBuffer {
   readonly state: EditorState;
   readonly edits: number;
 }
+
+/**
+ * TUI-C51 — the draft-preserving command menu, while it is open. `null` is closed.
+ *
+ * Its `query` is the whole reason this state exists: the typed menu (TUI-C10) filters on the
+ * PROMPT buffer, so it can only open on a buffer that begins with `/` and holds no space. This one
+ * carries its own, which is what lets the menu open over half a composed message.
+ */
+interface CommandMenu {
+  /** What has been typed into the MENU — never into the message. */
+  readonly query: string;
+  /** The highlighted row, reset to the most relevant match whenever the query changes. */
+  readonly index: number;
+}
+
+/**
+ * The menu query's prefix, deliberately as wide as `<PromptEditor>`'s `  > `.
+ *
+ * The query is not in the message, so it needs a row of its own or the user is typing somewhere
+ * they cannot see (DL-4). It is drawn directly above the prompt, below the matches, so the three
+ * read downwards as one block: what matches, what you typed, what you were writing.
+ */
+const COMMAND_MENU_PREFIX = '  / ';
 
 /**
  * What `<App>` may ask of a mounted prompt (TUI-C79) — the imperative half of the Ctrl+C ladder.
@@ -45,6 +69,21 @@ export interface PromptInputHandle {
    */
   clearToKillSlot(): boolean;
 }
+
+/**
+ * TUI-C51 — where a draft waits while this component does not exist, or `null` for "nothing is
+ * waiting".
+ *
+ * A restored draft is written into this component's own state, which is only sound while it is
+ * still mounted afterwards — and dispatching a command is one of the things that unmounts it. The
+ * prompt stands down for a pending approval, the attack banner, the focused debug pane and the
+ * `/approvals` picker, and that last one is opened BY a command the menu dispatches: `/approvals`
+ * is the very command the mid-turn notice offers as its example. So the snapshot is handed to a
+ * slot that outlives the unmount — held by `<App>`, which is always mounted — and the next mount
+ * takes it back. Everything else about the buffer stays here; this carries one message across one
+ * remount and nothing more.
+ */
+export type PromptDraftCarry = React.MutableRefObject<EditorState | null>;
 
 /**
  * The user prompt line. Mirrors the readline `  > ` prompt. Clears on submit; the parent
@@ -71,6 +110,28 @@ export interface PromptInputHandle {
  * it: `slashMenuQuery` matches `/` followed by non-whitespace to the end of the input, and `\n` is
  * whitespace — so a continued or pasted multi-line entry beginning with `/` is not a command query.
  *
+ * TUI-C51 — **the same menu, reachable over an unfinished message: `Ctrl+G` (or `Ctrl+/`).** The
+ * menu above filters on the prompt buffer itself, so with `please refactor the fo` typed there is no
+ * way to reach it at all: the buffer neither starts with `/` nor is expendable. The chord opens the
+ * menu in a mode whose query lives in its own state ({@link CommandMenu}), so the message is neither
+ * read nor written — it stays on screen, unchanged, caret where it was, while the user filters and
+ * dispatches above it. `Esc` closes the menu and leaves it exactly as it was.
+ *
+ * **The message is captured and put back across the dispatch**, rather than the dispatch being
+ * taught not to disturb it: the command goes out through the same `submit` the typed menu uses, so
+ * `<App>` cannot tell the two paths apart and every mid-turn rule it already applies keeps applying
+ * unchanged. What differs is only what this component does afterwards, which is give the draft back
+ * — and it gives it back even when the command replaced this prompt with something else while it
+ * ran, which `/approvals` does (see {@link PromptDraftCarry}).
+ *
+ * **The chord OPENS the menu; it never closes it.** A toggle would make an even number of presses
+ * indistinguishable from none — a shape this input family has twice made a test pass on a broken
+ * tree (TUI-C58) — and `Esc` already closes it.
+ *
+ * **It is not gated on a turn running.** `Ctrl+T` is, because Ink broadcasts every keypress to every
+ * `useInput` subscriber with no way to stop propagation; here filtering IS the mechanism and there
+ * is nothing to swallow, and working idle with a draft in the buffer is the whole point.
+ *
  * TUI-C24 — multiline paste. `usePaste` puts the terminal into bracketed-paste mode (`\x1b[?2004h`)
  * while the prompt is mounted and disables it on unmount, and Ink delivers the pasted text on a
  * channel separate from `useInput` — so an embedded newline in a pasted burst is never read as
@@ -82,6 +143,7 @@ export function PromptInput({
   commands = [],
   onMenuStateChange,
   handleRef,
+  draftCarryRef,
 }: {
   onSubmit: (value: string) => void;
   /** The slash-command registry (App builds it once) — the menu's single source of truth. */
@@ -92,6 +154,8 @@ export function PromptInput({
   /** TUI-C79 — where to publish this prompt's {@link PromptInputHandle} while it is mounted, so
    *  `<App>`'s Ctrl+C ladder can ask the buffer to clear itself (and is told when there is none). */
   handleRef?: React.MutableRefObject<PromptInputHandle | null>;
+  /** TUI-C51 — the slot a draft waits in across a remount; see {@link PromptDraftCarry}. */
+  draftCarryRef?: PromptDraftCarry;
 }): React.ReactElement {
   /**
    * The buffer and its edit serial — authoritative in a REF, mirrored into state for rendering.
@@ -208,6 +272,44 @@ export function PromptInput({
     };
   });
 
+  /** Whether this mount has already had its one chance to take a draft out of the carry slot. */
+  const carryTakenRef = useRef(false);
+
+  // TUI-C51 — the carry slot, on both of its sides, in the one place that can tell them apart.
+  //
+  // **On this mount's first commit**, a draft waiting in the slot is a message this prompt was
+  // showing before a command replaced it (see {@link PromptDraftCarry}), so it is taken back —
+  // caret included, since the slot holds the whole editor state. **On every commit after that**,
+  // the slot is emptied: a draft written into it by a dispatch that left this prompt standing has
+  // already been restored into local state by that dispatch, and leaving it there would resurrect
+  // the message at some later, unrelated remount the user cannot connect to anything.
+  //
+  // React runs no effect for a component that the same commit unmounted, which is exactly what
+  // makes this work: the dispatch that replaces the prompt gets neither branch, so the slot stays
+  // full until the next mount reads it. Deliberately without a dependency array, for the same
+  // reason the handle above has none — this must hold after every commit, not after a chosen few.
+  // The slot is read here rather than in the initial state, because a ref belongs to effects and
+  // handlers and not to render.
+  //
+  // **A LAYOUT effect, not a passive one, and the difference is reachable.** React flushes a
+  // passive effect on a later scheduler task, while Ink's stdin `data` events are ordinary
+  // macrotasks on the same loop — so between the commit that remounts this prompt (buffer empty,
+  // `<PromptEditor>`'s `useInput` already subscribed) and a passive restore, a keypress can be
+  // applied to the empty buffer and then thrown away whole, because `commitBuffer` replaces the
+  // buffer rather than merging into it. A user who Escapes the `/approvals` picker and types
+  // straight away would lose the first characters and watch the caret jump. A layout effect runs
+  // synchronously inside the commit, so there is no such window — and no frame painted empty
+  // before the message comes back.
+  useLayoutEffect(() => {
+    if (!draftCarryRef) return;
+    if (!carryTakenRef.current) {
+      carryTakenRef.current = true;
+      const carried = draftCarryRef.current;
+      if (carried) commitBuffer({ state: carried, edits: 0 });
+    }
+    draftCarryRef.current = null;
+  });
+
   /** Submit `value` and clear the buffer; the bumped serial resets the menu (see `bufferRef`). */
   const submit = (value: string): void => {
     commitBuffer({ state: createEditorState(), edits: bufferRef.current.edits + 1 });
@@ -245,19 +347,40 @@ export function PromptInput({
   });
   const menuAppliesToBuffer = menu.forEdit === buffer.edits;
 
+  /**
+   * TUI-C51 — the chord's menu, or `null`. Authoritative in a ref for the same reason the buffer
+   * is: Ink dispatches every key of one stdin chunk synchronously, so a handler reading the
+   * rendered value reads it from before its predecessor in that chunk — and here that predecessor
+   * is routinely the keystroke that OPENED the menu.
+   */
+  const [commandMenu, setCommandMenu] = useState<CommandMenu | null>(null);
+  const commandMenuRef = useRef(commandMenu);
+  const putCommandMenu = (next: CommandMenu | null): void => {
+    commandMenuRef.current = next;
+    setCommandMenu(next);
+  };
+
   const query = slashMenuQuery(state.value);
   const dismissed = menuAppliesToBuffer && menu.dismissed;
   const matches = query !== null && !dismissed ? filterSlashCommands(commands, query) : [];
-  const menuActive = matches.length > 0;
+  // The two menus are the same menu in two modes and never share the screen: while the chord's
+  // menu is open the editor is standing down, so a buffer that happens to read `/de` would
+  // otherwise leave a second, unreachable list rendered under a query nobody can type into.
+  const menuActive = commandMenu === null && matches.length > 0;
   // Clamp defensively in case the filtered list shrank below the highlight between renders.
   const selectedIndex = menuActive
     ? Math.min(menuAppliesToBuffer ? menu.index : 0, matches.length - 1)
     : 0;
 
-  // Let the parent suppress its competing Tab handler (debug-panel focus) while the menu is open.
+  const commandMatches = commandMenu ? filterSlashCommands(commands, commandMenu.query) : [];
+  const commandIndex = commandMenu ? Math.min(commandMenu.index, commandMatches.length - 1) : 0;
+
+  // Let the parent suppress its competing Tab handler (debug-panel focus) while EITHER menu owns
+  // the navigation keys.
+  const menuOwnsNavigation = menuActive || commandMenu !== null;
   useEffect(() => {
-    onMenuStateChange?.(menuActive);
-  }, [menuActive, onMenuStateChange]);
+    onMenuStateChange?.(menuOwnsNavigation);
+  }, [menuOwnsNavigation, onMenuStateChange]);
 
   /** Step the highlight by `step`, wrapping — the menu is open, so there is a list to step. */
   const moveHighlight = (step: number): void => {
@@ -273,6 +396,42 @@ export function PromptInput({
     });
   };
 
+  /**
+   * TUI-C51 — run the highlighted command and give the message back, caret included.
+   *
+   * The dispatch goes through the ordinary {@link submit}, which clears the buffer: that is what
+   * makes this a capture-and-restore rather than a claim that nothing was disturbed. Keeping the
+   * one submit path is the point — `<App>`'s `handleSubmit` sees exactly the string the typed menu
+   * would have sent it, so the mid-turn rules (a plain message refused, a command without
+   * `availableDuringRun` refused) apply here with nothing taught about this mode.
+   *
+   * The snapshot is taken from the AUTHORITATIVE buffer, not the render, for the usual reason: the
+   * Enter can share a stdin chunk with the edit before it, and a draft restored from the rendered
+   * value would silently roll that edit back.
+   *
+   * The serial keeps climbing across the round trip. It must: it is what invalidates the typed
+   * menu's transient bookkeeping, and a restore that put the old serial back would resurrect an
+   * Esc-dismissal or a stale highlight belonging to a buffer that has been away and returned.
+   */
+  const dispatchBesideDraft = (name: string): void => {
+    const draft = bufferRef.current.state;
+    // The slot is filled BEFORE the dispatch, because the dispatch may be the last thing that
+    // happens to this component: a command that opens a picker replaces the prompt, and the
+    // restore below then lands in state nothing will render again (see {@link PromptDraftCarry}).
+    //
+    // **What the carry then needs is that the unmount reaches React before this component commits
+    // again** — not that the order of these two lines is irrelevant. The effect above empties the
+    // slot on every commit after the first, so a picker-opening command that deferred its state
+    // change by even one macrotask would let this prompt commit once while still mounted, the slot
+    // would be cleared, and the draft would be gone by the time the remount looked for it. Nothing
+    // trips that today: `handleSubmit` and the commands it dispatches are synchronous, so the
+    // unmount lands in the same React commit and this component's effect never runs.
+    if (draftCarryRef) draftCarryRef.current = draft;
+    putCommandMenu(null);
+    submit(`/${name}`);
+    commitBuffer({ state: draft, edits: bufferRef.current.edits + 1 });
+  };
+
   // TUI-C24 — capture a bracketed paste as buffered text instead of keystrokes. Ink enables
   // bracketed-paste mode while this hook is mounted and routes the pasted payload here (off the
   // `useInput` channel), so its embedded newlines never reach Enter handling. The paste is inserted
@@ -284,7 +443,56 @@ export function PromptInput({
   });
 
   useInput(
-    (_input, key) => {
+    (input, key) => {
+      // TUI-C51 — the chord, live in every state of the buffer and of the session. It only ever
+      // OPENS (see the component's doc comment); pressing it again restarts the query.
+      if (opensCommandMenu(input, key)) {
+        putCommandMenu({ query: '', index: 0 });
+        return;
+      }
+
+      // While the chord's menu is open it owns the whole keyboard — `<PromptEditor>` is suspended,
+      // so every key answered here is answered nowhere else in this subtree. Read from the ref:
+      // the key that opened the menu may be the one immediately before this in the same chunk.
+      const open = commandMenuRef.current;
+      if (open) {
+        const list = filterSlashCommands(commands, open.query);
+        const highlighted = Math.min(open.index, list.length - 1);
+        if (key.escape) {
+          // Close, and leave the message exactly as it was — this component never wrote to it.
+          putCommandMenu(null);
+        } else if (key.upArrow || key.downArrow) {
+          if (list.length > 0) {
+            const step = key.upArrow ? -1 : 1;
+            putCommandMenu({
+              query: open.query,
+              index: (highlighted + step + list.length) % list.length,
+            });
+          }
+        } else if (key.tab) {
+          // Complete into the MENU's query, never into the message. No trailing space: there are no
+          // arguments to type here, and a space would only narrow the list to nothing.
+          if (list.length > 0) putCommandMenu({ query: list[highlighted].name, index: 0 });
+        } else if (key.return) {
+          // Nothing highlighted means nothing to run — the same rule <SelectList> applies to a
+          // filter that matches no row. The menu stays open so the query can be corrected.
+          if (list.length > 0) dispatchBesideDraft(list[highlighted].name);
+        } else if (key.backspace || key.delete) {
+          // Nothing to trim is nothing to do. Running the update anyway would reset the highlight
+          // on a keystroke that changed nothing on screen, so a user who has arrowed down the list
+          // and then pressed Backspace once too often watches the selection jump back to the top
+          // with nothing to explain it.
+          if (open.query) putCommandMenu({ query: open.query.slice(0, -1), index: 0 });
+        } else if (isTypedText(input, key)) {
+          // Every edit to the query resets the highlight to the most relevant match, exactly as the
+          // typed menu does — the row that was first before is not the row that is first now. The
+          // query is one line and holds no command name with a control character in it, so what
+          // goes in is the event's text (`keyGuards.ts`), not the event.
+          putCommandMenu({ query: open.query + typedText(input, key), index: 0 });
+        }
+        return;
+      }
+
       // Only claim keys while the menu is visible; otherwise the editor handles everything.
       if (!menuActive) return;
       if (key.upArrow) {
@@ -312,6 +520,18 @@ export function PromptInput({
   return (
     <Box flexDirection="column">
       {menuActive ? <SlashCommandMenu commands={matches} selectedIndex={selectedIndex} /> : null}
+      {/* TUI-C51 — the chord's menu: the matches, then the query row it is being filtered by, then
+          the untouched message below. The query needs the row because it is nowhere else on
+          screen, and an empty one still draws it — that row IS the mode indicator (DL-4). */}
+      {commandMenu ? (
+        <Box flexDirection="column">
+          <SlashCommandMenu commands={commandMatches} selectedIndex={commandIndex} />
+          <Box>
+            <Text color="cyan">{COMMAND_MENU_PREFIX}</Text>
+            <Text>{commandMenu.query}</Text>
+          </Box>
+        </Box>
+      ) : null}
       {/* The editor decides nothing that depends on the text: it hands up an UPDATER for each edit
           and motion, and merely REPORTS Enter. Both go through `setBuffer`, so two keystrokes that
           share one stdin chunk compose in order instead of the second overwriting the first. */}
@@ -322,6 +542,7 @@ export function PromptInput({
         onYank={yankKill}
         onEnter={pressEnterOnBuffer}
         menuActive={menuActive}
+        suspended={commandMenu !== null}
       />
     </Box>
   );

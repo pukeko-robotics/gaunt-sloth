@@ -563,6 +563,10 @@ their config has a problem.
   a pending shell approval answers it (rejecting, fail-closed); a turn in flight is aborted; the
   focused debug pane clears its search or unfocuses; otherwise the conversation returns to the
   newest output. The order is the specification, not an artefact of where the branches sit.
+  - **The slash menu is a known exception, in both of its modes.** The prompt closes the menu on
+    `Esc`, but the abort above does not consult the menu the way the `Tab` handler consults it — so
+    `Esc` pressed to dismiss the menu while a turn is streaming closes the menu **and** stops the
+    turn. Anything that advertises `Esc` as the way out of that menu has to say so.
 - **`Ctrl+C`** — on the TUI, one key with three meanings, resolved most-local-first: a **modal state**
   (attack banner, pending approval, approvals picker) leaves, because that is what those screens
   promise and the run is blocked on an answer nobody is at the keyboard to give; else a **typed
@@ -577,27 +581,84 @@ their config has a problem.
   to work — so the prompt publishes a handle for the clear and `<App>` decides. This is the TUI
   surface only; readline's `Ctrl+C` is unchanged (GS2-87).
 - **`Ctrl+T`** — toggle tool-call detail, running or idle (mirrors `/verbose`).
-- **A control chord must not type its letter, and must not move the message under it.** The prompt's
-  editor (`PromptEditor.tsx`) inserts a keystroke only when none of `ctrl`/`meta`/`super`/`hyper` is
-  set, so a chord the app binds elsewhere — or binds nowhere at all — is refused silently rather
-  than falling through to the insert branch. Without that, each keybinding the app adds also drops a
+- **`Ctrl+G`** (and `Ctrl+/`) — open the slash-command menu **over an unfinished message**, with the
+  message left alone. See the slash-menu entry below.
+- **A control chord must not type its letter, and must not move the message under it.** Every text
+  buffer in the TUI takes its input from one shared pair of answers in `tui/keyGuards.ts` —
+  `isTypedText` for "does this event carry text at all", `typedText` for "which of it may be
+  inserted" — and they all use them: the prompt's editor, the chord menu's query, `App.tsx`'s
+  debug-pane search, `SelectList`'s filter. Sharing them is not tidiness: **Ink broadcasts one
+  keypress to every `useInput` subscriber with no way to stop propagation**, and in the same
+  synchronous dispatch, so a buffer that answers "is this text?" differently from its neighbour types
+  the byte its neighbour refused. Without the guard at all, each keybinding the app adds also drops a
   stray character into whatever the user was part-way through writing; and gating a binding on "a
   turn is running" does not avoid it, because the prompt stays mounted while a turn streams.
-  **`shift` is the one modifier deliberately not in that list** — it is how a capital is typed, not a
-  different key. Every text buffer in the TUI owes the same four-modifier guard, and they all carry
-  it: the prompt's editor, and `App.tsx`'s attack-banner phrase and debug-pane search.
-  **The guard reaches exactly as far as Ink's decode does, and that is not all the way.** A control
-  byte that arrives merged into an escape sequence decodes with `ctrl: false`, so it falls through
-  the guard and is typed into the buffer — the `ESC ^C` residual of the hold-back filter
-  (`mouseStdin.ts`) is the known instance, measured. Read the guard as removing the ordinary case,
-  not as a guarantee that no binding can leave a stray character behind.
+  - **The predicate refuses a control character whatever the modifiers say, and that half is the one
+    a modifier test cannot do.** Ink's ctrl+letter branch is bounded at `\x1a`, so `Ctrl+/` (`0x1f`)
+    and `Ctrl+\` (`0x1c`) decode with `ctrl: false` and an `input` holding the byte; the `ESC ^C`
+    residual of the hold-back filter (`mouseStdin.ts`) arrives the same way. All of them look like
+    typed text to a four-modifier guard, and the symptom is an invisible byte in whatever has focus.
+  - **`shift` is deliberately not refused** — it is how a capital is typed, not a different key.
+    `capsLock`/`numLock` sit on the same object and are lock states, not modifiers.
+  - **The refusal is per CHARACTER, because one event is not one keystroke.** Ink hands a pasted
+    string over as a single `input`, and a paste is what arrives on the keystroke channel whenever
+    bracketed-paste mode is off — which it is in every state where the prompt, the only holder of
+    `usePaste`, is not mounted. So the control characters are removed from what is inserted and the
+    rest of the text lands; refusing the whole event instead would silently discard the paste, with
+    no character, no error and no way to get it back. A bare control byte still reaches nothing:
+    with its one character removed there is nothing left to insert.
+  - **A buffer that can hold a line break says so.** `typedText` drops `\n` with the other control
+    characters because a query, a filter or a phrase is one line; `<PromptEditor>`'s message is
+    drawn on as many rows as it has lines, so it asks for `typedMultilineText`, which keeps `\n`
+    (normalized like a bracketed paste's) and removes everything else.
+  - **A key that must survive the guard needs its own branch**, because the guard cannot know it:
+    `Ctrl+J` is the byte `\n` alone, which carries no text by this answer, so `PromptEditor.tsx`
+    binds it explicitly rather than letting it fall through to the insert branch.
+  - **The attack banner's phrase field is the one deliberate exception, and it is stricter**
+    ([[TUI-C68]] §1). It refuses the whole event when a control character is in it, because the
+    character in question is the `\r` of a pasted `run anyway` line and the phrase matcher trims
+    before it compares — filtering would leave the exact phrase in the buffer, one Enter from an
+    irreversible command nobody typed. Losing a paste costs a retype; keeping one costs the
+    command. Every other buffer takes the opposite trade, and differing from the shared answer
+    anywhere else is drift.
 - **`o` / `s` / `a` / anything-else** at a pending shell approval — approve once / session / always
   / reject (fail-closed). `[s]` and `[a]` are offered only when there is something to remember.
   Changing the approvals mode is not one of the choices: the ladder has no "turn the gate down from
   here" action, so that decision is made deliberately with `/approvals`.
+- **The slash menu has two doors, and one menu behind them (DL-9 keyboard-first, DL-3 preserve the
+  user's content, TUI-C10/TUI-C51).** Typing `/` on an otherwise-empty line filters the menu on the
+  prompt buffer itself, which is why it only opens on a buffer that starts with `/` and holds no
+  space. **`Ctrl+G` — or `Ctrl+/` — opens the same menu with a query of its own**, so it is reachable
+  with a half-written message in the prompt, where the first door cannot open at all and clearing the
+  buffer to reach it would destroy what the user wrote. In that mode the editor stands down
+  completely, the message is captured and put back around the dispatch (caret included), and `Esc`
+  closes leaving it as it was — mid-turn, `Esc` also stops the turn (see the `Esc` entry above).
+  **Only one of the two is ever on screen.**
+  - **The message comes back even when the command REPLACED the prompt while it ran.** `/approvals`
+    opens a picker, and the prompt is not rendered while one is up, so a draft restored into the
+    prompt's own state would be restored into something about to be unmounted and lost with it —
+    with no kill-slot recovery, because nothing killed it. The snapshot is handed to a slot on
+    `<App>`, which is always mounted, and the next mount of the prompt takes it back. Restoring
+    only for the commands that happen to leave the prompt standing is not the promise: `/approvals`
+    is the command the mid-turn notice offers as its example.
+  - **It ships on, with no config key** — an additive chord changes nothing until pressed, and a
+    discovery affordance behind a flag is not one (DL-9). `--no-tui` is the opt-out, as for the TUI
+    generally.
+  - **`Ctrl+G` is the binding and `Ctrl+/` is a second spelling, decided on measured emission**
+    rather than on how the chord reads: `Ctrl+/` sends nothing at all on macOS, in Terminal.app and
+    in Zed, while Konsole sends `0x1f`. `Alt+/` is not bound because on macOS it is the printable
+    `÷`, and `Ctrl+\` is not because it shares `Ctrl+/`'s defect and is conventionally `SIGQUIT`.
+  - **The chord OPENS; it never toggles.** An even number of presses would then be indistinguishable
+    from none, which is how a test passes on a tree where the binding does nothing.
+  - **It is not gated on a turn running.** `Ctrl+T` is, because Ink broadcasts every keypress
+    everywhere; here filtering IS the mechanism and there is nothing to swallow — and composing a
+    message while idle is precisely the case the door exists for.
 - **slash commands mid-turn** — the prompt stays mounted while a turn streams, so run-safe commands
-  (`/approvals`, `/verbose`, `/debug`, `/help`, `/model`, …) work during inference; a plain message
-  or an idle-only command is refused with a hint until the turn finishes.
+  (`/approvals`, `/verbose`, `/debug`, `/model`, `/status`, …) work during inference; a plain message
+  or an idle-only command (`/help`, `/clear`, `/exit`, `/quit` — the ones without
+  `availableDuringRun`) is refused with a hint until the turn finishes. **The gate is
+  `handleSubmit`'s, not the prompt's**, so it applies identically however the command was reached —
+  typed, or dispatched from the `Ctrl+G` menu.
 - **`Tab`** — focus the docked debug panel when visible/idle; once focused, `Tab` cycles its views
   (`Shift+Tab` reverses), `↑`/`↓` scroll one line and `PageUp`/`PageDown` page-step (arrows are the
   documented scroll keys since Mac/compact keyboards lack dedicated `PageUp`/`PageDown` — DL-9, DL-5,

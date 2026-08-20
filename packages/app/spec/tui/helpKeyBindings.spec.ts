@@ -52,6 +52,9 @@ const TUI_ONLY_KEYS = [
   'Ctrl+Home',
   'Ctrl+End',
   'Ctrl+T',
+  // TUI-C51 — the chord that opens the slash menu over an unfinished message. readline's prompt is
+  // one `rl.question` in cooked mode with no menu to open and no buffer of ours to preserve.
+  'Ctrl+G',
   'wheel',
   '\\ then Enter',
   'Ctrl+J',
@@ -70,7 +73,7 @@ const TUI_ONLY_KEYS = [
 const EXPECTED_SECTIONS: readonly [title: string, bindings: number][] = [
   ['Scrolling the conversation (this window has no scrollback of its own)', 5],
   ['While the agent is working', 2],
-  ['At the prompt', 16],
+  ['At the prompt', 17],
   ['Panels', 7],
   ['When a tool call asks for approval (the prompt shows these too)', 1],
   ['Leaving', 1],

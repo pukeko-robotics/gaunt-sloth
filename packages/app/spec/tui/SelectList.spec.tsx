@@ -245,6 +245,40 @@ describe('CFG-20 type-to-filter interaction', () => {
     expect(frame).toContain('grok-4.3');
   });
 
+  it('keeps a bare control byte out of the filter while an ordinary character still lands', async () => {
+    // TUI-C51 — the third of the TUI's text buffers, on the shared `isTypedText` predicate now that
+    // `Ctrl+/` is a chord this app accepts. `0x1f` reaches every `useInput` subscriber with no
+    // modifier flag set, so nothing here can recognise it as a chord — and an accepted one would be
+    // invisible in `filter: gro`, which is why the assertion is that the filter still MATCHES.
+    const { lastFrame, stdin } = render(
+      <SelectList title="Pick a model" items={models} initialIndex={0} onSelect={vi.fn()} />
+    );
+    stdin.write('\x1f'); // Ctrl+/ where a terminal sends anything at all
+    await tick();
+    stdin.write('grok');
+    await tick();
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('filter: grok');
+    expect(frame).toContain('grok-4.3');
+    expect(frame).not.toContain('no matches');
+  });
+
+  it('filters on a pasted term, minus the control characters that came with it', async () => {
+    // TUI-C51 — the same buffer, met by a paste instead of a keystroke. With bracketed-paste mode
+    // off the whole string arrives as one event, so a term copied off a line brings that line's
+    // ending along: refusing the event would leave the list unfiltered with nothing on screen to
+    // say why, and inserting it whole would leave `filter: grok\n`, which matches no row.
+    const { lastFrame, stdin } = render(
+      <SelectList title="Pick a model" items={models} initialIndex={0} onSelect={vi.fn()} />
+    );
+    stdin.write('grok\n');
+    await tick();
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('filter: grok');
+    expect(frame).toContain('grok-4.3');
+    expect(frame).not.toContain('no matches');
+  });
+
   it('shows a no-matches state and Enter does nothing while unmatched', async () => {
     const onSelect = vi.fn();
     const { lastFrame, stdin } = render(

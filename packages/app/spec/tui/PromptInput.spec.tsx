@@ -6,7 +6,11 @@ import chalk from 'chalk';
 import stripAnsi from 'strip-ansi';
 import { Box, Text } from 'ink';
 import { render } from 'ink-testing-library';
-import { PromptInput, type PromptInputHandle } from '#src/tui/components/PromptInput.js';
+import {
+  PromptInput,
+  type PromptDraftCarry,
+  type PromptInputHandle,
+} from '#src/tui/components/PromptInput.js';
 import { PromptEditor } from '#src/tui/components/PromptEditor.js';
 import { SlashCommandMenu } from '#src/tui/components/SlashCommandMenu.js';
 import { moveWordLeft, moveWordRight, type EditorState } from '#src/tui/lineEditor.js';
@@ -62,6 +66,18 @@ const CTRL_U = '\x15';
 const CTRL_Y = '\x19';
 /** Ctrl+J — the linefeed byte, which is a literal newline at this prompt. */
 const CTRL_J = '\n';
+/**
+ * TUI-C51 — the chord that opens the slash menu over an unfinished message, in both spellings, and
+ * the near neighbour that is deliberately bound to nothing.
+ *
+ * `Ctrl+G` is the binding: `0x07` is what every measured terminal sends for it. `Ctrl+/` sends
+ * `0x1f` where it sends anything at all (nothing on macOS), and `Ctrl+\`'s `0x1c` is the same shape
+ * of byte left unbound — so the two together are the discriminating pair for "the chord is
+ * recognised, and a control byte is not typed".
+ */
+const CTRL_G = '\x07';
+const CTRL_SLASH = '\x1f';
+const CTRL_BACKSLASH = '\x1c';
 /** <App>'s transcript-scroll keys — the prompt must leave these alone. */
 const CTRL_HOME = '\x1b[1;5H';
 const CTRL_END = '\x1b[1;5F';
@@ -128,6 +144,30 @@ function bufferIn(frame: string): string {
   return promptRows(frame)
     .map((row) => stripAnsi(row).slice(PROMPT.length).replace(/\s+$/, ''))
     .join('\n');
+}
+
+/**
+ * TUI-C51 — what has been typed into the MENU's own query, or `null` when no menu owns one.
+ *
+ * The query is drawn on its own row, prefixed `  / ` — four columns wide, exactly like the prompt's
+ * `  > ` — which is what distinguishes it from the menu's own rows: a match renders as `❯ /name` or
+ * `  /name`, and neither puts a space directly after the slash.
+ */
+function commandMenuQueryIn(frame: string): string | null {
+  for (const row of frame.split('\n')) {
+    const plain = stripAnsi(row);
+    if (/^ {2}\/(?: |$)/.test(plain)) return plain.slice(4).replace(/\s+$/, '');
+  }
+  return null;
+}
+
+/** The name on the menu's highlighted row (`❯ /status`), or `null` when no row is highlighted. */
+function highlightedIn(frame: string): string | null {
+  for (const row of frame.split('\n')) {
+    const match = /❯\s+(\/\S+)/.exec(stripAnsi(row));
+    if (match) return match[1];
+  }
+  return null;
 }
 
 /** Type each character as its own input event, the way a person produces them. */
@@ -307,6 +347,364 @@ describe('tui <PromptInput> slash-command menu (TUI-C10 interaction)', () => {
   });
 });
 
+/**
+ * TUI-C51 — reaching that same menu with an unfinished message in the buffer.
+ *
+ * The draft used throughout is the node's own example, and it is chosen to be unreachable by the
+ * TUI-C10 route in two independent ways: it does not begin with `/`, and it holds spaces. There is
+ * no keystroke that opens the menu over it except the chord, and no way to open it by clearing the
+ * buffer that does not destroy what the user wrote.
+ *
+ * **The draft is asserted through `onSubmit`, not only through the frame,** wherever a stray
+ * control byte could be the difference: the caret is drawn as an inverse-video cell and an
+ * unprintable byte in the buffer is invisible on screen, so a frame that "looks right" is exactly
+ * what an unguarded insert branch produces.
+ */
+describe('tui <PromptInput> the slash menu over an unfinished message (TUI-C51)', () => {
+  paintsAnsi();
+
+  const DRAFT = 'please refactor the fo';
+
+  /** Type the draft and leave the caret at its end; returns the render handle. */
+  const withDraft = async (onSubmit = vi.fn()) => {
+    const handle = render(<PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />);
+    await typeSlowly(handle.stdin, DRAFT);
+    expect(bufferIn(handle.lastFrame() ?? '')).toBe(DRAFT);
+    expect(handle.lastFrame() ?? '').not.toMatch(/❯/);
+    return { ...handle, onSubmit };
+  };
+
+  it('opens the menu on Ctrl+G with the draft visible, unmodified, and its caret unmoved', async () => {
+    const { stdin, lastFrame, onSubmit } = await withDraft();
+    const caretBefore = caretIn(lastFrame() ?? '');
+    expect(caretBefore).toEqual({ row: 0, column: DRAFT.length });
+
+    stdin.write(CTRL_G);
+    await tick();
+
+    const frame = lastFrame() ?? '';
+    // The whole registry, because the menu's own query starts empty.
+    expect(frame).toMatch(/❯/);
+    expect(frame).toContain('/status');
+    expect(frame).toContain('/help');
+    // …with the message still on the prompt row beneath it, caret where it was.
+    expect(bufferIn(frame)).toBe(DRAFT);
+    expect(caretIn(frame)).toEqual(caretBefore);
+    // And the chord's own letter did not join the message.
+    expect(bufferIn(frame)).not.toContain('g');
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('/help');
+  });
+
+  it('opens on Ctrl+/ as well, without putting its byte anywhere near the message', async () => {
+    const { stdin, lastFrame, onSubmit } = await withDraft();
+
+    stdin.write(CTRL_SLASH);
+    await tick();
+    expect(lastFrame() ?? '').toMatch(/❯/);
+
+    // The discriminating half: an ordinary character still lands — in the MENU, since that is what
+    // owns the keyboard now — while the control byte reached neither buffer.
+    stdin.write('s');
+    await tick();
+    expect(commandMenuQueryIn(lastFrame() ?? '')).toBe('s');
+    expect(bufferIn(lastFrame() ?? '')).toBe(DRAFT);
+
+    stdin.write(ESC);
+    await tick();
+    stdin.write(ENTER);
+    await tick();
+    // Byte-exact, because `\x1f` in the buffer renders as nothing at all.
+    expect(onSubmit).toHaveBeenCalledWith(DRAFT);
+  });
+
+  it('refuses Ctrl+\\ as both a chord and a character — it opens nothing and types nothing', async () => {
+    // The control for the case above: a handler that accepted every unrecognised control byte would
+    // pass that one, and a buffer that typed them would leave `0x1c` in the message invisibly.
+    const { stdin, lastFrame, onSubmit } = await withDraft();
+
+    stdin.write(CTRL_BACKSLASH);
+    await tick();
+    expect(lastFrame() ?? '').not.toMatch(/❯/);
+    expect(commandMenuQueryIn(lastFrame() ?? '')).toBeNull();
+
+    stdin.write('o');
+    await tick();
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith(`${DRAFT}o`);
+  });
+
+  it('types the filter into the menu’s own query and never into the message', async () => {
+    const { stdin, lastFrame, onSubmit } = await withDraft();
+    stdin.write(CTRL_G);
+    await tick();
+
+    await typeSlowly(stdin, 'stat');
+
+    const frame = lastFrame() ?? '';
+    expect(commandMenuQueryIn(frame)).toBe('stat');
+    expect(frame).toContain('/status');
+    expect(frame).not.toContain('/help');
+    // The message is untouched — neither the letters nor a caret move reached it.
+    expect(bufferIn(frame)).toBe(DRAFT);
+    expect(caretIn(frame)).toEqual({ row: 0, column: DRAFT.length });
+
+    // Backspace trims the QUERY, not the message.
+    stdin.write(BACKSPACE);
+    await tick();
+    expect(commandMenuQueryIn(lastFrame() ?? '')).toBe('sta');
+    expect(bufferIn(lastFrame() ?? '')).toBe(DRAFT);
+
+    stdin.write(ESC);
+    await tick();
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith(DRAFT);
+  });
+
+  it('dispatches the highlighted command and gives the message back, caret included', async () => {
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = await withDraft(onSubmit);
+    // Put the caret somewhere that is NOT the end, so a restore that merely re-typed the text
+    // would be visibly wrong.
+    stdin.write(META_B);
+    await tick();
+    const caretBefore = caretIn(lastFrame() ?? '');
+    expect(caretBefore).toEqual({ row: 0, column: DRAFT.length - 2 });
+
+    stdin.write(CTRL_G);
+    await tick();
+    await typeSlowly(stdin, 'stat');
+    stdin.write(ENTER);
+    await tick();
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit).toHaveBeenCalledWith('/status');
+    const frame = lastFrame() ?? '';
+    expect(bufferIn(frame)).toBe(DRAFT);
+    expect(caretIn(frame)).toEqual(caretBefore);
+    // The menu closed behind the dispatch.
+    expect(frame).not.toMatch(/❯/);
+    expect(commandMenuQueryIn(frame)).toBeNull();
+
+    // The editor has the keyboard back, and it inserts AT the restored caret.
+    await typeSlowly(stdin, 'XY');
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenLastCalledWith('please refactor the XYfo');
+  });
+
+  it('Enter with nothing matching runs nothing and leaves the menu open to be corrected', async () => {
+    const { stdin, lastFrame, onSubmit } = await withDraft();
+    stdin.write(CTRL_G);
+    await tick();
+    await typeSlowly(stdin, 'zzz');
+    expect(lastFrame() ?? '').not.toMatch(/❯/); // no rows to highlight
+    expect(commandMenuQueryIn(lastFrame() ?? '')).toBe('zzz');
+
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(commandMenuQueryIn(lastFrame() ?? '')).toBe('zzz');
+  });
+
+  it('Backspace on an empty query leaves the highlight where the user put it', async () => {
+    // Backspace trims the query, and with nothing to trim it must do NOTHING: resetting the
+    // highlight here moves the selection with nothing on screen having changed to explain it, and
+    // the row the user arrowed down to is the row they are about to press Enter on.
+    const { stdin, lastFrame } = await withDraft();
+    stdin.write(CTRL_G);
+    await tick();
+    stdin.write(DOWN);
+    await tick();
+    const highlighted = highlightedIn(lastFrame() ?? '');
+    expect(highlighted).not.toBeNull();
+
+    stdin.write(BACKSPACE);
+    await tick();
+    const frame = lastFrame() ?? '';
+    expect(highlightedIn(frame)).toBe(highlighted);
+    // …and neither the query nor the message underneath it lost a character either.
+    expect(commandMenuQueryIn(frame)).toBe('');
+    expect(bufferIn(frame)).toBe(DRAFT);
+  });
+
+  it('Esc closes the menu and leaves the message exactly as it was', async () => {
+    const { stdin, lastFrame, onSubmit } = await withDraft();
+    stdin.write(CTRL_G);
+    await tick();
+    await typeSlowly(stdin, 'stat');
+
+    stdin.write(ESC);
+    await tick();
+    const frame = lastFrame() ?? '';
+    expect(frame).not.toMatch(/❯/);
+    expect(commandMenuQueryIn(frame)).toBeNull();
+    expect(bufferIn(frame)).toBe(DRAFT);
+    expect(caretIn(frame)).toEqual({ row: 0, column: DRAFT.length });
+
+    // The editor owns the keyboard again — the letters go back to the message.
+    await typeSlowly(stdin, 'o');
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith(`${DRAFT}o`);
+  });
+
+  it('Up/Down step the menu’s highlight while the message stays put', async () => {
+    const { stdin, lastFrame, onSubmit } = await withDraft();
+    stdin.write(CTRL_G);
+    await tick();
+    await typeSlowly(stdin, 'de'); // [debug, debug-dump, model]
+
+    stdin.write(DOWN);
+    await tick();
+    expect(bufferIn(lastFrame() ?? '')).toBe(DRAFT);
+    stdin.write(UP);
+    await tick();
+    stdin.write(UP); // wrap past the first row to the last
+    await tick();
+    expect(bufferIn(lastFrame() ?? '')).toBe(DRAFT);
+
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('/model');
+  });
+
+  it('Tab completes into the menu’s query, never into the message', async () => {
+    const { stdin, lastFrame, onSubmit } = await withDraft();
+    stdin.write(CTRL_G);
+    await tick();
+    await typeSlowly(stdin, 'de');
+    stdin.write(DOWN); // -> debug-dump
+    await tick();
+
+    stdin.write(TAB);
+    await tick();
+    const frame = lastFrame() ?? '';
+    expect(commandMenuQueryIn(frame)).toBe('debug-dump');
+    expect(bufferIn(frame)).toBe(DRAFT);
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    // No trailing space was added (the typed menu's Tab adds one, and here it would narrow the
+    // list to nothing), so the menu is still open — and Enter proves WHICH row it left highlighted.
+    expect(frame).toMatch(/❯/);
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('/debug-dump');
+  });
+
+  it('OPENS on the chord rather than toggling, so an odd or even count is the same state', async () => {
+    // TUI-C58's discipline, applied to the binding itself: a toggle would let a test that pressed
+    // the chord twice pass on a tree where it did nothing at all. Three presses, one at a time.
+    const { stdin, lastFrame } = await withDraft();
+    for (let i = 0; i < 3; i += 1) {
+      stdin.write(CTRL_G);
+      await tick();
+      expect(lastFrame() ?? '').toMatch(/❯/);
+    }
+    expect(bufferIn(lastFrame() ?? '')).toBe(DRAFT);
+
+    // …and pressing it again with a query typed restarts that query rather than closing anything.
+    await typeSlowly(stdin, 'stat');
+    expect(commandMenuQueryIn(lastFrame() ?? '')).toBe('stat');
+    stdin.write(CTRL_G);
+    await tick();
+    expect(commandMenuQueryIn(lastFrame() ?? '')).toBe('');
+    expect(lastFrame() ?? '').toMatch(/❯/);
+  });
+
+  it('drops a control byte out of the MENU’s query as well as out of the message', async () => {
+    // The chord menu's query is a text buffer like any other and it is the one newly-accepted call
+    // site with a keyboard of its own: while the menu is open `<PromptEditor>` has stood down, so
+    // whatever a paste carries arrives HERE. What discriminates is not how the row looks — `\x1f`
+    // renders as nothing, so a query holding it reads as `stat` on screen — but whether the query
+    // still MATCHES: `st\x1fat` matches no registered command, and the row the user was about to
+    // press Enter on is not there.
+    const { stdin, lastFrame, onSubmit } = await withDraft();
+    stdin.write(CTRL_G);
+    await tick();
+
+    stdin.write('st\x1fat'); // one event, the way a paste arrives with bracketed-paste mode off
+    await tick();
+
+    const frame = lastFrame() ?? '';
+    expect(commandMenuQueryIn(frame)).toBe('stat');
+    expect(frame).toContain('/status');
+    expect(frame).not.toContain('/help');
+    // The message underneath never sees this event at all, which is why the query is the assertion.
+    expect(bufferIn(frame)).toBe(DRAFT);
+
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('/status');
+  });
+
+  it('empties the carry slot once the draft is back, so no later remount replays it', async () => {
+    // The other half of the carry, and the one no outcome shows at the time it goes wrong. A
+    // command that leaves this prompt standing — `/status` here, `/verbose` in `<App>` — has its
+    // draft put back locally, so the slot it was parked in has done its job. Left full, it is a
+    // message with no owner: the NEXT unrelated remount (focusing and unfocusing the debug pane,
+    // answering a tool approval) takes it and types it into a prompt the user had since emptied,
+    // with nothing on screen to connect it to anything.
+    const onSubmit = vi.fn();
+    const carry: PromptDraftCarry = { current: null };
+    const prompt = (instance: string) => (
+      <PromptInput
+        key={instance}
+        onSubmit={onSubmit}
+        commands={createCommandRegistry()}
+        draftCarryRef={carry}
+      />
+    );
+    const { stdin, lastFrame, rerender } = render(prompt('first'));
+    await typeSlowly(stdin, DRAFT);
+    expect(bufferIn(lastFrame() ?? '')).toBe(DRAFT);
+
+    stdin.write(CTRL_G);
+    await tick();
+    await typeSlowly(stdin, 'stat');
+    stdin.write(ENTER);
+    await tick();
+    // The prompt is still mounted and has the message back — the local restore, not the slot's.
+    expect(onSubmit).toHaveBeenCalledWith('/status');
+    expect(bufferIn(lastFrame() ?? '')).toBe(DRAFT);
+
+    // A remount that has nothing to do with the dispatch: a different instance of the same
+    // component, exactly as `<App>` produces when a picker or the debug pane hands the prompt back.
+    rerender(prompt('second'));
+    await tick();
+    expect(bufferIn(lastFrame() ?? '')).toBe('');
+  });
+
+  it('shows ONE menu when the buffer would have opened the typed one too', async () => {
+    // The two modes are the same menu; a buffer reading `/de` under an open chord menu must not
+    // leave a second list on screen filtered by a query nobody can reach.
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    await typeSlowly(stdin, '/de');
+    expect((lastFrame() ?? '').match(/❯/g)?.length).toBe(1);
+
+    stdin.write(CTRL_G);
+    await tick();
+    const frame = lastFrame() ?? '';
+    expect(frame.match(/❯/g)?.length).toBe(1);
+    // It is the CHORD's menu: its query is empty, so the whole registry is listed.
+    expect(commandMenuQueryIn(frame)).toBe('');
+    expect(frame).toContain('/help');
+    expect(bufferIn(frame)).toBe('/de');
+
+    // Esc gives the typed menu back, still filtered by the buffer.
+    stdin.write(ESC);
+    await tick();
+    expect(lastFrame() ?? '').not.toContain('/help');
+    expect(lastFrame() ?? '').toContain('/debug-dump');
+  });
+});
+
 describe('tui <PromptInput> multiline paste (TUI-C24)', () => {
   it('buffers a multiline paste without submitting; a later Enter submits the whole value', async () => {
     const onSubmit = vi.fn();
@@ -406,6 +804,126 @@ describe('tui <PromptInput> multiline paste (TUI-C24)', () => {
  * object can satisfy a handler on a decoding no terminal produces, and the caret is a position the
  * component never exposes, so the reverse-video run is the only honest observable of it.
  */
+/**
+ * TUI-C51 — a paste that arrives as KEYSTROKES, which is what a paste is with bracketed-paste mode
+ * off.
+ *
+ * Every case in the TUI-C24 block above goes through the `paste()` helper, i.e. the `\x1b[200~`
+ * channel — the one a terminal offers only after the prompt has asked for it, and the one that is
+ * off in every state where the prompt is not mounted. Nothing there exercises the channel below,
+ * where the whole pasted string arrives as a single `input` event and the guard that decides what
+ * is text meets it. The rule is that the control characters are removed and the text is not: a
+ * paste is never discarded over a character inside it, and no control byte reaches the buffer **on
+ * this channel**. It is not a rule about the buffer: the bracketed-paste channel that the cases
+ * above drive splices its payload in unfiltered, so a control byte pasted with the mode on still
+ * lands (`keyGuards.ts` records the divergence).
+ */
+describe('tui <PromptInput> a paste arriving as keystrokes (TUI-C51)', () => {
+  it('keeps the lines of a multi-line paste, and does not submit on the newline', async () => {
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    stdin.write('line one\nline two');
+    await tick();
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(promptRows(lastFrame() ?? '')).toHaveLength(2);
+    expect(bufferIn(lastFrame() ?? '')).toBe('line one\nline two');
+
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('line one\nline two');
+  });
+
+  it('keeps a paste whose only control character is the newline it ends with', async () => {
+    // Copying a whole line brings its line ending along, so this is the ordinary case, not an edge
+    // one — and the whole message is what an event-level refusal would have thrown away.
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    stdin.write('hello\n');
+    await tick();
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(bufferIn(lastFrame() ?? '')).toBe('hello\n');
+
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('hello\n');
+  });
+
+  it('drops the control characters inside a paste and keeps the text around them', async () => {
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    stdin.write('a\x1fb\tc');
+    await tick();
+    // `\x1f` renders as nothing at all and `\t` as whitespace, so the frame is read for the shape
+    // and `onSubmit` for the bytes — the buffer is asserted where an invisible character shows.
+    expect(bufferIn(lastFrame() ?? '')).toBe('abc');
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('abc');
+  });
+
+  it('lands at the caret, after what was already typed, exactly as the other channel does', async () => {
+    const onSubmit = vi.fn();
+    const { stdin } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    stdin.write('note: ');
+    await tick();
+    stdin.write('first\r\nsecond'); // CRLF, normalized the way a bracketed paste's is
+    await tick();
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('note: first\nsecond');
+  });
+
+  it('keeps a paste that is NOTHING but line breaks, which this buffer can hold', async () => {
+    // The guard and the inserter have to be drawn from the same filter or they disagree at exactly
+    // one input: a chunk of only line breaks — a blank line copied, the tail of a copied block —
+    // is text to `typedMultilineText` (which keeps `\n`) and not to `typedText` (which strips it).
+    // Guarded on the single-line answer, this paste is refused whole by the one buffer that has
+    // rows to put it in.
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    stdin.write('one');
+    await tick();
+    stdin.write('\n\n'); // one event: two breaks and not a character between them
+    await tick();
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(promptRows(lastFrame() ?? '')).toHaveLength(3);
+    stdin.write('two');
+    await tick();
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('one\n\ntwo');
+  });
+
+  it('still refuses a bare control byte, which is the guard this widened', async () => {
+    // The narrowing above must not have cost the refusal it was built for: `Ctrl+\` alone carries
+    // no text, so it inserts nothing — while an ordinary character right after it still lands.
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    stdin.write(CTRL_BACKSLASH);
+    await tick();
+    expect(bufferIn(lastFrame() ?? '')).toBe('');
+    stdin.write('o');
+    await tick();
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('o');
+  });
+});
+
 describe('tui <PromptEditor> rendering (TUI-C25)', () => {
   paintsAnsi();
 

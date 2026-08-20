@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import { SelectCancelledError } from '#src/tui/selectCancelled.js';
 import { useTerminalSize } from '#src/tui/useTerminalSize.js';
+import { isTypedText, typedText } from '#src/tui/keyGuards.js';
 
 export interface SelectItem {
   /** The text shown for this row. */
@@ -224,11 +225,12 @@ export function SelectList({
       return;
     }
     // Any other printable, non-modified key extends the filter — unless this list opted out of
-    // filtering, in which case it is swallowed rather than narrowing the list. Guard against
-    // control/meta combos and non-printable input (arrows/return/etc. are handled above and
-    // arrive with empty `input`).
-    if (filterable && input && !key.ctrl && !key.meta && !/[\x00-\x1f]/.test(input)) {
-      applyFilter(filter + input);
+    // filtering, in which case it is swallowed rather than narrowing the list. The answers are the
+    // shared ones (`keyGuards.ts`): a chord is refused outright and control characters are dropped
+    // out of what is inserted, so this filter and the prompt's own buffer cannot disagree about
+    // what counts as typed text. The filter is one line, so a pasted newline goes with them.
+    if (filterable && isTypedText(input, key)) {
+      applyFilter(filter + typedText(input, key));
     }
   });
 
