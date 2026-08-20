@@ -131,16 +131,22 @@ describe('CFG-36/CFG-47: the TUI fallback covers the TUI and nothing else', () =
     // the drain resolves every consecutive `mock` entry IN PARALLEL: each entry awaits its own
     // module-resolution round trip and only then writes the mock registry, which is a plain
     // last-writer-wins map. Two queued registrations for the SAME path therefore do not apply in
-    // the order they were queued — the one whose round trip finishes last wins. Left un-drained,
-    // the restore above shares a batch with the `vi.doMock` in the module-load cell below, and
-    // whenever it lands second that cell gets the ordinary stub instead: the TUI "loads", and the
-    // readline fallback the cell exists to prove never happens. It fails as a bare
-    // `createTuiSession` was called, which reads like a product defect and is not one.
+    // the order they were queued — the one whose round trip finishes last wins. Un-drained, the
+    // restore above shares a batch with the `vi.doMock` in the module-load cell below, and whenever
+    // it lands second that cell gets the ordinary stub instead: the TUI "loads", and the readline
+    // fallback the cell exists to prove never happens. It fails as a bare `createTuiSession` was
+    // called, which reads like a product defect and is not one.
     // So: **one pending `vi.doMock` per module path at a time — consume it with the import it is
     // for before any other cell can queue its own.** The await below is that consumption; it leaves
     // the queue empty at the start of every cell, which is what makes cell 4's registration the
     // only one in its batch and therefore deterministic. Any spec that swaps a module mock between
     // cases needs the same discipline.
+    // The one way to break that invariant from inside this file: a cell that queues a `vi.doMock`
+    // and then fails or returns BEFORE its own import. Its entry stays pending, the restore joins
+    // it, and this hook drains a batch of two — the same race, relocated somewhere far worse to
+    // read, because the losing side is now the restore. If the throwing factory wins, the import
+    // below executes it and this hook throws, so the failure surfaces against a cell that did
+    // nothing wrong. A cell that queues a mock must reach the import it queued it for.
     // Where `vi.resetModules()` sits relative to `vi.doMock` is NOT part of this: the reset clears
     // the evaluated-module cache and deliberately skips mock entries, so it can neither discard nor
     // reorder a queued registration. Moving it does not fix anything, and is not why this works.
