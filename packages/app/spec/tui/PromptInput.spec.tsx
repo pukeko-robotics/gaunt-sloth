@@ -8,6 +8,7 @@ import { Box, Text } from 'ink';
 import { render } from 'ink-testing-library';
 import {
   PromptInput,
+  extendCommandMenuQuery,
   type PromptDraftCarry,
   type PromptInputHandle,
 } from '#src/tui/components/PromptInput.js';
@@ -702,6 +703,222 @@ describe('tui <PromptInput> the slash menu over an unfinished message (TUI-C51)'
     await tick();
     expect(lastFrame() ?? '').not.toContain('/help');
     expect(lastFrame() ?? '').toContain('/debug-dump');
+  });
+});
+
+/**
+ * TUI-C95 — the leading slash the user already knows to type.
+ *
+ * The chord menu filters on command names, which are stored without a slash, so a query typed the
+ * way a user learned the command — `/help` — matched nothing at all. What discriminates here is
+ * almost never the match list on its own: the QUERY ROW is where the character either was or was
+ * not swallowed, and it is drawn from the same stored string the filter reads, so a test that only
+ * asked "does /help appear in the frame" would pass on a tree that kept the slash and happened to
+ * find the command anyway.
+ *
+ * Every input below is fed ONE EVENT AT A TIME except where a paste is the point, because a
+ * multi-character write takes the single-event branch in one step and would test neither the
+ * character-by-character path nor the empty-query condition the strip is keyed on.
+ */
+describe('tui <PromptInput> the chord menu tolerates a leading slash (TUI-C95)', () => {
+  paintsAnsi();
+
+  const DRAFT = 'please refactor the fo';
+
+  /** The same unfinished message as TUI-C51's, with the chord's menu open over it. */
+  const withMenuOverDraft = async (onSubmit = vi.fn()) => {
+    const handle = render(<PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />);
+    await typeSlowly(handle.stdin, DRAFT);
+    expect(bufferIn(handle.lastFrame() ?? '')).toBe(DRAFT);
+    handle.stdin.write(CTRL_G);
+    await tick();
+    expect(commandMenuQueryIn(handle.lastFrame() ?? '')).toBe('');
+    return { ...handle, onSubmit };
+  };
+
+  it('filters identically whether or not the slash was typed, down to the rendered query row', async () => {
+    const slashed = await withMenuOverDraft();
+    await typeSlowly(slashed.stdin, '/help');
+    const withSlash = slashed.lastFrame() ?? '';
+
+    const bare = await withMenuOverDraft();
+    await typeSlowly(bare.stdin, 'help');
+    const withoutSlash = bare.lastFrame() ?? '';
+
+    expect(commandMenuQueryIn(withSlash)).toBe('help');
+    expect(withSlash).toContain('/help');
+    expect(withSlash).not.toContain('/status');
+    expect(highlightedIn(withSlash)).toBe('/help');
+    // The acceptance in one assertion: the two spellings are the same screen — the same matches,
+    // the same query row, the same draft beneath, down to the ANSI.
+    expect(withSlash).toBe(withoutSlash);
+  });
+
+  it('takes a bare "/" as an empty query — the whole registry, not an empty list', async () => {
+    const { stdin, lastFrame } = await withMenuOverDraft();
+    const opened = lastFrame() ?? '';
+
+    stdin.write('/');
+    await tick();
+
+    const frame = lastFrame() ?? '';
+    expect(commandMenuQueryIn(frame)).toBe('');
+    expect(frame).toContain('/help');
+    expect(frame).toContain('/status');
+    expect(frame).toMatch(/❯/);
+    // Indistinguishable from the menu as it opened, which is what "an empty query" means.
+    expect(frame).toBe(opened);
+    expect(bufferIn(frame)).toBe(DRAFT);
+  });
+
+  it('takes a pasted "/help" — one event carrying the whole string — as a typed one', async () => {
+    const { stdin, lastFrame, onSubmit } = await withMenuOverDraft();
+
+    stdin.write('/help'); // one event: what a paste is with bracketed-paste mode off
+    await tick();
+
+    const frame = lastFrame() ?? '';
+    expect(commandMenuQueryIn(frame)).toBe('help');
+    expect(frame).toContain('/help');
+    expect(frame).not.toContain('/status');
+    expect(bufferIn(frame)).toBe(DRAFT);
+
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('/help');
+  });
+
+  it('dispatches the same command from either spelling, and gives the draft back with its caret', async () => {
+    const onSubmit = vi.fn();
+    const handle = render(<PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />);
+    await typeSlowly(handle.stdin, DRAFT);
+    // Caret off the end, so a restore that merely re-typed the message would be visibly wrong.
+    handle.stdin.write(META_B);
+    await tick();
+    const caretBefore = caretIn(handle.lastFrame() ?? '');
+    expect(caretBefore).toEqual({ row: 0, column: DRAFT.length - 2 });
+
+    handle.stdin.write(CTRL_G);
+    await tick();
+    await typeSlowly(handle.stdin, '/stat');
+    expect(commandMenuQueryIn(handle.lastFrame() ?? '')).toBe('stat');
+    expect(bufferIn(handle.lastFrame() ?? '')).toBe(DRAFT);
+
+    handle.stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit).toHaveBeenCalledWith('/status');
+    const frame = handle.lastFrame() ?? '';
+    expect(bufferIn(frame)).toBe(DRAFT);
+    expect(caretIn(frame)).toEqual(caretBefore);
+    expect(commandMenuQueryIn(frame)).toBeNull();
+  });
+
+  it('leaves the message untouched while a slashed query is typed, and on Esc', async () => {
+    const { stdin, lastFrame, onSubmit } = await withMenuOverDraft();
+    const caretBefore = caretIn(lastFrame() ?? '');
+    expect(caretBefore).toEqual({ row: 0, column: DRAFT.length });
+
+    await typeSlowly(stdin, '/help');
+    expect(bufferIn(lastFrame() ?? '')).toBe(DRAFT);
+    expect(caretIn(lastFrame() ?? '')).toEqual(caretBefore);
+
+    stdin.write(ESC);
+    await tick();
+    const frame = lastFrame() ?? '';
+    expect(commandMenuQueryIn(frame)).toBeNull();
+    expect(bufferIn(frame)).toBe(DRAFT);
+    expect(caretIn(frame)).toEqual(caretBefore);
+
+    stdin.write(ENTER);
+    await tick();
+    // Byte-exact through `onSubmit`: a `/` the swallow missed would be invisible in the frame.
+    expect(onSubmit).toHaveBeenCalledWith(DRAFT);
+  });
+
+  it('tolerates the slash only where a user puts one — later it is ordinary query text', async () => {
+    const { stdin, lastFrame } = await withMenuOverDraft();
+    await typeSlowly(stdin, 'sta');
+    expect(lastFrame() ?? '').toContain('/status');
+
+    stdin.write('/');
+    await tick();
+    const frame = lastFrame() ?? '';
+    expect(commandMenuQueryIn(frame)).toBe('sta/');
+    expect(frame).not.toMatch(/❯/); // no command name holds a slash, so nothing matches
+    expect(bufferIn(frame)).toBe(DRAFT);
+
+    // …and the character is really IN the query rather than lost: Backspace gives the match back.
+    stdin.write(BACKSPACE);
+    await tick();
+    expect(commandMenuQueryIn(lastFrame() ?? '')).toBe('sta');
+    expect(lastFrame() ?? '').toContain('/status');
+  });
+
+  it('strips ONE slash — "//help" keeps its second and matches nothing', async () => {
+    // The decision, asserted rather than left to be discovered: one slash is what a user means by
+    // the command they know, and quietly accepting any number of them would be its own small lie.
+    const { stdin, lastFrame } = await withMenuOverDraft();
+
+    stdin.write('//help');
+    await tick();
+
+    const frame = lastFrame() ?? '';
+    expect(commandMenuQueryIn(frame)).toBe('/help');
+    expect(frame).not.toMatch(/❯/);
+    expect(bufferIn(frame)).toBe(DRAFT);
+  });
+
+  it('leaves the typed door alone — there the slash is part of the message', async () => {
+    // The fix must not reach TUI-C10's door, which filters on the buffer itself and strips the
+    // slash on its own way in. Asserted, not assumed: the slash stays visible in the message.
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    await typeSlowly(stdin, '/help');
+
+    const frame = lastFrame() ?? '';
+    expect(bufferIn(frame)).toBe('/help');
+    expect(commandMenuQueryIn(frame)).toBeNull(); // no chord menu, so no query row of its own
+    expect(frame).toContain('/help');
+    expect(frame).toMatch(/❯/);
+
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('/help');
+  });
+
+  it('leaves the typed door’s path heuristic alone — "//help" opens no menu there', async () => {
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    await typeSlowly(stdin, '//help');
+
+    const frame = lastFrame() ?? '';
+    expect(bufferIn(frame)).toBe('//help');
+    expect(frame).not.toMatch(/❯/); // a second `/` is a path, and a path is not a command query
+
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('//help');
+  });
+});
+
+describe('tui extendCommandMenuQuery (TUI-C95)', () => {
+  it('drops one leading slash from a query that is being started', () => {
+    expect(extendCommandMenuQuery('', '/')).toBe('');
+    expect(extendCommandMenuQuery('', '/help')).toBe('help');
+    expect(extendCommandMenuQuery('', 'help')).toBe('help');
+  });
+
+  it('keeps every other slash, and never rewrites what the query already held', () => {
+    expect(extendCommandMenuQuery('', '//help')).toBe('/help');
+    expect(extendCommandMenuQuery('sta', '/')).toBe('sta/');
+    // A query that already begins with a slash keeps it: the strip is applied where the query is
+    // STARTED, so adding a character to it can never retroactively take one away.
+    expect(extendCommandMenuQuery('/help', 'x')).toBe('/helpx');
   });
 });
 

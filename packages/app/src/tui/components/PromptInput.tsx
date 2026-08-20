@@ -48,6 +48,36 @@ interface CommandMenu {
 const COMMAND_MENU_PREFIX = '  / ';
 
 /**
+ * TUI-C95 — the chord menu's query after `typed` is added to what it already held.
+ *
+ * **A leading `/` is tolerated where the user would put one, and nowhere else.** Command names are
+ * stored without the slash, so a query still carrying one matches nothing — and to a user who
+ * learned the commands as `/help` the character they typed looks exactly like part of the name they
+ * are looking for, which leaves an empty list with nothing on screen to explain it. The chord menu
+ * is right not to REQUIRE the slash — reaching it over a half-written message is the whole point —
+ * so the slash is dropped rather than demanded, and the two doors take the same spelling.
+ *
+ * **The normalisation belongs here, at the storing boundary, and not in `filterSlashCommands`.**
+ * That filter is shared with the typed door, which already strips the slash on the way in
+ * (`slashMenuQuery`); a second strip inside it would state the same rule twice and let the two
+ * drift. Storing-side also settles the rendered query row, which draws its own `/ ` prefix
+ * ({@link COMMAND_MENU_PREFIX}) and would otherwise read `/ /help`.
+ *
+ * **What arrives is an event's text, not a keystroke**, which is why the strip is applied to the
+ * whole of it: with bracketed-paste mode off a pasted `/help` lands as one call carrying the
+ * whole string, and a fix that swallowed a lone `/` key would miss it entirely.
+ *
+ * **Exactly one slash, and only at the front of an empty query.** One is what a user means; a
+ * second is not a spelling of anything, and a query that already has characters in it is being
+ * filtered rather than started — so a `/` there is ordinary query text and matches nothing, which
+ * is the honest answer.
+ */
+export function extendCommandMenuQuery(current: string, typed: string): string {
+  if (current) return current + typed;
+  return typed.startsWith('/') ? typed.slice(1) : typed;
+}
+
+/**
  * What `<App>` may ask of a mounted prompt (TUI-C79) — the imperative half of the Ctrl+C ladder.
  *
  * `<App>` arbitrates Ctrl+C because Ink broadcasts a keypress to every `useInput` subscriber with no
@@ -123,6 +153,9 @@ export type PromptDraftCarry = React.MutableRefObject<EditorState | null>;
  * unchanged. What differs is only what this component does afterwards, which is give the draft back
  * — and it gives it back even when the command replaced this prompt with something else while it
  * ran, which `/approvals` does (see {@link PromptDraftCarry}).
+ *
+ * **The menu neither requires the leading `/` nor refuses it** — a query typed as `/help` filters
+ * exactly as `help` does ({@link extendCommandMenuQuery}).
  *
  * **The chord OPENS the menu; it never closes it.** A toggle would make an even number of presses
  * indistinguishable from none — a shape this input family has twice made a test pass on a broken
@@ -488,7 +521,10 @@ export function PromptInput({
           // typed menu does — the row that was first before is not the row that is first now. The
           // query is one line and holds no command name with a control character in it, so what
           // goes in is the event's text (`keyGuards.ts`), not the event.
-          putCommandMenu({ query: open.query + typedText(input, key), index: 0 });
+          putCommandMenu({
+            query: extendCommandMenuQuery(open.query, typedText(input, key)),
+            index: 0,
+          });
         }
         return;
       }

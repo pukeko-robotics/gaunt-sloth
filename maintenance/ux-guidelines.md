@@ -641,6 +641,13 @@ their config has a problem.
     `<App>`, which is always mounted, and the next mount of the prompt takes it back. Restoring
     only for the commands that happen to leave the prompt standing is not the promise: `/approvals`
     is the command the mid-turn notice offers as its example.
+  - **The leading `/` is tolerated, never required (DL-6, DL-9).** The chord menu's query filters on
+    command names, which are stored without the slash, so a query typed as `/help` is normalised to
+    `help` as it is stored and a bare `/` is an empty query listing everything. A user who learned
+    the commands as `/help` types the name the way they know it, and the character they typed looks
+    exactly like part of the name — so an empty list there has nothing on screen to explain it.
+    Exactly one slash, and only at the front of an empty query: a `/` typed into a query that
+    already has characters is ordinary query text and matches nothing.
   - **It ships on, with no config key** — an additive chord changes nothing until pressed, and a
     discovery affordance behind a flag is not one (DL-9). `--no-tui` is the opt-out, as for the TUI
     generally.

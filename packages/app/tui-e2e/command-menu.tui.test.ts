@@ -103,6 +103,48 @@ test.describe('gth chat TUI — the slash menu over an unfinished message (greet
     await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
   });
 
+  test('the leading slash is tolerated: a query typed as /stat filters as stat does', async ({
+    terminal,
+  }) => {
+    await expect(terminal.getByText('ready to chat')).toBeVisible();
+
+    terminal.write(DRAFT);
+    await expect(terminal.getByText(`> ${DRAFT}`)).toBeVisible();
+
+    terminal.write('\x07'); // Ctrl+G
+    await expect(terminal.getByText('❯')).toBeVisible();
+
+    // TUI-C95 — the slash is what a user who already knows the command types first, and it is
+    // dropped as the query is stored, so `/stat` filters exactly as `stat` does.
+    //
+    // **What proves it is the QUERY ROW, and only after a further character.** The row is drawn
+    // `  / ` with its own slash, so a retained one reads `  / /stat` — but "the list is still all
+    // of the registry" cannot be asserted the instant the `/` is written: a screen that has not
+    // repainted yet still shows the list from before it, and the assertion would pass on the very
+    // tree this cell exists to catch. The first loop step below is the discriminating one, because
+    // `/ s` can only be on screen if the slash never reached the query.
+    terminal.write('/');
+
+    // One character at a time, each waited for: a burst lands in one step and would test neither
+    // the empty-query condition the strip is keyed on nor the row it is read back from.
+    const filter = 'stat';
+    for (let i = 0; i < filter.length; i++) {
+      terminal.write(filter[i]);
+      await expect(terminal.getByText(`/ ${filter.slice(0, i + 1)}`)).toBeVisible();
+      await expect(terminal.getByText(`> ${DRAFT}`)).toBeVisible();
+    }
+    // Filtered to the one command, with the slash nowhere in the query row or the message.
+    // (`/verbose` is the marker rather than `/help`, which the permanent hint row already carries.)
+    await expect(terminal.getByText('/status')).toBeVisible();
+    await expect(terminal.getByText('/verbose')).not.toBeVisible();
+    await expect(terminal.getByText(`> ${DRAFT}/`)).not.toBeVisible();
+
+    terminal.submit();
+    await expect(terminal.getByText('Session status')).toBeVisible();
+    await expect(terminal.getByText(`> ${DRAFT}`)).toBeVisible();
+    await expect(terminal.getByText('chat  ·  turns: 0  ·  ready')).toBeVisible();
+  });
+
   test('Esc closes the menu and leaves the message exactly as it was', async ({ terminal }) => {
     await expect(terminal.getByText('ready to chat')).toBeVisible();
 
