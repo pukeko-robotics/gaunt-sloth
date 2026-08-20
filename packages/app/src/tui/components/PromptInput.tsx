@@ -36,6 +36,15 @@ interface CommandMenu {
   readonly query: string;
   /** The highlighted row, reset to the most relevant match whenever the query changes. */
   readonly index: number;
+  /**
+   * Whether anything has reached this query yet — what arms the one leading-slash strip.
+   *
+   * `false` holds only between the chord opening the menu and the first input it takes, which is
+   * what bounds the strip at one. An empty query is not the same question and cannot stand in for
+   * it: the swallowed slash LEAVES the query empty, so a strip keyed on emptiness re-arms itself
+   * on every slash and is unbounded. See {@link extendCommandMenuQuery}.
+   */
+  readonly started: boolean;
 }
 
 /**
@@ -67,13 +76,18 @@ const COMMAND_MENU_PREFIX = '  / ';
  * whole of it: with bracketed-paste mode off a pasted `/help` lands as one call carrying the
  * whole string, and a fix that swallowed a lone `/` key would miss it entirely.
  *
- * **Exactly one slash, and only at the front of an empty query.** One is what a user means; a
- * second is not a spelling of anything, and a query that already has characters in it is being
- * filtered rather than started — so a `/` there is ordinary query text and matches nothing, which
- * is the honest answer.
+ * **Exactly one slash, and only as the first thing that reaches a freshly opened menu** —
+ * `started`, not an empty query, is what says so. One slash is what a user means; a second is not a
+ * spelling of anything, and the typed door refuses `//help` outright as a path rather than a
+ * command, so a chord door that dispatched it would give two doors opposite answers for the same
+ * six characters. Keying the strip on emptiness instead is what makes that happen: a swallowed
+ * slash leaves the query empty, so the strip re-arms and `//help` typed one key at a time collapses
+ * to `help` while the same string pasted keeps its second slash. Anywhere after the first input —
+ * a query with characters in it, or one backspaced empty again — a `/` is ordinary query text and
+ * matches nothing, which is the honest answer.
  */
-export function extendCommandMenuQuery(current: string, typed: string): string {
-  if (current) return current + typed;
+function extendCommandMenuQuery(current: string, typed: string, started: boolean): string {
+  if (started) return current + typed;
   return typed.startsWith('/') ? typed.slice(1) : typed;
 }
 
@@ -155,7 +169,8 @@ export type PromptDraftCarry = React.MutableRefObject<EditorState | null>;
  * ran, which `/approvals` does (see {@link PromptDraftCarry}).
  *
  * **The menu neither requires the leading `/` nor refuses it** — a query typed as `/help` filters
- * exactly as `help` does ({@link extendCommandMenuQuery}).
+ * exactly as `help` does, and a query PASTED while the menu is open is filtered by rather than
+ * spliced into the message.
  *
  * **The chord OPENS the menu; it never closes it.** A toggle would make an even number of presses
  * indistinguishable from none — a shape this input family has twice made a test pass on a broken
@@ -170,6 +185,8 @@ export type PromptDraftCarry = React.MutableRefObject<EditorState | null>;
  * channel separate from `useInput` — so an embedded newline in a pasted burst is never read as
  * Enter and can never submit the turn mid-paste. The normalized paste (CRLF/CR → `\n`) is inserted
  * at the caret without submitting; a subsequent explicit Enter submits the whole multi-line value.
+ * While the chord's menu is open the paste goes to the MENU's query instead, for the same reason
+ * every other key does.
  */
 export function PromptInput({
   onSubmit,
@@ -393,6 +410,25 @@ export function PromptInput({
     setCommandMenu(next);
   };
 
+  /**
+   * TUI-C95 — put `typed` into the open menu's query: the ONE place either input channel stores it.
+   *
+   * The keystroke channel and the bracketed-paste channel both land here, so the leading-slash
+   * strip and the highlight reset are stated once. Split between the two, they would answer the
+   * same `/help` differently depending only on whether the terminal wrapped it in paste markers —
+   * which is not a distinction the user makes, or can even see.
+   *
+   * Every edit to the query resets the highlight to the most relevant match, exactly as the typed
+   * menu does: the row that was first before is not the row that is first now.
+   */
+  const typeIntoCommandMenu = (open: CommandMenu, typed: string): void => {
+    putCommandMenu({
+      query: extendCommandMenuQuery(open.query, typed, open.started),
+      index: 0,
+      started: true,
+    });
+  };
+
   const query = slashMenuQuery(state.value);
   const dismissed = menuAppliesToBuffer && menu.dismissed;
   const matches = query !== null && !dismissed ? filterSlashCommands(commands, query) : [];
@@ -469,9 +505,27 @@ export function PromptInput({
   // bracketed-paste mode while this hook is mounted and routes the pasted payload here (off the
   // `useInput` channel), so its embedded newlines never reach Enter handling. The paste is inserted
   // AT THE CARET and does NOT submit — a later explicit Enter submits it all.
+  //
+  // TUI-C95 — **unless the chord's menu is open, in which case the paste is what the menu is being
+  // filtered BY.** While it is up the menu owns the whole keyboard and the message underneath is
+  // not written to (TUI-C51), and this is the channel a terminal normally uses: bracketed-paste
+  // mode is on for as long as this hook is mounted, so a user who presses the chord and pastes
+  // `/status` out of their notes arrives HERE and not at `useInput`. Ungated, that paste filtered
+  // nothing and was spliced into the draft instead — the one way the menu could modify a message it
+  // promises to leave exactly as it was.
   usePaste((text) => {
     const pasted = normalizePastedText(text);
     if (!pasted) return;
+    const open = commandMenuRef.current;
+    if (open) {
+      // Through the same `typedText` the keystroke channel reads, so the two cannot diverge on what
+      // a one-line query may hold: a paste is never a chord, and a line break is not content to a
+      // query (`keyGuards.ts`). Nothing left after that filter is nothing to do — updating anyway
+      // would reset the highlight on a paste that changed nothing on screen.
+      const typed = typedText(pasted, {});
+      if (typed) typeIntoCommandMenu(open, typed);
+      return;
+    }
     applyEdit((current) => insertText(current, pasted));
   });
 
@@ -480,7 +534,7 @@ export function PromptInput({
       // TUI-C51 — the chord, live in every state of the buffer and of the session. It only ever
       // OPENS (see the component's doc comment); pressing it again restarts the query.
       if (opensCommandMenu(input, key)) {
-        putCommandMenu({ query: '', index: 0 });
+        putCommandMenu({ query: '', index: 0, started: false });
         return;
       }
 
@@ -500,12 +554,14 @@ export function PromptInput({
             putCommandMenu({
               query: open.query,
               index: (highlighted + step + list.length) % list.length,
+              started: open.started,
             });
           }
         } else if (key.tab) {
           // Complete into the MENU's query, never into the message. No trailing space: there are no
           // arguments to type here, and a space would only narrow the list to nothing.
-          if (list.length > 0) putCommandMenu({ query: list[highlighted].name, index: 0 });
+          if (list.length > 0)
+            putCommandMenu({ query: list[highlighted].name, index: 0, started: true });
         } else if (key.return) {
           // Nothing highlighted means nothing to run — the same rule <SelectList> applies to a
           // filter that matches no row. The menu stays open so the query can be corrected.
@@ -515,16 +571,16 @@ export function PromptInput({
           // on a keystroke that changed nothing on screen, so a user who has arrowed down the list
           // and then pressed Backspace once too often watches the selection jump back to the top
           // with nothing to explain it.
-          if (open.query) putCommandMenu({ query: open.query.slice(0, -1), index: 0 });
+          if (open.query)
+            putCommandMenu({
+              query: open.query.slice(0, -1),
+              index: 0,
+              started: open.started,
+            });
         } else if (isTypedText(input, key)) {
-          // Every edit to the query resets the highlight to the most relevant match, exactly as the
-          // typed menu does — the row that was first before is not the row that is first now. The
-          // query is one line and holds no command name with a control character in it, so what
+          // The query is one line and holds no command name with a control character in it, so what
           // goes in is the event's text (`keyGuards.ts`), not the event.
-          putCommandMenu({
-            query: extendCommandMenuQuery(open.query, typedText(input, key)),
-            index: 0,
-          });
+          typeIntoCommandMenu(open, typedText(input, key));
         }
         return;
       }

@@ -646,8 +646,20 @@ their config has a problem.
     `help` as it is stored and a bare `/` is an empty query listing everything. A user who learned
     the commands as `/help` types the name the way they know it, and the character they typed looks
     exactly like part of the name — so an empty list there has nothing on screen to explain it.
-    Exactly one slash, and only at the front of an empty query: a `/` typed into a query that
-    already has characters is ordinary query text and matches nothing.
+    Exactly one slash, and only as the first thing that reaches a freshly opened menu. Anywhere
+    after that — a query with characters in it, or one backspaced empty again — a `/` is ordinary
+    query text and matches nothing, which is the honest answer. A second slash is not a spelling of
+    anything, and the typed door refuses `//help` outright as a path rather than a command, so a
+    chord door that dispatched it would give two doors opposite answers for the same six
+    characters. **The condition is "nothing has reached this menu yet", not "the query is empty"**:
+    a swallowed slash leaves the query empty, so the emptiness reading re-arms on every slash and
+    strips an unbounded number of them — and it does so only on the keystroke path, which is how
+    the same input typed and pasted came to give two different screens.
+  - **A paste while the menu is open is filtered BY the menu, never spliced into the message.**
+    Both arrival shapes go to the query through one normalisation, so what a `/help` does cannot
+    depend on whether the terminal wrapped it in bracketed-paste markers — a distinction the user
+    neither makes nor can see. This is also what keeps the draft-preservation promise above true on
+    the channel a terminal actually uses.
   - **It ships on, with no config key** — an additive chord changes nothing until pressed, and a
     discovery affordance behind a flag is not one (DL-9). `--no-tui` is the opt-out, as for the TUI
     generally.

@@ -8,7 +8,6 @@ import { Box, Text } from 'ink';
 import { render } from 'ink-testing-library';
 import {
   PromptInput,
-  extendCommandMenuQuery,
   type PromptDraftCarry,
   type PromptInputHandle,
 } from '#src/tui/components/PromptInput.js';
@@ -716,9 +715,16 @@ describe('tui <PromptInput> the slash menu over an unfinished message (TUI-C51)'
  * asked "does /help appear in the frame" would pass on a tree that kept the slash and happened to
  * find the command anyway.
  *
- * Every input below is fed ONE EVENT AT A TIME except where a paste is the point, because a
- * multi-character write takes the single-event branch in one step and would test neither the
- * character-by-character path nor the empty-query condition the strip is keyed on.
+ * Every input below is fed ONE EVENT AT A TIME except where a multi-character arrival is itself the
+ * point, because a burst takes the whole string through the strip in one step: it exercises neither
+ * the character-by-character path nor the "nothing has reached this menu yet" flag the strip is
+ * armed by, and a rule keyed on the query being empty instead passes the burst while failing every
+ * user who types.
+ *
+ * The two multi-character shapes are different channels and both are asserted: a bare
+ * `stdin.write` is what a paste looks like with bracketed-paste mode OFF, and {@link paste} wraps
+ * the payload in the terminal's markers, which is the normal case at this prompt and the one that
+ * must not reach the message.
  */
 describe('tui <PromptInput> the chord menu tolerates a leading slash (TUI-C95)', () => {
   paintsAnsi();
@@ -771,7 +777,7 @@ describe('tui <PromptInput> the chord menu tolerates a leading slash (TUI-C95)',
     expect(bufferIn(frame)).toBe(DRAFT);
   });
 
-  it('takes a pasted "/help" — one event carrying the whole string — as a typed one', async () => {
+  it('takes "/help" arriving as one event — a paste with bracketed-paste mode off — as a typed one', async () => {
     const { stdin, lastFrame, onSubmit } = await withMenuOverDraft();
 
     stdin.write('/help'); // one event: what a paste is with bracketed-paste mode off
@@ -855,18 +861,91 @@ describe('tui <PromptInput> the chord menu tolerates a leading slash (TUI-C95)',
     expect(lastFrame() ?? '').toContain('/status');
   });
 
-  it('strips ONE slash — "//help" keeps its second and matches nothing', async () => {
+  it('strips ONE slash — "//help" typed keeps its second and matches nothing', async () => {
     // The decision, asserted rather than left to be discovered: one slash is what a user means by
-    // the command they know, and quietly accepting any number of them would be its own small lie.
+    // the command they know, and quietly accepting any number of them would be its own small lie —
+    // the typed door refuses `//help` as a path (the cell two below), so a chord door that ran
+    // `/help` for it would give two doors opposite answers for one input.
+    //
+    // TYPED, one key at a time, which is what the header above demands and what discriminates: the
+    // strip is armed by the menu being untouched, not by the query being empty, and a swallowed
+    // slash leaves the query empty — so the emptiness rule re-arms on every slash and collapses
+    // this to `help`, while the same six characters in one event do not.
     const { stdin, lastFrame } = await withMenuOverDraft();
 
-    stdin.write('//help');
-    await tick();
+    await typeSlowly(stdin, '//help');
 
     const frame = lastFrame() ?? '';
     expect(commandMenuQueryIn(frame)).toBe('/help');
     expect(frame).not.toMatch(/❯/);
     expect(bufferIn(frame)).toBe(DRAFT);
+  });
+
+  it('gives "//help" the same screen typed as in one event', async () => {
+    // The two shapes are the same six characters and must be the same answer; the defect this pins
+    // was visible ONLY as the difference between them.
+    const typed = await withMenuOverDraft();
+    await typeSlowly(typed.stdin, '//help');
+
+    const burst = await withMenuOverDraft();
+    burst.stdin.write('//help'); // one event: what a paste is with bracketed-paste mode off
+    await tick();
+
+    expect(commandMenuQueryIn(burst.lastFrame() ?? '')).toBe('/help');
+    expect(typed.lastFrame() ?? '').toBe(burst.lastFrame() ?? '');
+  });
+
+  it('is filtered BY a bracketed paste, not written into the message by one', async () => {
+    // The channel a terminal actually uses: `usePaste` puts the prompt in bracketed-paste mode for
+    // as long as it is mounted, so this — not the one-event `stdin.write` above — is how a pasted
+    // `/help` arrives in Terminal.app, iTerm2, Ghostty, Konsole or Windows Terminal.
+    const { stdin, lastFrame, onSubmit } = await withMenuOverDraft();
+    const caretBefore = caretIn(lastFrame() ?? '');
+
+    stdin.write(paste('/help'));
+    await tick();
+
+    const frame = lastFrame() ?? '';
+    expect(commandMenuQueryIn(frame)).toBe('help');
+    expect(highlightedIn(frame)).toBe('/help');
+    expect(frame).not.toContain('/status');
+    // TUI-C51's headline promise, on the one channel that used to break it.
+    expect(bufferIn(frame)).toBe(DRAFT);
+    expect(caretIn(frame)).toEqual(caretBefore);
+
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('/help');
+  });
+
+  it('puts a pasted slash exactly where a typed one goes', async () => {
+    // The same rule on both channels, at the one place they could disagree: mid-query the slash is
+    // ordinary text, whether it was typed or pasted.
+    const { stdin, lastFrame } = await withMenuOverDraft();
+    await typeSlowly(stdin, 'sta');
+
+    stdin.write(paste('/'));
+    await tick();
+
+    const frame = lastFrame() ?? '';
+    expect(commandMenuQueryIn(frame)).toBe('sta/');
+    expect(frame).not.toMatch(/❯/);
+    expect(bufferIn(frame)).toBe(DRAFT);
+  });
+
+  it('gives the paste back to the message once the menu is closed', async () => {
+    // The gate is on the menu being open and nothing else — a paste with no menu up is TUI-C24's
+    // insert at the caret, unchanged.
+    const { stdin, lastFrame } = await withMenuOverDraft();
+    stdin.write(ESC);
+    await tick();
+
+    stdin.write(paste('/help'));
+    await tick();
+
+    const frame = lastFrame() ?? '';
+    expect(commandMenuQueryIn(frame)).toBeNull();
+    expect(bufferIn(frame)).toBe(`${DRAFT}/help`);
   });
 
   it('leaves the typed door alone — there the slash is part of the message', async () => {
@@ -903,22 +982,6 @@ describe('tui <PromptInput> the chord menu tolerates a leading slash (TUI-C95)',
     stdin.write(ENTER);
     await tick();
     expect(onSubmit).toHaveBeenCalledWith('//help');
-  });
-});
-
-describe('tui extendCommandMenuQuery (TUI-C95)', () => {
-  it('drops one leading slash from a query that is being started', () => {
-    expect(extendCommandMenuQuery('', '/')).toBe('');
-    expect(extendCommandMenuQuery('', '/help')).toBe('help');
-    expect(extendCommandMenuQuery('', 'help')).toBe('help');
-  });
-
-  it('keeps every other slash, and never rewrites what the query already held', () => {
-    expect(extendCommandMenuQuery('', '//help')).toBe('/help');
-    expect(extendCommandMenuQuery('sta', '/')).toBe('sta/');
-    // A query that already begins with a slash keeps it: the strip is applied where the query is
-    // STARTED, so adding a character to it can never retroactively take one away.
-    expect(extendCommandMenuQuery('/help', 'x')).toBe('/helpx');
   });
 });
 
