@@ -881,6 +881,85 @@ describe('tui <PromptInput> the chord menu tolerates a leading slash (TUI-C95)',
     expect(bufferIn(frame)).toBe(DRAFT);
   });
 
+  /*
+   * The four cells below pin the `started` flag at the sites where it is merely CARRIED rather than
+   * set — the Backspace, arrow and Tab branches, plus the paste no-op guard. Each was measured to
+   * change what the user sees while leaving every other cell in this file green, so without them
+   * the flag is threaded through six branches and held by two.
+   *
+   * They are not defensive extras. `started: open.started` reads as bookkeeping a later editor
+   * would "simplify", and two of these mutations WIPE THE QUERY — a user who Tab-completes or
+   * arrows the list and then types a `/` watches it vanish with nothing on screen to explain it.
+   */
+
+  it('does not re-arm the strip when the query is backspaced empty again', async () => {
+    // The clause `ux-guidelines.md` states and nothing else held: emptiness is not what arms the
+    // strip, so a query emptied by Backspace is still a STARTED query and its next `/` is text.
+    // This is the precise defect Fix 2 exists to prevent, reachable by a second route.
+    const { stdin, lastFrame } = await withMenuOverDraft();
+    await typeSlowly(stdin, 'sta');
+    for (const _ of 'sta') {
+      stdin.write(BACKSPACE);
+      await tick();
+    }
+    expect(commandMenuQueryIn(lastFrame() ?? '')).toBe('');
+
+    await typeSlowly(stdin, '/help');
+
+    const frame = lastFrame() ?? '';
+    expect(commandMenuQueryIn(frame)).toBe('/help');
+    expect(frame).not.toMatch(/❯/);
+    expect(bufferIn(frame)).toBe(DRAFT);
+  });
+
+  it('keeps the query when the list has been arrowed and a slash follows', async () => {
+    // Moving the highlight is not typing: it must leave both the query and its started-ness alone.
+    const { stdin, lastFrame } = await withMenuOverDraft();
+    await typeSlowly(stdin, 'sta');
+
+    stdin.write(DOWN);
+    await tick();
+    stdin.write('/');
+    await tick();
+
+    // Not merely "the slash is text" — the query is still THERE. Dropping the flag here empties it.
+    expect(commandMenuQueryIn(lastFrame() ?? '')).toBe('sta/');
+    expect(bufferIn(lastFrame() ?? '')).toBe(DRAFT);
+  });
+
+  it('keeps the query when a slash follows a Tab completion', async () => {
+    // Tab writes the whole command name in; the query it produces is as started as a typed one.
+    const { stdin, lastFrame } = await withMenuOverDraft();
+
+    stdin.write(TAB);
+    await tick();
+    const completed = commandMenuQueryIn(lastFrame() ?? '');
+    expect(completed).toBeTruthy();
+
+    stdin.write('/');
+    await tick();
+
+    expect(commandMenuQueryIn(lastFrame() ?? '')).toBe(`${completed}/`);
+    expect(bufferIn(lastFrame() ?? '')).toBe(DRAFT);
+  });
+
+  it('lets a paste that carries no query text leave the strip armed', async () => {
+    // A lone newline is nothing to a one-line query, so it must not count as the menu's first
+    // input — otherwise a paste that changed nothing on screen silently spends the strip.
+    const { stdin, lastFrame } = await withMenuOverDraft();
+
+    stdin.write(paste('\n'));
+    await tick();
+    expect(commandMenuQueryIn(lastFrame() ?? '')).toBe('');
+
+    await typeSlowly(stdin, '/help');
+
+    const frame = lastFrame() ?? '';
+    expect(commandMenuQueryIn(frame)).toBe('help');
+    expect(highlightedIn(frame)).toBe('/help');
+    expect(bufferIn(frame)).toBe(DRAFT);
+  });
+
   it('gives "//help" the same screen typed as in one event', async () => {
     // The two shapes are the same six characters and must be the same answer; the defect this pins
     // was visible ONLY as the difference between them.

@@ -9,7 +9,8 @@
  *
  * What remains ours is normalizing the payload's line breaks, which is genuinely on the runtime
  * path: the `usePaste` handler runs every pasted payload through {@link normalizePastedText} before
- * inserting it into the buffer. Kept free of any Ink/React dependency so it stays unit-testable by
+ * doing anything with it — inserting it into the buffer, or, while the chord's slash menu is open,
+ * filtering the menu by it. Kept free of any Ink/React dependency so it stays unit-testable by
  * feeding strings and asserting the result.
  */
 

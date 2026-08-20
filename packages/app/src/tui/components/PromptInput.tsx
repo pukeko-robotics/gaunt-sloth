@@ -76,8 +76,9 @@ const COMMAND_MENU_PREFIX = '  / ';
  * whole of it: with bracketed-paste mode off a pasted `/help` lands as one call carrying the
  * whole string, and a fix that swallowed a lone `/` key would miss it entirely.
  *
- * **Exactly one slash, and only as the first thing that reaches a freshly opened menu** —
- * `started`, not an empty query, is what says so. One slash is what a user means; a second is not a
+ * **Exactly one slash, and only as the first TEXT to reach a freshly opened menu** — `started`, not
+ * an empty query, is what says so, and keys that reach the menu without putting text in it (the
+ * arrows) leave it armed. One slash is what a user means; a second is not a
  * spelling of anything, and the typed door refuses `//help` outright as a path rather than a
  * command, so a chord door that dispatched it would give two doors opposite answers for the same
  * six characters. Keying the strip on emptiness instead is what makes that happen: a swallowed

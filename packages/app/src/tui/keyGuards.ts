@@ -109,9 +109,16 @@ export function typedText(input: string, key: ChordModifiers): string {
  * Line endings are normalized exactly as a bracketed paste's are ({@link normalizePastedText}), so
  * a CRLF or a bare CR lands as the same `\n` on either channel and the message is not left holding
  * a line ending its own terminal chose. **That parity is about line endings and nothing else.** The
- * bracketed channel (`usePaste` → `normalizePastedText` → `insertText`) applies no filter of its
- * own, so with bracketed-paste mode on — the normal case at the prompt — an embedded `\x1f` is
- * still spliced in raw, while the keystroke channel drops it here.
+ * bracketed channel applies no filter of its own **on its way to the message** (`usePaste` →
+ * `normalizePastedText` → `insertText`), so with bracketed-paste mode on — the normal case at the
+ * prompt — an embedded `\x1f` is still spliced in raw, while the keystroke channel drops it here.
+ *
+ * **That channel has a second destination, and it is filtered.** With the chord's slash menu open a
+ * paste is what the menu is being filtered BY, so `<PromptInput>` routes it through
+ * {@link typedText} — the same guard the keystroke path asks — into the query rather than into the
+ * buffer. A one-line query and a message are different questions, which is why they read different
+ * guards; what they must never do is disagree about the same `/help` because one arrived wrapped in
+ * paste markers.
  */
 export function typedMultilineText(input: string, key: ChordModifiers): string {
   if (isChord(key)) return '';
