@@ -175,19 +175,28 @@ describe('<TranscriptViewport>', () => {
       unmount();
     });
 
-    it('TUI-C90 — the rule above a user turn IS the separation, and is not doubled', () => {
-      // A user item already carries a dim rule above it (every one but the first). A blank row
-      // beside that rule would be two rows of separation where every other boundary gets one.
+    it('TUI-C91 — a user turn opens on air: blank, then the rule, then the line', () => {
+      // A user item after the first carries a dim rule above it, and TUI-C91 gives that rule a
+      // blank row of its own above it, so the boundary reads blank → rule → `You ›`. Without the
+      // blank the rule sits hard against the answer above it and reads as belonging to the line
+      // below rather than as separating the two turns.
       const user = (id: number): TranscriptItem => ({ kind: 'user', id, text: `ask-${id}` });
       const { lastFrame, unmount } = render(
         <Frame items={[user(1), line(2), user(3)]} height={6} columns={40} />
       );
       const rows = (lastFrame() ?? '').split('\n');
 
-      const ruleRow = rows.findIndex((r) => /^─+$/.test(r.trim()));
-      expect(ruleRow).toBeGreaterThan(0);
-      expect(rows[ruleRow - 1].trim()).not.toBe('');
-      expect(rows[ruleRow + 1]).toContain('ask-3');
+      // Six rows exactly: `ask-1`, blank, `line-2`, blank, rule, `ask-3`. Asserting the whole
+      // frame rather than only the rule's neighbours is what keeps the FIRST user item honest —
+      // it opens the transcript with neither a rule nor a blank above it, and a test that looked
+      // only around the rule could not tell that from a frame padded at the top.
+      expect(rows).toHaveLength(6);
+      expect(rows[0]).toContain('ask-1');
+      expect(rows[1].trim()).toBe('');
+      expect(rows[2]).toContain('line-2');
+      expect(rows[3].trim()).toBe('');
+      expect(rows[4].trim()).toMatch(/^─+$/);
+      expect(rows[5]).toContain('ask-3');
 
       unmount();
     });

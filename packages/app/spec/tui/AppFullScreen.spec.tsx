@@ -70,6 +70,47 @@ const replyingAgent: TuiAgent = {
 };
 
 /**
+ * An agent whose turn STAYS open until the test closes it, so the mid-stream frame can be looked
+ * at. A generator that simply yields and returns is committed by the time the next frame renders,
+ * and there is no streaming state left to assert on.
+ */
+function streamingAgent(): {
+  agent: TuiAgent;
+  emit: (text: string) => void;
+  finish: () => void;
+} {
+  const pending: string[] = [];
+  let done = false;
+  let wake: (() => void) | null = null;
+  const nudge = () => {
+    const resolve = wake;
+    wake = null;
+    resolve?.();
+  };
+  return {
+    agent: {
+      async *runTurn(): AsyncGenerator<AgentStreamEvent> {
+        for (;;) {
+          while (pending.length) yield { type: 'text', delta: pending.shift() as string };
+          if (done) return;
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+          });
+        }
+      },
+    },
+    emit: (text: string) => {
+      pending.push(text);
+      nudge();
+    },
+    finish: () => {
+      done = true;
+      nudge();
+    },
+  };
+}
+
+/**
  * TUI-C90 / trap 3 — an agent that leaves a three-item checklist pinned in the dock. The checklist
  * tool draws nothing inside the turn; it is the dock panel, which is exactly why it is the item
  * that makes the dock its tallest.
@@ -122,6 +163,33 @@ function leadingBlankRows(stdout: SizedStdout): number {
   let count = 0;
   while (count < rows.length && rows[count].trim() === '') count += 1;
   return count;
+}
+
+/** Places where one blank row sits directly under another — the signature of padding. */
+function adjacentBlankRows(stdout: SizedStdout): number {
+  const rows = frameRows(stdout);
+  return rows.filter((r, i) => i > 0 && r.trim() === '' && rows[i - 1].trim() === '').length;
+}
+
+/**
+ * The region is FULL: the conversation reaches the top of the screen rather than floating on a
+ * band of padding, which is what an over-counting window estimate produces.
+ *
+ * "No blank row at the top" is not the way to say it, because since TUI-C90 every item draws its
+ * own blank separator row and the top edge of the region can land exactly on one — a legitimately
+ * full screen whose first row is blank. Padding is what has to be excluded, and padding has a
+ * signature the separator does not: it sits ABOVE the topmost mounted item, which draws its own
+ * blank row, so any padding at all puts two blank rows next to each other. Hence the pair — at
+ * most one blank row at the top, and no two adjacent anywhere.
+ *
+ * What this catches is the BAND, which is the visible defect: an estimator wrong by enough to
+ * outrun the window walker's slack item and the whole-terminal budget it spends. The direction of
+ * a single item's estimate is not measurable from a frame and is not asserted here — that is
+ * `transcriptWindow.spec.tsx`, which compares every item kind against Ink's own render.
+ */
+function expectRegionFull(stdout: SizedStdout): void {
+  expect(leadingBlankRows(stdout)).toBeLessThanOrEqual(1);
+  expect(adjacentBlankRows(stdout)).toBe(0);
 }
 
 /**
@@ -215,8 +283,8 @@ describe('<App> full-screen frame', () => {
     // The dock's closing rule is the LAST row of the terminal, and the status bar is a handful of
     // rows above it — not floating in the middle of a 30-row screen with blank space below.
     expect(lines[lines.length - 1]).toMatch(/^─+$/);
-    // The dock is rule · status · blank · prompt · blank · hint · rule, so the status bar sits six
-    // rows above the last one.
+    // The dock is blank · rule · status · blank · prompt · blank · hint · rule, so the status bar
+    // sits six rows above the last one.
     const statusRow = lines.findIndex((l) => l.includes('chat') && l.includes('turns: 0'));
     expect(statusRow).toBeGreaterThan(lines.length - 8);
     // …and the region above the dock is empty, because there is no conversation yet.
@@ -268,13 +336,89 @@ describe('<App> full-screen frame', () => {
     unmount();
   });
 
-  it('TUI-C90 trap 3 — the dock still fits 80x24 with every optional row mounted', async () => {
-    // The node's third trap, as a test rather than a manual look. Two rows added to a dock pinned
-    // to the terminal floor are two rows taken from the conversation at every size, and the dock
-    // is at its tallest with an advisory, an MCP failure and a pinned checklist all on screen at
-    // once. On the smallest terminal anyone uses, the frame must still be exactly the terminal —
-    // a taller one does not error, it loses its top rows silently — and there must still be
-    // conversation visible above the dock rather than a dock that has eaten the whole screen.
+  it('TUI-C91 — the dock opens on a blank row, whatever state it is in', async () => {
+    // The dock's opening rule is the boundary between the conversation and the controls, and it
+    // gets a row of air above it exactly as every other boundary does — otherwise it reads as the
+    // top edge of the status bar rather than as the end of the conversation.
+    //
+    // Both the row and the rule are unconditional, so the three states below are the ones where
+    // something else moves: idle, mid-stream (the prompt stays mounted, the conversation is
+    // growing), and with the prompt stood down for a focused debug pane. A row that was somehow
+    // tied to the prompt would survive the first two and vanish in the third.
+    const dockOpening = (stdout: SizedStdout): number => {
+      const lines = frameRows(stdout);
+      // The status bar says something different while a turn is running, so both spellings are
+      // named — anchoring on the idle one alone would simply not find the dock mid-stream.
+      const statusRow = lines.findIndex(
+        (l) => l.includes('model:') || l.includes('Esc to interrupt')
+      );
+      expect(statusRow).toBeGreaterThan(1);
+      // The rule directly above the status bar, past the advisory rows that may sit between them.
+      let rule = statusRow - 1;
+      while (rule > 0 && !/^─+$/.test(lines[rule].trim())) rule -= 1;
+      expect(lines[rule].trim()).toMatch(/^─+$/);
+      return rule;
+    };
+
+    const stream = streamingAgent();
+    const { stdout, stdin, unmount } = renderAt(
+      80,
+      30,
+      <App {...baseProps} agent={stream.agent} />
+    );
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
+
+    // Idle.
+    expect(frameRows(stdout)[dockOpening(stdout) - 1].trim()).toBe('');
+
+    // Streaming: a turn is in flight and its text is on screen above the dock.
+    stdin.write('ask');
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('> ask'));
+    stdin.write('\r');
+    stream.emit('half an answer');
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('half an answer'));
+    const streamingRule = dockOpening(stdout);
+    expect(frameRows(stdout)[streamingRule - 1].trim()).toBe('');
+    // …and it really is the dock's row, not the conversation's: the row above it is the newest
+    // line of the answer, so nothing has floated the streaming turn off the region's own floor.
+    expect(frameRows(stdout)[streamingRule - 2]).toContain('half an answer');
+    stream.finish();
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('turns: 1'));
+
+    unmount();
+  }, 30_000);
+
+  it('TUI-C91 — the dock opens on a blank row with the prompt stood down', async () => {
+    const { stdout, stdin, unmount } = renderAt(80, 30, <App {...baseProps} debug />);
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
+
+    stdin.write('/debug');
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('> /debug'));
+    stdin.write('\r');
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('Subagents'));
+    stdin.write('\t');
+    await vi.waitFor(() => {
+      const rows = frameRows(stdout);
+      expect(rows.some((l) => l.trimStart().startsWith('> '))).toBe(false);
+    });
+
+    const lines = frameRows(stdout);
+    const statusRow = lines.findIndex((l) => l.includes('chat') && l.includes('model:'));
+    expect(statusRow).toBeGreaterThan(1);
+    expect(lines[statusRow - 1].trim()).toMatch(/^─+$/);
+    expect(lines[statusRow - 2].trim()).toBe('');
+
+    unmount();
+  }, 30_000);
+
+  it('TUI-C91 — the dock still fits 80x24 with every optional row mounted', async () => {
+    // TUI-C90's third trap, as a test rather than a manual look, re-measured for the row TUI-C91
+    // adds above the dock's opening rule. Every row added to a dock pinned to the terminal floor
+    // is a row taken from the conversation at every size, and the dock is at its tallest with an
+    // advisory, an MCP failure and a pinned checklist all on screen at once. On the smallest
+    // terminal anyone uses, the frame must still be exactly the terminal — a taller one does not
+    // error, it loses its top rows silently — and there must still be conversation visible above
+    // the dock rather than a dock that has eaten the whole screen.
     const { stdout, stdin, unmount } = renderAt(
       80,
       24,
@@ -304,11 +448,13 @@ describe('<App> full-screen frame', () => {
     expect(frame).toContain('Verify output');
 
     // …and the conversation is not squeezed out. The dock runs from the pinned checklist panel to
-    // the closing rule; measured, it starts on row 10, leaving the conversation ten rows of the
-    // twenty-four. Asserted with one row of margin, so the next thing added to the dock at this
-    // size fails here rather than on someone's screen.
+    // the closing rule; measured, it starts on row 9 — fifteen dock rows, leaving the conversation
+    // nine of the twenty-four. Asserted with one row of margin, so the next thing added to the
+    // dock at this size fails here rather than on someone's screen. The number moves only when
+    // someone decides it should: this bound is re-measured against the frame above, never widened
+    // to whatever the current dock happens to need.
     const dockTop = lines.findIndex((l) => l.includes('Checklist'));
-    expect(dockTop).toBeGreaterThanOrEqual(9);
+    expect(dockTop).toBeGreaterThanOrEqual(8);
     expect(lines.slice(0, dockTop).join('\n')).toContain('go');
 
     unmount();
@@ -408,7 +554,7 @@ describe('<App> fills the conversation region it hands the viewport', () => {
     await converse(stdout, stdin, 10);
 
     expect(frameRows(stdout)).toHaveLength(24);
-    expect(leadingBlankRows(stdout)).toBe(0);
+    expectRegionFull(stdout);
 
     unmount();
   }, 30_000);
@@ -430,7 +576,7 @@ describe('<App> fills the conversation region it hands the viewport', () => {
     await converse(stdout, stdin, 12);
 
     expect(frameRows(stdout)).toHaveLength(56);
-    expect(leadingBlankRows(stdout)).toBe(0);
+    expectRegionFull(stdout);
     // …and the conversation on screen really is wide-terminal conversation: a turn that occupies 8
     // rows at the fallback width occupies 3 here, so the screen holds seven of them (measured)
     // where a window computed at 80 columns leaves room for about half that. The terminal is 56

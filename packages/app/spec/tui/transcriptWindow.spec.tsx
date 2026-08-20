@@ -206,6 +206,44 @@ function actualRows(item: TranscriptItem, columns: number, toolsExpanded: boolea
   return frame.split('\n').length;
 }
 
+/**
+ * A one-row user item, used as the item ABOVE the one under measurement.
+ *
+ * It has to be a `user` item: the viewport suppresses the separating rule above the FIRST user item
+ * in the transcript, so with any other anchor a user item at index 1 would still be the first one
+ * and would still draw no rule. Its text is short enough to occupy a single row at every width
+ * these cases use, which is what makes subtracting it exact rather than approximate.
+ */
+const ANCHOR: TranscriptItem = { kind: 'user', id: 0, text: 'a' };
+
+/**
+ * Rows the viewport really renders for one item that is NOT the first in the transcript — so it
+ * carries its TUI-C90 blank row, and, if it is a user item, the TUI-C91 rule beside it.
+ *
+ * This is the case `actualRows` cannot reach: rendered alone, an item is at index 0, where the
+ * viewport deliberately draws neither. The anchor's own single row is subtracted, so what comes
+ * back is the item's height including everything drawn above it.
+ */
+function actualRowsBelowAnother(
+  item: TranscriptItem,
+  columns: number,
+  toolsExpanded: boolean
+): number {
+  const frame = renderToString(
+    <Box flexDirection="column">
+      <TranscriptViewport
+        items={[ANCHOR, item]}
+        budgetRows={1}
+        columns={columns}
+        toolsExpanded={toolsExpanded}
+        regionRows={0}
+      />
+    </Box>,
+    { columns }
+  );
+  return frame.split('\n').length - 1;
+}
+
 describe('transcriptWindow — the estimate is a LOWER bound on the rendered rows', () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -228,16 +266,65 @@ describe('transcriptWindow — the estimate is a LOWER bound on the rendered row
               `${name} at ${columns} cols: estimated ${estimate} rows but Ink rendered ${actual}`
             ).toBeLessThanOrEqual(actual);
           });
+
+          // The same invariant for the rows drawn ABOVE an item, which the case above cannot see:
+          // rendered alone an item is the first in the transcript and gets neither the blank row
+          // nor the rule. TUI-C91 draws both together above a user item, so this is where an
+          // estimator that charged one row for two — or two for one — would show up.
+          it(`never over-counts below another item: ${name}`, () => {
+            const estimate = estimateItemRows(item, {
+              columns,
+              toolsExpanded,
+              separator: item.kind === 'user',
+              leadingBlank: true,
+            });
+            const actual = actualRowsBelowAnother(item, columns, toolsExpanded);
+            expect(
+              estimate,
+              `${name} at ${columns} cols: estimated ${estimate} rows but Ink rendered ${actual}`
+            ).toBeLessThanOrEqual(actual);
+          });
         }
       });
     }
   }
 
-  it('counts the separator rule above a non-first user line', () => {
+  it('TUI-C91 — counts the blank row and the separator rule as the two rows they are', () => {
     const item: TranscriptItem = { kind: 'user', id: 1, text: 'hi' };
-    const without = estimateItemRows(item, { columns: 80, toolsExpanded: false, separator: false });
-    const withRule = estimateItemRows(item, { columns: 80, toolsExpanded: false, separator: true });
-    expect(withRule).toBe(without + 1);
+    const at = (separator: boolean, leadingBlank: boolean): number =>
+      estimateItemRows(item, { columns: 80, toolsExpanded: false, separator, leadingBlank });
+
+    const bare = at(false, false);
+    expect(at(true, false)).toBe(bare + 1);
+    expect(at(false, true)).toBe(bare + 1);
+    // Both, and they are no longer alternatives: a user turn opens on a blank row AND a rule.
+    expect(at(true, true)).toBe(bare + 2);
+  });
+
+  it('under-counts rather than over-counts when the caller does not say', () => {
+    // `leadingBlank` is optional and defaults to false, and that default is load-bearing: this
+    // module's whole direction is a lower bound, so a caller that does not know whether the row is
+    // drawn must be charged nothing for it rather than charged for a row that may not exist.
+    const item: TranscriptItem = { kind: 'system', id: 1, level: 'INFO', text: 'hello' };
+    const unspecified = estimateItemRows(item, {
+      columns: 80,
+      toolsExpanded: false,
+      separator: false,
+    });
+    const explicitlyFalse = estimateItemRows(item, {
+      columns: 80,
+      toolsExpanded: false,
+      separator: false,
+      leadingBlank: false,
+    });
+    const explicitlyTrue = estimateItemRows(item, {
+      columns: 80,
+      toolsExpanded: false,
+      separator: false,
+      leadingBlank: true,
+    });
+    expect(unspecified).toBe(explicitlyFalse);
+    expect(unspecified).toBeLessThan(explicitlyTrue);
   });
 
   it('charges an expanded tool panel more than a collapsed one', () => {

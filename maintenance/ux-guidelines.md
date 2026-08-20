@@ -500,10 +500,16 @@ because those are signal, not chatter (DL-1 no important action is silent). Plai
   is a stack of blocks — a text run, a tool-call panel, a `💭 Thinking` panel — and each is
   separated from its neighbour by a single empty row. The separation goes **between** blocks and at
   neither end of a turn, so the conversation still opens flush at the top of the region and still
-  ends flush against the dock. One row of separation per boundary, never two: where a user turn's
-  dim rule already provides it, the blank row stands down. Without this the glyph column is the
-  only structural signal a reader has, and a tool's indented output sits at nearly the weight of
-  the next block's header.
+  ends flush on its own floor. Without this the glyph column is the only structural signal a reader
+  has, and a tool's indented output sits at nearly the weight of the next block's header.
+- **A rule gets the blank row too — the order is blank, rule, content (DL-7).** The two rule
+  boundaries are the turn-separating rule above a `You ›` item and the rule that opens the pinned
+  dock, and each opens on a row of air like every other boundary. A rule drawn hard against the
+  block above it reads as the top edge of the block below rather than as the thing separating the
+  two. The transcript's first item is the exception at both ends: it draws neither the rule nor the
+  blank, so the conversation never opens on air or on a stray line. The dock's row belongs to the
+  **dock**: at the tail of the conversation region it would draw the same picture while sitting
+  inside the scrolled window and inside `transcriptWindow`'s arithmetic.
 - **A blank row is a sized `<Box>` (`tui/components/BlankRow.tsx`), never an empty `<Text>`.** An
   empty `<Text>` among siblings measures zero-high in Yoga and the row silently vanishes; a
   `<Text>` holding a space would hold the row open but leave trailing whitespace. Anything that

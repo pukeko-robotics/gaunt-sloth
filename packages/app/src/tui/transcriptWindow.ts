@@ -152,10 +152,10 @@ export function estimateItemRows(
   }
 ): number {
   const columns = Math.max(1, options.columns);
-  // One row of separation above the item — the dim rule over a user line, or the TUI-C90 blank
-  // row everywhere else. They are mutually exclusive in `<TranscriptRow>`, so they are one row
-  // here, never two.
-  let rows = options.separator || options.leadingBlank ? 1 : 0;
+  // The separation above the item: the TUI-C90 blank row, and the dim rule over a user line.
+  // TUI-C91 draws them TOGETHER — blank, then rule — so a user item that has both costs two rows
+  // here, not one.
+  let rows = (options.separator ? 1 : 0) + (options.leadingBlank ? 1 : 0);
   switch (item.kind) {
     case 'user':
       // The prompt marker and the text share one row Box, so they wrap as one run of text.

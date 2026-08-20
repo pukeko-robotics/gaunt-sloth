@@ -86,7 +86,8 @@ export function TranscriptViewport({
   /**
    * The bottom of the conversation region: the streaming turn and the pre-first-exchange intro.
    * They live inside the viewport because they are conversation, not dock chrome, and they sit
-   * last so the newest output is the row against the dock.
+   * last so the newest output is the bottom of the conversation — the region stays anchored to its
+   * own floor, whatever separation the dock puts between that floor and its own opening rule.
    */
   children?: React.ReactNode;
 }): React.ReactElement {
@@ -241,13 +242,13 @@ const TranscriptRow = React.memo(function TranscriptRow({
   React.useLayoutEffect(() => geometry?.registerRow(index, ref.current), [geometry, index]);
   return (
     <Box ref={ref} flexDirection="column" flexShrink={0}>
-      {/* TUI-C90 — the row that separates this item from the one above it. It LEADS rather than
-          trails, which is what keeps the newest line of the conversation flush against the dock
-          (TUI-C48's pinned tail) instead of floating a blank row above it. It is also why it is
-          suppressed when `separator` is set: the rule above a user item already is that row of
-          separation, and a blank beside it would double the gap between turns.
-          `transcriptWindow.estimateItemRows` charges for it. */}
-      {leadingBlank && !separator ? <BlankRow /> : null}
+      {/* TUI-C90/TUI-C91 — the row that separates this item from the one above it. It LEADS rather
+          than trails, which is what keeps the newest line of the conversation flush against the
+          dock (TUI-C48's pinned tail) instead of floating a blank row above it.
+          It is drawn BESIDE the rule, not instead of it: a turn boundary reads as blank, then rule,
+          then the line, so the rule separates the two turns rather than looking like part of the
+          `You ›` line under it. `transcriptWindow.estimateItemRows` charges for both rows. */}
+      {leadingBlank ? <BlankRow /> : null}
       {separator ? <Rule /> : null}
       {renderItem(item, toolsExpanded, columns)}
     </Box>

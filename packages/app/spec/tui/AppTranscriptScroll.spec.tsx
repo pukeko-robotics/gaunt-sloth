@@ -208,10 +208,12 @@ const frameRows = (stdout: SizedStdout) => (stdout.lastFrame() ?? '').split('\n'
  * is either two rows above that (status, hint) or five (status, blank, prompt, blank, hint — the
  * prompt with its TUI-C90 rows of air). The nearer candidate is tried first, because with the
  * prompt gone the further one lands inside the conversation, where a turn separator is also a rule.
- * Both ends are asserted, so a change to the dock breaks this
- * helper loudly instead of silently shifting every comparison in the file by a row. The status bar
- * is deliberately not the landmark — it swaps to a spinner while a turn streams, which is exactly
- * when several of these cases look at it.
+ * Above that rule sits the TUI-C91 blank row the dock opens on, which is dock chrome too — counting
+ * it as conversation would put a row that is empty by construction at the bottom of every
+ * comparison here, where the newest line of the answer is supposed to be. Every end is asserted, so
+ * a change to the dock breaks this helper loudly instead of silently shifting every comparison in
+ * the file by a row. The status bar is deliberately not the landmark — it swaps to a spinner while
+ * a turn streams, which is exactly when several of these cases look at it.
  */
 function regionRows(stdout: SizedStdout): string[] {
   const rows = frameRows(stdout);
@@ -220,10 +222,12 @@ function regionRows(stdout: SizedStdout): string[] {
   expect(exitRow).toBeGreaterThan(3);
   expect(rows[exitRow + 1]).toMatch(rule);
   const openingRule = [exitRow - 2, exitRow - 5].find((row) => rule.test(rows[row] ?? ''));
-  expect(openingRule).toBeGreaterThan(0);
+  expect(openingRule).toBeGreaterThan(1);
+  // TUI-C91 — the dock's own leading blank row, immediately above its opening rule.
+  expect(rows[(openingRule as number) - 1].trim()).toBe('');
   // The docked debug pane sits above that rule and is dock, not conversation.
   const panelTop = rows.findIndex((r) => r.startsWith('╭'));
-  const dockTop = openingRule as number;
+  const dockTop = (openingRule as number) - 1;
   return rows.slice(0, panelTop >= 0 && panelTop < dockTop ? panelTop : dockTop);
 }
 
@@ -890,10 +894,12 @@ describe('<App> keeps the scroll position honest when the layout moves under it'
 
     stdin.write(KEY.pageUp);
     await settle(stdout);
-    // One page back from the tail. The landmark moved from row 12 to row 16 with TUI-C90: the dock
-    // is two rows taller, and the answer carries a separator row above it, so a page is that much
-    // less conversation.
-    expect(regionRows(stdout)[0]).toContain('numbered-row-016');
+    // One page back from the tail, and the landmark row is arithmetic: every row the dock takes
+    // shortens the region, so a page back from a fixed tail moves this row down by TWO — once for
+    // the shorter window and once for the shorter page. TUI-C90's two dock rows plus the answer's
+    // own separator put it at row 16; TUI-C91's single row above the dock's opening rule puts it
+    // at 18.
+    expect(regionRows(stdout)[0]).toContain('numbered-row-018');
 
     stdout.resizeTo(120, 20);
     await vi.waitFor(() => expect(frameRows(stdout)).toHaveLength(20), { timeout: 5000 });
@@ -1054,8 +1060,8 @@ describe('<App> scrolling inside a single answer taller than the screen', () => 
     // and a scroll that landed somewhere other than a page back.
     expect(region.join('').trim()).not.toBe('');
     expect(frameRows(stdout)).toHaveLength(40);
-    // A page back from the tail — see the note on the shorter-terminal case for why it is row 16.
-    expect(region[0]).toContain('numbered-row-016');
+    // A page back from the tail — see the note on the shorter-terminal case for why it is row 18.
+    expect(region[0]).toContain('numbered-row-018');
     expect(region.join('\n')).not.toContain('numbered-row-080');
 
     stdin.write(KEY.ctrlEnd);

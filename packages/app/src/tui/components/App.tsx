@@ -1308,6 +1308,13 @@ export function App(props: TuiAppProps): React.ReactElement {
                 onCancel={() => setApprovalsPicker(null)}
               />
             ) : null}
+            {/* TUI-C91 — the dock opens on air: a blank row, then its opening rule, so the rule
+          separates the controls from the conversation instead of reading as the top edge of the
+          status bar. It belongs to the DOCK rather than to the tail of the viewport — at the tail
+          it would sit inside the scrolled window and inside `transcriptWindow`'s arithmetic for an
+          identical picture. It is unconditional, like the rule it precedes: whatever optional row
+          sits above it, the boundary is the same one. */}
+            <BlankRow />
             <Rule />
             {/* TUI-C19 — persistent startup-advisory line. Lives here in the pinned dock, right by the
           status bar, so a config-validation warning stays on screen and survives transcript
