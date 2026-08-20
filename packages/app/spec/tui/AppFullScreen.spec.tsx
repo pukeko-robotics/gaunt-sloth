@@ -69,6 +69,30 @@ const replyingAgent: TuiAgent = {
   },
 };
 
+/**
+ * TUI-C90 / trap 3 — an agent that leaves a three-item checklist pinned in the dock. The checklist
+ * tool draws nothing inside the turn; it is the dock panel, which is exactly why it is the item
+ * that makes the dock its tallest.
+ */
+const checklistAgent: TuiAgent = {
+  async *runTurn(): AsyncGenerator<AgentStreamEvent> {
+    yield { type: 'text', delta: 'planning' };
+    yield { type: 'tool_start', id: 'c1', name: 'gth_checklist' };
+    yield {
+      type: 'tool_args',
+      id: 'c1',
+      delta: JSON.stringify({
+        items: [
+          { content: 'Inspect planets.html', status: 'completed' },
+          { content: 'Design kingdoms.html', status: 'in_progress' },
+          { content: 'Verify output', status: 'pending' },
+        ],
+      }),
+    };
+    yield { type: 'tool_end', id: 'c1' };
+  },
+};
+
 const baseProps = {
   agent: idleAgent,
   mode: 'chat',
@@ -240,6 +264,52 @@ describe('<App> full-screen frame', () => {
     const hintRow = lines.findIndex((l) => l.includes("Type 'exit' to leave"));
     expect(hintRow).toBeGreaterThan(0);
     expect(lines[hintRow - 1]).toContain('chat');
+
+    unmount();
+  });
+
+  it('TUI-C90 trap 3 — the dock still fits 80x24 with every optional row mounted', async () => {
+    // The node's third trap, as a test rather than a manual look. Two rows added to a dock pinned
+    // to the terminal floor are two rows taken from the conversation at every size, and the dock
+    // is at its tallest with an advisory, an MCP failure and a pinned checklist all on screen at
+    // once. On the smallest terminal anyone uses, the frame must still be exactly the terminal —
+    // a taller one does not error, it loses its top rows silently — and there must still be
+    // conversation visible above the dock rather than a dock that has eaten the whole screen.
+    const { stdout, stdin, unmount } = renderAt(
+      80,
+      24,
+      <App
+        {...baseProps}
+        agent={checklistAgent}
+        advisories={['config has problems']}
+        mcpFailures={[{ server: 'some-server', error: 'connect ECONNREFUSED' }]}
+      />
+    );
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
+
+    stdin.write('go');
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('> go'));
+    stdin.write('\r');
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('Verify output'));
+
+    const lines = frameRows(stdout);
+    expect(lines).toHaveLength(24);
+    expect(lines[23].trim()).toMatch(/^─+$/);
+
+    // Everything the dock can carry really is on screen — otherwise this would pass by having
+    // silently dropped the rows it is meant to be measuring.
+    const frame = lines.join('\n');
+    expect(frame).toContain('config has problems');
+    expect(frame).toContain('some-server');
+    expect(frame).toContain('Verify output');
+
+    // …and the conversation is not squeezed out. The dock runs from the pinned checklist panel to
+    // the closing rule; measured, it starts on row 10, leaving the conversation ten rows of the
+    // twenty-four. Asserted with one row of margin, so the next thing added to the dock at this
+    // size fails here rather than on someone's screen.
+    const dockTop = lines.findIndex((l) => l.includes('Checklist'));
+    expect(dockTop).toBeGreaterThanOrEqual(9);
+    expect(lines.slice(0, dockTop).join('\n')).toContain('go');
 
     unmount();
   });
