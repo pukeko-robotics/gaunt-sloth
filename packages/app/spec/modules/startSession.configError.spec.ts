@@ -119,13 +119,32 @@ describe('CFG-36/CFG-47: the TUI fallback covers the TUI and nothing else', () =
     configMock.loadConfiguredTui.mockResolvedValue(undefined);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     // Cell 4 replaces the TUI module with a factory that throws; put the normal stub back (and drop
     // the module cache that remembers the failure) so the ordering of the cells cannot matter.
     // Deliberately re-mocking rather than `doUnmock`ing: unmocking would hand the later cells the
     // REAL tuiSessionModule, whose optional-dependency imports have nothing stubbed under them.
     vi.doMock('#src/tui/tuiSessionModule.js', () => tuiSessionMock);
     vi.resetModules();
+    // **The pattern this spec is written to, and why the order is load-bearing.** `vi.doMock` does
+    // not register a mock. It appends to a queue that vitest drains at the next module fetch, and
+    // the drain resolves every consecutive `mock` entry IN PARALLEL: each entry awaits its own
+    // module-resolution round trip and only then writes the mock registry, which is a plain
+    // last-writer-wins map. Two queued registrations for the SAME path therefore do not apply in
+    // the order they were queued — the one whose round trip finishes last wins. Left un-drained,
+    // the restore above shares a batch with the `vi.doMock` in the module-load cell below, and
+    // whenever it lands second that cell gets the ordinary stub instead: the TUI "loads", and the
+    // readline fallback the cell exists to prove never happens. It fails as a bare
+    // `createTuiSession` was called, which reads like a product defect and is not one.
+    // So: **one pending `vi.doMock` per module path at a time — consume it with the import it is
+    // for before any other cell can queue its own.** The await below is that consumption; it leaves
+    // the queue empty at the start of every cell, which is what makes cell 4's registration the
+    // only one in its batch and therefore deterministic. Any spec that swaps a module mock between
+    // cases needs the same discipline.
+    // Where `vi.resetModules()` sits relative to `vi.doMock` is NOT part of this: the reset clears
+    // the evaluated-module cache and deliberately skips mock entries, so it can neither discard nor
+    // reorder a queued registration. Moving it does not fix anything, and is not why this works.
+    await import('#src/tui/tuiSessionModule.js');
   });
 
   it('re-raises an unusable configuration instead of blaming the TUI', async () => {
