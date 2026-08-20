@@ -21,7 +21,7 @@ import {
   type EditorState,
   type KillResult,
 } from '#src/tui/lineEditor.js';
-import { isTypedText, typedMultilineText } from '#src/tui/keyGuards.js';
+import { typedMultilineText } from '#src/tui/keyGuards.js';
 
 /**
  * TUI-C25 — the prompt's editor: the keyboard on one side, {@link EditorState} on the other.
@@ -38,8 +38,8 @@ import { isTypedText, typedMultilineText } from '#src/tui/keyGuards.js';
  * buy nothing but a way to be wrong on a terminal nobody measured.
  *
  * **Control chords are refused, never typed.** The insert branch takes an event only when
- * `isTypedText` says it carries text — no `ctrl`/`meta`/`super`/`hyper`, and not a control byte
- * whatever the modifiers claim — and inserts `typedMultilineText` of it rather than the raw event,
+ * `typedMultilineText` finds text in it — no `ctrl`/`meta`/`super`/`hyper`, and not a control byte
+ * whatever the modifiers claim — and inserts exactly that rather than the raw event,
  * so a chord bound elsewhere in the app, or bound nowhere at all, cannot drop its letter (or its
  * byte) into what the user is writing, and a paste arriving as keystrokes keeps its text and its
  * line breaks while losing its control bytes. That is a property of owning the editor, and it is
@@ -274,10 +274,13 @@ export function PromptEditor({
     // **`Ctrl+J` is the newline key** (TUI-C79), and it needs a branch of its own. The byte is
     // `\n`, which Ink parses as `{name: 'enter'}`: `key.return` is set only for `'return'`, and
     // `'enter'` is not one of the `nonAlphanumericKeys` whose `input` gets blanked, so the event
-    // arrives as `input === '\n'` with no modifier set. That made it a fall-through into the insert
-    // branch below until the branch learned to refuse control characters — and `\n` is one. Bound
-    // explicitly here, the key survives the guard instead of being silently removed by it;
-    // `spec/tui/PromptInput.spec.tsx` pins it. `Alt+Enter` is NOT bound: `\x1b\r` decodes as
+    // arrives as `input === '\n'` with no modifier set, i.e. as a fall-through into the insert
+    // branch below — which is a filter, and every filter this module has ever asked has at some
+    // point answered that a lone `\n` is not text. Bound explicitly here, the key does not depend
+    // on which filter that branch happens to consult; `spec/tui/PromptInput.spec.tsx` pins it.
+    // (The branch below would keep it today: it asks `typedMultilineText`, and `\n` survives that
+    // one. It does not survive `typedText`, which is what every single-line buffer asks.)
+    // `Alt+Enter` is NOT bound: `\x1b\r` decodes as
     // `{return, meta}` and the Enter branch above tests no modifiers, so it already submits.
     if (input === '\n' && !key.ctrl && !key.meta && !key.super && !key.hyper) {
       onChange((previous) => insertText(previous, '\n'));
@@ -294,7 +297,21 @@ export function PromptEditor({
     // the terminal is not in bracketed-paste mode, so the control characters are dropped out of it
     // rather than the message being dropped over them. Line breaks are kept — this buffer has
     // rows — and normalized the same way the bracketed-paste channel normalizes them.
-    if (isTypedText(input, key)) {
+    //
+    // The guard asks the INSERTER's own question (`typedMultilineText(…) !== ''`) rather than
+    // `isTypedText`, which is built on the single-line `typedText` and so answers about a filter
+    // this branch does not use: a chunk of nothing but line breaks — a blank line pasted, the tail
+    // of a copied block — carries text to this buffer and none to that one. Asking one filter and
+    // inserting another is how the two answers drift apart.
+    //
+    // **No event this branch claims can also submit, but a PASTE still can.** A chunk of more than
+    // one character gets no key name from Ink's parser, so `key.return` is never set for
+    // `"run anyway\r"` or `"hello\n"` and the Enter branch above cannot fire on it. A paste is not
+    // guaranteed to arrive as one chunk, though: split by the OS (or by a terminal flushing per
+    // line) at a point that leaves a lone `\r`, that byte decodes as `{name: 'return'}` and submits
+    // whatever has landed so far. That is inherent to this channel and is exactly what
+    // bracketed-paste mode exists to prevent; nothing here can close it.
+    if (typedMultilineText(input, key) !== '') {
       onChange((previous) => insertText(previous, typedMultilineText(input, key)));
     }
   });

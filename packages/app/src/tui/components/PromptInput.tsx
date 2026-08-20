@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Box, Text, useInput, usePaste } from 'ink';
 import { PromptEditor } from '#src/tui/components/PromptEditor.js';
 import { SlashCommandMenu } from '#src/tui/components/SlashCommandMenu.js';
@@ -290,7 +290,17 @@ export function PromptInput({
   // reason the handle above has none — this must hold after every commit, not after a chosen few.
   // The slot is read here rather than in the initial state, because a ref belongs to effects and
   // handlers and not to render.
-  useEffect(() => {
+  //
+  // **A LAYOUT effect, not a passive one, and the difference is reachable.** React flushes a
+  // passive effect on a later scheduler task, while Ink's stdin `data` events are ordinary
+  // macrotasks on the same loop — so between the commit that remounts this prompt (buffer empty,
+  // `<PromptEditor>`'s `useInput` already subscribed) and a passive restore, a keypress can be
+  // applied to the empty buffer and then thrown away whole, because `commitBuffer` replaces the
+  // buffer rather than merging into it. A user who Escapes the `/approvals` picker and types
+  // straight away would lose the first characters and watch the caret jump. A layout effect runs
+  // synchronously inside the commit, so there is no such window — and no frame painted empty
+  // before the message comes back.
+  useLayoutEffect(() => {
     if (!draftCarryRef) return;
     if (!carryTakenRef.current) {
       carryTakenRef.current = true;
@@ -408,8 +418,14 @@ export function PromptInput({
     // The slot is filled BEFORE the dispatch, because the dispatch may be the last thing that
     // happens to this component: a command that opens a picker replaces the prompt, and the
     // restore below then lands in state nothing will render again (see {@link PromptDraftCarry}).
-    // Filling it first makes the order irrelevant — whichever side of the unmount the restore
-    // falls on, the message survives.
+    //
+    // **What the carry then needs is that the unmount reaches React before this component commits
+    // again** — not that the order of these two lines is irrelevant. The effect above empties the
+    // slot on every commit after the first, so a picker-opening command that deferred its state
+    // change by even one macrotask would let this prompt commit once while still mounted, the slot
+    // would be cleared, and the draft would be gone by the time the remount looked for it. Nothing
+    // trips that today: `handleSubmit` and the commands it dispatches are synchronous, so the
+    // unmount lands in the same React commit and this component's effect never runs.
     if (draftCarryRef) draftCarryRef.current = draft;
     putCommandMenu(null);
     submit(`/${name}`);

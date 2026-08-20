@@ -6,7 +6,11 @@ import chalk from 'chalk';
 import stripAnsi from 'strip-ansi';
 import { Box, Text } from 'ink';
 import { render } from 'ink-testing-library';
-import { PromptInput, type PromptInputHandle } from '#src/tui/components/PromptInput.js';
+import {
+  PromptInput,
+  type PromptDraftCarry,
+  type PromptInputHandle,
+} from '#src/tui/components/PromptInput.js';
 import { PromptEditor } from '#src/tui/components/PromptEditor.js';
 import { SlashCommandMenu } from '#src/tui/components/SlashCommandMenu.js';
 import { moveWordLeft, moveWordRight, type EditorState } from '#src/tui/lineEditor.js';
@@ -611,6 +615,69 @@ describe('tui <PromptInput> the slash menu over an unfinished message (TUI-C51)'
     expect(lastFrame() ?? '').toMatch(/❯/);
   });
 
+  it('drops a control byte out of the MENU’s query as well as out of the message', async () => {
+    // The chord menu's query is a text buffer like any other and it is the one newly-accepted call
+    // site with a keyboard of its own: while the menu is open `<PromptEditor>` has stood down, so
+    // whatever a paste carries arrives HERE. What discriminates is not how the row looks — `\x1f`
+    // renders as nothing, so a query holding it reads as `stat` on screen — but whether the query
+    // still MATCHES: `st\x1fat` matches no registered command, and the row the user was about to
+    // press Enter on is not there.
+    const { stdin, lastFrame, onSubmit } = await withDraft();
+    stdin.write(CTRL_G);
+    await tick();
+
+    stdin.write('st\x1fat'); // one event, the way a paste arrives with bracketed-paste mode off
+    await tick();
+
+    const frame = lastFrame() ?? '';
+    expect(commandMenuQueryIn(frame)).toBe('stat');
+    expect(frame).toContain('/status');
+    expect(frame).not.toContain('/help');
+    // The message underneath never sees this event at all, which is why the query is the assertion.
+    expect(bufferIn(frame)).toBe(DRAFT);
+
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('/status');
+  });
+
+  it('empties the carry slot once the draft is back, so no later remount replays it', async () => {
+    // The other half of the carry, and the one no outcome shows at the time it goes wrong. A
+    // command that leaves this prompt standing — `/status` here, `/verbose` in `<App>` — has its
+    // draft put back locally, so the slot it was parked in has done its job. Left full, it is a
+    // message with no owner: the NEXT unrelated remount (focusing and unfocusing the debug pane,
+    // answering a tool approval) takes it and types it into a prompt the user had since emptied,
+    // with nothing on screen to connect it to anything.
+    const onSubmit = vi.fn();
+    const carry: PromptDraftCarry = { current: null };
+    const prompt = (instance: string) => (
+      <PromptInput
+        key={instance}
+        onSubmit={onSubmit}
+        commands={createCommandRegistry()}
+        draftCarryRef={carry}
+      />
+    );
+    const { stdin, lastFrame, rerender } = render(prompt('first'));
+    await typeSlowly(stdin, DRAFT);
+    expect(bufferIn(lastFrame() ?? '')).toBe(DRAFT);
+
+    stdin.write(CTRL_G);
+    await tick();
+    await typeSlowly(stdin, 'stat');
+    stdin.write(ENTER);
+    await tick();
+    // The prompt is still mounted and has the message back — the local restore, not the slot's.
+    expect(onSubmit).toHaveBeenCalledWith('/status');
+    expect(bufferIn(lastFrame() ?? '')).toBe(DRAFT);
+
+    // A remount that has nothing to do with the dispatch: a different instance of the same
+    // component, exactly as `<App>` produces when a picker or the debug pane hands the prompt back.
+    rerender(prompt('second'));
+    await tick();
+    expect(bufferIn(lastFrame() ?? '')).toBe('');
+  });
+
   it('shows ONE menu when the buffer would have opened the typed one too', async () => {
     // The two modes are the same menu; a buffer reading `/de` under an open chord menu must not
     // leave a second list on screen filtered by a query nobody can reach.
@@ -746,7 +813,10 @@ describe('tui <PromptInput> multiline paste (TUI-C24)', () => {
  * off in every state where the prompt is not mounted. Nothing there exercises the channel below,
  * where the whole pasted string arrives as a single `input` event and the guard that decides what
  * is text meets it. The rule is that the control characters are removed and the text is not: a
- * paste is never discarded over a character inside it, and no control byte is ever inserted.
+ * paste is never discarded over a character inside it, and no control byte reaches the buffer **on
+ * this channel**. It is not a rule about the buffer: the bracketed-paste channel that the cases
+ * above drive splices its payload in unfiltered, so a control byte pasted with the mode on still
+ * lands (`keyGuards.ts` records the divergence).
  */
 describe('tui <PromptInput> a paste arriving as keystrokes (TUI-C51)', () => {
   it('keeps the lines of a multi-line paste, and does not submit on the newline', async () => {
@@ -810,6 +880,30 @@ describe('tui <PromptInput> a paste arriving as keystrokes (TUI-C51)', () => {
     stdin.write(ENTER);
     await tick();
     expect(onSubmit).toHaveBeenCalledWith('note: first\nsecond');
+  });
+
+  it('keeps a paste that is NOTHING but line breaks, which this buffer can hold', async () => {
+    // The guard and the inserter have to be drawn from the same filter or they disagree at exactly
+    // one input: a chunk of only line breaks — a blank line copied, the tail of a copied block —
+    // is text to `typedMultilineText` (which keeps `\n`) and not to `typedText` (which strips it).
+    // Guarded on the single-line answer, this paste is refused whole by the one buffer that has
+    // rows to put it in.
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    stdin.write('one');
+    await tick();
+    stdin.write('\n\n'); // one event: two breaks and not a character between them
+    await tick();
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(promptRows(lastFrame() ?? '')).toHaveLength(3);
+    stdin.write('two');
+    await tick();
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('one\n\ntwo');
   });
 
   it('still refuses a bare control byte, which is the guard this widened', async () => {

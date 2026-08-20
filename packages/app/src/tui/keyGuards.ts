@@ -102,12 +102,16 @@ export function typedText(input: string, key: ChordModifiers): string {
  * `\n` survives here and every other control character still goes, because for a multi-line paste
  * arriving on the keystroke channel the break is content: the message is drawn on as many rows as
  * it has lines, so dropping it joins two lines the user can see are separate, and refusing the
- * paste over it loses the whole message. (A `\n` ALONE is still not text — {@link isTypedText}
- * refuses it, and the newline key it belongs to is bound on its own branch in `<PromptEditor>`.)
+ * paste over it loses the whole message. (A `\n` ALONE is not text to {@link isTypedText}, which
+ * every single-line buffer asks and which is built on {@link typedText}; it is text to this one,
+ * and the newline key it belongs to is bound on its own branch in `<PromptEditor>` regardless.)
  *
  * Line endings are normalized exactly as a bracketed paste's are ({@link normalizePastedText}), so
- * the same text pasted into the same buffer lands the same way whether or not the terminal had
- * bracketed-paste mode on.
+ * a CRLF or a bare CR lands as the same `\n` on either channel and the message is not left holding
+ * a line ending its own terminal chose. **That parity is about line endings and nothing else.** The
+ * bracketed channel (`usePaste` → `normalizePastedText` → `insertText`) applies no filter of its
+ * own, so with bracketed-paste mode on — the normal case at the prompt — an embedded `\x1f` is
+ * still spliced in raw, while the keystroke channel drops it here.
  */
 export function typedMultilineText(input: string, key: ChordModifiers): string {
   if (isChord(key)) return '';
