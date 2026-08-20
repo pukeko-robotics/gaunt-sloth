@@ -77,6 +77,13 @@ export const TUI_KEY_BINDINGS: readonly KeyBindingGroup[] = [
     title: 'At the prompt',
     bindings: [
       { keys: '/', description: 'open the slash-command menu' },
+      {
+        // The one way in that works with a message already typed, and the only entry in this group
+        // a user cannot find by pressing keys at random — so it says what it is FOR, not just what
+        // it opens. `Ctrl+/` is named second because it emits nothing at all on macOS.
+        keys: 'Ctrl+G, or Ctrl+/',
+        description: 'open that menu without disturbing a message you have started writing',
+      },
       { keys: 'Tab', description: 'complete the highlighted command' },
       {
         // Worth a line precisely because it is not what the buffer shows: with the menu open,

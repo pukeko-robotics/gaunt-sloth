@@ -21,6 +21,7 @@ import {
   type EditorState,
   type KillResult,
 } from '#src/tui/lineEditor.js';
+import { isTypedText } from '#src/tui/keyGuards.js';
 
 /**
  * TUI-C25 — the prompt's editor: the keyboard on one side, {@link EditorState} on the other.
@@ -36,10 +37,13 @@ import {
  * Konsole sends for `Alt+←/→`. They are alternatives, not fallbacks. A platform check here would
  * buy nothing but a way to be wrong on a terminal nobody measured.
  *
- * **Control chords are refused, never typed.** The insert branch takes an event only when none of
- * `ctrl`/`meta`/`super`/`hyper` is set, so a chord bound elsewhere in the app — or bound nowhere at
- * all — cannot drop its letter into what the user is writing. That is a property of owning the
- * editor, and it is what makes a separate guard component in front of the prompt unnecessary.
+ * **Control chords are refused, never typed.** The insert branch takes an event only when
+ * `isTypedText` says the user typed a character — no `ctrl`/`meta`/`super`/`hyper`, and no control
+ * byte whatever the modifiers claim — so a chord bound elsewhere in the app, or bound nowhere at
+ * all, cannot drop its letter (or its byte) into what the user is writing. That is a property of
+ * owning the editor, and it is what makes a separate guard component in front of the prompt
+ * unnecessary. The predicate is shared with every other text buffer in the TUI, because Ink
+ * delivers a chord to all of them at once; `keyGuards.ts` says why that matters.
  *
  * **Every edit is an UPDATER, because keystrokes share a stdin chunk.** Ink splits one chunk into
  * several key events and dispatches them synchronously, so every handler after the first in a chunk
@@ -109,6 +113,7 @@ export function PromptEditor({
   onYank,
   onEnter,
   menuActive,
+  suspended = false,
 }: {
   /** The buffer and caret to RENDER. Owned by the parent — this component never stores them. */
   state: EditorState;
@@ -134,8 +139,20 @@ export function PromptEditor({
   onEnter: () => void;
   /** While true the editor ignores Up/Down and Enter — the slash menu owns them. */
   menuActive: boolean;
+  /**
+   * TUI-C51 — while true the editor handles NO key at all: the draft-preserving command menu is
+   * open and owns the whole keyboard, so what the user types filters that menu instead of joining
+   * the message. Distinct from {@link menuActive}, which stands down from three keys and leaves the
+   * rest of the editor live, because this mode's whole purpose is that the draft is not edited.
+   *
+   * The draft keeps rendering — caret included. It is the thing the user is looking at.
+   */
+  suspended?: boolean;
 }): React.ReactElement {
   useInput((input, key) => {
+    // The menu owns every key while it is open; nothing below may edit the draft under it.
+    if (suspended) return;
+
     // Word motion — three spellings, none of them a fallback for another (see the doc comment).
     if ((key.meta && input === 'b') || ((key.ctrl || key.meta) && key.leftArrow)) {
       onChange(moveWordLeft);
@@ -252,21 +269,25 @@ export function PromptEditor({
       return;
     }
 
+    // **`Ctrl+J` is the newline key** (TUI-C79), and it needs a branch of its own. The byte is
+    // `\n`, which Ink parses as `{name: 'enter'}`: `key.return` is set only for `'return'`, and
+    // `'enter'` is not one of the `nonAlphanumericKeys` whose `input` gets blanked, so the event
+    // arrives as `input === '\n'` with no modifier set. That made it a fall-through into the insert
+    // branch below until the branch learned to refuse control characters — and `\n` is one. Bound
+    // explicitly here, the key survives the guard instead of being silently removed by it;
+    // `spec/tui/PromptInput.spec.tsx` pins it. `Alt+Enter` is NOT bound: `\x1b\r` decodes as
+    // `{return, meta}` and the Enter branch above tests no modifiers, so it already submits.
+    if (input === '\n' && !key.ctrl && !key.meta && !key.super && !key.hyper) {
+      onChange((previous) => insertText(previous, '\n'));
+      return;
+    }
+
     // Everything else that carries text. The guard is the point: a chord belongs to whoever bound
     // it, and an editor whose insert branch is the fall-through for unrecognised chords types `t`
-    // when the user presses Ctrl+T. Ours refuses every modifier that makes a key a chord, silently.
-    // `shift` is the one deliberately absent: it is how a capital is typed, not a different key.
-    //
-    // **`Ctrl+J` reaches HERE, and that is deliberate — it is the newline key** (TUI-C79). The byte
-    // is `\n`, which Ink parses as `{name: 'enter'}`: `key.return` is set only for `'return'`, and
-    // `'enter'` is not one of the `nonAlphanumericKeys` whose `input` gets blanked, so the event
-    // arrives with `input === '\n'` and no modifier and this branch splices a literal newline. It
-    // works by fall-through rather than by a branch of its own, so tightening these guards would
-    // silently remove a documented key; `spec/tui/PromptInput.spec.tsx` pins it. `Alt+Enter` is NOT
-    // bound: `\x1b\r` decodes as `{return, meta}` and the Enter branch above tests no modifiers, so
-    // it already submits — binding it would mean narrowing that branch for a second spelling of a
-    // key that works.
-    if (input.length > 0 && !key.ctrl && !key.meta && !key.super && !key.hyper) {
+    // when the user presses Ctrl+T — or splices `Ctrl+/`'s `0x1f` in as if it were a character,
+    // which no modifier flag reports (see `keyGuards.ts`). `shift` is the one modifier deliberately
+    // not refused: it is how a capital is typed, not a different key.
+    if (isTypedText(input, key)) {
       onChange((previous) => insertText(previous, input));
     }
   });

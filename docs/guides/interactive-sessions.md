@@ -75,6 +75,19 @@ there opens a searchable command menu. A few worth knowing:
 A pasted filesystem path such as `/usr/local/bin` is not swallowed as a command — only a line with
 no further `/` after the leading one is parsed as one.
 
+### Running a command with a message half-written
+
+Typing `/` only opens the menu on an empty line, so with `please refactor the fo` already in the
+prompt there is nothing to type it into. In the TUI, press **Ctrl+G** (**Ctrl+/** works too, on
+terminals that send it — macOS sends nothing for it) and the menu opens *above* your message
+instead. Type to filter, `↑`/`↓` to move, `Tab` to complete the highlighted name, Enter to run it,
+`Esc` to close. What you type goes into the menu, not into the message: the message stays on screen
+untouched, and it comes back with the cursor where you left it once the command has run.
+
+It works mid-turn as well, with the same rule as a typed command — the ones that are safe while the
+agent is working (`/approvals`, `/verbose`, `/debug`, `/model`, `/status`, …) run, and `/clear`,
+`/help`, `/exit` and `/quit` ask you to wait for the turn to finish.
+
 ## Writing a longer message
 
 *In the TUI. The plain readline surface (`--no-tui`) keeps readline's own line editing and puts its

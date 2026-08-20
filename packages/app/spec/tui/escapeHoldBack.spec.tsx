@@ -233,13 +233,18 @@ describe('<App> behind the TUI-C62 escape hold-back', () => {
    * `input` only becomes `'\x03'` after `use-input` strips the escape prefix, and `key.ctrl` is
    * false throughout. So it does not match, and `mouseStdin.ts` says so in as many words.
    *
-   * **What the difference is observable AS, which is not what it first looks like.** With no
-   * modifier set, `<PromptEditor>`'s insert branch takes the merged event and types the stray byte
-   * into the buffer — so by the time the ladder is asked, the prompt is never empty. Widening the
-   * predicate to `input === '\x03' || …`, the obvious tidy-up for a future reader, therefore does
-   * not change whether the session exits: it changes whether **rung 1 fires**, and a user who types
-   * a message and presses Escape then Ctrl+C within the hold window loses it. That is why this case
-   * is built around a draft rather than around the exit, and why the assertion below is the draft.
+   * **What the difference is observable AS, which is not what it first looks like.** Widening the
+   * predicate to `input === '\x03' || …`, the obvious tidy-up for a future reader, does not change
+   * whether the session exits: it changes whether **rung 1 fires**, and a user who types a message
+   * and presses Escape then Ctrl+C within the hold window loses it. That is why this case is built
+   * around a draft rather than around the exit, and why the assertion below is the draft.
+   *
+   * The draft is asserted CHARACTER-EXACT (TUI-C51). The merged event arrives with no modifier set,
+   * so `<PromptEditor>`'s insert branch used to take it and splice `\x03` into the message — an
+   * invisible byte in what the user is writing, which a `toContain` on the visible text could not
+   * see. The shared `isTypedText` guard refuses control characters whatever the modifiers claim, so
+   * the residual now reaches no buffer at all, and the letter typed after it lands flush against
+   * what came before.
    */
   it('is not the interrupt key when the Ctrl+C is released with a held-back Escape', async () => {
     const onExit = vi.fn();
@@ -266,8 +271,9 @@ describe('<App> behind the TUI-C62 escape hold-back', () => {
     source.write('z');
     await vi.waitFor(() => expect(stdout.lastFrame()).toContain('z'), { timeout: 5_000 });
 
-    // Rung 1 did not fire — the draft is still there…
-    expect(stdout.lastFrame()).toContain('a draft worth keeping');
+    // Rung 1 did not fire — the draft is still there, and nothing of the merged key is in it: the
+    // `z` sits directly against the message, which `a draft worth keeping\x03z` would not.
+    expect(stdout.lastFrame()).toContain('> a draft worth keepingz');
     // …nor rung 2, nor rung 3.
     expect(pump.wasAborted()).toBe(false);
     expect(onExit).not.toHaveBeenCalled();

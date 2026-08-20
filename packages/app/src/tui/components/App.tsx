@@ -61,6 +61,7 @@ import { findMatches, scrollOffsetForLine, stepMatch } from '#src/tui/debugSearc
 import { useTranscriptScroll } from '#src/tui/useTranscriptScroll.js';
 import { isComposingKeystroke, WHEEL_ROWS_PER_NOTCH } from '#src/tui/transcriptScroll.js';
 import { TUI_HINT_SUFFIX, TUI_KEY_BINDINGS } from '#src/tui/keyBindings.js';
+import { isTypedText } from '#src/tui/keyGuards.js';
 
 /** Rows of clipping viewport in the docked debug panel (default / restored size). */
 const DEBUG_VIEWPORT_HEIGHT = 8;
@@ -989,10 +990,11 @@ export function App(props: TuiAppProps): React.ReactElement {
         ) {
           return;
         }
-        // A chord belongs to whoever bound it, never to a text buffer — the same four modifiers the
-        // attack-banner phrase and the prompt's own editor refuse, so every buffer in the TUI reads
-        // a chord the same way. `shift` is excluded deliberately: it is how a capital is typed.
-        if (input && !key.ctrl && !key.meta && !key.super && !key.hyper) {
+        // A chord belongs to whoever bound it, never to a text buffer — and neither does a bare
+        // control byte, which carries no modifier for a four-modifier guard to see. The predicate
+        // is the shared one every buffer in the TUI reads its input through (`keyGuards.ts`), so
+        // this pane and the prompt cannot disagree about what a keystroke is.
+        if (isTypedText(input, key)) {
           setDebugSearch(debugSearchQueryRef.current + input);
         }
         return;
