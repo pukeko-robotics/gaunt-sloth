@@ -21,7 +21,7 @@ import {
   type EditorState,
   type KillResult,
 } from '#src/tui/lineEditor.js';
-import { isTypedText } from '#src/tui/keyGuards.js';
+import { isTypedText, typedMultilineText } from '#src/tui/keyGuards.js';
 
 /**
  * TUI-C25 — the prompt's editor: the keyboard on one side, {@link EditorState} on the other.
@@ -38,12 +38,14 @@ import { isTypedText } from '#src/tui/keyGuards.js';
  * buy nothing but a way to be wrong on a terminal nobody measured.
  *
  * **Control chords are refused, never typed.** The insert branch takes an event only when
- * `isTypedText` says the user typed a character — no `ctrl`/`meta`/`super`/`hyper`, and no control
- * byte whatever the modifiers claim — so a chord bound elsewhere in the app, or bound nowhere at
- * all, cannot drop its letter (or its byte) into what the user is writing. That is a property of
- * owning the editor, and it is what makes a separate guard component in front of the prompt
- * unnecessary. The predicate is shared with every other text buffer in the TUI, because Ink
- * delivers a chord to all of them at once; `keyGuards.ts` says why that matters.
+ * `isTypedText` says it carries text — no `ctrl`/`meta`/`super`/`hyper`, and not a control byte
+ * whatever the modifiers claim — and inserts `typedMultilineText` of it rather than the raw event,
+ * so a chord bound elsewhere in the app, or bound nowhere at all, cannot drop its letter (or its
+ * byte) into what the user is writing, and a paste arriving as keystrokes keeps its text and its
+ * line breaks while losing its control bytes. That is a property of owning the editor, and it is
+ * what makes a separate guard component in front of the prompt unnecessary. Both answers are
+ * shared with every other text buffer in the TUI, because Ink delivers a chord to all of them at
+ * once; `keyGuards.ts` says why that matters.
  *
  * **Every edit is an UPDATER, because keystrokes share a stdin chunk.** Ink splits one chunk into
  * several key events and dispatches them synchronously, so every handler after the first in a chunk
@@ -287,8 +289,13 @@ export function PromptEditor({
     // when the user presses Ctrl+T — or splices `Ctrl+/`'s `0x1f` in as if it were a character,
     // which no modifier flag reports (see `keyGuards.ts`). `shift` is the one modifier deliberately
     // not refused: it is how a capital is typed, not a different key.
+    //
+    // What is inserted is the event's TEXT, not the event: one `input` is a whole paste whenever
+    // the terminal is not in bracketed-paste mode, so the control characters are dropped out of it
+    // rather than the message being dropped over them. Line breaks are kept — this buffer has
+    // rows — and normalized the same way the bracketed-paste channel normalizes them.
     if (isTypedText(input, key)) {
-      onChange((previous) => insertText(previous, input));
+      onChange((previous) => insertText(previous, typedMultilineText(input, key)));
     }
   });
 

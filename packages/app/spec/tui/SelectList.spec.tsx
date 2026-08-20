@@ -263,6 +263,22 @@ describe('CFG-20 type-to-filter interaction', () => {
     expect(frame).not.toContain('no matches');
   });
 
+  it('filters on a pasted term, minus the control characters that came with it', async () => {
+    // TUI-C51 — the same buffer, met by a paste instead of a keystroke. With bracketed-paste mode
+    // off the whole string arrives as one event, so a term copied off a line brings that line's
+    // ending along: refusing the event would leave the list unfiltered with nothing on screen to
+    // say why, and inserting it whole would leave `filter: grok\n`, which matches no row.
+    const { lastFrame, stdin } = render(
+      <SelectList title="Pick a model" items={models} initialIndex={0} onSelect={vi.fn()} />
+    );
+    stdin.write('grok\n');
+    await tick();
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('filter: grok');
+    expect(frame).toContain('grok-4.3');
+    expect(frame).not.toContain('no matches');
+  });
+
   it('shows a no-matches state and Enter does nothing while unmatched', async () => {
     const onSelect = vi.fn();
     const { lastFrame, stdin } = render(

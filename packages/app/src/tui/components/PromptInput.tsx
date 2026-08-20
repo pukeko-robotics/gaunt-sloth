@@ -16,7 +16,7 @@ import {
   type KillResult,
 } from '#src/tui/lineEditor.js';
 import { normalizePastedText } from '#src/tui/pasteParser.js';
-import { isTypedText, opensCommandMenu } from '#src/tui/keyGuards.js';
+import { isTypedText, opensCommandMenu, typedText } from '#src/tui/keyGuards.js';
 
 /** The prompt buffer, with the monotonic serial of the edits that produced it. */
 interface PromptBuffer {
@@ -71,6 +71,21 @@ export interface PromptInputHandle {
 }
 
 /**
+ * TUI-C51 — where a draft waits while this component does not exist, or `null` for "nothing is
+ * waiting".
+ *
+ * A restored draft is written into this component's own state, which is only sound while it is
+ * still mounted afterwards — and dispatching a command is one of the things that unmounts it. The
+ * prompt stands down for a pending approval, the attack banner, the focused debug pane and the
+ * `/approvals` picker, and that last one is opened BY a command the menu dispatches: `/approvals`
+ * is the very command the mid-turn notice offers as its example. So the snapshot is handed to a
+ * slot that outlives the unmount — held by `<App>`, which is always mounted — and the next mount
+ * takes it back. Everything else about the buffer stays here; this carries one message across one
+ * remount and nothing more.
+ */
+export type PromptDraftCarry = React.MutableRefObject<EditorState | null>;
+
+/**
  * The user prompt line. Mirrors the readline `  > ` prompt. Clears on submit; the parent
  * hides it while a turn is running so Ink owns stdin uncontended during streaming.
  *
@@ -105,7 +120,9 @@ export interface PromptInputHandle {
  * **The message is captured and put back across the dispatch**, rather than the dispatch being
  * taught not to disturb it: the command goes out through the same `submit` the typed menu uses, so
  * `<App>` cannot tell the two paths apart and every mid-turn rule it already applies keeps applying
- * unchanged. What differs is only what this component does afterwards, which is give the draft back.
+ * unchanged. What differs is only what this component does afterwards, which is give the draft back
+ * — and it gives it back even when the command replaced this prompt with something else while it
+ * ran, which `/approvals` does (see {@link PromptDraftCarry}).
  *
  * **The chord OPENS the menu; it never closes it.** A toggle would make an even number of presses
  * indistinguishable from none — a shape this input family has twice made a test pass on a broken
@@ -126,6 +143,7 @@ export function PromptInput({
   commands = [],
   onMenuStateChange,
   handleRef,
+  draftCarryRef,
 }: {
   onSubmit: (value: string) => void;
   /** The slash-command registry (App builds it once) — the menu's single source of truth. */
@@ -136,6 +154,8 @@ export function PromptInput({
   /** TUI-C79 — where to publish this prompt's {@link PromptInputHandle} while it is mounted, so
    *  `<App>`'s Ctrl+C ladder can ask the buffer to clear itself (and is told when there is none). */
   handleRef?: React.MutableRefObject<PromptInputHandle | null>;
+  /** TUI-C51 — the slot a draft waits in across a remount; see {@link PromptDraftCarry}. */
+  draftCarryRef?: PromptDraftCarry;
 }): React.ReactElement {
   /**
    * The buffer and its edit serial — authoritative in a REF, mirrored into state for rendering.
@@ -252,6 +272,34 @@ export function PromptInput({
     };
   });
 
+  /** Whether this mount has already had its one chance to take a draft out of the carry slot. */
+  const carryTakenRef = useRef(false);
+
+  // TUI-C51 — the carry slot, on both of its sides, in the one place that can tell them apart.
+  //
+  // **On this mount's first commit**, a draft waiting in the slot is a message this prompt was
+  // showing before a command replaced it (see {@link PromptDraftCarry}), so it is taken back —
+  // caret included, since the slot holds the whole editor state. **On every commit after that**,
+  // the slot is emptied: a draft written into it by a dispatch that left this prompt standing has
+  // already been restored into local state by that dispatch, and leaving it there would resurrect
+  // the message at some later, unrelated remount the user cannot connect to anything.
+  //
+  // React runs no effect for a component that the same commit unmounted, which is exactly what
+  // makes this work: the dispatch that replaces the prompt gets neither branch, so the slot stays
+  // full until the next mount reads it. Deliberately without a dependency array, for the same
+  // reason the handle above has none — this must hold after every commit, not after a chosen few.
+  // The slot is read here rather than in the initial state, because a ref belongs to effects and
+  // handlers and not to render.
+  useEffect(() => {
+    if (!draftCarryRef) return;
+    if (!carryTakenRef.current) {
+      carryTakenRef.current = true;
+      const carried = draftCarryRef.current;
+      if (carried) commitBuffer({ state: carried, edits: 0 });
+    }
+    draftCarryRef.current = null;
+  });
+
   /** Submit `value` and clear the buffer; the bumped serial resets the menu (see `bufferRef`). */
   const submit = (value: string): void => {
     commitBuffer({ state: createEditorState(), edits: bufferRef.current.edits + 1 });
@@ -357,6 +405,12 @@ export function PromptInput({
    */
   const dispatchBesideDraft = (name: string): void => {
     const draft = bufferRef.current.state;
+    // The slot is filled BEFORE the dispatch, because the dispatch may be the last thing that
+    // happens to this component: a command that opens a picker replaces the prompt, and the
+    // restore below then lands in state nothing will render again (see {@link PromptDraftCarry}).
+    // Filling it first makes the order irrelevant — whichever side of the unmount the restore
+    // falls on, the message survives.
+    if (draftCarryRef) draftCarryRef.current = draft;
     putCommandMenu(null);
     submit(`/${name}`);
     commitBuffer({ state: draft, edits: bufferRef.current.edits + 1 });
@@ -408,11 +462,17 @@ export function PromptInput({
           // filter that matches no row. The menu stays open so the query can be corrected.
           if (list.length > 0) dispatchBesideDraft(list[highlighted].name);
         } else if (key.backspace || key.delete) {
-          putCommandMenu({ query: open.query.slice(0, -1), index: 0 });
+          // Nothing to trim is nothing to do. Running the update anyway would reset the highlight
+          // on a keystroke that changed nothing on screen, so a user who has arrowed down the list
+          // and then pressed Backspace once too often watches the selection jump back to the top
+          // with nothing to explain it.
+          if (open.query) putCommandMenu({ query: open.query.slice(0, -1), index: 0 });
         } else if (isTypedText(input, key)) {
           // Every edit to the query resets the highlight to the most relevant match, exactly as the
-          // typed menu does — the row that was first before is not the row that is first now.
-          putCommandMenu({ query: open.query + input, index: 0 });
+          // typed menu does — the row that was first before is not the row that is first now. The
+          // query is one line and holds no command name with a control character in it, so what
+          // goes in is the event's text (`keyGuards.ts`), not the event.
+          putCommandMenu({ query: open.query + typedText(input, key), index: 0 });
         }
         return;
       }

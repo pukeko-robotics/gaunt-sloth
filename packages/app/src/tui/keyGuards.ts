@@ -1,9 +1,9 @@
 /**
- * TUI-C51 — the two questions every keyboard handler on this surface asks about a raw key event.
+ * TUI-C51 — the questions every keyboard handler on this surface asks about a raw key event.
  *
- * Both are pure, and both live here rather than being spelled out at each call site, because the
- * answers have to AGREE. Ink broadcasts one keypress to every `useInput` subscriber and offers no
- * way to stop propagation, so a chord that one handler claims is still delivered to every text
+ * All of them are pure, and they live here rather than being spelled out at each call site, because
+ * the answers have to AGREE. Ink broadcasts one keypress to every `useInput` subscriber and offers
+ * no way to stop propagation, so a chord that one handler claims is still delivered to every text
  * buffer in the tree — in the same synchronous dispatch, before any state the claim produced has
  * rendered. A buffer that decides "is this text?" differently from its neighbour therefore does not
  * merely differ in style: it types the byte its neighbour refused.
@@ -16,7 +16,20 @@
  * `'\x03'` with no modifier set (`mouseStdin.ts`, `spec/tui/escapeHoldBack.spec.tsx`). A guard that
  * tests only the modifiers passes all of those through as if they were typed, and the symptom is an
  * invisible byte in whatever has focus — which a user reads as a broken prompt.
+ *
+ * **One event is not one character, so the refusal is per CHARACTER.** Ink splits a stdin chunk on
+ * ESC and on the two backspace bytes and on nothing else — deliberately, because `\r` and `\t`
+ * legitimately appear inside pasted text — and `useInput`'s own contract is that a paste of more
+ * than one character arrives as a single call with the whole string as `input`. A predicate that
+ * refused the whole EVENT because one character in it is a control byte would therefore discard an
+ * entire paste, silently and with no way to get it back; and a paste is exactly what arrives on
+ * this channel whenever bracketed-paste mode is off, which it is in every state where the prompt
+ * (the only holder of `usePaste`) is not mounted — the focused debug pane's search, above all.
+ * {@link typedText} keeps the characters and drops the control bytes, so what a buffer receives is
+ * what a user could have typed into it, and every bare control byte still reaches nothing.
  */
+
+import { normalizePastedText } from '#src/tui/pasteParser.js';
 
 /**
  * Ink's modifier flags, minus `shift`.
@@ -44,32 +57,77 @@ export interface ChordModifiers {
 const CTRL_SLASH = '\x1f';
 
 /** Whether a modifier that makes a key a chord is set — anything but `shift`. */
-export function isChord(key: ChordModifiers): boolean {
+function isChord(key: ChordModifiers): boolean {
   return Boolean(key.ctrl || key.meta || key.super || key.hyper);
 }
 
 /**
- * Whether this event is the user typing a character — the one predicate every text buffer in the
- * TUI takes its input from (the prompt's editor, the debug pane's search, `<SelectList>`'s filter,
- * and the attack banner's phrase).
+ * What a text buffer may take from this event — the one answer the TUI's text buffers read their
+ * input through (the prompt's editor, the chord menu's query, the debug pane's search and
+ * `<SelectList>`'s filter), `''` when there is nothing to take.
  *
- * Three refusals, each for its own reason:
+ * Two whole-event refusals and one per-character one, each for its own reason:
  *
- * - **Empty `input`.** Ink reports the navigation keys by name and blanks their `input`.
- * - **A chord.** It belongs to whoever bound it, and an insert branch that is the fall-through for
- *   unrecognised chords types `t` when the user presses `Ctrl+T`.
- * - **A control character**, whatever the modifiers say. See the note above: this is the half a
- *   four-modifier guard cannot see.
+ * - **A chord** takes nothing. It belongs to whoever bound it, and an insert branch that is the
+ *   fall-through for unrecognised chords types `t` when the user presses `Ctrl+T`.
+ * - **An empty `input`** has nothing in it anyway. Ink reports the navigation keys by name and
+ *   blanks their `input`.
+ * - **Every control character is REMOVED**, whatever the modifiers say — see the note above for
+ *   why a modifier test cannot find them, and why the removal is per character rather than a
+ *   refusal of the event that carries them.
  *
- * `\p{Cc}` is the whole C0 and C1 range, so `\x7f` and the `0x80`-`0x9f` block are covered too —
- * the same class the attack banner already refuses. **A caller that wants a literal newline has to
- * ask for it separately**, because `\n` is a control character: `<PromptEditor>` binds `Ctrl+J` on
- * its own branch for exactly that reason.
+ * `\p{Cc}` is the whole C0 and C1 range, so `\x7f` and the `0x80`-`0x9f` block go too. A bare
+ * control byte is therefore an empty result and reaches no buffer at all — which is the entire
+ * guard — while a paste that happens to carry one arrives as its text, minus that character.
+ *
+ * `\n` is a control character and goes with the rest here, because these buffers are single-line: a
+ * query or a filter cannot hold a line break, and a paste of several lines is one line of text to
+ * them. The one multi-line buffer asks for {@link typedMultilineText} instead.
+ *
+ * **The attack banner's phrase field is deliberately NOT one of these buffers** (`App.tsx`), and it
+ * is the only place that may differ. It refuses a whole event carrying a control character instead
+ * of filtering the character out, because the character in question is the `\r` of a pasted
+ * `run anyway` line and the filtered result would be the exact phrase, one Enter from an
+ * irreversible command. That is the opposite trade to this one and the right one there: losing a
+ * paste costs a retype, keeping one costs the command. Anywhere else, a different answer is drift.
+ */
+export function typedText(input: string, key: ChordModifiers): string {
+  if (isChord(key)) return '';
+  return input.replace(/\p{Cc}/gu, '');
+}
+
+/**
+ * {@link typedText} for the one buffer that can hold a line break: `<PromptEditor>`'s message.
+ *
+ * `\n` survives here and every other control character still goes, because for a multi-line paste
+ * arriving on the keystroke channel the break is content: the message is drawn on as many rows as
+ * it has lines, so dropping it joins two lines the user can see are separate, and refusing the
+ * paste over it loses the whole message. (A `\n` ALONE is still not text — {@link isTypedText}
+ * refuses it, and the newline key it belongs to is bound on its own branch in `<PromptEditor>`.)
+ *
+ * Line endings are normalized exactly as a bracketed paste's are ({@link normalizePastedText}), so
+ * the same text pasted into the same buffer lands the same way whether or not the terminal had
+ * bracketed-paste mode on.
+ */
+export function typedMultilineText(input: string, key: ChordModifiers): string {
+  if (isChord(key)) return '';
+  return normalizePastedText(input).replace(/\p{Cc}/gu, (character) =>
+    character === '\n' ? character : ''
+  );
+}
+
+/**
+ * Whether this event carries any text at all — the guard each text buffer claims the key with,
+ * before inserting what {@link typedText} (or {@link typedMultilineText}) hands it.
+ *
+ * `false` is exactly "nothing a buffer could take": a chord, an empty `input`, or an event whose
+ * every character is a control character — which a lone control byte, the case this module exists
+ * for, always is. It stays a single question, asked the same way everywhere, so that WHICH events a
+ * buffer claims cannot drift between buffers even as they differ on what they may hold: `\n` is not
+ * text by this answer, which is why the newline key needs its own branch in `<PromptEditor>`.
  */
 export function isTypedText(input: string, key: ChordModifiers): boolean {
-  if (input.length === 0) return false;
-  if (isChord(key)) return false;
-  return !/\p{Cc}/u.test(input);
+  return typedText(input, key) !== '';
 }
 
 /**

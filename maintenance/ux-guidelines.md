@@ -563,6 +563,10 @@ their config has a problem.
   a pending shell approval answers it (rejecting, fail-closed); a turn in flight is aborted; the
   focused debug pane clears its search or unfocuses; otherwise the conversation returns to the
   newest output. The order is the specification, not an artefact of where the branches sit.
+  - **The slash menu is a known exception, in both of its modes.** The prompt closes the menu on
+    `Esc`, but the abort above does not consult the menu the way the `Tab` handler consults it — so
+    `Esc` pressed to dismiss the menu while a turn is streaming closes the menu **and** stops the
+    turn. Anything that advertises `Esc` as the way out of that menu has to say so.
 - **`Ctrl+C`** — on the TUI, one key with three meanings, resolved most-local-first: a **modal state**
   (attack banner, pending approval, approvals picker) leaves, because that is what those screens
   promise and the run is blocked on an answer nobody is at the keyboard to give; else a **typed
@@ -580,10 +584,10 @@ their config has a problem.
 - **`Ctrl+G`** (and `Ctrl+/`) — open the slash-command menu **over an unfinished message**, with the
   message left alone. See the slash-menu entry below.
 - **A control chord must not type its letter, and must not move the message under it.** Every text
-  buffer in the TUI takes its input from one shared predicate — `isTypedText` in
-  `tui/keyGuards.ts` — and they all use it: the prompt's editor, the chord menu's query, `App.tsx`'s
-  debug-pane search, `SelectList`'s filter (the attack-banner phrase applies the same rule inline,
-  where its `q`/Enter arbitration already sits). Sharing it is not tidiness: **Ink broadcasts one
+  buffer in the TUI takes its input from one shared pair of answers in `tui/keyGuards.ts` —
+  `isTypedText` for "does this event carry text at all", `typedText` for "which of it may be
+  inserted" — and they all use them: the prompt's editor, the chord menu's query, `App.tsx`'s
+  debug-pane search, `SelectList`'s filter. Sharing them is not tidiness: **Ink broadcasts one
   keypress to every `useInput` subscriber with no way to stop propagation**, and in the same
   synchronous dispatch, so a buffer that answers "is this text?" differently from its neighbour types
   the byte its neighbour refused. Without the guard at all, each keybinding the app adds also drops a
@@ -596,9 +600,27 @@ their config has a problem.
     typed text to a four-modifier guard, and the symptom is an invisible byte in whatever has focus.
   - **`shift` is deliberately not refused** — it is how a capital is typed, not a different key.
     `capsLock`/`numLock` sit on the same object and are lock states, not modifiers.
+  - **The refusal is per CHARACTER, because one event is not one keystroke.** Ink hands a pasted
+    string over as a single `input`, and a paste is what arrives on the keystroke channel whenever
+    bracketed-paste mode is off — which it is in every state where the prompt, the only holder of
+    `usePaste`, is not mounted. So the control characters are removed from what is inserted and the
+    rest of the text lands; refusing the whole event instead would silently discard the paste, with
+    no character, no error and no way to get it back. A bare control byte still reaches nothing:
+    with its one character removed there is nothing left to insert.
+  - **A buffer that can hold a line break says so.** `typedText` drops `\n` with the other control
+    characters because a query, a filter or a phrase is one line; `<PromptEditor>`'s message is
+    drawn on as many rows as it has lines, so it asks for `typedMultilineText`, which keeps `\n`
+    (normalized like a bracketed paste's) and removes everything else.
   - **A key that must survive the guard needs its own branch**, because the guard cannot know it:
-    `Ctrl+J` is the byte `\n`, which is a control character, so `PromptEditor.tsx` binds it
-    explicitly rather than letting it fall through to the insert branch.
+    `Ctrl+J` is the byte `\n` alone, which carries no text by this answer, so `PromptEditor.tsx`
+    binds it explicitly rather than letting it fall through to the insert branch.
+  - **The attack banner's phrase field is the one deliberate exception, and it is stricter**
+    ([[TUI-C68]] §1). It refuses the whole event when a control character is in it, because the
+    character in question is the `\r` of a pasted `run anyway` line and the phrase matcher trims
+    before it compares — filtering would leave the exact phrase in the buffer, one Enter from an
+    irreversible command nobody typed. Losing a paste costs a retype; keeping one costs the
+    command. Every other buffer takes the opposite trade, and differing from the shared answer
+    anywhere else is drift.
 - **`o` / `s` / `a` / anything-else** at a pending shell approval — approve once / session / always
   / reject (fail-closed). `[s]` and `[a]` are offered only when there is something to remember.
   Changing the approvals mode is not one of the choices: the ladder has no "turn the gate down from
@@ -610,7 +632,15 @@ their config has a problem.
   with a half-written message in the prompt, where the first door cannot open at all and clearing the
   buffer to reach it would destroy what the user wrote. In that mode the editor stands down
   completely, the message is captured and put back around the dispatch (caret included), and `Esc`
-  closes leaving it as it was. **Only one of the two is ever on screen.**
+  closes leaving it as it was — mid-turn, `Esc` also stops the turn (see the `Esc` entry above).
+  **Only one of the two is ever on screen.**
+  - **The message comes back even when the command REPLACED the prompt while it ran.** `/approvals`
+    opens a picker, and the prompt is not rendered while one is up, so a draft restored into the
+    prompt's own state would be restored into something about to be unmounted and lost with it —
+    with no kill-slot recovery, because nothing killed it. The snapshot is handed to a slot on
+    `<App>`, which is always mounted, and the next mount of the prompt takes it back. Restoring
+    only for the commands that happen to leave the prompt standing is not the promise: `/approvals`
+    is the command the mid-turn notice offers as its example.
   - **It ships on, with no config key** — an additive chord changes nothing until pressed, and a
     discovery affordance behind a flag is not one (DL-9). `--no-tui` is the opt-out, as for the TUI
     generally.

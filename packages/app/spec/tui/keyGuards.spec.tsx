@@ -2,10 +2,15 @@ import { describe, expect, it } from 'vitest';
 import React from 'react';
 import { Text, useInput } from 'ink';
 import { render } from 'ink-testing-library';
-import { isChord, isTypedText, opensCommandMenu } from '#src/tui/keyGuards.js';
+import {
+  isTypedText,
+  opensCommandMenu,
+  typedMultilineText,
+  typedText,
+} from '#src/tui/keyGuards.js';
 
 /**
- * TUI-C51 — the two shared key predicates, and the decode they have to survive.
+ * TUI-C51 — the shared key answers, and the decode they have to survive.
  *
  * The cases below are in two halves and the split is the point. The predicates are pure functions
  * of `(input, key)`, so most of them can be stated directly — but a predicate that is right about a
@@ -56,14 +61,18 @@ async function deliver(bytes: string): Promise<Delivered> {
   return events[0];
 }
 
-describe('isChord / isTypedText (TUI-C51)', () => {
-  it('calls every modifier but shift a chord', () => {
-    expect(isChord({ ctrl: true })).toBe(true);
-    expect(isChord({ meta: true })).toBe(true);
-    expect(isChord({ super: true })).toBe(true);
-    expect(isChord({ hyper: true })).toBe(true);
-    // shift is how a capital is typed, not a different key — and no flag at all is not a chord.
-    expect(isChord({})).toBe(false);
+describe('isTypedText / typedText (TUI-C51)', () => {
+  it('takes nothing at all from a chord, whatever it carries', () => {
+    // Every modifier but shift makes the event someone else's, and that is a refusal of the WHOLE
+    // event: a chord is not a paste with a control byte in it, it is a key that belongs elsewhere.
+    for (const chord of [{ ctrl: true }, { meta: true }, { super: true }, { hyper: true }]) {
+      expect(typedText('t', chord)).toBe('');
+      expect(typedText('a longer burst', chord)).toBe('');
+      expect(typedMultilineText('line one\nline two', chord)).toBe('');
+      expect(isTypedText('t', chord)).toBe(false);
+    }
+    // No flag at all is not a chord — shift, which is how a capital is typed, is not one of them.
+    expect(typedText('t', {})).toBe('t');
   });
 
   it('accepts an ordinary character and refuses the chord carrying the same letter', () => {
@@ -90,14 +99,60 @@ describe('isChord / isTypedText (TUI-C51)', () => {
     expect(isTypedText('\x9b', {})).toBe(false);
   });
 
-  it('refuses a control byte hiding inside otherwise-ordinary text', () => {
-    expect(isTypedText('a\x1fb', {})).toBe(false);
+  it('removes a control byte hiding inside otherwise-ordinary text, and keeps the text', () => {
+    // The event is a PASTE, not a keystroke: `useInput` hands over a pasted string as one `input`,
+    // and only a terminal with bracketed-paste mode on sends pastes down the other channel — which
+    // no state that is not the mounted prompt has. Refusing the event here would silently discard
+    // everything the user pasted; refusing the CHARACTER leaves them the text they can see.
+    expect(isTypedText('a\x1fb', {})).toBe(true);
+    expect(typedText('a\x1fb', {})).toBe('ab');
+  });
+
+  it('is empty for anything with no text left in it, which is what a bare control byte is', () => {
+    expect(typedText('\x1f', {})).toBe('');
+    expect(typedText('\x03', {})).toBe('');
+    expect(typedText('\n', {})).toBe('');
+    expect(typedText('', {})).toBe('');
+    // …and that emptiness IS the refusal the guard is made of.
+    expect(isTypedText('\x1f', {})).toBe(false);
   });
 
   it('accepts text above ASCII, including a whole astral code point', () => {
     expect(isTypedText('é', {})).toBe(true);
     expect(isTypedText('÷', {})).toBe(true);
     expect(isTypedText('😀', {})).toBe(true);
+    // Whole code points survive the filter — `\p{Cc}` is matched with `u`, so an astral character
+    // is never half-removed into a lone surrogate.
+    expect(typedText('é÷😀', {})).toBe('é÷😀');
+  });
+});
+
+/**
+ * TUI-C51 — the multi-line buffer's filter, which differs in exactly one character.
+ *
+ * `<PromptEditor>`'s message is the only buffer here drawn on more than one row, so a line break
+ * pasted into it is content rather than a control byte to remove. Every other control character
+ * still goes, and a bare `\n` is still not text — the newline KEY has its own branch.
+ */
+describe('typedMultilineText (TUI-C51)', () => {
+  it('keeps the line breaks of a paste and removes every other control character', () => {
+    expect(typedMultilineText('line one\nline two', {})).toBe('line one\nline two');
+    expect(typedMultilineText('hello\n', {})).toBe('hello\n');
+    expect(typedMultilineText('a\tb', {})).toBe('ab');
+    expect(typedMultilineText('a\x1fb', {})).toBe('ab');
+    expect(typedMultilineText('\x1f', {})).toBe('');
+  });
+
+  it('normalizes CRLF and CR the way the bracketed-paste channel does', () => {
+    // The same text pasted into the same buffer must land the same way whether or not the terminal
+    // had bracketed-paste mode on; `pasteParser.ts` is what the other channel runs.
+    expect(typedMultilineText('a\r\nb\rc', {})).toBe('a\nb\nc');
+  });
+
+  it('differs from the single-line answer on the newline and on nothing else', () => {
+    const pasted = 'first\tline\x1f\nsecond line';
+    expect(typedMultilineText(pasted, {})).toBe('firstline\nsecond line');
+    expect(typedText(pasted, {})).toBe('firstlinesecond line');
   });
 });
 
@@ -152,6 +207,28 @@ describe('the predicates over Ink’s own decode of the raw bytes (TUI-C51)', ()
     expect(event.input).toBe('\n');
     expect(event.ctrl).toBe(false);
     expect(isTypedText(event.input, event)).toBe(false);
+  });
+
+  it('delivers a pasted multi-line burst as ONE event, which keeps its text either way', async () => {
+    // The case the whole per-character shape exists for, driven through the production decode
+    // rather than argued about: Ink splits a chunk on ESC and on the backspace bytes and on
+    // nothing else, so a paste arrives whole — and with bracketed-paste mode off (every state
+    // where the prompt, the only holder of `usePaste`, is not mounted) this is the channel it
+    // arrives on. An event-level refusal would drop all of it.
+    const event = await deliver('line one\nline two');
+    expect(event.input).toBe('line one\nline two');
+    expect(isTypedText(event.input, event)).toBe(true);
+    // The message keeps its two lines; a one-line buffer gets the text without the break.
+    expect(typedMultilineText(event.input, event)).toBe('line one\nline two');
+    expect(typedText(event.input, event)).toBe('line oneline two');
+  });
+
+  it('delivers a search term copied off a line with its trailing newline attached', async () => {
+    // Copying a whole line brings the line ending with it, which is how the debug pane's search
+    // meets this: `line-30\n` is a term that matches, and a term that used to vanish whole.
+    const event = await deliver('line-30\n');
+    expect(event.input).toBe('line-30\n');
+    expect(typedText(event.input, event)).toBe('line-30');
   });
 
   it('an ordinary letter decodes to itself and is text', async () => {

@@ -157,6 +157,15 @@ function commandMenuQueryIn(frame: string): string | null {
   return null;
 }
 
+/** The name on the menu's highlighted row (`❯ /status`), or `null` when no row is highlighted. */
+function highlightedIn(frame: string): string | null {
+  for (const row of frame.split('\n')) {
+    const match = /❯\s+(\/\S+)/.exec(stripAnsi(row));
+    if (match) return match[1];
+  }
+  return null;
+}
+
 /** Type each character as its own input event, the way a person produces them. */
 const typeSlowly = async (stdin: { write: (data: string) => void }, text: string) => {
   for (const character of text) {
@@ -497,6 +506,27 @@ describe('tui <PromptInput> the slash menu over an unfinished message (TUI-C51)'
     expect(commandMenuQueryIn(lastFrame() ?? '')).toBe('zzz');
   });
 
+  it('Backspace on an empty query leaves the highlight where the user put it', async () => {
+    // Backspace trims the query, and with nothing to trim it must do NOTHING: resetting the
+    // highlight here moves the selection with nothing on screen having changed to explain it, and
+    // the row the user arrowed down to is the row they are about to press Enter on.
+    const { stdin, lastFrame } = await withDraft();
+    stdin.write(CTRL_G);
+    await tick();
+    stdin.write(DOWN);
+    await tick();
+    const highlighted = highlightedIn(lastFrame() ?? '');
+    expect(highlighted).not.toBeNull();
+
+    stdin.write(BACKSPACE);
+    await tick();
+    const frame = lastFrame() ?? '';
+    expect(highlightedIn(frame)).toBe(highlighted);
+    // …and neither the query nor the message underneath it lost a character either.
+    expect(commandMenuQueryIn(frame)).toBe('');
+    expect(bufferIn(frame)).toBe(DRAFT);
+  });
+
   it('Esc closes the menu and leaves the message exactly as it was', async () => {
     const { stdin, lastFrame, onSubmit } = await withDraft();
     stdin.write(CTRL_G);
@@ -707,6 +737,99 @@ describe('tui <PromptInput> multiline paste (TUI-C24)', () => {
  * object can satisfy a handler on a decoding no terminal produces, and the caret is a position the
  * component never exposes, so the reverse-video run is the only honest observable of it.
  */
+/**
+ * TUI-C51 — a paste that arrives as KEYSTROKES, which is what a paste is with bracketed-paste mode
+ * off.
+ *
+ * Every case in the TUI-C24 block above goes through the `paste()` helper, i.e. the `\x1b[200~`
+ * channel — the one a terminal offers only after the prompt has asked for it, and the one that is
+ * off in every state where the prompt is not mounted. Nothing there exercises the channel below,
+ * where the whole pasted string arrives as a single `input` event and the guard that decides what
+ * is text meets it. The rule is that the control characters are removed and the text is not: a
+ * paste is never discarded over a character inside it, and no control byte is ever inserted.
+ */
+describe('tui <PromptInput> a paste arriving as keystrokes (TUI-C51)', () => {
+  it('keeps the lines of a multi-line paste, and does not submit on the newline', async () => {
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    stdin.write('line one\nline two');
+    await tick();
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(promptRows(lastFrame() ?? '')).toHaveLength(2);
+    expect(bufferIn(lastFrame() ?? '')).toBe('line one\nline two');
+
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('line one\nline two');
+  });
+
+  it('keeps a paste whose only control character is the newline it ends with', async () => {
+    // Copying a whole line brings its line ending along, so this is the ordinary case, not an edge
+    // one — and the whole message is what an event-level refusal would have thrown away.
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    stdin.write('hello\n');
+    await tick();
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(bufferIn(lastFrame() ?? '')).toBe('hello\n');
+
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('hello\n');
+  });
+
+  it('drops the control characters inside a paste and keeps the text around them', async () => {
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    stdin.write('a\x1fb\tc');
+    await tick();
+    // `\x1f` renders as nothing at all and `\t` as whitespace, so the frame is read for the shape
+    // and `onSubmit` for the bytes — the buffer is asserted where an invisible character shows.
+    expect(bufferIn(lastFrame() ?? '')).toBe('abc');
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('abc');
+  });
+
+  it('lands at the caret, after what was already typed, exactly as the other channel does', async () => {
+    const onSubmit = vi.fn();
+    const { stdin } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    stdin.write('note: ');
+    await tick();
+    stdin.write('first\r\nsecond'); // CRLF, normalized the way a bracketed paste's is
+    await tick();
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('note: first\nsecond');
+  });
+
+  it('still refuses a bare control byte, which is the guard this widened', async () => {
+    // The narrowing above must not have cost the refusal it was built for: `Ctrl+\` alone carries
+    // no text, so it inserts nothing — while an ordinary character right after it still lands.
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    stdin.write(CTRL_BACKSLASH);
+    await tick();
+    expect(bufferIn(lastFrame() ?? '')).toBe('');
+    stdin.write('o');
+    await tick();
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('o');
+  });
+});
+
 describe('tui <PromptEditor> rendering (TUI-C25)', () => {
   paintsAnsi();
 

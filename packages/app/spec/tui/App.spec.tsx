@@ -2256,6 +2256,61 @@ describe('tui <App> — the slash menu over an unfinished message (TUI-C51)', ()
     unmount();
   });
 
+  /** A session that can actually answer `/approvals`, so the command opens its picker. */
+  const pickerAgent = (): TuiAgent =>
+    ({
+      async *runTurn() {
+        yield { type: 'text', delta: 'ok' };
+      },
+      getApprovals: () => ({
+        approvals: { rung: 'write', rater: undefined, allow: [], deny: [], escalate: [] },
+        allowlist: { session: 0, always: undefined },
+        deny: [],
+      }),
+      setApprovalRung: (next: string) => ({ rung: next, rater: undefined, allow: [], deny: [] }),
+    }) as unknown as TuiAgent;
+
+  it('gives the message back after a command that REPLACES the prompt (/approvals)', async () => {
+    // The class of command the restore cannot reach on its own: `/approvals` opens the posture
+    // picker, and the prompt is not rendered while a picker is up — so a draft put back into this
+    // component's own state after the dispatch is put into something that is about to stop
+    // existing. It is the command the mid-turn notice offers as its example, and the one the
+    // user guide lists first. The scripted agent here supplies `setApprovalRung`, without which
+    // `/approvals` only prints "unavailable" and the picker never opens at all.
+    const LEFT = '\x1b[D';
+    const { stdin, frames, lastFrame, unmount } = render(
+      <App {...baseProps} agent={pickerAgent()} />
+    );
+    await vi.waitFor(() => expect(lastFrame()).toContain('ready to chat'));
+
+    stdin.write('please refactor the fo');
+    await vi.waitFor(() => expect(lastFrame()).toContain('> please refactor the fo'));
+    // Park the caret away from the end, so a restore that merely re-typed the text is visible.
+    stdin.write(LEFT);
+    stdin.write(LEFT);
+
+    stdin.write(CTRL_G);
+    await vi.waitFor(() => expect(lastFrame()).toMatch(/❯/));
+    stdin.write('approvals');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/approvals'));
+    stdin.write('\r');
+
+    // The picker is up — and the prompt really is gone while it is, which is the whole hazard.
+    await vi.waitFor(() => expect(lastFrame()).toContain('Choose an approvals mode:'));
+    expect(lastFrame()).not.toContain('> please refactor the fo');
+
+    stdin.write(ESC);
+    await vi.waitFor(() => expect(lastFrame()).not.toContain('Choose an approvals mode:'));
+    // Back, with the caret where it was: typing lands two characters from the end.
+    await vi.waitFor(() => expect(lastFrame()).toContain('> please refactor the fo'));
+    stdin.write('XY');
+    await vi.waitFor(() => expect(lastFrame()).toContain('> please refactor the XYfo'));
+    stdin.write('\r');
+    await vi.waitFor(() => expect(frames.join('\n')).toContain('please refactor the XYfo'));
+
+    unmount();
+  });
+
   it('keeps Ctrl+/’s byte out of the debug pane’s search query', async () => {
     // The OTHER text buffer on this surface, and the one the prompt cannot protect: the pane is
     // focused, so the prompt is unmounted and nothing here opens a menu — but the byte still
@@ -2290,6 +2345,42 @@ describe('tui <App> — the slash menu over an unfinished message (TUI-C51)', ()
       const frame = lastFrame() ?? '';
       expect(frame).toContain('line-30'); // the viewport jumped to the match
       expect(frame).toContain('1/1'); // …and there is exactly one
+    });
+
+    unmount();
+  });
+
+  it('takes a search term pasted with the newline the copy brought with it', async () => {
+    // The other half of the same guard, at the same buffer, and the one that needs no unusual
+    // terminal: bracketed-paste mode is OFF while the pane has focus, because the prompt is what
+    // asks for it and the prompt is unmounted here. So a pasted term arrives as one keystroke
+    // event with whatever the copy included — copying a whole line includes its line ending — and
+    // dropping the event over that character loses the search with nothing on screen to say so.
+    const longResult = Array.from({ length: 40 }, (_, i) => `line-${i}`).join('\n');
+    const agent = scriptedAgent([
+      { type: 'tool_start', id: 's1', name: 'task' },
+      { type: 'tool_args', id: 's1', delta: '{"subagent_type":"worker","description":"big"}' },
+      { type: 'tool_end', id: 's1' },
+      { type: 'tool_result', id: 's1', content: longResult },
+      { type: 'text', delta: 'ok' },
+    ]);
+    const { stdin, lastFrame, unmount } = render(
+      <App {...baseProps} agent={agent} initialMessage="go" />
+    );
+    await vi.waitFor(() => expect(lastFrame()).toContain('turns: 1'));
+    stdin.write('/debug');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/debug'));
+    stdin.write('\r');
+    await vi.waitFor(() => expect(lastFrame()).toContain('worker'));
+    stdin.write(TAB);
+    await vi.waitFor(() => expect(lastFrame()).toContain('Tab: section'));
+
+    stdin.write('/');
+    stdin.write('line-30\n'); // one event, exactly as a paste arrives on this channel
+    await vi.waitFor(() => {
+      const frame = lastFrame() ?? '';
+      expect(frame).toContain('line-30');
+      expect(frame).toContain('1/1'); // the term matched, so the newline did not join it
     });
 
     unmount();
