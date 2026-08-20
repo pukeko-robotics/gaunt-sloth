@@ -96,8 +96,10 @@ describe('<TranscriptViewport>', () => {
 
       // The newest line is the last row of the region…
       expect(rows[rows.length - 1]).toContain('line-39');
-      // …the rows above it are its immediate predecessors, in order…
-      expect(rows[rows.length - 2]).toContain('line-38');
+      // …the rows above it are its immediate predecessors, in order, one TUI-C90 separator row
+      // apart…
+      expect(rows[rows.length - 2].trim()).toBe('');
+      expect(rows[rows.length - 3]).toContain('line-38');
       // …and the oldest ones are not on screen at all. A top-aligned region would show line-0
       // here and no line-39, which is precisely the failure this pins.
       expect(lastFrame()).not.toContain('line-0\n');
@@ -123,11 +125,19 @@ describe('<TranscriptViewport>', () => {
     it('leaves NO blank band above the conversation when there is enough of it', () => {
       // The failure mode of an over-counting height estimate: the slice is cut too high, the
       // region cannot fill, and a band of empty rows appears above the conversation.
+      //
+      // Since TUI-C90 the region legitimately contains single blank rows — one above each item —
+      // so "no blank rows at all" is no longer the property. A **band** is: two blank rows in a
+      // row can only be padding, because a separator row is always followed by the item it
+      // separates. That still fails on an over-count of even one row, which is what this pins.
       const items = Array.from({ length: 60 }, (_, i) => line(i));
       const { lastFrame, unmount } = render(<Frame items={items} height={12} />);
       const rows = (lastFrame() ?? '').split('\n');
 
-      expect(rows.filter((r) => r.trim() === '')).toHaveLength(0);
+      const adjacentBlanks = rows.filter(
+        (r, i) => i > 0 && r.trim() === '' && rows[i - 1].trim() === ''
+      );
+      expect(adjacentBlanks).toHaveLength(0);
 
       unmount();
     });
@@ -136,10 +146,48 @@ describe('<TranscriptViewport>', () => {
       const { lastFrame, unmount } = render(<Frame items={[line(1), line(2)]} height={6} />);
       const rows = (lastFrame() ?? '').split('\n');
 
+      // Three rows of conversation — the first item, the TUI-C90 separator, the second item — so
+      // three rows of padding sit above them.
       expect(rows).toHaveLength(6);
       expect(rows[0].trim()).toBe('');
-      expect(rows[4]).toContain('line-1');
+      expect(rows[3]).toContain('line-1');
+      expect(rows[4].trim()).toBe('');
       expect(rows[5]).toContain('line-2');
+
+      unmount();
+    });
+
+    it('TUI-C90 — separates each item from the one above it, and opens flush at the top', () => {
+      const { lastFrame, unmount } = render(
+        <Frame items={[line(1), line(2), line(3)]} height={5} />
+      );
+      const rows = (lastFrame() ?? '').split('\n');
+
+      // Five rows exactly: the three items and the two rows that separate them. Nothing above the
+      // first — the region would otherwise open on a blank row every session.
+      expect(rows).toHaveLength(5);
+      expect(rows[0]).toContain('line-1');
+      expect(rows[1].trim()).toBe('');
+      expect(rows[2]).toContain('line-2');
+      expect(rows[3].trim()).toBe('');
+      expect(rows[4]).toContain('line-3');
+
+      unmount();
+    });
+
+    it('TUI-C90 — the rule above a user turn IS the separation, and is not doubled', () => {
+      // A user item already carries a dim rule above it (every one but the first). A blank row
+      // beside that rule would be two rows of separation where every other boundary gets one.
+      const user = (id: number): TranscriptItem => ({ kind: 'user', id, text: `ask-${id}` });
+      const { lastFrame, unmount } = render(
+        <Frame items={[user(1), line(2), user(3)]} height={6} columns={40} />
+      );
+      const rows = (lastFrame() ?? '').split('\n');
+
+      const ruleRow = rows.findIndex((r) => /^─+$/.test(r.trim()));
+      expect(ruleRow).toBeGreaterThan(0);
+      expect(rows[ruleRow - 1].trim()).not.toBe('');
+      expect(rows[ruleRow + 1]).toContain('ask-3');
 
       unmount();
     });

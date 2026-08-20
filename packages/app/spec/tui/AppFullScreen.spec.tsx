@@ -191,10 +191,55 @@ describe('<App> full-screen frame', () => {
     // The dock's closing rule is the LAST row of the terminal, and the status bar is a handful of
     // rows above it — not floating in the middle of a 30-row screen with blank space below.
     expect(lines[lines.length - 1]).toMatch(/^─+$/);
+    // The dock is rule · status · blank · prompt · blank · hint · rule, so the status bar sits six
+    // rows above the last one.
     const statusRow = lines.findIndex((l) => l.includes('chat') && l.includes('turns: 0'));
-    expect(statusRow).toBeGreaterThan(lines.length - 6);
+    expect(statusRow).toBeGreaterThan(lines.length - 8);
     // …and the region above the dock is empty, because there is no conversation yet.
     expect(lines[0].trim()).toBe('');
+
+    unmount();
+  });
+
+  it('TUI-C90 — gives the prompt a row of air above and below it', async () => {
+    const { stdout, unmount } = renderAt(80, 30, <App {...baseProps} />);
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
+
+    const lines = frameRows(stdout);
+    const promptRow = lines.findIndex((l) => l.trimStart().startsWith('>'));
+    expect(promptRow).toBeGreaterThan(0);
+    // Real rows, not empty <Text>s Yoga collapses away: the status bar and the hint are two rows
+    // further from the prompt than they were, and both gaps have to be there.
+    expect(lines[promptRow - 1].trim()).toBe('');
+    expect(lines[promptRow + 1].trim()).toBe('');
+    expect(lines[promptRow - 2]).toContain('chat');
+    expect(lines[promptRow + 2]).toContain("Type 'exit' to leave");
+
+    unmount();
+  });
+
+  it('TUI-C90 — the prompt takes its rows of air with it when it stands down', async () => {
+    // The prompt is unmounted whenever something else owns the keyboard. Rows left behind would be
+    // two rows of nothing between the status bar and the hint in every one of those states, which
+    // on a short terminal is conversation the reader paid for and cannot see.
+    const { stdout, stdin, unmount } = renderAt(80, 30, <App {...baseProps} debug />);
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
+
+    // `/debug` opens the docked pane, Tab gives it the keyboard, and the prompt stands down.
+    stdin.write('/debug');
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('> /debug'));
+    stdin.write('\r');
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('Subagents'));
+    stdin.write('\t');
+    await vi.waitFor(() => {
+      const rows = frameRows(stdout);
+      expect(rows.some((l) => l.trimStart().startsWith('> '))).toBe(false);
+    });
+
+    const lines = frameRows(stdout);
+    const hintRow = lines.findIndex((l) => l.includes("Type 'exit' to leave"));
+    expect(hintRow).toBeGreaterThan(0);
+    expect(lines[hintRow - 1]).toContain('chat');
 
     unmount();
   });
@@ -307,22 +352,24 @@ describe('<App> fills the conversation region it hands the viewport', () => {
     // top of the region is left empty.
     const { stdout, stdin, unmount } = renderAt(
       200,
-      40,
+      56,
       <App {...baseProps} agent={replyingAgent} />
     );
     await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
 
     await converse(stdout, stdin, 12);
 
-    expect(frameRows(stdout)).toHaveLength(40);
+    expect(frameRows(stdout)).toHaveLength(56);
     expect(leadingBlankRows(stdout)).toBe(0);
     // …and the conversation on screen really is wide-terminal conversation: a turn that occupies 8
-    // rows at the fallback width occupies 3 here, so the screen holds six of them (measured) where
-    // a window computed at 80 columns leaves room for four.
+    // rows at the fallback width occupies 3 here, so the screen holds seven of them (measured)
+    // where a window computed at 80 columns leaves room for about half that. The terminal is 56
+    // rows rather than 40 so the discriminating gap survives the rows TUI-C90 spends — two in the
+    // dock, and one separator above every item.
     const visibleTurns = new Set(
       frameRows(stdout).flatMap((row) => [...row.matchAll(/t(\d+)-x/g)].map((m) => m[1]))
     );
-    expect(visibleTurns.size).toBeGreaterThanOrEqual(5);
+    expect(visibleTurns.size).toBeGreaterThanOrEqual(6);
 
     unmount();
   }, 30_000);

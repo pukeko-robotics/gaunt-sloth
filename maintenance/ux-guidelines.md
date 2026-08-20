@@ -496,6 +496,26 @@ because those are signal, not chatter (DL-1 no important action is silent). Plai
   the terminal height the same way `Rule` tracks the width — from the stdout `resize` event —
   because Ink relays out on `SIGWINCH` without re-rendering React, and a frame that keeps its old
   height is either short of the floor or overflowing the screen.
+- **One blank row between blocks of sense (DL-7 legibility, DL-2 progressive disclosure).** A turn
+  is a stack of blocks — a text run, a tool-call panel, a `💭 Thinking` panel — and each is
+  separated from its neighbour by a single empty row. The separation goes **between** blocks and at
+  neither end of a turn, so the conversation still opens flush at the top of the region and still
+  ends flush against the dock. One row of separation per boundary, never two: where a user turn's
+  dim rule already provides it, the blank row stands down. Without this the glyph column is the
+  only structural signal a reader has, and a tool's indented output sits at nearly the weight of
+  the next block's header.
+- **A blank row is a sized `<Box>` (`tui/components/BlankRow.tsx`), never an empty `<Text>`.** An
+  empty `<Text>` among siblings measures zero-high in Yoga and the row silently vanishes; a
+  `<Text>` holding a space would hold the row open but leave trailing whitespace. Anything that
+  paints a row must also be counted in `tui/transcriptWindow.ts`, whose estimates are a deliberate
+  lower bound — the failure direction is a blank band above the conversation.
+- **The live turn carries the same separation as the committed one.** Geometry that appears only at
+  commit time makes the whole conversation jump by a row the moment a turn finishes, including a
+  view the reader has deliberately parked above the edge.
+- **The prompt gets a row of air above and below it**, so the line the user types into reads as its
+  own block rather than as the next line of the status bar. Both rows belong to the prompt and are
+  unmounted with it whenever something else owns the keyboard — an approval prompt, the attack
+  banner, the approvals picker, a focused debug pane.
 - **Single-line, stable status bar** (`tui/components/StatusBar.tsx`). One dim line carrying
   session context — **mode · model · turn counter · ready** — when idle; a spinner +
   `Thinking… (Esc to interrupt)` while a turn runs. Keep it to one line and free of streaming

@@ -3,6 +3,7 @@ import { Box, Text, type DOMElement } from 'ink';
 import type { TranscriptItem } from '#src/tui/types.js';
 import { LiveTurn, ReasoningPanel } from '#src/tui/components/LiveTurn.js';
 import { Rule } from '#src/tui/components/Rule.js';
+import { BlankRow } from '#src/tui/components/BlankRow.js';
 import { CommandNotice } from '#src/tui/components/CommandNotice.js';
 import { ApprovalStopMessage } from '#src/tui/components/ApprovalStopMessage.js';
 import { transcriptWindowEnd, transcriptWindowStart } from '#src/tui/transcriptWindow.js';
@@ -152,6 +153,7 @@ export function TranscriptViewport({
       columns={columns}
       geometry={geometry}
       separator={items[index].kind === 'user' && index !== firstUserIndex}
+      leadingBlank={index !== 0}
     />
   );
 
@@ -216,6 +218,7 @@ const TranscriptRow = React.memo(function TranscriptRow({
   toolsExpanded,
   columns,
   separator,
+  leadingBlank,
   geometry,
 }: {
   /** The item's position in the whole transcript — stable for a committed item, so the geometry
@@ -230,12 +233,21 @@ const TranscriptRow = React.memo(function TranscriptRow({
    */
   columns: number;
   separator: boolean;
+  /** TUI-C90 — whether anything sits above this item for a blank row to separate it from. */
+  leadingBlank: boolean;
   geometry?: TranscriptGeometry;
 }): React.ReactElement {
   const ref = React.useRef<DOMElement | null>(null);
   React.useLayoutEffect(() => geometry?.registerRow(index, ref.current), [geometry, index]);
   return (
     <Box ref={ref} flexDirection="column" flexShrink={0}>
+      {/* TUI-C90 — the row that separates this item from the one above it. It LEADS rather than
+          trails, which is what keeps the newest line of the conversation flush against the dock
+          (TUI-C48's pinned tail) instead of floating a blank row above it. It is also why it is
+          suppressed when `separator` is set: the rule above a user item already is that row of
+          separation, and a blank beside it would double the gap between turns.
+          `transcriptWindow.estimateItemRows` charges for it. */}
+      {leadingBlank && !separator ? <BlankRow /> : null}
       {separator ? <Rule /> : null}
       {renderItem(item, toolsExpanded, columns)}
     </Box>

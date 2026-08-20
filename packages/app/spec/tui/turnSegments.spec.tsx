@@ -359,8 +359,9 @@ describe('TUI-C52 — the row-count oracle moves in lockstep with the renderer',
 
   it('charges a text run that FOLLOWS a tool call its own row', () => {
     // Same characters of text, same tool call — only the POSITION of the text differs. Rendered
-    // per segment the interleaved turn is one row taller, and the oracle has to say so: an oracle
-    // still measuring the turn's text as a single block reports the two as equal.
+    // per segment the interleaved turn is TWO rows taller — the second text run, and the TUI-C90
+    // blank row that now separates it from the tool panel — and the oracle has to say so: an
+    // oracle still measuring the turn's text as a single block reports the two as equal.
     const interleaved = foldEventSequence([
       text('alpha'),
       ...toolCall('t1', 'probe_tool'),
@@ -372,13 +373,14 @@ describe('TUI-C52 — the row-count oracle moves in lockstep with the renderer',
       ...toolCall('t1', 'probe_tool'),
     ]);
     expect(estimateItemRows(item(interleaved), opts)).toBe(
-      estimateItemRows(item(trailing), opts) + 1
+      estimateItemRows(item(trailing), opts) + 2
     );
   });
 
   it('charges every one of a 40-tool turn’s text runs (the measured field shape)', () => {
     // A turn with forty-plus tool calls is real — it is what the reported session contained. At a
-    // width where nothing wraps, forty separate runs are forty rows where one joined run is one.
+    // width where nothing wraps, forty separate runs are forty rows where one joined run is one,
+    // and each of the 39 extra segments brings a TUI-C90 blank row with it: 39 + 39.
     const wide = { columns: 400, toolsExpanded: false, separator: false };
     const many: AgentStreamEvent[] = [];
     const joined: AgentStreamEvent[] = [];
@@ -388,7 +390,7 @@ describe('TUI-C52 — the row-count oracle moves in lockstep with the renderer',
     }
     for (let i = 0; i < 40; i++) joined.push(...toolCall(`t${i}`, `tool_${i}`));
     expect(estimateItemRows(item(foldEventSequence(many)), wide)).toBe(
-      estimateItemRows(item(foldEventSequence(joined)), wide) + 39
+      estimateItemRows(item(foldEventSequence(joined)), wide) + 78
     );
   });
 
@@ -565,7 +567,8 @@ describe('TUI-C52 — a segment that draws nothing does not break a text run', (
   it('CONTROL: the oracle still charges a run split by a DRAWN tool as two', () => {
     const withTool = foldEventSequence([text(PLAN), ...drawnTool('t1', 'read_file'), text(ACT)]);
     const asOneRun = foldEventSequence([text(JOINED), ...drawnTool('t1', 'read_file')]);
-    expect(estimate(withTool)).toBe(estimate(asOneRun) + 1);
+    // The split run's own row, plus the TUI-C90 blank row that separates it from the tool panel.
+    expect(estimate(withTool)).toBe(estimate(asOneRun) + 2);
   });
 
   it('keeps the segment list truthful — the checklist call is still recorded and findable', () => {
@@ -819,15 +822,16 @@ describe('TUI-C81 — reasoning is a segment, so a turn paints its thoughts wher
     const opts = { columns: 100, toolsExpanded: true, separator: false };
     const twice = foldEventSequence(THINKS_TWICE);
     // The control holds the same two thoughts as ONE run, one per line, so both turns draw the same
-    // two gutter rows of body and the only difference left is the second panel's header. An oracle
-    // still counting a turn's reasoning as a single block above everything reports the two as equal.
+    // two gutter rows of body and the only differences left are the second panel's header and the
+    // TUI-C90 blank row that separates it from the block above. An oracle still counting a turn's
+    // reasoning as a single block above everything reports the two as equal.
     const once = foldEventSequence([
       ...think('THOUGHT-A: I should read alpha.\nTHOUGHT-B: alpha says X, so the answer is Y.'),
       text('Let me look at alpha. '),
       ...toolCall('t1', 'alpha_tool'),
       text('The answer is Y.'),
     ]);
-    expect(estimateItemRows(item(twice), opts)).toBe(estimateItemRows(item(once), opts) + 1);
+    expect(estimateItemRows(item(twice), opts)).toBe(estimateItemRows(item(once), opts) + 2);
   });
 
   for (const columns of [24, 40, 100]) {

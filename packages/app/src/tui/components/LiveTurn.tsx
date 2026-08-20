@@ -14,6 +14,7 @@ import type {
 } from '#src/tui/viewModel.js';
 import { displaySegments } from '#src/tui/viewModel.js';
 import { renderMarkdown } from '#src/tui/markdown.js';
+import { BlankRow } from '#src/tui/components/BlankRow.js';
 
 /** Status glyph + word for a tool call's compact summary line. */
 function toolStatus(tc: ToolCallViewModel): { glyph: string; label: string; color: string } {
@@ -298,26 +299,32 @@ export function LiveTurn({
       {/* Keyed by position: these components hold no state, so an index key can only affect how
           React diffs them, never what they show. */}
       {drawn.map((segment, i) => {
-        if (segment.kind === 'text') {
-          return <Text key={i}>{streaming ? segment.text : renderMarkdown(segment.text)}</Text>;
-        }
-        if (segment.kind === 'reasoning') {
-          // Only the thought at the BOTTOM of a still-streaming turn is the one being written, so
-          // it is the only one that previews its newest rows. Once text or a tool call follows it
-          // the thought is finished. The expand hint stays on every panel of a live turn, because
-          // Ctrl+T toggles all of them.
-          return (
+        const body =
+          segment.kind === 'text' ? (
+            <Text>{streaming ? segment.text : renderMarkdown(segment.text)}</Text>
+          ) : segment.kind === 'reasoning' ? (
+            // Only the thought at the BOTTOM of a still-streaming turn is the one being written,
+            // so it is the only one that previews its newest rows. Once text or a tool call
+            // follows it the thought is finished. The expand hint stays on every panel of a live
+            // turn, because Ctrl+T toggles all of them.
             <ReasoningPanel
-              key={i}
               reasoning={segment.text}
               expanded={toolsExpanded}
               live={streaming}
               previewTail={streaming && i === drawn.length - 1}
             />
+          ) : (
+            <ToolCallPanel tc={segment.tool} expanded={toolsExpanded} live={streaming} />
           );
-        }
+        // TUI-C90 — one blank row BETWEEN blocks, never around them. A leading row would push a
+        // turn off its own separator, and a trailing one would make a streaming turn jump the
+        // moment its first segment arrives; the row below the last block belongs to the item
+        // wrapper in `TranscriptViewport`, which is what separates one item from the next.
         return (
-          <ToolCallPanel key={i} tc={segment.tool} expanded={toolsExpanded} live={streaming} />
+          <React.Fragment key={i}>
+            {i > 0 ? <BlankRow /> : null}
+            {body}
+          </React.Fragment>
         );
       })}
     </Box>

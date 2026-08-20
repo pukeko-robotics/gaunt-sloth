@@ -205,7 +205,10 @@ const frameRows = (stdout: SizedStdout) => (stdout.lastFrame() ?? '').split('\n'
  * Found from the bottom up rather than from a constant, because the dock's height is not one: it
  * grows a debug pane, advisories and a checklist, and it LOSES the prompt while the debug pane has
  * the keyboard. The exit hint is always the row above the closing rule, and the dock's opening rule
- * is two or three rows above that; both ends are asserted, so a change to the dock breaks this
+ * is either two rows above that (status, hint) or five (status, blank, prompt, blank, hint — the
+ * prompt with its TUI-C90 rows of air). The nearer candidate is tried first, because with the
+ * prompt gone the further one lands inside the conversation, where a turn separator is also a rule.
+ * Both ends are asserted, so a change to the dock breaks this
  * helper loudly instead of silently shifting every comparison in the file by a row. The status bar
  * is deliberately not the landmark — it swaps to a spinner while a turn streams, which is exactly
  * when several of these cases look at it.
@@ -216,7 +219,7 @@ function regionRows(stdout: SizedStdout): string[] {
   const exitRow = rows.findIndex((r) => r.includes("Type 'exit' to leave"));
   expect(exitRow).toBeGreaterThan(3);
   expect(rows[exitRow + 1]).toMatch(rule);
-  const openingRule = [exitRow - 2, exitRow - 3].find((row) => rule.test(rows[row] ?? ''));
+  const openingRule = [exitRow - 2, exitRow - 5].find((row) => rule.test(rows[row] ?? ''));
   expect(openingRule).toBeGreaterThan(0);
   // The docked debug pane sits above that rule and is dock, not conversation.
   const panelTop = rows.findIndex((r) => r.startsWith('╭'));
@@ -887,7 +890,10 @@ describe('<App> keeps the scroll position honest when the layout moves under it'
 
     stdin.write(KEY.pageUp);
     await settle(stdout);
-    expect(regionRows(stdout)[0]).toContain('numbered-row-012');
+    // One page back from the tail. The landmark moved from row 12 to row 16 with TUI-C90: the dock
+    // is two rows taller, and the answer carries a separator row above it, so a page is that much
+    // less conversation.
+    expect(regionRows(stdout)[0]).toContain('numbered-row-016');
 
     stdout.resizeTo(120, 20);
     await vi.waitFor(() => expect(frameRows(stdout)).toHaveLength(20), { timeout: 5000 });
@@ -1038,7 +1044,7 @@ describe('<App> scrolling inside a single answer taller than the screen', () => 
 
     // The tail of the answer is on screen; its beginning is thirty-odd rows above.
     expect(regionRows(stdout).join('\n')).toContain('numbered-row-080');
-    expect(regionRows(stdout).join('\n')).not.toContain('numbered-row-012');
+    expect(regionRows(stdout).join('\n')).not.toContain('numbered-row-016');
 
     stdin.write(KEY.pageUp);
     await settle(stdout);
@@ -1048,7 +1054,8 @@ describe('<App> scrolling inside a single answer taller than the screen', () => 
     // and a scroll that landed somewhere other than a page back.
     expect(region.join('').trim()).not.toBe('');
     expect(frameRows(stdout)).toHaveLength(40);
-    expect(region[0]).toContain('numbered-row-012');
+    // A page back from the tail — see the note on the shorter-terminal case for why it is row 16.
+    expect(region[0]).toContain('numbered-row-016');
     expect(region.join('\n')).not.toContain('numbered-row-080');
 
     stdin.write(KEY.ctrlEnd);

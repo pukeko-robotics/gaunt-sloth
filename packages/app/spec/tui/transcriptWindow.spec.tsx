@@ -278,13 +278,15 @@ describe('transcriptWindowStart', () => {
   });
 
   it('cuts to the tail once the transcript exceeds the budget', () => {
-    // 50 one-row items against a 10-row budget: 10 items cover it, plus one item of slack, so the
-    // window opens at index 39. The 39 is written out rather than derived from the slack constant
-    // on purpose — an assertion that names a constant on both sides cannot fail when it changes,
-    // which is the whole reason this number is worth asserting.
+    // 50 single-line items against a 10-row budget. Each costs TWO rows, not one: its own line
+    // plus the TUI-C90 blank row above it (every item but the very first draws one). So 5 items
+    // cover the budget, plus one item of slack, and the window opens at index 44. The 44 is
+    // written out rather than derived from the slack constant on purpose — an assertion that names
+    // a constant on both sides cannot fail when it changes, which is the whole reason this number
+    // is worth asserting.
     const items = Array.from({ length: 50 }, (_, i) => line(i));
     const start = transcriptWindowStart(items, 10, 80, false);
-    expect(start).toBe(39);
+    expect(start).toBe(44);
     expect(items.length - start).toBeLessThan(items.length);
   });
 
@@ -298,9 +300,10 @@ describe('transcriptWindowStart', () => {
       return items.length - transcriptWindowStart(items, 40, 80, false);
     });
     expect(new Set(sizes).size).toBe(1);
-    // 40 one-row items cover the 40-row budget, plus one of slack. Exact, and stated as a number:
-    // written as `40 + TRANSCRIPT_WINDOW_SLACK_ITEMS` it would follow the constant anywhere.
-    expect(sizes[0]).toBe(41);
+    // 20 two-row items (a line each, plus the TUI-C90 blank row above it) cover the 40-row budget,
+    // plus one of slack. Exact, and stated as a number: written as `20 + TRANSCRIPT_WINDOW_SLACK_ITEMS`
+    // it would follow the constant anywhere.
+    expect(sizes[0]).toBe(21);
   });
 
   it('never mounts fewer than the newest item, even when one item dwarfs the viewport', () => {
@@ -316,13 +319,14 @@ describe('transcriptWindowStart', () => {
   });
 
   it('bounds the mounted count by the budget at every viewport size', () => {
-    // One-row items, so the count is the budget plus a single item of slack at every size. The
-    // `+ 1` is that slack written as a number: with the constant on both sides this assertion
-    // would hold for any value it took, which is exactly what it exists to rule out.
+    // Two-row items — a line each, plus the TUI-C90 blank row above it — so the count is half the
+    // budget plus a single item of slack at every size. The `+ 1` is that slack written as a
+    // number: with the constant on both sides this assertion would hold for any value it took,
+    // which is exactly what it exists to rule out.
     const items = Array.from({ length: 200 }, (_, i) => line(i));
     for (const budget of [1, 8, 40, 120]) {
       const mounted = items.length - transcriptWindowStart(items, budget, 80, false);
-      expect(mounted).toBe(budget + 1);
+      expect(mounted).toBe(Math.ceil(budget / 2) + 1);
     }
   });
 });
@@ -385,12 +389,13 @@ describe('the window around a scrolled edge', () => {
 
   it('walks back from the edge, not from the end of the conversation', () => {
     const items = Array.from({ length: 50 }, (_, i) => line(i));
-    // Fifty one-row items, a ten-row budget, edge at item 20: ten items cover the budget and one
-    // more is slack, so the window opens at index 10 — not at 39, which is where a walk from the
-    // end would put it. Written as literals; deriving them from the slack constant would make the
-    // assertion unable to fail when that constant changes.
-    expect(transcriptWindowStart(items, 10, 80, false, 20)).toBe(10);
-    expect(transcriptWindowStart(items, 10, 80, false)).toBe(39);
+    // Fifty single-line items, a ten-row budget, edge at item 20. Each item costs two rows — its
+    // line plus the TUI-C90 blank above it — so five cover the budget and one more is slack, and
+    // the window opens at index 15, not at 44 where a walk from the end would put it. Written as
+    // literals; deriving them from the slack constant would make the assertion unable to fail when
+    // that constant changes.
+    expect(transcriptWindowStart(items, 10, 80, false, 20)).toBe(15);
+    expect(transcriptWindowStart(items, 10, 80, false)).toBe(44);
   });
 
   it('is unchanged from the walk it has always done when the edge is the newest item', () => {
@@ -402,8 +407,8 @@ describe('the window around a scrolled edge', () => {
 
   it('mounts a budget of conversation below the edge as well', () => {
     const items = Array.from({ length: 50 }, (_, i) => line(i));
-    // Ten one-row items cover a ten-row budget, plus one of slack: 20 + 11 = 31.
-    expect(transcriptWindowEnd(items, 10, 80, false, 20)).toBe(31);
+    // Five two-row items cover a ten-row budget, plus one of slack: 20 + 6 = 26.
+    expect(transcriptWindowEnd(items, 10, 80, false, 20)).toBe(26);
   });
 
   it('stops at the newest item rather than running past it', () => {

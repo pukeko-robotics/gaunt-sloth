@@ -268,13 +268,13 @@ test.describe('gth chat TUI — greeting fixture', () => {
     // is already proven here and re-asserting it would only add an assertion that cannot fail.
     // What is left to check is where the rest of the dock landed relative to it.
     const shrunk = await screenAfterResize(terminal, 20);
-    expect(shrunk[17]).toContain('>');
-    expect(shrunk[16]).toContain('chat  ·  turns: 0  ·  ready');
+    expect(shrunk[16]).toContain('>');
+    expect(shrunk[14]).toContain('chat  ·  turns: 0  ·  ready');
 
     // Growing back must move the dock down again, not leave it stranded mid-screen.
     terminal.resize(100, 34);
     const grown = await screenAfterResize(terminal, 34);
-    expect(grown[30]).toContain('chat  ·  turns: 0  ·  ready');
+    expect(grown[28]).toContain('chat  ·  turns: 0  ·  ready');
 
     terminal.write('hello');
     await expect(terminal.getByText('> hello')).toBeVisible();
@@ -284,7 +284,7 @@ test.describe('gth chat TUI — greeting fixture', () => {
     await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
     const streamed = screenRows(terminal);
     expect(streamed[33].trim()).toMatch(/^─+$/);
-    expect(streamed[28]).toContain('Hello from the fixture agent.');
+    expect(streamed[26]).toContain('Hello from the fixture agent.');
   });
 
   // TUI-C48 — the node's central claim, asserted at the only level that can prove it. Ink renders
@@ -298,17 +298,21 @@ test.describe('gth chat TUI — greeting fixture', () => {
     const rows = screenRows(terminal);
     // The frame fills the 30-row terminal this describe configures.
     expect(rows).toHaveLength(30);
-    // The dock's closing rule is the LAST row of the screen, and the four dock rows above it are
-    // in their fixed order. Inline rendering put every one of these directly under the banner,
-    // around row 8 of 30, with 20 blank rows below — which is the bug this node exists to fix.
+    // The dock's closing rule is the LAST row of the screen, and the six dock rows above it are in
+    // their fixed order — including the TUI-C90 rows of air either side of the prompt, which this
+    // is the only gate that can prove really paint (an empty <Text> would mount and draw nothing).
+    // Inline rendering put every one of these directly under the banner, around row 8 of 30, with
+    // 20 blank rows below — which is the bug this node exists to fix.
     expect(rows[29].trim()).toMatch(/^─+$/);
     expect(rows[28]).toContain("Type 'exit'");
-    expect(rows[27]).toContain('>');
-    expect(rows[26]).toContain('chat  ·  turns: 0  ·  ready');
-    expect(rows[25].trim()).toMatch(/^─+$/);
+    expect(rows[27].trim()).toBe('');
+    expect(rows[26]).toContain('>');
+    expect(rows[25].trim()).toBe('');
+    expect(rows[24]).toContain('chat  ·  turns: 0  ·  ready');
+    expect(rows[23].trim()).toMatch(/^─+$/);
     // Above the dock the conversation region is padded at the TOP: the intro sits against the
     // dock, and the empty screen is above it rather than below.
-    expect(rows[24]).toContain('ready to chat');
+    expect(rows[22]).toContain('ready to chat');
     expect(rows[0].trim()).toBe('');
 
     // One exchange later the newest output is still the row immediately above the dock.
@@ -320,8 +324,8 @@ test.describe('gth chat TUI — greeting fixture', () => {
     const after = screenRows(terminal);
     expect(after).toHaveLength(30);
     expect(after[29].trim()).toMatch(/^─+$/);
-    expect(after[26]).toContain('chat  ·  turns: 1  ·  ready');
-    expect(after[24]).toContain('Hello from the fixture agent.');
+    expect(after[24]).toContain('chat  ·  turns: 1  ·  ready');
+    expect(after[22]).toContain('Hello from the fixture agent.');
     expect(after[0].trim()).toBe('');
   });
 
@@ -594,6 +598,53 @@ test.describe('gth chat TUI — TUI-C52 a turn keeps its own order (interleaved 
     // both tool panels first, then all three explanations — rather than as a bare index mismatch.
     const painted = [...expected].sort((a, b) => rowOf(a) - rowOf(b));
     expect(painted).toEqual(expected);
+  });
+
+  /**
+   * TUI-C90 — the same turn, read for its vertical rhythm rather than its order.
+   *
+   * This is the only gate that can make the claim. A blank row is a sized `<Box>` precisely
+   * because an empty `<Text>` mounts, renders, satisfies every component-level assertion and then
+   * measures zero-high in Yoga, so the row never reaches the terminal. Nothing short of a real pty
+   * distinguishes the two.
+   */
+  test('opens every block of the turn on the row below an empty one', async ({ terminal }) => {
+    await expect(terminal.getByText('ready to chat')).toBeVisible();
+
+    terminal.write('go');
+    await expect(terminal.getByText('> go')).toBeVisible();
+    terminal.submit();
+    await expect(terminal.getByText('third-explanation-run')).toBeVisible();
+    await expect(terminal.getByText('chat  ·  turns: 1  ·  ready')).toBeVisible();
+
+    const rows = screenRows(terminal);
+    const rowOf = (needle: string): number => {
+      const at = rows.findIndex((row) => row.includes(needle));
+      if (at === -1) {
+        throw new Error(`"${needle}" is not on screen; frame was:\n${rows.join('\n')}`);
+      }
+      return at;
+    };
+
+    // Every block after the first opens on the row below an empty one. Stated that way rather than
+    // as a fixed gap because a block is not always one row tall — a tool panel carries a preview
+    // of its result under the summary line — and a gap assertion would then be pinning the
+    // fixture's output length rather than the separation this node is about.
+    const markers = [
+      'You ', // the committed user item — `You › go`
+      'first-explanation-run',
+      'read_file(path=alpha.txt)',
+      'second-explanation-run',
+      'read_file(path=beta.txt)',
+      'third-explanation-run',
+    ];
+    for (let i = 1; i < markers.length; i++) {
+      const at = rowOf(markers[i]);
+      expect(rows[at - 1].trim()).toBe('');
+      // …and the block above really is above it, so this cannot pass on a turn painted in some
+      // other order that happens to have blank rows in it.
+      expect(rowOf(markers[i - 1])).toBeLessThan(at - 1);
+    }
   });
 });
 
@@ -1053,39 +1104,39 @@ test.describe('gth chat TUI — scrolling the conversation (scroll fixture, TUI-
   }) => {
     await longAnswer(terminal);
 
-    // The region is 35 rows of a 40-row terminal, so the answer's tail is what is on screen and
-    // line 012 is well above it — thirty-odd rows above, which is what makes the page assertion
-    // below a statement about distance.
-    await expect(terminal.getByText('scroll-line-012')).not.toBeVisible();
+    // The region is 33 rows of a 40-row terminal — two fewer than before TUI-C90 put a row of air
+    // either side of the prompt — so the answer's tail is what is on screen and line 016 is well
+    // above it, which is what makes the page assertion below a statement about distance.
+    await expect(terminal.getByText('scroll-line-016')).not.toBeVisible();
 
     terminal.write('\x1b[5~');
-    // One page is the region less a row of overlap, so line 012 comes into view and the last line
-    // of the answer leaves it. Both halves: "line 012 is visible" alone would pass for any scroll
+    // One page is the region less a row of overlap, so line 016 comes into view and the last line
+    // of the answer leaves it. Both halves: "line 016 is visible" alone would pass for any scroll
     // far enough, and "line 080 is gone" alone would pass for any scroll at all.
-    await expect(terminal.getByText('scroll-line-012')).toBeVisible();
+    await expect(terminal.getByText('scroll-line-016')).toBeVisible();
     await expect(terminal.getByText('scroll-line-080')).not.toBeVisible();
 
     terminal.write('\x1b[1;5F');
     await expect(terminal.getByText('scroll-line-080')).toBeVisible();
-    await expect(terminal.getByText('scroll-line-012')).not.toBeVisible();
+    await expect(terminal.getByText('scroll-line-016')).not.toBeVisible();
   });
 
   test('the wheel scrolls three lines a notch, and Esc returns to the newest output', async ({
     terminal,
   }) => {
     await longAnswer(terminal);
-    await expect(terminal.getByText('scroll-line-037')).not.toBeVisible();
+    await expect(terminal.getByText('scroll-line-039')).not.toBeVisible();
 
     // Three SGR wheel-up reports (button 64) at an arbitrary cell: nine rows, which is exactly
-    // enough to bring line 037 in and not enough to have reached line 030. A notch of any other
+    // enough to bring line 039 in and not enough to have reached line 032. A notch of any other
     // size fails one of the two.
     for (let notch = 0; notch < 3; notch++) terminal.write('\x1b[<64;20;10M');
-    await expect(terminal.getByText('scroll-line-037')).toBeVisible();
-    await expect(terminal.getByText('scroll-line-030')).not.toBeVisible();
+    await expect(terminal.getByText('scroll-line-039')).toBeVisible();
+    await expect(terminal.getByText('scroll-line-032')).not.toBeVisible();
 
     terminal.write('\x1b');
     await expect(terminal.getByText('scroll-line-080')).toBeVisible();
-    await expect(terminal.getByText('scroll-line-037')).not.toBeVisible();
+    await expect(terminal.getByText('scroll-line-039')).not.toBeVisible();
   });
 
   // TUI-C63 — the suite had never sent a MODIFIED wheel report, so the whole Shift+wheel path could
@@ -1096,13 +1147,13 @@ test.describe('gth chat TUI — scrolling the conversation (scroll fixture, TUI-
     terminal,
   }) => {
     await longAnswer(terminal);
-    await expect(terminal.getByText('scroll-line-012')).not.toBeVisible();
+    await expect(terminal.getByText('scroll-line-016')).not.toBeVisible();
 
     // ONE report — button 64 (wheel up) | 4 (shift) = 68. One is the whole point: a second would
     // clamp at the top of the conversation and pass for any page size at all. The three-line
     // control is the neighbouring case, which sends the same report without the modifier.
     terminal.write('\x1b[<68;20;10M');
-    await expect(terminal.getByText('scroll-line-012')).toBeVisible();
+    await expect(terminal.getByText('scroll-line-016')).toBeVisible();
     await expect(terminal.getByText('scroll-line-080')).not.toBeVisible();
   });
 });

@@ -610,4 +610,67 @@ describe('tui <LiveTurn>', () => {
       b.unmount();
     });
   });
+
+  describe('TUI-C90 — a blank row between blocks of sense', () => {
+    const probeTool: ToolCallViewModel = {
+      id: 't1',
+      name: 'read_file',
+      argsText: '{"path":"README.md"}',
+      status: 'done',
+      result: '',
+    };
+
+    it('separates every adjacent pair of blocks, and neither end of the turn', () => {
+      const t = turn({
+        reasoning: 'a private thought',
+        toolCalls: [probeTool],
+        text: 'the answer',
+      });
+      const { lastFrame, unmount } = render(<LiveTurn turn={t} />);
+      const rows = stripAnsi(lastFrame() ?? '').split('\n');
+
+      // Three blocks, so five rows: thought, blank, tool, blank, answer. The ends are the point —
+      // a leading row would push the turn off the separator above it, and a trailing one would
+      // float the conversation away from the dock.
+      expect(rows).toHaveLength(5);
+      expect(rows[0]).toContain('Thinking');
+      expect(rows[2]).toContain('read_file');
+      expect(rows[4]).toContain('the answer');
+      // Exactly empty, not merely blank: a row held open with a space would satisfy `trim()` and
+      // leave trailing whitespace on every separator in the session.
+      expect(rows[1]).toBe('');
+      expect(rows[3]).toBe('');
+
+      unmount();
+    });
+
+    it('draws a REAL row, not an empty <Text> that Yoga collapses', () => {
+      // The trap TUI-C36 hit on the launch banner, and the reason `BlankRow` is a sized <Box>: an
+      // empty <Text> among siblings measures zero-high and the separation silently vanishes. A
+      // one-block turn and a two-block turn differing by exactly two rows is what proves the row
+      // is really painted rather than merely mounted.
+      const one = render(<LiveTurn turn={turn({ text: 'the answer' })} />);
+      const two = render(<LiveTurn turn={turn({ toolCalls: [probeTool], text: 'the answer' })} />);
+      const rowsOf = (frame: string | undefined) => stripAnsi(frame ?? '').split('\n').length;
+
+      expect(rowsOf(two.lastFrame())).toBe(rowsOf(one.lastFrame()) + 2);
+
+      one.unmount();
+      two.unmount();
+    });
+
+    it('adds nothing to a single-block turn', () => {
+      const { lastFrame, unmount } = render(<LiveTurn turn={turn({ text: 'the answer' })} />);
+      expect(stripAnsi(lastFrame() ?? '').split('\n')).toHaveLength(1);
+      unmount();
+    });
+
+    it('separates the blocks of a STREAMING turn too, so nothing shifts when it commits', () => {
+      const t = turn({ toolCalls: [probeTool], text: 'the answer' });
+      const live = render(<LiveTurn turn={t} streaming />);
+      const rows = stripAnsi(live.lastFrame() ?? '').split('\n');
+      expect(rows[1]).toBe('');
+      live.unmount();
+    });
+  });
 });

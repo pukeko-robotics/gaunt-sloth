@@ -33,6 +33,7 @@ import { StatusBar } from '#src/tui/components/StatusBar.js';
 import { NoticeBar, McpFailureBar } from '#src/tui/components/NoticeBar.js';
 import { PromptInput, type PromptInputHandle } from '#src/tui/components/PromptInput.js';
 import { Rule } from '#src/tui/components/Rule.js';
+import { BlankRow } from '#src/tui/components/BlankRow.js';
 import { ClearBanner } from '#src/tui/components/ClearBanner.js';
 import { LaunchBanner } from '#src/tui/components/LaunchBanner.js';
 import { MouseProvider } from '#src/tui/useMouse.js';
@@ -1247,6 +1248,11 @@ export function App(props: TuiAppProps): React.ReactElement {
               <LaunchBanner model={modelDisplayName} provider={props.modelProviderType} />
             ) : null}
             {showIntro ? <Text dimColor>{readyMessage.trim()}</Text> : null}
+            {/* TUI-C90 — the streaming turn is separated from the item above it by the same blank
+              row `<TranscriptRow>` gives it once it commits. Without this the row appears at the
+              moment the turn becomes a committed item, and the whole conversation jumps up by one
+              — including a view the reader has deliberately parked above the edge. */}
+            {live && transcript.length > 0 ? <BlankRow /> : null}
             {live ? <LiveTurn turn={live} toolsExpanded={toolsExpanded} streaming /> : null}
           </TranscriptViewport>
           {/* The dock: everything from here down is pinned to the terminal floor and never scrolls.
@@ -1331,14 +1337,24 @@ export function App(props: TuiAppProps): React.ReactElement {
           slash commands like /approvals; handleSubmit + dispatch gate what's allowed then. It
           is suspended only when the debug panel is focused or a tool approval owns the keyboard. */}
             {!debugFocused && !pendingApproval && !pendingAttack && !approvalsPicker ? (
-              <PromptInput
-                onSubmit={handleSubmit}
-                commands={registry}
-                onMenuStateChange={(active) => {
-                  slashMenuActiveRef.current = active;
-                }}
-                handleRef={promptHandleRef}
-              />
+              // TUI-C90 — the input line gets a row of air on each side, so the thing the user is
+              // typing into reads as its own block rather than as the next line of the status bar.
+              // Both rows are INSIDE the conditional: the prompt stands down for the approval
+              // prompt, the attack banner, the approvals picker and a focused debug panel, and a
+              // pair of blank rows left behind would be two rows of nothing between the status bar
+              // and the hint in every one of those states.
+              <>
+                <BlankRow />
+                <PromptInput
+                  onSubmit={handleSubmit}
+                  commands={registry}
+                  onMenuStateChange={(active) => {
+                    slashMenuActiveRef.current = active;
+                  }}
+                  handleRef={promptHandleRef}
+                />
+                <BlankRow />
+              </>
             ) : null}
             {/* TUI-C63 — the shared hint row plus this surface's own scroll fragment. `exitMessage`
           is the readline session's line too (printed there via displayInfo), and readline still has

@@ -2115,9 +2115,10 @@ describe('tui <App>', () => {
       // …up in the dock with the status bar…
       expect(lineRow).toBeLessThan(statusRow);
       // …and the dock really is the floor: the status bar sits in the last handful of rows of a
-      // frame that fills the terminal, not somewhere in the middle of it.
+      // frame that fills the terminal, not somewhere in the middle of it. Six rows follow it —
+      // the TUI-C90 blank, the prompt, the second blank, the hint and the closing rule.
       expect(rows.length).toBe(FALLBACK_TERMINAL_ROWS);
-      expect(statusRow).toBeGreaterThan(rows.length - 6);
+      expect(statusRow).toBeGreaterThan(rows.length - 8);
 
       unmount();
     });

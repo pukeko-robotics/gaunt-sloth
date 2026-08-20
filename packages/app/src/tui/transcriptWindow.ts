@@ -111,8 +111,13 @@ function reasoningPanelRows(reasoning: string, expanded: boolean, columns: numbe
  * than an error anywhere.
  */
 function turnRows(turn: TurnViewModel, toolsExpanded: boolean, columns: number): number {
-  let rows = 0;
-  for (const segment of displaySegments(turn)) {
+  const segments = displaySegments(turn);
+  // TUI-C90 — the blank row `<LiveTurn>` paints between each adjacent pair of blocks. It is a
+  // sized `<Box>`, so unlike an empty `<Text>` it really occupies its row and really has to be
+  // counted: leaving it out would keep the estimate a lower bound, but a worse one by exactly the
+  // number of blocks on screen, which on a long turn is not a rounding error.
+  let rows = Math.max(0, segments.length - 1);
+  for (const segment of segments) {
     if (segment.kind === 'text') {
       // Measured from the RENDERED markdown, not the raw text: a fence becomes two rules plus an
       // indented body, so the raw line count is not a bound on either side of it.
@@ -134,11 +139,23 @@ function turnRows(turn: TurnViewModel, toolsExpanded: boolean, columns: number):
 /** A lower bound on the rows one committed transcript item occupies. */
 export function estimateItemRows(
   item: TranscriptItem,
-  options: { columns: number; toolsExpanded: boolean; separator: boolean }
+  options: {
+    columns: number;
+    toolsExpanded: boolean;
+    separator: boolean;
+    /**
+     * TUI-C90 — whether this item draws a blank row above it. Optional, and defaulting to
+     * `false`, because the direction of the whole module is a lower bound: a caller that does not
+     * know is better off under-counting the row than claiming one that is not drawn.
+     */
+    leadingBlank?: boolean;
+  }
 ): number {
   const columns = Math.max(1, options.columns);
-  // The dim separator rule drawn above every user line except the first.
-  let rows = options.separator ? 1 : 0;
+  // One row of separation above the item — the dim rule over a user line, or the TUI-C90 blank
+  // row everywhere else. They are mutually exclusive in `<TranscriptRow>`, so they are one row
+  // here, never two.
+  let rows = options.separator || options.leadingBlank ? 1 : 0;
   switch (item.kind) {
     case 'user':
       // The prompt marker and the text share one row Box, so they wrap as one run of text.
@@ -207,6 +224,7 @@ export function transcriptWindowStart(
       columns,
       toolsExpanded,
       separator: items[start].kind === 'user' && start !== firstUserIndex,
+      leadingBlank: start !== 0,
     });
   }
   return Math.max(0, start - TRANSCRIPT_WINDOW_SLACK_ITEMS);
@@ -244,6 +262,7 @@ export function transcriptWindowEnd(
       columns,
       toolsExpanded,
       separator: items[end].kind === 'user' && end !== firstUserIndex,
+      leadingBlank: end !== 0,
     });
   }
   return Math.min(items.length - 1, end + TRANSCRIPT_WINDOW_SLACK_ITEMS);
