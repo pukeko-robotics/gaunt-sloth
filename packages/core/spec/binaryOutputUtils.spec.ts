@@ -34,6 +34,36 @@ describe('binaryOutputUtils', () => {
     expect(result).toEqual([{ index: 1, mimeType: 'image/png', data: 'YWJj' }]);
   });
 
+  it('extractInlineBinaryBlocks should detect snake_case inline_data, image_url, and source blocks', async () => {
+    const { extractInlineBinaryBlocks } = await import('#src/utils/binaryOutputUtils.js');
+
+    const result = extractInlineBinaryBlocks([
+      { type: 'inline_data', inline_data: { mime_type: 'image/jpeg', data: 'DEF' } },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,GHI' } },
+      { type: 'image_url', image_url: 'data:image/webp;base64,JKL' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/gif', data: 'MNO' } },
+    ]);
+
+    expect(result).toEqual([
+      { index: 0, mimeType: 'image/jpeg', data: 'DEF' },
+      { index: 1, mimeType: 'image/png', data: 'GHI' },
+      { index: 2, mimeType: 'image/webp', data: 'JKL' },
+      { index: 3, mimeType: 'image/gif', data: 'MNO' },
+    ]);
+  });
+
+  it('extractInlineBinaryBlocks should handle single non-array object or string content', async () => {
+    const { extractInlineBinaryBlocks } = await import('#src/utils/binaryOutputUtils.js');
+
+    const singleObj = extractInlineBinaryBlocks({
+      inlineData: { mimeType: 'image/png', data: 'AAA' },
+    });
+    expect(singleObj).toEqual([{ index: 0, mimeType: 'image/png', data: 'AAA' }]);
+
+    const singleString = extractInlineBinaryBlocks('data:image/png;base64,BBB');
+    expect(singleString).toEqual([{ index: 0, mimeType: 'image/png', data: 'BBB' }]);
+  });
+
   it('materializeBinaryOutputs should write decoded bytes to a gth file path', async () => {
     const { materializeBinaryOutputs } = await import('#src/utils/binaryOutputUtils.js');
 

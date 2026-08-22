@@ -69,36 +69,122 @@ function getBinaryOutputFilePath(command: GthCommand | undefined, extension: str
   return `${suffixBase}_${Date.now()}.${normalizedExtension}`;
 }
 
+function parseDataUrl(url: string): { mimeType: string; data: string } | null {
+  if (typeof url !== 'string' || !url.startsWith('data:')) {
+    return null;
+  }
+  const commaPos = url.indexOf(',');
+  if (commaPos === -1) {
+    return null;
+  }
+  const meta = url.slice(5, commaPos);
+  const data = url.slice(commaPos + 1);
+  if (!data) {
+    return null;
+  }
+  const parts = meta.split(';');
+  const mimeType = parts[0]?.trim() || 'application/octet-stream';
+  return { mimeType, data };
+}
+
+function tryExtractBinaryFromBlock(block: unknown): { mimeType: string; data: string } | null {
+  if (block === null || block === undefined) {
+    return null;
+  }
+
+  if (typeof block === 'string') {
+    return parseDataUrl(block);
+  }
+
+  if (typeof block !== 'object') {
+    return null;
+  }
+
+  const obj = block as Record<string, unknown>;
+
+  // Check inlineData / inline_data (nested or flat)
+  const inlineObj = (obj.inlineData ?? obj.inline_data) as Record<string, unknown> | undefined;
+  if (inlineObj && typeof inlineObj === 'object') {
+    const mimeType = (inlineObj.mimeType ?? inlineObj.mime_type ?? inlineObj.media_type) as
+      string | undefined;
+    const data = inlineObj.data as string | undefined;
+    if (typeof mimeType === 'string' && typeof data === 'string') {
+      return { mimeType, data };
+    }
+  }
+
+  // Check image_url / imageUrl
+  const imageUrl = obj.image_url ?? obj.imageUrl;
+  if (imageUrl) {
+    if (typeof imageUrl === 'string') {
+      const parsed = parseDataUrl(imageUrl);
+      if (parsed) return parsed;
+    } else if (typeof imageUrl === 'object' && imageUrl !== null) {
+      const url = (imageUrl as Record<string, unknown>).url;
+      if (typeof url === 'string') {
+        const parsed = parseDataUrl(url);
+        if (parsed) return parsed;
+      }
+    }
+  }
+
+  // Check source property (Anthropic / LangChain image source)
+  const source = obj.source as Record<string, unknown> | undefined;
+  if (source && typeof source === 'object') {
+    const mimeType = (source.media_type ?? source.mime_type ?? source.mimeType) as
+      string | undefined;
+    const data = source.data as string | undefined;
+    if (typeof data === 'string') {
+      if (typeof mimeType === 'string') {
+        return { mimeType, data };
+      }
+      const parsed = parseDataUrl(data);
+      if (parsed) return parsed;
+    }
+  }
+
+  // Check flat properties (mimeType / mime_type / media_type and data)
+  const mimeType = (obj.mimeType ?? obj.mime_type ?? obj.media_type) as string | undefined;
+  const data = obj.data as string | undefined;
+  if (typeof mimeType === 'string' && typeof data === 'string') {
+    return { mimeType, data };
+  }
+
+  // Check flat url property
+  if (typeof obj.url === 'string') {
+    const parsed = parseDataUrl(obj.url);
+    if (parsed) return parsed;
+  }
+
+  // Check flat data property if it's a data URL
+  if (typeof data === 'string') {
+    const parsed = parseDataUrl(data);
+    if (parsed) return parsed;
+  }
+
+  return null;
+}
+
 export function extractInlineBinaryBlocks(content: unknown): InlineBinaryBlock[] {
-  if (!Array.isArray(content)) {
+  if (content === null || content === undefined) {
     return [];
   }
 
-  return content.flatMap((block, index) => {
-    if (
-      block &&
-      typeof block === 'object' &&
-      'type' in block &&
-      block.type === 'inlineData' &&
-      'inlineData' in block &&
-      block.inlineData &&
-      typeof block.inlineData === 'object' &&
-      'mimeType' in block.inlineData &&
-      'data' in block.inlineData &&
-      typeof block.inlineData.mimeType === 'string' &&
-      typeof block.inlineData.data === 'string'
-    ) {
-      return [
-        {
-          index,
-          mimeType: block.inlineData.mimeType,
-          data: block.inlineData.data,
-        },
-      ];
-    }
+  const items = Array.isArray(content) ? content : [content];
 
-    return [];
+  const results: InlineBinaryBlock[] = [];
+  items.forEach((block, index) => {
+    const extracted = tryExtractBinaryFromBlock(block);
+    if (extracted) {
+      results.push({
+        index,
+        mimeType: extracted.mimeType,
+        data: extracted.data,
+      });
+    }
   });
+
+  return results;
 }
 
 export function renderAssistantContent(
@@ -107,6 +193,10 @@ export function renderAssistantContent(
 ): string {
   if (content === undefined || content === null) {
     return '';
+  }
+
+  if (binaryPlaceholders.has(0) && (typeof content === 'string' || !Array.isArray(content))) {
+    return binaryPlaceholders.get(0)!;
   }
 
   if (typeof content === 'string') {
