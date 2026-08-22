@@ -1,6 +1,6 @@
 {
   "llm": {
-    "type": "vertexai",
+    "type": "google-genai",
     "model": "gemini-3.1-flash-image-preview",
     "location": "global"
   },
