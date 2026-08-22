@@ -4,6 +4,7 @@
     "model": "gemini-3.1-flash-image-preview",
     "location": "global"
   },
+  "noDefaultPrompts": true,
   "binaryFormats": [
     { "type": "image", "extensions": ["png", "jpg", "jpeg", "gif", "webp", "heic", "heif"] },
     { "type": "file", "extensions": ["pdf"] }
