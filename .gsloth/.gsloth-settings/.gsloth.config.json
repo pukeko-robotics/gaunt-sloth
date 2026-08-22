@@ -1,0 +1,11 @@
+{
+  "$schema": "https://gauntsloth.app/schema/v2/gsloth-config.schema.json",
+  "llm": {
+    "type": "xai",
+    "model": "grok-4.6"
+  },
+  "binaryFormats": [
+    { "type": "image", "extensions": ["png", "jpg", "jpeg", "gif", "webp", "heic", "heif"] },
+    { "type": "file", "extensions": ["pdf"] }
+  ]
+}
