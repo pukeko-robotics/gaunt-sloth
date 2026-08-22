@@ -43,8 +43,8 @@
     "@gaunt-sloth/batch": "*"
   },
   "devDependencies": {
-    "@gaunt-sloth/batch": "workspace:*",
-    "fast-xml-parser": "^5.10.1"
+    "@gaunt-sloth/batch": "2.0.0-beta.1",
+    "fast-xml-parser": "^5.11.0"
   },
   "publishConfig": {
     "access": "public",
