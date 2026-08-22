@@ -922,6 +922,8 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
     // turn. Capture it (first per-chunk signal wins; aggregate fallback at stream end) and surface
     // it as a `text` event so every consumer (Ink TUI viewModel, AG-UI SSE) shows a clear notice.
     let refusalInfo: RefusalInfo | null = null;
+    const seenBinaryKeys = new Set<string>();
+    const binaryBlocks: Array<{ mimeType: string; data: string }> = [];
     // TUI-C22 — one splitter for the whole stream so a <think> opened in one chunk and closed
     // several chunks later is tracked across the boundary. Reset at message boundaries via flush().
     const thinkSplitter = createThinkTagSplitter();
@@ -997,6 +999,19 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
       // a ToolMessage / normal chunk yields null, so a normal turn never surfaces a false refusal.
       if (!refusalInfo) {
         refusalInfo = detectRefusal(chunk);
+      }
+
+      if (
+        this.config?.writeBinaryOutputsToFile &&
+        (AIMessageChunk.isInstance(chunk) || AIMessage.isInstance(chunk))
+      ) {
+        for (const block of extractInlineBinaryBlocks(chunk.content)) {
+          const binaryKey = `${block.mimeType}:${block.data.length}:${block.data}`;
+          if (!seenBinaryKeys.has(binaryKey)) {
+            seenBinaryKeys.add(binaryKey);
+            binaryBlocks.push({ mimeType: block.mimeType, data: block.data });
+          }
+        }
       }
 
       if (AIMessageChunk.isInstance(chunk)) {
@@ -1085,6 +1100,22 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
 
     // Flush any tool calls not followed by a ToolMessage (e.g. terminal tool calls).
     yield* flushAggregated();
+
+    if (this.config?.writeBinaryOutputsToFile && binaryBlocks.length > 0) {
+      const processedContent = materializeBinaryOutputs(
+        binaryBlocks.map((block) => ({
+          type: 'inlineData',
+          inlineData: block,
+        })),
+        this.command
+      );
+      for (const successMessage of processedContent.successMessages) {
+        this.statusUpdate(StatusLevel.SUCCESS, successMessage);
+      }
+      if (processedContent.renderedContent.trim().length > 0) {
+        yield { type: 'text', delta: '\n' + processedContent.renderedContent + '\n' };
+      }
+    }
 
     // EXT-41: aggregate-level fallback (I-1's robustness on this path too) — if no per-chunk
     // metadata flagged a refusal, inspect the final aggregated message's stop/finish reason. Then

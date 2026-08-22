@@ -2621,6 +2621,50 @@ describe('GthLangChainAgent', () => {
   });
 
   describe('streamWithEvents', () => {
+    it('should extract and materialize binary model outputs from stream chunks', async () => {
+      const agent = new GthLangChainAgent(statusUpdateCallback);
+      const fakeListChatModel = new FakeListChatModel({ responses: [] });
+      fakeListChatModel.bindTools = vi.fn().mockReturnValue(fakeListChatModel);
+      await agent.init(undefined, { ...mockConfig, llm: fakeListChatModel });
+
+      binaryOutputUtilsMock.extractInlineBinaryBlocks.mockReturnValue([
+        { index: 0, mimeType: 'image/jpeg', data: 'B64DATA' },
+      ]);
+      binaryOutputUtilsMock.materializeBinaryOutputs.mockReturnValue({
+        renderedContent: '[Binary model output saved: image/jpeg -> /tmp/gth_123.jpg]',
+        successMessages: ['Wrote model output (image/jpeg) to /tmp/gth_123.jpg'],
+      });
+
+      const aiChunk = new AIMessageChunk({
+        content: [{ type: 'inlineData', inlineData: { mimeType: 'image/jpeg', data: 'B64DATA' } }],
+      });
+
+      async function* chunkStream() {
+        yield [aiChunk, {}];
+      }
+      agentMock.stream.mockReturnValue(chunkStream());
+
+      const runConfig: RunnableConfig = {
+        recursionLimit: 1000,
+        configurable: { thread_id: 't-binary' },
+      };
+
+      const events: any[] = [];
+      for await (const ev of agent.streamWithEvents([new HumanMessage('draw')], runConfig)) {
+        events.push(ev);
+      }
+
+      expect(binaryOutputUtilsMock.extractInlineBinaryBlocks).toHaveBeenCalledWith(aiChunk.content);
+      expect(binaryOutputUtilsMock.materializeBinaryOutputs).toHaveBeenCalledWith(
+        [{ type: 'inlineData', inlineData: { mimeType: 'image/jpeg', data: 'B64DATA' } }],
+        undefined
+      );
+      expect(events).toContainEqual({
+        type: 'text',
+        delta: '\n[Binary model output saved: image/jpeg -> /tmp/gth_123.jpg]\n',
+      });
+    });
+
     it('should swallow GraphInterrupt and end the iterator', async () => {
       const agent = new GthLangChainAgent(statusUpdateCallback);
       const fakeListChatModel = new FakeListChatModel({ responses: [] });
