@@ -47,16 +47,30 @@ export function getGslothFilePath(filename: string): string {
  * If .gsloth dir exists returns `projectdir/.gsloth/.gsloth-settings`
  * If .gsloth dir does not exist returns `projectdir`
  *
+ * When `identityProfileRaw` names a profile, the path is always
+ * `projectdir/.gsloth/.gsloth-settings/<profile>`, creating `.gsloth` and the profile dir as
+ * needed — a named profile only exists under `.gsloth-settings/`, so there is no project-root
+ * fallback for it. A blank/whitespace-only profile name counts as "no profile".
+ *
  * @param filename The configuration filename
+ * @param identityProfileRaw Optional identity profile subdirectory name within `.gsloth-settings`
  * @returns The resolved path where the configuration file should be written
  */
-export function getGslothConfigWritePath(filename: string): string {
+export function getGslothConfigWritePath(filename: string, identityProfileRaw?: string): string {
   const currentDir = getProjectDir();
+  const identityProfile = identityProfileRaw?.trim();
+  const gslothDirPath = resolve(currentDir, GSLOTH_DIR);
+  const gslothSettingsPath = resolve(gslothDirPath, GSLOTH_SETTINGS_DIR);
+
+  if (identityProfile) {
+    const profileDirPath = resolve(gslothSettingsPath, identityProfile);
+    if (!existsSync(profileDirPath)) {
+      mkdirSync(profileDirPath, { recursive: true });
+    }
+    return resolve(profileDirPath, filename);
+  }
 
   if (gslothDirExists()) {
-    const gslothDirPath = resolve(currentDir, GSLOTH_DIR);
-    const gslothSettingsPath = resolve(gslothDirPath, GSLOTH_SETTINGS_DIR);
-
     // Create .gsloth-settings directory if it doesn't exist
     if (!existsSync(gslothSettingsPath)) {
       mkdirSync(gslothSettingsPath, { recursive: true });

@@ -17,6 +17,12 @@ those first, asks you to pick a provider and then a model from that provider's l
 (`.gsloth/.gsloth-settings/`) or globally for all projects (`~/.gsloth/`). If a config already
 exists at the chosen location, it asks before overwriting.
 
+Pass `-g`/`--global` to skip that question and write straight to the global config, and
+`-i, --identity-profile <name>`/`--profile <name>` to create a named profile instead of the
+unscoped config — the folder labels in the dialog change to spell out the profile subdirectory
+(`.gsloth/.gsloth-settings/<name>` / `~/.gsloth/.gsloth-settings/<name>`). See
+[Creating a profile](profiles.md#creating-a-profile) for the profile walkthrough.
+
 Already know the provider? Pass it directly and skip the dialog:
 
 ```bash

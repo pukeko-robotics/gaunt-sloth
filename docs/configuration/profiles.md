@@ -95,20 +95,37 @@ under `-g`, and vice versa.
 
 ### Creating a profile
 
-`gth config profile create <name>` scaffolds a new profile directory
-(`.gsloth/.gsloth-settings/<name>/.gsloth.config.json`), seeded from your current effective config
-(or a minimal template when none resolves) and schema-validated before it is written. Pass
-`--model <id>` to set the profile's model, and `--force` to overwrite an existing profile.
+Two ways to create a profile, depending on how you want it seeded:
 
-For example, to add a cheap flash-lite profile alongside your normal setup and then run under it:
+- **`gth init -i <name>`** walks the same CFG-2 provider/model dialog as a plain `gth init`, then
+  writes into the named profile instead of the unscoped config. Use this when you want to pick the
+  provider and model interactively (from the live catalog, preferred models starred) rather than
+  seed from something that already exists. Add `-g` to create the profile under
+  `~/.gsloth/.gsloth-settings/<name>/` instead of the project:
 
-```bash
-gth config profile create cheap --model gemini-2.0-flash-lite
-gth --profile cheap ask "summarise the open TODOs in this repo"
-```
+  ```bash
+  gth init -i test2          # .gsloth/.gsloth-settings/test2/.gsloth.config.json
+  gth init -g -i test2       # ~/.gsloth/.gsloth-settings/test2/.gsloth.config.json
+  ```
 
-Then edit `.gsloth/.gsloth-settings/cheap/.gsloth.config.json` to adjust its tools, prompts, or
-provider as needed — it is an ordinary config file.
+  `gth init -i <name> <provider>` (the scriptable path, e.g. `gth init -i test2 anthropic`) skips
+  the dialog and writes the project profile directly; add `-g` to target the global profile instead.
+
+- **`gth config profile create <name>`** scaffolds a new profile directory
+  (`.gsloth/.gsloth-settings/<name>/.gsloth.config.json`), seeded from your *current effective
+  config* (or a minimal template when none resolves) and schema-validated before it is written.
+  Pass `--model <id>` to set the profile's model, and `--force` to overwrite an existing profile.
+  Use this when the new profile should start as a copy of what you already have.
+
+  For example, to add a cheap flash-lite profile alongside your normal setup and then run under it:
+
+  ```bash
+  gth config profile create cheap --model gemini-2.0-flash-lite
+  gth --profile cheap ask "summarise the open TODOs in this repo"
+  ```
+
+Either way you end up with an ordinary config file at `.gsloth/.gsloth-settings/<name>/.gsloth.config.json`
+(or its global counterpart) that you can go on to edit — adjust its tools, prompts, or provider as needed.
 
 ## Named-profile subagents (subagents)
 

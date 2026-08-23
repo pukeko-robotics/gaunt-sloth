@@ -112,6 +112,37 @@ describe('globalConfigUtils', () => {
       expect(mkdirSync).toHaveBeenCalledWith(resolve(mockHomeDir, GSLOTH_DIR), { recursive: true });
       expect(result).toBe(resolve(mockHomeDir, GSLOTH_DIR, USER_PROJECT_CONFIG_JSON));
     });
+
+    it('should write under .gsloth-settings/<profile> and ensure that directory exists when a profile is named', () => {
+      vi.mocked(existsSync).mockReturnValue(false);
+
+      const result = getGlobalGslothConfigWritePath(USER_PROJECT_CONFIG_JSON, 'test2');
+
+      expect(mkdirSync).toHaveBeenCalledWith(resolve(mockHomeDir, GSLOTH_DIR), { recursive: true });
+      expect(mkdirSync).toHaveBeenCalledWith(
+        resolve(mockHomeDir, GSLOTH_DIR, GSLOTH_SETTINGS_DIR, 'test2'),
+        { recursive: true }
+      );
+      expect(result).toBe(
+        resolve(mockHomeDir, GSLOTH_DIR, GSLOTH_SETTINGS_DIR, 'test2', USER_PROJECT_CONFIG_JSON)
+      );
+    });
+
+    it('should not recreate an existing profile directory', () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+
+      getGlobalGslothConfigWritePath(USER_PROJECT_CONFIG_JSON, 'test2');
+
+      expect(mkdirSync).not.toHaveBeenCalled();
+    });
+
+    it('should treat a blank profile as no profile', () => {
+      vi.mocked(existsSync).mockReturnValue(false);
+
+      const result = getGlobalGslothConfigWritePath(USER_PROJECT_CONFIG_JSON, '   ');
+
+      expect(result).toBe(resolve(mockHomeDir, GSLOTH_DIR, USER_PROJECT_CONFIG_JSON));
+    });
   });
 
   describe('getGlobalAuthDir', () => {

@@ -49,7 +49,15 @@ export async function startSession(
     // CFG-56 — under `--global` the session reads global config only, so the dialog must write
     // there. Left to its project default it would write a config this run cannot see, fail the
     // re-check below, and report incomplete setup on every retry.
-    await runFirstRunDialog({}, false, commandLineConfigOverrides.global ? 'global' : undefined);
+    // GS2-33 — likewise for `-i <profile>`: a run reading a named profile must have the dialog
+    // write into that profile's config, not the unscoped project/global default it would then
+    // refuse to see.
+    await runFirstRunDialog(
+      {},
+      false,
+      commandLineConfigOverrides.global ? 'global' : undefined,
+      commandLineConfigOverrides.identityProfile
+    );
     if (!(await hasAnyConfig(commandLineConfigOverrides))) {
       // The user aborted the dialog without writing a config; nothing to run.
       displayWarning('Setup was not completed. Re-run gth once a configuration exists.');

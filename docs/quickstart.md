@@ -40,7 +40,8 @@ This writes a `.gsloth.config.json` you can commit and tune later. The provider 
 
 Prefer to be walked through it? Run `gth init` with no argument — it detects which providers have a
 key set, lets you pick a provider and model, and offers to store the config for this project or
-globally.
+globally. Interactive init can also target the global config or a named profile with `-g` /
+`-i <name>` — see [Creating a profile](configuration/profiles.md#creating-a-profile).
 
 ## 4. Ask your first question
 

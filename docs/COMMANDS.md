@@ -35,12 +35,22 @@ No prompt template files are planted — the bundled prompt defaults apply until
 prompt files (e.g. `.gsloth.guidelines.md`) or configure the
 [`prompts` object](configuration/prompts.md#prompt-files-prompts).
 
+`init` honours the same `-g`/`--global` and `-i, --identity-profile <name>`/`--profile <name>` flags as every other command:
+- `gth init -g` creates/overwrites the global config at `~/.gsloth/.gsloth.config.json` and skips the project-vs-global question entirely (interactive path) or writes straight to `~/.gsloth/` (scriptable path).
+- `gth init -g -i test2` creates a named profile at `~/.gsloth/.gsloth-settings/test2/.gsloth.config.json`.
+- `gth init -i test2` still asks where to write it (interactive path), but the folder labels include the profile: `This project only (.gsloth/.gsloth-settings/test2)` / `Globally for all projects (~/.gsloth/.gsloth-settings/test2)`. On the scriptable path (`gth init -i test2 anthropic`), it writes the project profile by default — pass `-g` as well to target the global profile.
+
+See [Creating a profile](configuration/profiles.md#creating-a-profile) for the profile-oriented walkthrough.
+
 ### Examples
 ```bash
 gth init              # Auto-detect API keys and prompt for provider
 gth init vertexai
 gth init anthropic
 gth init groq
+gth init -g           # Create/overwrite the global config, skipping the scope question
+gth init -i test2     # Create a named profile through the dialog (.gsloth/.gsloth-settings/test2)
+gth init -g -i test2  # Create a named profile under ~/.gsloth/.gsloth-settings/test2
 ```
 
 ## get

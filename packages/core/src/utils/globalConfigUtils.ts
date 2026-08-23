@@ -68,15 +68,29 @@ export function getGlobalGslothConfigReadPath(
 
 /**
  * Gets the write path for a global gsloth config file (e.g. `.gsloth.config.json`)
- * inside the global `~/.gsloth` directory, ensuring the directory exists.
+ * inside the global `~/.gsloth` directory (or `~/.gsloth/.gsloth-settings/<identityProfile>/`),
+ * ensuring the relevant directory exists.
  *
  * Intended for first-run setup flows (CFG-2) that need to persist global settings.
  *
  * @param filename The configuration filename (e.g. `.gsloth.config.json`)
+ * @param identityProfileRaw Optional identity profile subdirectory name within `.gsloth-settings`.
+ *   A blank/whitespace-only value counts as "no profile".
  * @returns The resolved path where the global configuration file should be written
  */
-export function getGlobalGslothConfigWritePath(filename: string): string {
-  return resolve(ensureGlobalGslothDir(), filename);
+export function getGlobalGslothConfigWritePath(
+  filename: string,
+  identityProfileRaw?: string
+): string {
+  const globalDir = ensureGlobalGslothDir();
+  const identityProfile = identityProfileRaw?.trim();
+  if (identityProfile) {
+    const profileDirPath = resolve(globalDir, GSLOTH_SETTINGS_DIR, identityProfile);
+    if (!existsSync(profileDirPath)) {
+      mkdirSync(profileDirPath, { recursive: true });
+    }
+  }
+  return resolveGlobalConfigPath(globalDir, filename, identityProfileRaw);
 }
 
 /**

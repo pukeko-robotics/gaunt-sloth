@@ -45,6 +45,11 @@ By default, `gth init` creates a `.gsloth` directory in the project root and pla
 files in `.gsloth/.gsloth-settings/`. Project root configuration is still supported for backward
 compatibility.
 
+`gth init` also accepts the global `-g`/`--global` and `-i, --identity-profile <name>` flags to
+target `~/.gsloth/` or a named profile (`.gsloth/.gsloth-settings/<name>/`, or its global
+counterpart) instead of the plain project config — see [init](../COMMANDS.md#init) and
+[Creating a profile](profiles.md#creating-a-profile).
+
 ### Google GenAI (AI Studio)
 
 ```bash

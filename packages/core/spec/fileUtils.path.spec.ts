@@ -137,4 +137,45 @@ describe('pathUtils', () => {
 
     expect(result).toBe('/test/project/.gsloth/.gsloth-settings/devops/.gsloth.config.json');
   });
+
+  it('getGslothConfigWritePath should write under .gsloth-settings/<profile> when a profile is given, creating .gsloth as needed', async () => {
+    // .gsloth does not exist yet, profile dir does not exist yet either.
+    nodeFsMock.existsSync.mockReturnValue(false);
+
+    const { getGslothConfigWritePath } = await import('#src/utils/fileUtils.js');
+
+    const result = getGslothConfigWritePath('.gsloth.config.json', 'test2');
+
+    expect(result).toBe('/test/project/.gsloth/.gsloth-settings/test2/.gsloth.config.json');
+    expect(nodeFsMock.mkdirSync).toHaveBeenCalledWith(
+      '/test/project/.gsloth/.gsloth-settings/test2',
+      { recursive: true }
+    );
+  });
+
+  it('getGslothConfigWritePath should not recreate an existing profile directory', async () => {
+    nodeFsMock.existsSync.mockReturnValue(true);
+
+    const { getGslothConfigWritePath } = await import('#src/utils/fileUtils.js');
+
+    const result = getGslothConfigWritePath('.gsloth.config.json', 'test2');
+
+    expect(result).toBe('/test/project/.gsloth/.gsloth-settings/test2/.gsloth.config.json');
+    expect(nodeFsMock.mkdirSync).not.toHaveBeenCalled();
+  });
+
+  it('getGslothConfigWritePath should treat a blank profile as no profile', async () => {
+    let callCount = 0;
+    nodeFsMock.existsSync.mockImplementation((_path: string) => {
+      callCount++;
+      if (callCount === 1) return true; // .gsloth exists
+      return false; // .gsloth-settings does not exist
+    });
+
+    const { getGslothConfigWritePath } = await import('#src/utils/fileUtils.js');
+
+    const result = getGslothConfigWritePath('.gsloth.config.json', '   ');
+
+    expect(result).toBe('/test/project/.gsloth/.gsloth-settings/.gsloth.config.json');
+  });
 });

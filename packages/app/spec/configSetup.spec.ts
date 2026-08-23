@@ -8,8 +8,18 @@ const constantsMock = {
 };
 vi.mock('@gaunt-sloth/core/constants.js', () => constantsMock);
 
+// A minimal stand-in for the real validateProfileName (packages/core/src/config/profiles.ts):
+// trims, rejects empty/./../traversal-shaped names, accepts a plain segment like 'test2'.
+function fakeValidateProfileName(nameRaw: string): string {
+  const name = (nameRaw ?? '').trim();
+  if (!name || name === '.' || name === '..' || !/^[A-Za-z0-9._-]+$/.test(name)) {
+    throw new Error(`Invalid profile name "${name}"`);
+  }
+  return name;
+}
 vi.mock('@gaunt-sloth/core/config.js', () => ({
   availableDefaultConfigs: ['vertexai', 'anthropic', 'groq', 'openrouter'],
+  validateProfileName: fakeValidateProfileName,
 }));
 
 const consoleUtilsMock = {
@@ -27,6 +37,11 @@ const writeFileIfNotExistsWithMessages = vi.fn();
 vi.mock('@gaunt-sloth/review/utils/fileUtils.js', () => ({
   getGslothConfigWritePath,
   writeFileIfNotExistsWithMessages,
+}));
+
+const getGlobalGslothConfigWritePath = vi.fn();
+vi.mock('@gaunt-sloth/core/utils/globalConfigUtils.js', () => ({
+  getGlobalGslothConfigWritePath,
 }));
 
 const exit = vi.fn();
@@ -110,7 +125,63 @@ describe('createProjectConfig (gth init <provider>)', () => {
 
     expect(writeFileIfNotExistsWithMessages).not.toHaveBeenCalled();
     expect(getGslothConfigWritePath).toHaveBeenCalledTimes(1);
-    expect(getGslothConfigWritePath).toHaveBeenCalledWith('.gsloth.config.json');
+    expect(getGslothConfigWritePath).toHaveBeenCalledWith('.gsloth.config.json', undefined);
     expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+  });
+
+  // GS2-33 — `gth init -g` / `gth init -g -i test2` / `gth init -i test2`.
+  describe('global / profile destinations', () => {
+    const GLOBAL_CONFIG_PATH = '/home/user/.gsloth/.gsloth.config.json';
+    const GLOBAL_PROFILE_CONFIG_PATH =
+      '/home/user/.gsloth/.gsloth-settings/test2/.gsloth.config.json';
+    const PROJECT_PROFILE_CONFIG_PATH = '/proj/.gsloth/.gsloth-settings/test2/.gsloth.config.json';
+
+    it('writes the global config and skips ensureGslothDir when global: true', async () => {
+      getGlobalGslothConfigWritePath.mockReturnValue(GLOBAL_CONFIG_PATH);
+      fsMock.existsSync.mockImplementation((p: string) => p !== GLOBAL_CONFIG_PATH);
+
+      const { createProjectConfig } = await import('#src/commands/configSetup.js');
+      await createProjectConfig('vertexai', false, { global: true });
+
+      expect(getGlobalGslothConfigWritePath).toHaveBeenCalledWith('.gsloth.config.json', undefined);
+      expect(getGslothConfigWritePath).not.toHaveBeenCalled();
+      expect(fsMock.mkdirSync).not.toHaveBeenCalled();
+      expect(vertexaiInit).toHaveBeenCalledWith(GLOBAL_CONFIG_PATH, false, undefined);
+    });
+
+    it('writes the global profile config when global: true and identityProfile is set', async () => {
+      getGlobalGslothConfigWritePath.mockReturnValue(GLOBAL_PROFILE_CONFIG_PATH);
+      fsMock.existsSync.mockImplementation((p: string) => p !== GLOBAL_PROFILE_CONFIG_PATH);
+
+      const { createProjectConfig } = await import('#src/commands/configSetup.js');
+      await createProjectConfig('vertexai', false, { global: true, identityProfile: 'test2' });
+
+      expect(getGlobalGslothConfigWritePath).toHaveBeenCalledWith('.gsloth.config.json', 'test2');
+      expect(vertexaiInit).toHaveBeenCalledWith(GLOBAL_PROFILE_CONFIG_PATH, false, undefined);
+    });
+
+    it('writes the project profile config (through ensureGslothDir) when only identityProfile is set', async () => {
+      getGslothConfigWritePath.mockReturnValue(PROJECT_PROFILE_CONFIG_PATH);
+      fsMock.existsSync.mockImplementation((p: string) => p !== PROJECT_PROFILE_CONFIG_PATH);
+
+      const { createProjectConfig } = await import('#src/commands/configSetup.js');
+      await createProjectConfig('vertexai', false, { identityProfile: 'test2' });
+
+      expect(getGslothConfigWritePath).toHaveBeenCalledWith('.gsloth.config.json', 'test2');
+      expect(getGlobalGslothConfigWritePath).not.toHaveBeenCalled();
+      expect(vertexaiInit).toHaveBeenCalledWith(PROJECT_PROFILE_CONFIG_PATH, false, undefined);
+    });
+
+    it('rejects an invalid profile name before resolving any path or writing', async () => {
+      const { createProjectConfig } = await import('#src/commands/configSetup.js');
+      await createProjectConfig('vertexai', false, { identityProfile: '../evil' });
+
+      expect(getGslothConfigWritePath).not.toHaveBeenCalled();
+      expect(getGlobalGslothConfigWritePath).not.toHaveBeenCalled();
+      expect(vertexaiInit).not.toHaveBeenCalled();
+      expect(consoleUtilsMock.displayError).toHaveBeenCalledWith(
+        expect.stringContaining('Invalid profile name')
+      );
+    });
   });
 });

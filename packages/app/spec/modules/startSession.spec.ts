@@ -163,7 +163,12 @@ describe('startSession dispatcher', () => {
     const { startSession } = await import('#src/modules/startSession.js');
     await startSession(sessionConfig, { global: true }, undefined);
 
-    expect(firstRunDialogMock.runFirstRunDialog).toHaveBeenCalledWith({}, false, 'global');
+    expect(firstRunDialogMock.runFirstRunDialog).toHaveBeenCalledWith(
+      {},
+      false,
+      'global',
+      undefined
+    );
   });
 
   it('CFG-56: leaves the scope to the user without --global', async () => {
@@ -173,7 +178,37 @@ describe('startSession dispatcher', () => {
     const { startSession } = await import('#src/modules/startSession.js');
     await startSession(sessionConfig, {}, undefined);
 
-    expect(firstRunDialogMock.runFirstRunDialog).toHaveBeenCalledWith({}, false, undefined);
+    expect(firstRunDialogMock.runFirstRunDialog).toHaveBeenCalledWith(
+      {},
+      false,
+      undefined,
+      undefined
+    );
+  });
+
+  it('GS2-33: pins the dialog to the named profile under -i/--profile', async () => {
+    configMock.hasAnyConfig.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    loadInkMock.isInkAvailable.mockResolvedValue(false);
+
+    const { startSession } = await import('#src/modules/startSession.js');
+    await startSession(sessionConfig, { identityProfile: 'test2' }, undefined);
+
+    expect(firstRunDialogMock.runFirstRunDialog).toHaveBeenCalledWith(
+      {},
+      false,
+      undefined,
+      'test2'
+    );
+  });
+
+  it('GS2-33: pins the dialog to global scope and the named profile under --global -i', async () => {
+    configMock.hasAnyConfig.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    loadInkMock.isInkAvailable.mockResolvedValue(false);
+
+    const { startSession } = await import('#src/modules/startSession.js');
+    await startSession(sessionConfig, { global: true, identityProfile: 'test2' }, undefined);
+
+    expect(firstRunDialogMock.runFirstRunDialog).toHaveBeenCalledWith({}, false, 'global', 'test2');
   });
 
   it('CFG-16: does NOT run the dialog (no auto-launch) on a non-TTY (piped) run', async () => {

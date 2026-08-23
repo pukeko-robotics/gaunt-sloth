@@ -10,7 +10,9 @@ import {
   type ProviderId,
 } from '@gaunt-sloth/core/providers/modelDiscovery.js';
 import { getGlobalGslothConfigWritePath } from '@gaunt-sloth/core/utils/globalConfigUtils.js';
+import { validateProfileName } from '@gaunt-sloth/core/config.js';
 import {
+  displayError,
   displayInfo,
   displaySuccess,
   displayWarning,
@@ -122,11 +124,16 @@ export function buildConfigContent(providerId: ProviderId, model: string): strin
   return `${buildInitConfigContent(providerId, model)}\n`;
 }
 
-/** Resolves the config write path for the chosen scope (CFG-3 layering). */
-export function resolveConfigWritePath(scope: ConfigScope): string {
+/**
+ * Resolves the config write path for the chosen scope (CFG-3 layering). When `identityProfile` is
+ * set, the path is the named profile's config within that scope's settings tree
+ * (`.gsloth/.gsloth-settings/<profile>/` or `~/.gsloth/.gsloth-settings/<profile>/`) rather than
+ * the unscoped project/global config file.
+ */
+export function resolveConfigWritePath(scope: ConfigScope, identityProfile?: string): string {
   return scope === 'global'
-    ? getGlobalGslothConfigWritePath(USER_PROJECT_CONFIG_JSON)
-    : getGslothConfigWritePath(USER_PROJECT_CONFIG_JSON);
+    ? getGlobalGslothConfigWritePath(USER_PROJECT_CONFIG_JSON, identityProfile)
+    : getGslothConfigWritePath(USER_PROJECT_CONFIG_JSON, identityProfile);
 }
 
 /**
@@ -171,10 +178,14 @@ async function promptMenu(
   }
 }
 
-function defaultWriteConfig(scope: ConfigScope, content: string): string {
-  const path = resolveConfigWritePath(scope);
-  writeFileWithMessages(path, content);
-  return path;
+function makeDefaultWriteConfig(
+  identityProfile: string | undefined
+): (scope: ConfigScope, content: string) => string {
+  return (scope, content) => {
+    const path = resolveConfigWritePath(scope, identityProfile);
+    writeFileWithMessages(path, content);
+    return path;
+  };
 }
 
 /**
@@ -256,8 +267,20 @@ export function makeDefaultProgress(): <T>(label: string, run: () => Promise<T>)
 export async function runFirstRunDialog(
   overrides: Partial<FirstRunDialogDeps> = {},
   force = false,
-  forcedScope?: ConfigScope
+  forcedScope?: ConfigScope,
+  identityProfile?: string
 ): Promise<void> {
+  // GS2-33 — a bad profile name must never reach a prompt, a mkdir or a write. Validate before
+  // anything else runs (before the readline interface is even created).
+  if (identityProfile !== undefined) {
+    try {
+      identityProfile = validateProfileName(identityProfile);
+    } catch (err) {
+      displayError(err instanceof Error ? err.message : String(err));
+      return;
+    }
+  }
+
   // The readline interface is created LAZILY, only when a readline prompt is actually needed
   // (the non-TTY number-menu fallback, or free-text model entry). On the Ink-select path it is
   // never created, so readline never binds stdin/raw-mode alongside Ink — two owners on the same
@@ -275,9 +298,9 @@ export async function runFirstRunDialog(
       discoverModelsWithProvenance(providerId, { timeoutMs: INTERACTIVE_MODEL_FETCH_TIMEOUT_MS }),
     withProgress: makeDefaultProgress(),
     ensureGslothDir,
-    resolveConfigPath: resolveConfigWritePath,
+    resolveConfigPath: (scope) => resolveConfigWritePath(scope, identityProfile),
     configExists: existsSync,
-    writeConfig: defaultWriteConfig,
+    writeConfig: makeDefaultWriteConfig(identityProfile),
     ask,
     select: makeDefaultSelect(ask),
     ...overrides,
@@ -339,11 +362,20 @@ export async function runFirstRunDialog(
     // 3. Scope. CFG-56 — a caller that has already committed to a scope (`gth -g`, which reads
     //    global config only) does not ask: the project default would write a file the run then
     //    refuses to look at, and the user would be told setup did not complete.
+    //    GS2-33 — when a named profile is set (`-i test2`), the folder labels spell out the profile
+    //    subdirectory the config will actually land in, so the choice matches where `-i test2`
+    //    later reads it from.
+    const projectLabel = identityProfile
+      ? `This project only (.gsloth/.gsloth-settings/${identityProfile})`
+      : 'This project only (.gsloth/.gsloth-settings/)';
+    const globalLabel = identityProfile
+      ? `Globally for all projects (~/.gsloth/.gsloth-settings/${identityProfile})`
+      : 'Globally for all projects (~/.gsloth/)';
     const scope: ConfigScope =
       forcedScope ??
       ((await deps.select(
         'Where should this configuration be stored?',
-        ['This project only (.gsloth/.gsloth-settings/)', 'Globally for all projects (~/.gsloth/)'],
+        [projectLabel, globalLabel],
         0
       )) === 1
         ? 'global'

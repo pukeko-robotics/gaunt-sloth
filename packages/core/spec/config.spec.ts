@@ -2605,7 +2605,10 @@ describe('config', async () => {
       // `.gsloth.guidelines.md` / `.gsloth.review.md` templates and no nag warning.
       expect(fileUtilsMock.writeFileIfNotExistsWithMessages).not.toHaveBeenCalled();
       expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
-      expect(fileUtilsMock.getGslothConfigWritePath).toHaveBeenCalledWith('.gsloth.config.json');
+      expect(fileUtilsMock.getGslothConfigWritePath).toHaveBeenCalledWith(
+        '.gsloth.config.json',
+        undefined
+      );
       expect(fileUtilsMock.getGslothConfigWritePath).not.toHaveBeenCalledWith(
         '.gsloth.guidelines.md'
       );

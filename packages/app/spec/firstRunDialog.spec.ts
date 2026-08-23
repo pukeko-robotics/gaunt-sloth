@@ -18,6 +18,7 @@ vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => ({
 vi.mock('#src/tui/shouldUseTui.js', () => ({ shouldUseTui: vi.fn(() => false) }));
 
 import {
+  displayError,
   displayInfo,
   displaySuccess,
   displayWarning,
@@ -417,6 +418,89 @@ describe('runFirstRunDialog', () => {
     expect(select).toHaveBeenCalledTimes(3);
     expect(writeConfig).toHaveBeenCalledTimes(1);
     expect(vi.mocked(displaySuccess)).toHaveBeenCalledWith(expect.stringContaining('Configured'));
+  });
+
+  // GS2-33 — `gth init -i test2` / `gth init -g -i test2`: the dialog's scope labels, forced-scope
+  // seam and write paths must all reflect the named profile.
+  describe('GS2-33 profile-aware scope', () => {
+    it('shows profile-qualified folder labels and defaults to project when -i test2 is set without a forced scope', async () => {
+      deps.detectProviders = vi.fn().mockResolvedValue([
+        provider({
+          id: 'anthropic',
+          available: true,
+          apiKeyEnvironmentVariable: 'ANTHROPIC_API_KEY',
+        }),
+      ]);
+      deps.fetchModels = vi
+        .fn()
+        .mockResolvedValue({ models: [model('claude-sonnet-4-5', true)], status: 'live' });
+      const select = vi.fn(scriptedSelect([0, undefined, undefined]));
+      deps.select = select;
+
+      await runFirstRunDialog(deps, false, undefined, 'test2');
+
+      const scopeCall = select.mock.calls.find(
+        ([title]) => title === 'Where should this configuration be stored?'
+      );
+      expect(scopeCall?.[1]).toEqual([
+        'This project only (.gsloth/.gsloth-settings/test2)',
+        'Globally for all projects (~/.gsloth/.gsloth-settings/test2)',
+      ]);
+      expect(scopeCall?.[2]).toBe(0);
+      expect(writeConfig.mock.calls[0][0]).toBe('project');
+    });
+
+    it('forced global scope + profile: skips the scope question and does not scaffold .gsloth', async () => {
+      deps.detectProviders = vi
+        .fn()
+        .mockResolvedValue([
+          provider({ id: 'openai', available: true, apiKeyEnvironmentVariable: 'OPENAI_API_KEY' }),
+        ]);
+      deps.fetchModels = vi
+        .fn()
+        .mockResolvedValue({ models: [model('gpt-4o', true)], status: 'live' });
+      const select = vi.fn(scriptedSelect([0, undefined]));
+      deps.select = select;
+
+      await runFirstRunDialog(deps, false, 'global', 'test2');
+
+      // provider + model only — no scope prompt.
+      expect(select).toHaveBeenCalledTimes(2);
+      expect(ensureGslothDir).not.toHaveBeenCalled();
+      expect(writeConfig.mock.calls[0][0]).toBe('global');
+    });
+
+    it('choosing global with a profile writes global scope', async () => {
+      deps.detectProviders = vi
+        .fn()
+        .mockResolvedValue([
+          provider({ id: 'openai', available: true, apiKeyEnvironmentVariable: 'OPENAI_API_KEY' }),
+        ]);
+      deps.fetchModels = vi
+        .fn()
+        .mockResolvedValue({ models: [model('gpt-4o', true)], status: 'live' });
+      // provider 0, model default, scope index 1 (global)
+      deps.select = scriptedSelect([0, undefined, 1]);
+
+      await runFirstRunDialog(deps, false, undefined, 'test2');
+
+      expect(ensureGslothDir).not.toHaveBeenCalled();
+      expect(writeConfig.mock.calls[0][0]).toBe('global');
+    });
+
+    it('rejects an invalid profile name before any prompt or write', async () => {
+      const detect = vi.fn();
+      deps.detectProviders = detect;
+
+      await runFirstRunDialog(deps, false, undefined, '../evil');
+
+      expect(detect).not.toHaveBeenCalled();
+      expect(writeConfig).not.toHaveBeenCalled();
+      expect(ensureGslothDir).not.toHaveBeenCalled();
+      expect(vi.mocked(displayError)).toHaveBeenCalledWith(
+        expect.stringContaining('Invalid profile name')
+      );
+    });
   });
 
   // CFG-21 — the model fetch is no longer silent (part a) and an attempted-and-failed fetch is
