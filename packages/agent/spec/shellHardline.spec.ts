@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { checkHardline } from '@gaunt-sloth/core/core/shell/hardline.js';
+import { normalizeCommand } from '@gaunt-sloth/core/core/shell/normalize.js';
 
 describe('checkHardline', () => {
   const blocked = [
@@ -19,11 +20,6 @@ describe('checkHardline', () => {
     'dd if=/dev/zero of=/dev/sda',
     'echo x > /dev/sda',
     ':(){ :|:& };:',
-    'shutdown -h now',
-    'sudo reboot',
-    'poweroff',
-    'systemctl poweroff',
-    'init 0',
     'chmod -R 777 /',
     'kill -9 -1',
     'chown -R nobody:nobody /',
@@ -561,9 +557,9 @@ describe('checkHardline — line breaks terminate a command (EXT-55)', () => {
     expect(checkHardline(`echo hi${sep}rm -rf /etc`)).not.toBeNull();
   });
 
-  it.each(separators)('anchors the shutdown family to a command position after a %s', (_l, sep) => {
-    expect(checkHardline(`ls${sep}reboot`)).not.toBeNull();
-    expect(checkHardline(`ls${sep}sudo poweroff${sep}ls`)).not.toBeNull();
+  it.each(separators)('anchors the kill-all arm to a command position after a %s', (_l, sep) => {
+    expect(checkHardline(`ls${sep}kill -9 -1`)).not.toBeNull();
+    expect(checkHardline(`ls${sep}sudo kill -9 -1${sep}ls`)).not.toBeNull();
   });
 
   it.each(separators)('still allows a benign multi-command string (%s)', (_l, sep) => {
@@ -987,7 +983,7 @@ describe('checkHardline — the wrapper enumeration (EXT-69)', () => {
     'timeout 5 mkfs.ext4 /dev/sda1',
     'eval chmod -R 777 /',
     'nice -n 10 chown -R nobody:nobody /',
-    'env -i shutdown -h now',
+    'env -i kill -9 -1',
   ];
 
   it.each(wrappedInvocations)('refuses a wrapped catastrophic command: %s', (cmd) => {
@@ -1223,5 +1219,384 @@ describe('checkHardline — the openers not modelled, and the prose that decides
 
   it.each(stillRefusedAfterAValue)('still refuses past a consumed flag value: %s', (cmd) => {
     expect(checkHardline(cmd), `expected "${cmd}" to be refused`).not.toBeNull();
+  });
+});
+
+/**
+ * EXT-129 — the standing MUST-NOT-FIRE probe set, across the WHOLE floor.
+ *
+ * §8.0 mandates a false-positive stress test for a NEW pattern. Nobody had ever run one across the
+ * EXISTING set, and two arms were rotten: the shutdown family refused `shutdown --help` and the
+ * `shutdown -c` that CANCELS a pending shutdown, and the block-device redirect arm fired on any
+ * MENTION of a redirect, including the `sed` that removes one from a script. **Both arms read as
+ * correct.** They were found by executing `checkHardline`, which is what this block institutionalises
+ * so the next arm cannot rot the same way unobserved.
+ *
+ * The asymmetry that makes this the half worth pinning: a false positive here is unappealable at
+ * EVERY rung including `bypass`, so the user cannot change rung to escape it, while a miss still has
+ * the rater and the confirmation dialog in front of it.
+ */
+describe('checkHardline — the standing must-not-fire probe set (EXT-129)', () => {
+  /**
+   * Ordinary work, across every arm the floor has — not only the two EXT-129 edited. Grouped by the
+   * arm each one probes so a red cell names what over-fired rather than only what was refused.
+   */
+  const ordinaryWork: ReadonlyArray<readonly [string, string]> = [
+    // rm / chmod / chown target arms — work below a system directory, and relative targets.
+    ['rm -rf ./build', 'rm, relative target'],
+    ['rm -rf /tmp/my-scratch', 'rm, a path below an unlisted directory'],
+    ['chmod -R 777 /var/www', 'chmod, a path BELOW a system directory'],
+    ['chown -R app:app /var/www/html', 'chown, a path below a system directory'],
+    ['ls -la /etc', 'a read-only listing of a system directory'],
+    ['cat /etc/hosts', 'reading a file under a system directory'],
+    // CMD_POS — a verb sitting in an ordinary ARGUMENT is not a command.
+    ['grep chown -r /etc', 'a read-only search whose PATTERN is a floored verb'],
+    ["grep -r 'rm -rf' /etc", 'a read-only search whose pattern is a floored command'],
+    ['grep -rn mkfs docs/', 'a source search for a floored verb'],
+    ['rg -n "dd of=/dev/sd" scripts/', 'a source search for a floored dd form'],
+    ['man reboot', 'reading the manual for a system verb'],
+    ['echo reboot', 'a floored verb as an echo argument'],
+    // kill — the SIGNAL position is not the PID operand position.
+    ['kill -9 12345', 'an ordinary kill of one process'],
+    ['kill -1 12345', 'SIGHUP to one process, not kill-all'],
+    // Block devices named as OPERANDS rather than written to.
+    ['lsblk /dev/sda', 'inspecting a block device'],
+    ['fdisk -l /dev/sda', 'listing a partition table'],
+    ['ls /dev/sda', 'listing a device node'],
+    // Redirection that is not to a raw block device.
+    ['ls > out.txt', 'redirect to an ordinary file'],
+    ['echo hi > /dev/null', 'redirect to the null device'],
+    ['echo hi 2> /dev/null', 'stderr redirect to the null device'],
+    ['cat /dev/urandom | head -c 10 > sample.bin', 'reading a char device into a file'],
+    // Ordinary developer commands, as a floor-wide control.
+    ['git status', 'the most ordinary command there is'],
+    ['npm run build', 'a build'],
+    ['docker run --rm alpine', 'a flag that merely contains a floored verb'],
+  ];
+
+  it.each(ordinaryWork)('does not refuse %s (%s)', (command) => {
+    const match = checkHardline(command);
+    expect(
+      match,
+      `"${command}" was REFUSED as "${match?.description}" — an unappealable refusal of ordinary work`
+    ).toBeNull();
+  });
+
+  /**
+   * The other half, in the same block on purpose: a narrowing that quietly emptied the floor would
+   * pass the cells above and fail here. These are the eight shapes EXT-129 declared must stay green.
+   *
+   * `shutdown -h now` is deliberately NOT among them — it is a PINNED REMOVAL, asserted as such
+   * below. That is the one deliberate exception and it is written out so a later reader cannot
+   * mistake it for a hole.
+   */
+  const mustRefuse: ReadonlyArray<readonly [string, string]> = [
+    ['rm -rf /', 'recursive delete of root filesystem'],
+    ['rm -rf / --no-preserve-root', 'recursive delete of root filesystem'],
+    ['sudo rm -rf /', 'recursive delete of root filesystem'],
+    ['rm -rf /etc', 'recursive delete of system directory'],
+    ['mkfs.ext4 /dev/sda1', 'format filesystem (mkfs)'],
+    ['dd if=/dev/zero of=/dev/sda', 'dd to raw block device'],
+    ['chown -R nobody:nobody /', 'recursive chown of root filesystem'],
+    [':(){ :|:& };:', 'fork bomb'],
+  ];
+
+  /**
+   * The expected DESCRIPTION is asserted, not merely non-null, because the description is the arm's
+   * identity. Without it a case can silently migrate to a different arm and the cell stays green —
+   * which matters here concretely: `dd if=/dev/zero of=/dev/sda` is caught by the `dd` arm, NOT by
+   * the redirect arm, so using it to probe the redirect arm would prove nothing about that arm.
+   */
+  it.each(mustRefuse)('still refuses %s, on the %s arm', (command, description) => {
+    const match = checkHardline(command);
+    expect(match, `"${command}" is no longer refused`).not.toBeNull();
+    expect(match!.description).toBe(description);
+  });
+});
+
+/**
+ * EXT-129 arm 1 — the shutdown family is REMOVED from the floor, deliberately.
+ *
+ * Andrew, 2026-08-24: *"I'd classify it as simply destructive rather than catastrophic."* §8 covers
+ * only the deterministic subset of `attack` and of `catastrophic`, so the classification takes the
+ * whole family out of this layer. The machine comes back; that is what separates it from every arm
+ * that stays.
+ *
+ * Removing it rather than anchoring it is what disposes of `--help`, `--dry-run` and `-c` in one
+ * move, with no new pattern to get wrong.
+ */
+describe('checkHardline — the shutdown family is not floored (EXT-129 arm 1)', () => {
+  /**
+   * **The PINNED REMOVAL SET (EXT-112).** Every one of these was refused before this node and runs
+   * after it. They are named as tests so the trade is visible now rather than discovered later.
+   *
+   * What is in front of them afterwards: the rater, at every rung but `bypass` — never
+   * auto-approved unless it says `safe`, escalated at `assisted`. At `bypass` they run unopposed,
+   * because running unopposed at `bypass` is what `bypass` means for everything that is not §8.
+   */
+  const pinnedRemovals = [
+    'shutdown -h now',
+    'shutdown -r now',
+    'sudo shutdown -h now',
+    'env -i shutdown -h now',
+    'reboot',
+    'sudo reboot',
+    'poweroff',
+    'halt',
+    'init 0',
+    'init 6',
+    'systemctl poweroff',
+    'systemctl reboot',
+    'systemctl halt',
+    'systemctl kexec',
+    'telinit 0',
+    'telinit 6',
+    'ls; reboot',
+  ];
+
+  it.each(pinnedRemovals)('PINNED REMOVAL — no longer refused by the floor: %s', (command) => {
+    expect(
+      checkHardline(command),
+      `"${command}" is a DELIBERATE removal (EXT-129 arm 1). If this is red, the family was re-added ` +
+        `to the floor — which needs the §8-eligibility ruling reopened, not a green cell.`
+    ).toBeNull();
+  });
+
+  /**
+   * The false positives the removal was FOR. They are asserted separately from the removal set
+   * above even though the same deletion frees both, because these are the cases that made the
+   * removal urgent: an unappealable refusal of a usage query, of a dry run, and of the command that
+   * PREVENTS the harm.
+   */
+  const wereUnappealablyRefused: ReadonlyArray<readonly [string, string]> = [
+    ['shutdown --help', 'a usage query'],
+    ['poweroff --help', 'a usage query'],
+    ['reboot --help', 'a usage query'],
+    ['halt --help', 'a usage query'],
+    ['shutdown --dry-run -h +5', 'a dry run'],
+    ['shutdown -c', 'the command that CANCELS a pending shutdown'],
+  ];
+
+  it.each(wereUnappealablyRefused)('allows %s (%s)', (command) => {
+    expect(checkHardline(command)).toBeNull();
+  });
+});
+
+/**
+ * EXT-129 arm 2 — the block-device redirect arm fires on the OPERATION, not on the string.
+ *
+ * The arm had no anchor of any kind, so any MENTION of a redirect was refused unappealably —
+ * including `sed -i 's|> /dev/sda|> /dev/null|' script.sh`, the command that removes a dangerous
+ * redirect from a script. The same species EXT-62 fixed for the verb families.
+ *
+ * `CMD_POS` is not the fix: a redirection operator appears mid-command by definition. The
+ * discrimination available is whether the `>` sits inside a single-quoted region.
+ */
+describe('checkHardline — the block-device redirect anchors outside quotes (EXT-129 arm 2)', () => {
+  const mentionsNowAllowed: ReadonlyArray<readonly [string, string]> = [
+    ["grep '> /dev/sda' install.log", 'searching a log for a redirect'],
+    ["awk '/> \\/dev\\/sda/' install.log", 'an awk program matching a redirect'],
+    ["echo 'wrote image > /dev/sdb'", 'prose describing a redirect'],
+    [
+      "sed -i 's|> /dev/sda|> /dev/null|' script.sh",
+      'THE REMEDIATION — removing a dangerous redirect from a script',
+    ],
+    ["rg -n '> /dev/nvme0n1' scripts/", 'a source search for a redirect'],
+    [
+      "echo 'note' ; grep '> /dev/sda' install.log",
+      'a COMPLETE quoted region before the mention — the odd-parity twin of a still-refused case below',
+    ],
+  ];
+
+  it.each(mentionsNowAllowed)('allows a quoted MENTION: %s (%s)', (command) => {
+    const match = checkHardline(command);
+    expect(
+      match,
+      `"${command}" was REFUSED as "${match?.description}" — a mention read as an operation`
+    ).toBeNull();
+  });
+
+  /**
+   * The counterweight, and the half that makes the narrowing reviewable: a REAL unquoted redirect
+   * to a raw block device is still refused, on the redirect arm itself.
+   *
+   * Each case is asserted by DESCRIPTION. `dd if=/dev/zero of=/dev/sda` is deliberately absent —
+   * it is caught by the separate `dd` arm, so it would hold this cell green no matter what happened
+   * to the anchor being tested here.
+   */
+  const realRedirects = [
+    'cat img.iso > /dev/sda',
+    'cat img.iso >/dev/sdb',
+    'cat img.iso >  /dev/sdc',
+    'tar cf - . > /dev/mmcblk0',
+    'cat a.img > /dev/nvme0n1',
+    'cat a.img > /dev/vda',
+    'cat a.img > /dev/xvda1',
+    'cat a.img > /dev/hda',
+    // A complete quoted region BEFORE the redirect must not shield it: quote parity is even here.
+    "echo 'safe' ; cat img.iso > /dev/sda",
+    "echo 'a > /dev/sda' ; cat b > /dev/sdb",
+    // Appending is the same operation for this purpose.
+    'cat a.img >> /dev/sda',
+  ];
+
+  it.each(realRedirects)('still refuses a real redirect: %s', (command) => {
+    const match = checkHardline(command);
+    expect(match, `"${command}" is no longer refused`).not.toBeNull();
+    expect(match!.description).toBe('redirect to raw block device');
+  });
+
+  /**
+   * **The PINNED REMOVAL SET for arm 2 (EXT-112).**
+   *
+   * **The RULE is exact and was verified exhaustively:** what stops being refused is every
+   * `> /dev/<blockdev>` preceded by an ODD number of single quotes, counting from the start of the
+   * normalized command — and nothing else. A differential over 437,747 inputs found no removal at
+   * even parity, no removal landing on another arm, and no widening.
+   *
+   * **The cells below are a SAMPLE of that rule, not an enumeration of it.** They are the shapes a
+   * reader is most likely to meet, pinned so the removals are a declared cost rather than a
+   * discovery. A shape that satisfies the rule and is absent here is still inside the declared set;
+   * the rule above is what to check a new one against.
+   *
+   * None of these is a false positive. They EXECUTE, and they are accepted on the §8.0 asymmetry —
+   * a miss keeps the rater and the confirmation dialog, an unappealable false positive keeps
+   * nothing. Every one of them has a named better answer in [[CFG-29]] span extraction. The first
+   * is also the interpreter-wrapper residual that EVERY other arm already has
+   * (`sh -c "rm -rf /"` is uncovered too), so the redirect arm was the inconsistent one.
+   *
+   * The command is kept out of the test NAME on purpose: two of these carry a line break, and a
+   * multi-line title is unreadable in a reporter's failure list.
+   */
+  const knowinglyUncovered: ReadonlyArray<{ shape: string; command: string; why: string }> = [
+    {
+      shape: 'an sh -c wrapper',
+      command: "sh -c 'cat img > /dev/sda'",
+      why: 'the interpreter-wrapper residual — the command sits inside a quoted ARGUMENT',
+    },
+    {
+      shape: 'an apostrophe inside double quotes',
+      command: 'echo "it\'s fine" ; cat img > /dev/sda',
+      why: 'an apostrophe inside double quotes flips the parity, so the later REAL redirect reads as quoted',
+    },
+    {
+      shape: 'a backslash-escaped apostrophe',
+      command: "echo it\\'s ; cat img > /dev/sda",
+      why: 'the same parity flip via a backslash-escaped quote, which normalizeCommand collapses to a bare quote',
+    },
+    {
+      shape: 'an apostrophe in a # comment, redirect on the next line',
+      command: "ls # don't\ncat img > /dev/sda",
+      why: 'the shell ends a comment at the line break, so the redirect below it is an ordinary executing command',
+    },
+    {
+      shape: 'an apostrophe in a heredoc body, redirect after the delimiter',
+      command: "cat <<EOF\ndon't\nEOF\ncat img > /dev/sda",
+      why: 'the shell ends a heredoc at its delimiter, so the redirect below it is an ordinary executing command',
+    },
+  ];
+
+  it.each(knowinglyUncovered)('KNOWINGLY UNCOVERED — $shape', ({ command, why }) => {
+    expect(
+      checkHardline(command),
+      `"${command}" (${why}) is now refused. That is a WIDENING of an unappealable layer: it may ` +
+        `be right, but it is not what EXT-129 declared, so re-derive the removal set before ` +
+        `greening this.`
+    ).toBeNull();
+  });
+
+  /**
+   * A retained false positive, pinned so it is a known cost rather than a surprise. A DOUBLE-quoted
+   * mention is still refused: single quotes alone are the region, because treating double quotes as
+   * one would newly hide `sh -c "cat img > /dev/sda"` and `bash -c "…"` — live shapes — to buy the
+   * refusal of prose nobody has hit.
+   */
+  it('a DOUBLE-quoted mention is still refused (a retained cost, not an oversight)', () => {
+    expect(checkHardline('echo "wrote image > /dev/sdb"')).not.toBeNull();
+  });
+
+  /**
+   * The carrier the two cells below use, and the reason it is shaped the way it is.
+   *
+   * `checkHardline` matches against the NORMALIZED command, and `normalizeCommand` deletes every
+   * `''` pair as a token-splitting artefact. A run of consecutive quotes is therefore not an
+   * adversarial input to the quote scan at all — it is deleted in full before the scan is reached,
+   * and a timing assertion built on one measures the scan at zero quotes. Interleaving the quotes
+   * with a character is what survives, and the cell below pins that difference so the carrier
+   * cannot quietly stop being adversarial again.
+   */
+  const quoteCarrier = (quotes: number) => `a${"'x".repeat(quotes)} > /dev/nope`;
+  const countQuotes = (s: string) => (s.match(/'/g) ?? []).length;
+
+  it('the adversarial carrier survives normalization — consecutive quotes do NOT', () => {
+    // The shape that does not survive: `normalizeCommand` deletes all 5,000 `''` pairs.
+    expect(countQuotes(normalizeCommand(`a${"'".repeat(10_000)} > /dev/nope`))).toBe(0);
+
+    // The shape the backtracking cell uses: preserved 1:1, quote for quote, at every size it runs.
+    for (const quotes of [1, 2, 24, 60]) {
+      const raw = quoteCarrier(quotes);
+      expect(normalizeCommand(raw), `the carrier at ${quotes} quotes no longer survives`).toBe(raw);
+      expect(countQuotes(normalizeCommand(raw))).toBe(quotes);
+    }
+  });
+
+  /**
+   * The anchor is a quote-parity scan over the whole command, so its cost has to be bounded — the
+   * lesson `CMD_POS` records about Fibonacci-many parses of a `sudo -u ` run. `[^']*` cannot cross a
+   * `'`, which makes each partition forced, but that is an argument and this is the measurement.
+   *
+   * **An escalating ladder rather than one size and one wall-clock threshold, because the useful
+   * window between the two is narrow and machine-dependent.** The cost of an ambiguous anchor
+   * doubles with every added quote, so any fixed pair of numbers is only right for one machine: a
+   * slower runner hangs the suite instead of failing it — and a synchronous regex cannot be
+   * interrupted by a test timeout, so a hang is a hang — while a faster one drops the bad form
+   * under the threshold and greens a real regression. Growing the input one quote at a time and
+   * stopping at the first step over the budget removes the constant: whatever the machine, the
+   * ladder stops within one doubling of the budget, so the worst single step is about twice it.
+   *
+   * **The `toBeNull()` is load-bearing, not decoration.** `checkHardline` returns on the first arm
+   * that matches, so if any earlier arm matched the carrier this arm would never be evaluated and
+   * the cell would silently stop measuring it. A null return is the proof that every arm ran.
+   *
+   * **The re-measure confirms a breach; it is not a retry for green.** A single stop-the-world
+   * pause could put one step over the budget on a loaded runner, and only a repeat separates that
+   * from a cost that genuinely grew. A real ambiguity is over budget every time it is measured.
+   */
+  it('the quote scan does not backtrack catastrophically', () => {
+    const STEP_BUDGET_MS = 250;
+    const MAX_QUOTES = 60;
+
+    const measure = (quotes: number): number => {
+      const command = quoteCarrier(quotes);
+      const started = performance.now();
+      const match = checkHardline(command);
+      const elapsed = performance.now() - started;
+      expect(
+        match,
+        `the carrier at ${quotes} quotes was REFUSED as "${match?.description}" — an earlier arm ` +
+          `matched it, so the quote scan below is no longer what this cell measures`
+      ).toBeNull();
+      return elapsed;
+    };
+
+    let blewUpAt: number | null = null;
+    let blewUpMs = 0;
+    for (let quotes = 1; quotes <= MAX_QUOTES; quotes++) {
+      if (measure(quotes) <= STEP_BUDGET_MS) continue;
+      const confirmed = measure(quotes);
+      if (confirmed > STEP_BUDGET_MS) {
+        blewUpAt = quotes;
+        blewUpMs = confirmed;
+      }
+      break;
+    }
+
+    expect(
+      blewUpAt,
+      `the quote scan took ${blewUpMs.toFixed(0)}ms at ${blewUpAt} quotes, over a ${STEP_BUDGET_MS}ms ` +
+        `budget — its cost is no longer bounded by the quote count. That is what an anchor whose ` +
+        `alternatives can match the same text produces: a dot-star where the shipped form uses a ` +
+        `class that cannot cross a quote. The shipped form stays flat to ${MAX_QUOTES} quotes.`
+    ).toBeNull();
   });
 });

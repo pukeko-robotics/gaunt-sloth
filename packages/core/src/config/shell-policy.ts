@@ -301,7 +301,7 @@ export interface GthDevToolsConfig {
    *   streaming is never capped.
    *
    * A hardcoded hardline blocklist of catastrophic commands (rm -rf /, mkfs, dd
-   * to a block device, fork bomb, shutdown/reboot, …) is refused even under
+   * to a block device, fork bomb, …) is refused even under
    * `approvals.mode: "bypass"`; that floor is not configurable.
    *
    * On-disk (CFG-18) these live on the `run_shell_command` entry of `builtInTools`, e.g.

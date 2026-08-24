@@ -21,8 +21,17 @@
  * **What it is:** a cheap, deterministic way to turn away a small set of commands we are
  * **absolutely sure** are catastrophic and that can be recognised **without numerous annoying false
  * positives** — wipe the root filesystem, format a disk, overwrite a raw block device, re-own the
- * filesystem out from under root, fork-bomb, take the host down — plus the deterministic subset of
- * the §4.1.1 `attack` outcome (a credential source and a network sink in one pipeline).
+ * filesystem out from under root, fork-bomb — plus the deterministic subset of the §4.1.1 `attack`
+ * outcome (a credential source and a network sink in one pipeline).
+ *
+ * **Taking the host down is NOT here.** `shutdown`, `reboot`, `halt`, `poweroff`, `init 0/6`,
+ * `systemctl poweroff` and `telinit 0/6` are `destructive`, not `catastrophic`: the machine comes
+ * back. §8 covers only the deterministic subset of `attack` and of `catastrophic`, so the family
+ * sits above this layer, with the rater and the confirmation dialog in front of it. Anchoring the
+ * family instead of removing it was the alternative and it is the wrong one — the floor is
+ * unappealable at every rung, so it refused `shutdown --help`, `shutdown --dry-run`, and the
+ * `shutdown -c` that CANCELS a pending shutdown, which is the command a user reaches for to PREVENT
+ * the harm.
  *
  * **What it is NOT: a security boundary, an ultimate defence, or complete.** It is a lexical test
  * over the normalized command; it does not parse the shell and never will. **Incompleteness here is
@@ -147,7 +156,7 @@ const WRAPPER_ARMS: readonly string[] = [
  * Matches a position where the shell would begin parsing a NEW command: start of string, after a
  * separator (`;` `&` `|` newline), after `$(` or a backtick, optionally consuming any run of the
  * leading wrappers in {@link WRAPPER_ARMS}. Used by every destructive-verb pattern so a verb in an
- * ordinary argument (`echo reboot`, `grep -c mkfs docs/*.md`) is not a refusal.
+ * ordinary argument (`echo mkfs.ext4 /dev/sda1`, `grep -c mkfs docs/*.md`) is not a refusal.
  *
  * **What this deliberately does NOT model. This is the worked example of the header's drop rule —
  * read it before proposing an addition.**
@@ -238,6 +247,45 @@ const CMD_POS =
  * because a target is the last thing before the enclosing construct resumes.
  */
 const TARGET_TOKEN_END = `(?=$|[\\s)\`${COMMAND_SEPARATOR_CLASS}])`;
+
+/**
+ * A prefix asserting that what follows sits OUTSIDE any single-quoted region — an even number of
+ * single quotes between the start of the normalized command and the match. Used by the
+ * redirect-to-block-device arm, the one destructive arm that {@link CMD_POS} cannot anchor.
+ *
+ * **Why this arm needs an anchor of its own.** A redirection operator appears mid-command by
+ * definition, so there is no command position to bind it to. Unanchored, the arm fires on the
+ * STRING rather than on the operation, and the floor — unappealable at every rung including
+ * `bypass` — refuses `grep '> /dev/sda' install.log`, `echo 'wrote image > /dev/sdb'`, and
+ * `sed -i 's|> /dev/sda|> /dev/null|' script.sh`, which is the command someone runs to REMOVE a
+ * dangerous redirect from a script. The remediation being refused is what makes this a defect
+ * rather than noise.
+ *
+ * **SINGLE quotes only, and that is measured rather than aesthetic.** A scanner for this floor that
+ * tracked escapes and heredocs precisely leaked 6 of 12 attacks where a blunt single-quote one
+ * leaked 0: precision moved the decision onto a surface the attacker controls. Double quotes are
+ * deliberately NOT a region here either — treating them as one would newly hide
+ * `sh -c "cat img > /dev/sda"` and `bash -c "…"`, live shapes, to buy the refusal of
+ * `echo "wrote image > /dev/sdb"`, which nobody has hit. So a double-quoted mention stays refused.
+ *
+ * **What it gives up** is one rule and nothing else: every `> /dev/<blockdev>` preceded by an ODD
+ * number of single quotes in the normalized command, which is where the redirect reads as sitting
+ * inside a quoted region. That rule is the specification of the set; `shellHardline.spec.ts` pins a
+ * named SAMPLE of it rather than an enumeration, so a shape that satisfies the rule and is absent
+ * there is a declared miss all the same, and the rule is what to check a new one against. The
+ * commonest is `sh -c 'cat img > /dev/sda'` — already the interpreter-wrapper residual every other
+ * arm has. They execute, and they are misses this layer accepts: a miss keeps the rater and the
+ * confirmation dialog, an unappealable false positive keeps nothing. [[CFG-29]] span extraction is
+ * the discriminator that would close them.
+ *
+ * **Linear, not backtracking.** `[^']*` cannot cross a `'`, so each iteration's partition is forced
+ * and the outer `*` is bounded by the quote count — no ambiguity for the engine to explore. The
+ * lesson {@link CMD_POS} records about Fibonacci-many parses does not reach this shape, and
+ * `shellHardline.spec.ts` measures that rather than arguing it, on quotes interleaved with other
+ * characters — a run of ADJACENT quotes is deleted by {@link normalizeCommand} as a token-splitting
+ * artefact and never reaches this scan at all.
+ */
+const OUTSIDE_SINGLE_QUOTES = "^(?:[^']*'[^']*')*[^']*";
 
 /**
  * A target path, in the three spellings a shell accepts for the same file: bare, double-quoted,
@@ -382,9 +430,12 @@ const CHOWN_HEAD =
  * asked for no gate. A false positive in this layer has no recovery at any rung; a miss still has
  * the layers above it. The floor stays narrow and accepts the misses.
  *
- * Two patterns are deliberately NOT anchored, because neither is a command-position construct: the
- * `>`-redirect-to-device arm (a redirection operator appears mid-command by definition) and the
- * fork-bomb literal (the string *is* the fork bomb).
+ * Two patterns carry no {@link CMD_POS} anchor, because neither is a command-position construct.
+ * The `>`-redirect-to-device arm is anchored differently instead — see
+ * {@link OUTSIDE_SINGLE_QUOTES} — because a redirection operator appears mid-command by definition,
+ * so the discrimination available to it is whether the `>` is QUOTED, not where it sits. The
+ * fork-bomb literal is anchored by nothing at all: the string *is* the fork bomb, so prose quoting
+ * it is refused, and that false positive is accepted rather than fixed.
  */
 export const HARDLINE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   // rm -rf targeting the root filesystem (`/`, `/*`). Built with `new RegExp` so both the tail and
@@ -413,8 +464,13 @@ export const HARDLINE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
     new RegExp(CMD_POS + 'dd\\b[^\\n]*\\bof=/dev/(?:sd|nvme|hd|mmcblk|vd|xvd)[a-z0-9]*'),
     'dd to raw block device',
   ],
-  // Shell redirection to a raw block device (`> /dev/sda`).
-  [/>\s*\/dev\/(?:sd|nvme|hd|mmcblk|vd|xvd)[a-z0-9]*\b/, 'redirect to raw block device'],
+  // Shell redirection to a raw block device (`> /dev/sda`). Anchored OUTSIDE single quotes rather
+  // than at a command position — a redirection operator has no command position — so a MENTION of a
+  // redirect is not read as performing one.
+  [
+    new RegExp(OUTSIDE_SINGLE_QUOTES + '>\\s*/dev/(?:sd|nvme|hd|mmcblk|vd|xvd)[a-z0-9]*\\b'),
+    'redirect to raw block device',
+  ],
   // Classic fork bomb `:(){ :|:& };:`.
   [/:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/, 'fork bomb'],
   // Recursive chmod of root, and the same on a named system directory.
@@ -465,15 +521,7 @@ export const HARDLINE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   // unappealably. Requiring a preceding token keeps `kill -9 -1`, `kill -HUP -1` and `kill -- -1`,
   // and drops only `kill -1` with no PID, which is a usage error rather than a kill-all.
   [new RegExp(CMD_POS + 'kill\\s+(?:-[^\\s]+\\s+)+-1\\b'), 'kill all processes'],
-  // System shutdown / reboot — anchored to a command position so `echo reboot`
-  // and `grep shutdown log` don't trip it.
-  [new RegExp(CMD_POS + '(?:shutdown|reboot|halt|poweroff)\\b'), 'system shutdown/reboot'],
-  [new RegExp(CMD_POS + 'init\\s+[06]\\b'), 'init 0/6 (shutdown/reboot)'],
-  [
-    new RegExp(CMD_POS + 'systemctl\\s+(?:poweroff|reboot|halt|kexec)\\b'),
-    'systemctl poweroff/reboot',
-  ],
-  [new RegExp(CMD_POS + 'telinit\\s+[06]\\b'), 'telinit 0/6 (shutdown/reboot)'],
+  // The shutdown family is NOT here — see "Taking the host down is NOT here" in the module header.
 ];
 
 /* -------------------------------------------------------------------------------------------- *
@@ -730,6 +778,7 @@ export const HARDLINE_PATTERN_SURFACE: Readonly<Record<string, string | readonly
     WRAPPER_ARMS: Object.freeze([...WRAPPER_ARMS]),
     CMD_POS,
     TARGET_TOKEN_END,
+    OUTSIDE_SINGLE_QUOTES,
     H_SPACE,
     H_TOKEN_EXCLUSIONS,
     H_TOKEN_CHAR,
