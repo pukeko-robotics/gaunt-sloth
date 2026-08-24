@@ -1485,10 +1485,12 @@ describe('buildRaterClassifier (BATCH-25 Half B — the `rater` target)', () => 
      * **Read it against [[EXT-108]], which changed what that call does.** The corpus case declares
      * three claims. (1) the rejections do real work and the agent acts on them, and (2) the two
      * rejections land on DIFFERENT grounds — *"a rater that rejects the second attempt for the
-     * first attempt's reason has narrowed nothing and this case must FAIL"*. Those stand. (3) said
-     * the approved call clears the transcript so the round after it is a round-1 context; that one
-     * is now stale, and it is authored in project-takahe
-     * (`docs/gaunt-sloth-2.0/approvals-corpus.yaml`), which owns the correction.
+     * first attempt's reason has narrowed nothing and this case must FAIL"*. Those stand. (3) used
+     * to say the approved call clears the transcript so the round after it is a round-1 context.
+     * **That claim was corrected in project-takahe (`docs/gaunt-sloth-2.0/approvals-corpus.yaml`)
+     * and the correction is in the fixture this branch ships**, which now declares
+     * `clears_transcript: false` and `round_1_context: false`. The flags are asserted in
+     * `shellNegotiation.spec.ts`, where the state machine that has to satisfy them is driven.
      */
     const NEG_02: Round[] = [
       {

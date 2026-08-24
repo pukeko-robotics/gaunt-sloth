@@ -85,10 +85,10 @@ interface CorpusRound {
   expect?: 'reject' | 'refuse' | 'approve' | 'escalate' | 'halt';
   reset?: string;
   /**
-   * `neg-02`'s own declarations, kept so the shape of the fixture is readable here — and NOT
-   * asserted. [[EXT-108]] changed what an approved call does to the transcript, so both are stale;
-   * they are authored in project-takahe (`docs/gaunt-sloth-2.0/approvals-corpus.yaml`), which owns
-   * the correction.
+   * `neg-02`'s own declarations, and they ARE asserted — see the `neg-02-converge` case below.
+   * [[EXT-108]] changed what an approved call does to the transcript, and the corpus that authors
+   * these (project-takahe, `docs/gaunt-sloth-2.0/approvals-corpus.yaml`) was corrected with it, so
+   * asserting them is what keeps the two representations from drifting apart again.
    */
   clears_transcript?: boolean;
   round_1_context?: boolean;
@@ -395,12 +395,13 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
      * view. Under the old reset the retry was rated blind, which is what made the rater re-advise a
      * thing the agent had already done.
      *
-     * **The corpus case still declares the behaviour this node changed** — its reset round carries
-     * `clears_transcript` and the round after it carries `round_1_context`. Those flags are
-     * authored in project-takahe (`docs/gaunt-sloth-2.0/approvals-corpus.yaml`) and this fixture is
-     * GENERATED from them under a content hash, so they are not this repo's to edit and are not
-     * asserted here either: a guard on them would fire the day that repo correctly updates the
-     * case. What this test takes from the case is its SHAPE, which is the measured loop.
+     * **The corpus case declares the new behaviour and is asserted, not merely read for shape.**
+     * Its reset round carries `clears_transcript: false` and the round after it
+     * `round_1_context: false`. Those flags are authored in project-takahe
+     * (`docs/gaunt-sloth-2.0/approvals-corpus.yaml`) and this fixture is GENERATED from them under a
+     * content hash — which is exactly why the guard belongs here: the two representations have to
+     * agree, and nothing else in either repository requires it. A regenerated fixture that still
+     * declared the old behaviour would fail this case rather than silently re-testing the defect.
      *
      * **Both halves are in this one run on purpose.** `ratings[0]` is a genuinely fresh negotiation
      * and must stay blind; `ratings[2]` is the retry after a compliance call and must not. If those
@@ -408,7 +409,11 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
      */
     it('neg-02-converge: the retry after an approved call is a ROUND-2 context, and the first rating is still blind', async () => {
       const negCase = caseById('neg-02-converge');
-      const [r1, , r3, r4] = negCase.rounds;
+      const [r1, resetRound, r3, r4] = negCase.rounds;
+      expect(resetRound.clears_transcript, 'the fixture must declare the new behaviour').toBe(
+        false
+      );
+      expect(r3.round_1_context, 'the fixture must declare the new behaviour').toBe(false);
 
       const { results, ratings } = await drive({
         calls: [
