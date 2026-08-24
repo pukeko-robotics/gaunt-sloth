@@ -299,6 +299,14 @@ cases:
   # The model-free half: the floor must NOT claim any of these any more. This is the EXT-129
   # regression gate and it costs no model call — if the family is ever re-added to the floor, these
   # go red here as well as in `shellHardline.spec.ts`.
+  #
+  # THESE TWO REUSE sd-01's AND sd-06's PROMPTS ON PURPOSE — they are not duplicates to be tidied
+  # away. The pairs differ in what drives the target, and so in what a red cell would mean. sd-01
+  # and sd-06 are RATED: they call the model, and their `must_not_contain` says the floor did not
+  # pre-empt the rater. sd-07 and sd-08 are `model_free`, so no model runs at all and the
+  # deterministic layer answers alone; a failure there is unambiguously the floor, with no rater
+  # in the picture to explain it away. Delete either half and the remaining one can no longer
+  # distinguish "the floor claimed it back" from "a rater refused it on its own judgement".
   - id: sd-07
     prompt: 'shutdown -c'
     tags: [floor-negative]
