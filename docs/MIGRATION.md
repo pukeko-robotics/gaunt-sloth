@@ -62,7 +62,7 @@ these before you upgrade.
 | Command configs must nest under `commands.*` | A top-level command key (e.g. `pr`) is a validation abort: `Top-level command config "pr" is no longer supported in 2.0. Move it under "commands.pr".` | Move it under `commands.<cmd>` |
 | Per-command `devTools` folded into `builtInTools` | `commands.<cmd>.devTools` is a validation abort: `Config property "devTools" in commands.code is no longer supported in 2.0. Configure tools under "builtInTools" instead.` | Move the dev/shell tools into the `builtInTools` registry (see section G) |
 | Approval knobs moved off `run_shell_command` | `yolo` / `judge` / `allowlist` / `persistAllowlist` on that entry are a validation abort: `Config property "yolo" in builtInTools.run_shell_command is no longer supported in 2.0. Use "approvals": "bypass" instead.` | Move them into the top-level `approvals` setting (see section I) |
-| Approvals became one ladder of five modes | `approvals.strictness` / `.escalate` / `.allowlist` / `.persistAllowlist`, an object-form `rater`, and the `mode` values `ask` / `read-only` / `auto-safe` / `full-auto` are all validation aborts naming the mode that replaced them | Pick a mode: `manual` · `write` · `assisted` · `auto` · `bypass` (see section I) |
+| Approvals became one ladder of five modes | `approvals.strictness` / `.escalate` / `.allowlist` / `.persistAllowlist`, an object-form `rater`, and the `mode` value `ask` are all validation aborts naming the mode that replaced them | Pick a mode: `manual` · `write` · `assisted` · `auto` · `bypass` (see section I) |
 | `projectGuidelines` / `projectReviewInstructions` folded into `prompts` | Either key is a validation abort: `Config property "projectGuidelines" was renamed in 2.0. Use "prompts.guidelines" instead.` | `prompts.guidelines` / `prompts.review` (see section H) |
 | Deprecated `*Provider*` config keys | `contentProvider` / `requirementsProvider` (and the `*ProviderConfig` variants) are rejected: `Config property "contentProvider" was renamed in 2.0. Use "contentSource" instead.` | Rename to `contentSource` / `requirementSource` (and `*SourceConfig`) |
 | `--content-provider` / `--requirements-provider` CLI flags removed | Scripts passing those flags error out | `--content-source` / `--requirements-source` (`-p` still aliases `--requirements-source`) |
@@ -438,9 +438,6 @@ your working folder granted as well as reads. The choice you are really making i
 | `judge.autoApproveLow: false` / `judge.blockHigh` | gone — the mode decides; there are no per-tier knobs |
 | `builtInTools.run_shell_command.allowlist` | `approvals.allow` — a declared list of command prefixes |
 | `builtInTools.run_shell_command.persistAllowlist` | gone — persistence is a per-decision choice at the prompt (*approve* forgets, *always approve* persists) |
-| `approvals.mode: "read-only"` | `approvals.mode: "manual"` — the same mode, renamed |
-| `approvals.mode: "auto-safe"` | `approvals.mode: "assisted"` — the same mode, renamed |
-| `approvals.mode: "full-auto"` | `approvals.mode: "auto"` — the same mode, renamed |
 | `approvals.mode: "ask"` | `approvals.mode: "write"` (the agent still edits files freely) or `"manual"` (it asks before writing too) |
 | `approvals.rater: { profile: "x" }` | `approvals.rater: "x"` |
 | `approvals.rater.strictness` | gone — choose a mode instead |
@@ -670,10 +667,9 @@ share one command registry):
 7. Replace every approvals knob — `yolo` / `judge` / `allowlist` / `persistAllowlist` on
    `run_shell_command`, and `strictness` / `escalate` / an object-form `rater` on `approvals` —
    with one of the five modes, plus `approvals.allow` / `.deny` where you need them. Rename the
-   retired `mode` values: `read-only` → `manual`, `auto-safe` → `assisted`, `full-auto` → `auto`
-   (all three the same mode under a new name), and `ask` → `write` if you want file edits in your
-   working folder granted, or `manual` if you want to be asked about those too. Decide whether you
-   want the new `assisted` default or `"write"` (I).
+   retired `mode` value `ask` to `write` if you want file edits in your working folder granted, or
+   to `manual` if you want to be asked about those too. Decide whether you want the new `assisted`
+   default or `"write"` (I).
 8. Rename `projectGuidelines` → `prompts.guidelines` and `projectReviewInstructions` →
    `prompts.review` (H).
 9. Remove `agent.backend: "deep"` (or set it to `"lean"`), and move off the ACP server if you

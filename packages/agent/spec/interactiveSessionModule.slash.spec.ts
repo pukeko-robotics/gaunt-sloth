@@ -270,11 +270,9 @@ describe('interactiveSessionModule shared slash-command registry (GS2-8)', () =>
     expect(runnerInstanceMock.setSessionApprovalRung).not.toHaveBeenCalled();
   });
 
-  it('the retired mode spellings are NOT accepted as aliases', async () => {
-    for (const retired of ['read-only', 'auto-safe', 'full-auto', 'ask']) {
-      await runSession(`/approvals ${retired}`, 'exit');
-      expect(allOutput()).toContain(`Unknown option: ${retired}`);
-    }
+  it('the retired `ask` spelling is NOT accepted as an alias', async () => {
+    await runSession('/approvals ask', 'exit');
+    expect(allOutput()).toContain('Unknown option: ask');
     expect(runnerInstanceMock.setSessionApprovalRung).not.toHaveBeenCalled();
   });
 

@@ -589,19 +589,20 @@ describe('config schema (GS2-1 B1)', () => {
         });
 
         /**
-         * CFG-39 — the retired `mode` spellings and the mode each one names now. The three renames
-         * map to the SAME mode under its new name; `ask` maps to the two modes that ask about
-         * everything. **Every mapping is equally- or less-permissive**, which is the property this
-         * table exists to keep: a retired name silently remapped to something more permissive
-         * would raise a user's autonomy setting on their behalf.
+         * The retired `mode` spelling and the mode it names now. `ask` maps to the two modes that
+         * ask about everything, and the message offers both. **The mapping is equally- or
+         * less-permissive**, which is the property this table exists to keep: a retired name
+         * silently remapped to something more permissive would raise a user's autonomy setting on
+         * their behalf.
+         *
+         * **Only a value whose MEANING changed earns a row**, which is why this table holds one
+         * entry rather than four. A value that merely acquired a new spelling is a spelling nobody
+         * has, so it is an ordinary unrecognised value — the block below pins that.
          *
          * `auto` is deliberately NOT here — it is now the canonical name of the most permissive
          * rated mode, and the cell below pins that it validates rather than erroring.
          */
         const RETIRED_MODES = {
-          'read-only': 'manual',
-          'auto-safe': 'assisted',
-          'full-auto': 'auto',
           ask: 'write',
         } as const;
 
@@ -639,6 +640,59 @@ describe('config schema (GS2-1 B1)', () => {
           });
         }
 
+        /**
+         * CFG-60 — `ask` is the one retired spelling that survives, and it survives because it is
+         * NOT a rename: it maps across two modes, so dropping it would drop a real migration rather
+         * than a stale alias. Both replacements have to be offered, and this is the pair that proves
+         * the CFG-60 removal was surgical rather than wholesale.
+         */
+        it('the retired mode "ask" names BOTH replacements, at the root and per command', () => {
+          for (const raw of [
+            { llm: { type: 'openai' }, approvals: 'ask' },
+            { llm: { type: 'openai' }, approvals: { mode: 'ask' } },
+            { llm: { type: 'openai' }, commands: { pr: { approvals: 'ask' } } },
+            { llm: { type: 'openai' }, commands: { pr: { approvals: { mode: 'ask' } } } },
+          ]) {
+            const issues = findDeprecatedConfigIssues(raw);
+            expect(issues, `${JSON.stringify(raw)} must carry migration advice`).toHaveLength(1);
+            expect(issues[0].message).toContain('"write"');
+            expect(issues[0].message).toContain('"manual"');
+            expect(issues[0].message).toContain(MIGRATION_DOC_URL);
+          }
+        });
+
+        /**
+         * CFG-60 — the alpha-era spellings `read-only` / `auto-safe` / `full-auto` were renamed
+         * inside 2.0 alpha and their migration entries are gone with them. They are ordinary
+         * unrecognised values now: still rejected, but by the enum, with NO message naming a
+         * replacement and no migration pointer.
+         *
+         * Pinned as a PAIR — `findDeprecatedConfigIssues` silent AND the config still invalid —
+         * because either half alone would also pass if the value had quietly become *valid*, which
+         * is the one outcome that would raise a user's autonomy setting without them choosing it.
+         * Pinned at the root and per command because the removal has to hold on both paths.
+         */
+        for (const removed of ['read-only', 'auto-safe', 'full-auto']) {
+          it(`"${removed}" is an unrecognised value now — rejected, naming no replacement`, () => {
+            for (const raw of [
+              { llm: { type: 'openai' }, approvals: removed },
+              { llm: { type: 'openai' }, approvals: { mode: removed } },
+              { llm: { type: 'openai' }, commands: { pr: { approvals: removed } } },
+              { llm: { type: 'openai' }, commands: { pr: { approvals: { mode: removed } } } },
+            ]) {
+              const where = JSON.stringify(raw);
+              expect(
+                findDeprecatedConfigIssues(raw),
+                `${where} must carry no migration advice`
+              ).toEqual([]);
+              const result = validateRawGthConfig(raw);
+              expect(result.ok, `${where} must still be invalid`).toBe(false);
+              expect(result.errorMessage).not.toContain('no longer supported');
+              expect(result.errorMessage).not.toContain(MIGRATION_DOC_URL);
+            }
+          });
+        }
+
         it('hard-errors on the retired OBJECT rater form, pointing at the bare profile name', () => {
           const issues = findDeprecatedConfigIssues({
             llm: { type: 'openai' },
@@ -650,11 +704,10 @@ describe('config schema (GS2-1 B1)', () => {
         });
 
         /**
-         * CFG-39 — **`auto` is a valid mode and must not error.** It named a pre-2.0 mode and used
-         * to be rejected here, pointing at `auto-safe`; it is now the canonical name of the most
-         * permissive rated mode. The retired entry and the rename had to land together, because an
-         * `auto` left in the table makes the newly documented name a hard validation error on
-         * arrival. This is the cell that fails if that entry ever comes back.
+         * CFG-39 — **`auto` is a valid mode and must not error.** It also named a pre-2.0 mode, so
+         * a retired-mode entry for it is the easy mistake: one left in the table makes the
+         * canonical name of the most permissive rated mode a hard validation error on arrival.
+         * This is the cell that fails if such an entry ever appears.
          */
         it('CFG-39: "auto" VALIDATES — it is the canonical name, not a retired one', () => {
           for (const approvals of ['auto', { mode: 'auto' }] as const) {
@@ -669,7 +722,7 @@ describe('config schema (GS2-1 B1)', () => {
 
         it('reports EVERY retired key present, not just the first', () => {
           const issues = findDeprecatedConfigIssues({
-            approvals: { mode: 'auto-safe', strictness: 'strict', escalate: 'danger' },
+            approvals: { mode: 'ask', strictness: 'strict', escalate: 'danger' },
           });
           expect(issues.map((i) => i.path).sort()).toEqual([
             'approvals.escalate',
