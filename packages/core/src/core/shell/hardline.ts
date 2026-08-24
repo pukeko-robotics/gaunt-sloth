@@ -268,17 +268,22 @@ const TARGET_TOKEN_END = `(?=$|[\\s)\`${COMMAND_SEPARATOR_CLASS}])`;
  * `sh -c "cat img > /dev/sda"` and `bash -c "…"`, live shapes, to buy the refusal of
  * `echo "wrote image > /dev/sdb"`, which nobody has hit. So a double-quoted mention stays refused.
  *
- * **What it gives up**, pinned as probes in `shellHardline.spec.ts`: every `> /dev/<blockdev>`
- * preceded by an ODD number of single quotes. That is `sh -c 'cat img > /dev/sda'` — already the
- * interpreter-wrapper residual every other arm has — and a parity flip from an apostrophe the shell
- * does not read as a quote, `echo "it's fine" ; cat img > /dev/sda`. Both execute. Both are misses
- * this layer accepts: a miss keeps the rater and the confirmation dialog, an unappealable false
- * positive keeps nothing. [[CFG-29]] span extraction is the discriminator that would close them.
+ * **What it gives up** is one rule and nothing else: every `> /dev/<blockdev>` preceded by an ODD
+ * number of single quotes in the normalized command, which is where the redirect reads as sitting
+ * inside a quoted region. That rule is the specification of the set; `shellHardline.spec.ts` pins a
+ * named SAMPLE of it rather than an enumeration, so a shape that satisfies the rule and is absent
+ * there is a declared miss all the same, and the rule is what to check a new one against. The
+ * commonest is `sh -c 'cat img > /dev/sda'` — already the interpreter-wrapper residual every other
+ * arm has. They execute, and they are misses this layer accepts: a miss keeps the rater and the
+ * confirmation dialog, an unappealable false positive keeps nothing. [[CFG-29]] span extraction is
+ * the discriminator that would close them.
  *
  * **Linear, not backtracking.** `[^']*` cannot cross a `'`, so each iteration's partition is forced
- * and the outer `*` is bounded by the quote count — no ambiguity for the engine to explore.
- * Measured at 10,000 single quotes with no match: under 0.1 ms. The lesson {@link CMD_POS} records
- * about Fibonacci-many parses does not reach this shape, but it is measured rather than argued.
+ * and the outer `*` is bounded by the quote count — no ambiguity for the engine to explore. The
+ * lesson {@link CMD_POS} records about Fibonacci-many parses does not reach this shape, and
+ * `shellHardline.spec.ts` measures that rather than arguing it, on quotes interleaved with other
+ * characters — a run of ADJACENT quotes is deleted by {@link normalizeCommand} as a token-splitting
+ * artefact and never reaches this scan at all.
  */
 const OUTSIDE_SINGLE_QUOTES = "^(?:[^']*'[^']*')*[^']*";
 

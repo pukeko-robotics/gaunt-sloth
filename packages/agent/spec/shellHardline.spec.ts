@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { checkHardline } from '@gaunt-sloth/core/core/shell/hardline.js';
+import { normalizeCommand } from '@gaunt-sloth/core/core/shell/normalize.js';
 
 describe('checkHardline', () => {
   const blocked = [
@@ -1401,7 +1402,10 @@ describe('checkHardline — the block-device redirect anchors outside quotes (EX
       'THE REMEDIATION — removing a dangerous redirect from a script',
     ],
     ["rg -n '> /dev/nvme0n1' scripts/", 'a source search for a redirect'],
-    ["git commit -F - <<'EOF'", 'no device at all, guarding the anchor itself'],
+    [
+      "echo 'note' ; grep '> /dev/sda' install.log",
+      'a COMPLETE quoted region before the mention — the odd-parity twin of a still-refused case below',
+    ],
   ];
 
   it.each(mentionsNowAllowed)('allows a quoted MENTION: %s (%s)', (command) => {
@@ -1443,36 +1447,61 @@ describe('checkHardline — the block-device redirect anchors outside quotes (EX
   });
 
   /**
-   * **The PINNED REMOVAL SET for arm 2 (EXT-112), characterised from the shape of the edit** —
-   * every `> /dev/<blockdev>` preceded by an ODD number of single quotes counting from the start of
-   * the normalized command. These are not false positives. They EXECUTE, and they are pinned at the
-   * dangerous end of the removal set rather than left for someone to find.
+   * **The PINNED REMOVAL SET for arm 2 (EXT-112).**
    *
-   * Both are accepted on the §8.0 asymmetry — a miss keeps the rater and the confirmation dialog,
-   * an unappealable false positive keeps nothing — and both have a named better answer in [[CFG-29]]
-   * span extraction. The first is also the interpreter-wrapper residual that EVERY other arm already
-   * has (`sh -c "rm -rf /"` is uncovered too), so the redirect arm was the inconsistent one.
+   * **The RULE is exact and was verified exhaustively:** what stops being refused is every
+   * `> /dev/<blockdev>` preceded by an ODD number of single quotes, counting from the start of the
+   * normalized command — and nothing else. A differential over 437,747 inputs found no removal at
+   * even parity, no removal landing on another arm, and no widening.
+   *
+   * **The cells below are a SAMPLE of that rule, not an enumeration of it.** They are the shapes a
+   * reader is most likely to meet, pinned so the removals are a declared cost rather than a
+   * discovery. A shape that satisfies the rule and is absent here is still inside the declared set;
+   * the rule above is what to check a new one against.
+   *
+   * None of these is a false positive. They EXECUTE, and they are accepted on the §8.0 asymmetry —
+   * a miss keeps the rater and the confirmation dialog, an unappealable false positive keeps
+   * nothing. Every one of them has a named better answer in [[CFG-29]] span extraction. The first
+   * is also the interpreter-wrapper residual that EVERY other arm already has
+   * (`sh -c "rm -rf /"` is uncovered too), so the redirect arm was the inconsistent one.
+   *
+   * The command is kept out of the test NAME on purpose: two of these carry a line break, and a
+   * multi-line title is unreadable in a reporter's failure list.
    */
-  const knowinglyUncovered: ReadonlyArray<readonly [string, string]> = [
-    [
-      "sh -c 'cat img > /dev/sda'",
-      'the interpreter-wrapper residual — the command sits inside a quoted ARGUMENT',
-    ],
-    [
-      'echo "it\'s fine" ; cat img > /dev/sda',
-      'an apostrophe inside double quotes flips the parity, so the later REAL redirect reads as quoted',
-    ],
-    [
-      "echo it\\'s ; cat img > /dev/sda",
-      'the same parity flip via a backslash-escaped quote, which normalizeCommand collapses to a bare quote',
-    ],
+  const knowinglyUncovered: ReadonlyArray<{ shape: string; command: string; why: string }> = [
+    {
+      shape: 'an sh -c wrapper',
+      command: "sh -c 'cat img > /dev/sda'",
+      why: 'the interpreter-wrapper residual — the command sits inside a quoted ARGUMENT',
+    },
+    {
+      shape: 'an apostrophe inside double quotes',
+      command: 'echo "it\'s fine" ; cat img > /dev/sda',
+      why: 'an apostrophe inside double quotes flips the parity, so the later REAL redirect reads as quoted',
+    },
+    {
+      shape: 'a backslash-escaped apostrophe',
+      command: "echo it\\'s ; cat img > /dev/sda",
+      why: 'the same parity flip via a backslash-escaped quote, which normalizeCommand collapses to a bare quote',
+    },
+    {
+      shape: 'an apostrophe in a # comment, redirect on the next line',
+      command: "ls # don't\ncat img > /dev/sda",
+      why: 'the shell ends a comment at the line break, so the redirect below it is an ordinary executing command',
+    },
+    {
+      shape: 'an apostrophe in a heredoc body, redirect after the delimiter',
+      command: "cat <<EOF\ndon't\nEOF\ncat img > /dev/sda",
+      why: 'the shell ends a heredoc at its delimiter, so the redirect below it is an ordinary executing command',
+    },
   ];
 
-  it.each(knowinglyUncovered)('KNOWINGLY UNCOVERED — %s (%s)', (command) => {
+  it.each(knowinglyUncovered)('KNOWINGLY UNCOVERED — $shape', ({ command, why }) => {
     expect(
       checkHardline(command),
-      `"${command}" is now refused. That is a WIDENING of an unappealable layer: it may be right, ` +
-        `but it is not what EXT-129 declared, so re-derive the removal set before greening this.`
+      `"${command}" (${why}) is now refused. That is a WIDENING of an unappealable layer: it may ` +
+        `be right, but it is not what EXT-129 declared, so re-derive the removal set before ` +
+        `greening this.`
     ).toBeNull();
   });
 
@@ -1487,14 +1516,87 @@ describe('checkHardline — the block-device redirect anchors outside quotes (EX
   });
 
   /**
+   * The carrier the two cells below use, and the reason it is shaped the way it is.
+   *
+   * `checkHardline` matches against the NORMALIZED command, and `normalizeCommand` deletes every
+   * `''` pair as a token-splitting artefact. A run of consecutive quotes is therefore not an
+   * adversarial input to the quote scan at all — it is deleted in full before the scan is reached,
+   * and a timing assertion built on one measures the scan at zero quotes. Interleaving the quotes
+   * with a character is what survives, and the cell below pins that difference so the carrier
+   * cannot quietly stop being adversarial again.
+   */
+  const quoteCarrier = (quotes: number) => `a${"'x".repeat(quotes)} > /dev/nope`;
+  const countQuotes = (s: string) => (s.match(/'/g) ?? []).length;
+
+  it('the adversarial carrier survives normalization — consecutive quotes do NOT', () => {
+    // The shape that does not survive: `normalizeCommand` deletes all 5,000 `''` pairs.
+    expect(countQuotes(normalizeCommand(`a${"'".repeat(10_000)} > /dev/nope`))).toBe(0);
+
+    // The shape the backtracking cell uses: preserved 1:1, quote for quote, at every size it runs.
+    for (const quotes of [1, 2, 24, 60]) {
+      const raw = quoteCarrier(quotes);
+      expect(normalizeCommand(raw), `the carrier at ${quotes} quotes no longer survives`).toBe(raw);
+      expect(countQuotes(normalizeCommand(raw))).toBe(quotes);
+    }
+  });
+
+  /**
    * The anchor is a quote-parity scan over the whole command, so its cost has to be bounded — the
    * lesson `CMD_POS` records about Fibonacci-many parses of a `sudo -u ` run. `[^']*` cannot cross a
    * `'`, which makes each partition forced, but that is an argument and this is the measurement.
+   *
+   * **An escalating ladder rather than one size and one wall-clock threshold, because the useful
+   * window between the two is narrow and machine-dependent.** The cost of an ambiguous anchor
+   * doubles with every added quote, so any fixed pair of numbers is only right for one machine: a
+   * slower runner hangs the suite instead of failing it — and a synchronous regex cannot be
+   * interrupted by a test timeout, so a hang is a hang — while a faster one drops the bad form
+   * under the threshold and greens a real regression. Growing the input one quote at a time and
+   * stopping at the first step over the budget removes the constant: whatever the machine, the
+   * ladder stops within one doubling of the budget, so the worst single step is about twice it.
+   *
+   * **The `toBeNull()` is load-bearing, not decoration.** `checkHardline` returns on the first arm
+   * that matches, so if any earlier arm matched the carrier this arm would never be evaluated and
+   * the cell would silently stop measuring it. A null return is the proof that every arm ran.
+   *
+   * **The re-measure confirms a breach; it is not a retry for green.** A single stop-the-world
+   * pause could put one step over the budget on a loaded runner, and only a repeat separates that
+   * from a cost that genuinely grew. A real ambiguity is over budget every time it is measured.
    */
   it('the quote scan does not backtrack catastrophically', () => {
-    const pathological = `a${"'".repeat(10_000)}${'x'.repeat(200)} > /dev/nope`;
-    const started = Date.now();
-    expect(checkHardline(pathological)).toBeNull();
-    expect(Date.now() - started).toBeLessThan(1_000);
+    const STEP_BUDGET_MS = 250;
+    const MAX_QUOTES = 60;
+
+    const measure = (quotes: number): number => {
+      const command = quoteCarrier(quotes);
+      const started = performance.now();
+      const match = checkHardline(command);
+      const elapsed = performance.now() - started;
+      expect(
+        match,
+        `the carrier at ${quotes} quotes was REFUSED as "${match?.description}" — an earlier arm ` +
+          `matched it, so the quote scan below is no longer what this cell measures`
+      ).toBeNull();
+      return elapsed;
+    };
+
+    let blewUpAt: number | null = null;
+    let blewUpMs = 0;
+    for (let quotes = 1; quotes <= MAX_QUOTES; quotes++) {
+      if (measure(quotes) <= STEP_BUDGET_MS) continue;
+      const confirmed = measure(quotes);
+      if (confirmed > STEP_BUDGET_MS) {
+        blewUpAt = quotes;
+        blewUpMs = confirmed;
+      }
+      break;
+    }
+
+    expect(
+      blewUpAt,
+      `the quote scan took ${blewUpMs.toFixed(0)}ms at ${blewUpAt} quotes, over a ${STEP_BUDGET_MS}ms ` +
+        `budget — its cost is no longer bounded by the quote count. That is what an anchor whose ` +
+        `alternatives can match the same text produces: a dot-star where the shipped form uses a ` +
+        `class that cannot cross a quote. The shipped form stays flat to ${MAX_QUOTES} quotes.`
+    ).toBeNull();
   });
 });
