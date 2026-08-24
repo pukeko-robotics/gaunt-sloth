@@ -529,8 +529,8 @@ export const RATER_NEGOTIATION_CONTEXT_GUIDANCE = [
  * outcome goes to the human instead, so *"MUST invite a response"* would be addressed to nobody.
  *
  * Turning it on therefore keys on {@link import('#src/config.js').isNegotiatingRung} and NOT on
- * whether a negotiation block exists. The two are independent by construction: a cleared transcript
- * (§5.3) produces a round-1 *context* that is still a round of a negotiation.
+ * whether a negotiation block exists. The two are independent by construction: an empty transcript
+ * produces a round-1 *context* that is still a round of a negotiation.
  *
  * It sits LAST in the system prompt, after {@link buildGrantedToolsGuidance}, because §5.2's list of
  * things a rejection may name ends with *a granted built-in that does the job* — a clause that reads
@@ -782,9 +782,9 @@ export interface RaterNegotiationRound {
  * prompt this module built before the negotiation existed.
  *
  * "Carrying nothing" is defined so a caller never has to choose a spelling: `undefined`, `{}`, an
- * empty or whitespace-only `justification`, and empty arrays are all the same round-1 context. §5.3
- * clears the transcript with the counter, so the state the runner holds after a reset is exactly
- * this, whichever way it spells it.
+ * empty or whitespace-only `justification`, and empty arrays are all the same round-1 context. That
+ * is the state the runner holds before its first rejection and again once a person has been
+ * reached, whichever way it spells it.
  *
  * Nothing here is bounded by the caller: the last-5 rule and the 1000-character truncation are
  * applied by {@link buildNegotiationContextBlock}, so a caller that hands over an entire
@@ -1158,9 +1158,9 @@ export function buildNegotiationContextBlock(
  *
  * **Round 1 is the prompt this function built before the negotiation existed, character for
  * character.** No negotiation, or one carrying nothing, adds no block and no guidance; a negotiated
- * round only ever APPENDS to both halves. §5.3 clears the transcript with the counter, so the rating
- * after a reset is a round-1 rating by construction rather than by the caller remembering to make
- * one.
+ * round only ever APPENDS to both halves. Which round a rating is is decided by the transcript the
+ * caller hands over ({@link import('./negotiation.js').ShellNegotiationState.contextFor}), so a
+ * round-1 rating is one by construction rather than by the caller remembering to make one.
  *
  * §4.3 defines the rated unit tool-generally (tool name + JSON arguments); `run_shell_command` is
  * the case whose argument is a command string, and it alone is additionally normalized and
@@ -1179,8 +1179,8 @@ export function buildRaterPrompt(
     /**
      * [[EXT-29]] (§5.1) — the negotiation so far, from round 2 onward. Absent or empty builds
      * exactly the round-1 prompt this function built before the negotiation existed, character for
-     * character, which is what makes §5.6's *"a cleared transcript means a round-1 context"* a
-     * property of this function rather than a discipline the caller has to keep.
+     * character, which is what makes *"an empty transcript means a round-1 context"* a property of
+     * this function rather than a discipline the caller has to keep.
      */
     negotiation?: RaterNegotiationContext;
     /**
@@ -1189,8 +1189,8 @@ export function buildRaterPrompt(
      *
      * **Independent of `negotiation` on purpose.** §5.1 decides what the rating may SEE; this
      * decides how a rejection must be WRITTEN, and the two diverge in exactly the round §5.6 cares
-     * most about — round 1 of a negotiation, and the round right after a §5.3 reset, where the
-     * context is empty and the rejection is still addressed to the agent.
+     * most about — round 1 of a negotiation, where the context is empty and the rejection is still
+     * addressed to the agent.
      *
      * It changes the SYSTEM prompt only. The user message is a function of the command and the
      * context alone, so a negotiation's round 1 has a byte-identical user prompt to an

@@ -309,13 +309,17 @@ export interface PendingToolInterrupt {
    * [[EXT-29]] §5.3 — **how many attempts the agent actually made**, counted since a human was last
    * involved rather than since the last approved call.
    *
-   * It is a separate number from `negotiationRounds.length` because an approved call clears the
-   * transcript, and a surface reading the array's length reports only the attempts that happened
-   * after the last one. On the escalation this was measured from, the agent proposed the same
-   * command five times, was refused every time, and the human was shown three — the two calls it
-   * made in between were `git stash` and `git status`, both approved, both erasing the rounds
-   * before them. Persistence is the single most decision-relevant fact this block carries, so
-   * under-reporting it by nearly half is not a cosmetic count.
+   * Persistence is the single most decision-relevant fact this block carries, and it is measured
+   * against a real under-report: on the escalation this comes from, the agent proposed the same
+   * command five times, was refused every time, and the human was shown three, because the two
+   * approved calls it made in between (`git stash`, `git status`) each erased the rounds before
+   * them. [[EXT-108]] removed that erasure, so the array and this count are now the same set as
+   * they leave the state machine.
+   *
+   * It stays a separate number for the reason that survives: a surface shows only the most recent
+   * rounds it has room for, so `negotiationRounds.length` is what fits on a screen and this is what
+   * the agent did. Sending both is what lets the renderer number the rounds it prints by their true
+   * attempt number instead of from one.
    *
    * Present exactly when {@link negotiationRounds} is, and never smaller than its length.
    */

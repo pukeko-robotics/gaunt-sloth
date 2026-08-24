@@ -1867,7 +1867,7 @@ describe('the one destructive floor (EXT-70 §4.7.2/§4.7.3)', () => {
  * asymmetrically*").
  *
  * The suite is built around one property the rest hangs off: **a negotiated prompt is a round-1
- * prompt plus an appendix**, in both halves. That makes §5.6's *"a cleared transcript means a
+ * prompt plus an appendix**, in both halves. That makes §5.6's *"an empty transcript means a
  * round-1 context"* checkable without a golden file, and it is the regression guard for every other
  * test in this file — all of which were written against the round-1 prompt.
  */
@@ -1906,8 +1906,9 @@ describe('[[EXT-29]] §5.1 — the negotiation the rater sees from round 2', () 
   /**
    * The regression guard the whole node rests on. A rating with no negotiation — or with one that
    * carries nothing, however the caller spells "nothing" — must build the prompt this module built
-   * before EXT-29 existed, character for character. §5.3 clears the transcript with the counter, so
-   * the rating right after a reset is exactly this case.
+   * before EXT-29 existed, character for character. The states that reach it are an untouched
+   * negotiation and one a human has just cleared: since [[EXT-108]] an approved call is not one of
+   * them, because the counter reset no longer takes the transcript with it.
    */
   describe('round 1 is byte-identical to a rating that has no negotiation at all', () => {
     const EMPTY: RaterNegotiationContext[] = [
@@ -2043,12 +2044,12 @@ describe('[[EXT-29]] §5.1 — the negotiation the rater sees from round 2', () 
             home: HOME,
             grantedTools,
             negotiable: true,
-            // The context a cleared transcript (§5.3) hands over — built by the thing that decides
-            // it, not asserted by this test.
+            // The context an EMPTY transcript hands over — built by the thing that decides it, not
+            // asserted by this test.
             negotiation: roundOneContext(),
           });
           // The half that must not move: §5.1's "round 1 sees the command alone" is a property of
-          // the user message, and `neg-02`'s post-reset round is exactly this prompt.
+          // the user message, and the first attempt of any case is exactly this prompt.
           expect(round1.user, `${command} user`).toBe(plain.user);
           // The half that must: §5.2's wording rules, appended and nothing else.
           expect(round1.system, `${command} system`).toBe(

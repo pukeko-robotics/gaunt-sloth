@@ -83,6 +83,12 @@ interface CorpusRound {
    */
   expect?: 'reject' | 'refuse' | 'approve' | 'escalate' | 'halt';
   reset?: string;
+  /**
+   * `neg-02`'s own declarations, kept so the shape of the fixture is readable here — and NOT
+   * asserted. [[EXT-108]] changed what an approved call does to the transcript, so both are stale;
+   * they are authored in project-takahe (`docs/gaunt-sloth-2.0/approvals-corpus.yaml`), which owns
+   * the correction.
+   */
   clears_transcript?: boolean;
   round_1_context?: boolean;
 }
@@ -144,9 +150,10 @@ interface DriveResult {
    * The reachability bound's count once the run has ended — the half of {@link
    * ShellNegotiationState.humanReached} that `noteProgress()` does NOT touch.
    *
-   * **It is the only field that tells those two apart**, which is exactly why it is read: both
-   * clear the transcript and the consecutive count, so a halt calling the wrong one is invisible in
-   * everything else this harness collects.
+   * Read together with {@link transcriptAfterRun} it is what tells the two calls apart. Since
+   * [[EXT-108]] the transcript separates them too, but this stays the sharper observable: the
+   * consecutive count they share is invisible to everything else this harness collects, and a halt
+   * calling the wrong one leaves this field standing at the rejections it should have spent.
    */
   sinceHumanAfterRun: number;
 }
@@ -381,20 +388,31 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
     });
 
     /**
-     * `neg-02` — **the reset, and the thing the spec warns will pass any obvious test.** A reset
-     * clears the counter AND the transcript, so the rating right after it is a round-1 context: the
-     * command alone, no transcript *and no user messages*.
+     * `neg-02` — **the convergence case, re-read after [[EXT-108]].** The approved call between the
+     * two rejections resets §5.3's counter and leaves the rounds standing, so the retry after it is
+     * rated as a round 2: the attempt it is narrowing, and the reply that told it how, are both in
+     * view. Under the old reset the retry was rated blind, which is what made the rater re-advise a
+     * thing the agent had already done.
+     *
+     * **The corpus case still declares the behaviour this node changed** — its reset round carries
+     * `clears_transcript` and the round after it carries `round_1_context`. Those flags are
+     * authored in project-takahe (`docs/gaunt-sloth-2.0/approvals-corpus.yaml`) and this fixture is
+     * GENERATED from them under a content hash, so they are not this repo's to edit and are not
+     * asserted here either: a guard on them would fire the day that repo correctly updates the
+     * case. What this test takes from the case is its SHAPE, which is the measured loop.
+     *
+     * **Both halves are in this one run on purpose.** `ratings[0]` is a genuinely fresh negotiation
+     * and must stay blind; `ratings[2]` is the retry after a compliance call and must not. If those
+     * two ever collapse into one case, in either direction, this goes red.
      */
-    it('neg-02-converge: the rating after a reset is a ROUND-1 CONTEXT, not just a reset counter', async () => {
+    it('neg-02-converge: the retry after an approved call is a ROUND-2 context, and the first rating is still blind', async () => {
       const negCase = caseById('neg-02-converge');
-      const [r1, resetRound, r3, r4] = negCase.rounds;
-      expect(resetRound.clears_transcript, 'the fixture still asks for this').toBe(true);
-      expect(r3.round_1_context, 'the fixture still asks for this').toBe(true);
+      const [r1, , r3, r4] = negCase.rounds;
 
       const { results, ratings } = await drive({
         calls: [
           { command: r1.command! },
-          // The reset the fixture describes: a successful intervening tool call.
+          // The approved call the fixture describes: a successful intervening tool call.
           { command: 'git log --oneline -5' },
           { command: r3.command! },
           { command: r4.command! },
@@ -406,26 +424,28 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
       expect(results).toEqual(['reject', 'approve', 'reject', 'approve']);
       expect(ratings).toHaveLength(4);
 
-      // Round 1 of the FIRST negotiation: no context at all.
-      expect(ratings[0].user).not.toContain('NEGOTIATION CONTEXT');
-      // …and the rating right after the reset is the same shape. **This is the assertion the spec
-      // asks for**: an implementation that cleared the counter alone would carry the transcript AND
-      // the user messages into this prompt and still pass every count-based test.
-      expect(ratings[2].user, 'no transcript after the reset').not.toContain(
-        '<negotiation_so_far>'
-      );
-      expect(ratings[2].user, 'no user messages either').not.toContain('<user_messages>');
-      expect(ratings[2].user).not.toContain('NEGOTIATION CONTEXT');
-      // The user prompt is byte-identical to what a first-ever rating of that command would build.
-      expect(ratings[2].user).toBe(
+      // Round 1 of the negotiation, and the only blind rating in the run: byte-identical to what a
+      // first-ever rating of that command builds, which is the strongest form §5.1's "the command
+      // alone" can be asserted in.
+      expect(ratings[0].user).toBe(
         [
           'Evaluate the following shell command and return a structured safety verdict.',
           '',
           '<command_to_evaluate>',
-          r3.command,
+          r1.command,
           '</command_to_evaluate>',
         ].join('\n')
       );
+      expect(ratings[0].user).not.toContain('NEGOTIATION CONTEXT');
+
+      // The retry after the approved call. The argument it is answering is in front of the rater —
+      // this is the whole of [[EXT-108]], read off the prompt that was actually sent.
+      expect(ratings[2].user, 'the transcript survives the approved call').toContain(
+        '<negotiation_so_far>'
+      );
+      expect(ratings[2].user, 'including the attempt this one narrows').toContain(r1.command!);
+      expect(ratings[2].user, 'and the reply that told it how').toContain('<user_messages>');
+      expect(ratings[2].user).toContain('just the last two');
     });
 
     /**
@@ -527,6 +547,67 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
       });
       expect(secondRound.ratings[1].user).toContain('<justification>');
       expect(secondRound.ratings[1].user).toContain('the build output only');
+    });
+
+    /**
+     * [[EXT-108]] — **THE acceptance: doing what the rater asked must not blind the retry.**
+     *
+     * Measured loop: the rater refused `git reset --hard` advising a stash first, the agent
+     * stashed, and the rater then advised a stash twice more. The stash was an approved call, which
+     * cleared the transcript, and a cleared transcript IS the round-1 case — so the retry was rated
+     * with no transcript, no mandate and no argument, and the rater could not know it had been
+     * obeyed. The counter reset that bounds a *stalled* negotiation now happens without that.
+     *
+     * **Two runs, because the second is the case that must NOT move.** Same command, same
+     * justification, same mandate, rated as the first thing that happens — §5.1's round 1, where
+     * the one channel able to LOWER an outcome stays shut. The pair fails whichever way the two
+     * collapse: a retry rated blind, or a fresh attempt rated with its own argument in view.
+     */
+    it('a retry after a compliance call is round 2 and its argument is read; a genuinely fresh attempt is still rated blind', async () => {
+      const RETRY = 'git reset --hard HEAD~2';
+      const ARGUMENT = 'stashed first, as you asked — this drops the last two commits only';
+      const MANDATE = 'wipe today’s commits so I can redo that bit properly';
+
+      const complied = await drive({
+        calls: [
+          { command: 'git reset --hard origin/main' },
+          // The compliance call: what the rejection told it to do, and an approved call.
+          { command: 'git stash' },
+          { command: RETRY, justification: ARGUMENT },
+        ],
+        script: ['destructive', 'safe', 'destructive'],
+        human: 'reject',
+        userMessages: [MANDATE],
+      });
+      expect(complied.results).toEqual(['reject', 'approve', 'reject']);
+      const retry = complied.ratings[2].user;
+      expect(retry, 'the rejection it is answering').toContain('<negotiation_so_far>');
+      expect(retry).toContain('git reset --hard origin/main');
+      expect(retry, 'the argument it made for this command').toContain('<justification>');
+      expect(retry).toContain(ARGUMENT);
+      expect(retry, 'and the mandate it is claiming').toContain('<user_messages>');
+      expect(retry).toContain(MANDATE);
+
+      // The control: the same command, argument and mandate, with nothing refused before them.
+      const fresh = await drive({
+        calls: [{ command: RETRY, justification: ARGUMENT }],
+        script: ['destructive'],
+        human: 'reject',
+        userMessages: [MANDATE],
+      });
+      const plain = await drive({
+        calls: [{ command: RETRY }],
+        script: ['destructive'],
+        human: 'reject',
+      });
+      // Byte-identical to the same command rated with nothing attached at all — the property §5.1
+      // needs, which an absent-tag assertion cannot give.
+      expect(fresh.ratings[0].user).toBe(plain.ratings[0].user);
+      expect(fresh.ratings[0].user).not.toContain(ARGUMENT);
+      expect(fresh.ratings[0].user).not.toContain(MANDATE);
+      // …and the two remain two: one call, two histories, two prompts. If these ever come out the
+      // same, one of the halves above has stopped being asserted by anything.
+      expect(retry).not.toBe(fresh.ratings[0].user);
     });
 
     /**
@@ -1065,7 +1146,7 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
   // The two bounds.
   // ────────────────────────────────────────────────────────────────────────────────────────────
 
-  describe('bound one — §5.3, three CONSECUTIVE rejections, sharing one lifetime with the transcript', () => {
+  describe('bound one — §5.3, three CONSECUTIVE rejections, on a shorter lifetime than the transcript', () => {
     it('escalates on exactly the third consecutive rejection, never the second or fourth', async () => {
       const { results, prompts } = await drive({
         calls: Array.from({ length: MAX_CONSECUTIVE_REJECTIONS }, () => ({
@@ -1097,29 +1178,33 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
     });
 
     /**
-     * **The transcript's lifetime, asserted as content rather than as a count.** The rating after a
-     * reset must see nothing; the rating after a rejection must see the round before it. A change
-     * that cleared the counter alone passes the test above and fails this one.
+     * **The transcript's lifetime, asserted as content rather than as a count** ([[EXT-108]]). The
+     * rating before any rejection must see nothing; every rating after one must see the rounds
+     * before it, *including across the approved call that resets the counter*. The two halves are
+     * in one fixture because the pair is the claim: a change that cleared the rounds again would
+     * still pass the first assertion and fail the last.
      */
-    it('the reset clears the TRANSCRIPT with the counter, and a rejection does not', async () => {
+    it('the reset spares the TRANSCRIPT — only the first rating of all sees nothing', async () => {
       const { ratings } = await drive({
         calls: [
           { command: 'rm -rf ./one' },
           { command: 'rm -rf ./two' }, // after a rejection: the transcript is carried
-          { command: 'git status' }, // approved → reset
-          { command: 'rm -rf ./three' }, // after a reset: nothing is carried
+          { command: 'git status' }, // approved → the consecutive counter resets
+          { command: 'rm -rf ./three' }, // after that reset: the argument so far is STILL carried
         ],
         script: ['destructive', 'destructive', 'safe', 'destructive'],
         human: 'reject',
       });
-      expect(ratings[0].user).not.toContain('<negotiation_so_far>');
+      expect(ratings[0].user, 'the first rating of all').not.toContain('<negotiation_so_far>');
       expect(ratings[1].user, 'a rejection carries the round before it').toContain(
         '<negotiation_so_far>'
       );
       expect(ratings[1].user).toContain('rm -rf ./one');
-      expect(ratings[3].user, 'a reset clears it').not.toContain('<negotiation_so_far>');
-      expect(ratings[3].user).not.toContain('rm -rf ./one');
-      expect(ratings[3].user).not.toContain('rm -rf ./two');
+      expect(ratings[3].user, 'and an approved call does not erase them').toContain(
+        '<negotiation_so_far>'
+      );
+      expect(ratings[3].user).toContain('rm -rf ./one');
+      expect(ratings[3].user).toContain('rm -rf ./two');
     });
   });
 
@@ -1151,12 +1236,18 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
         .slice(0, firstEscalation + 1)
         .filter((r) => r === 'reject' || r === 'escalate').length;
       expect(rejectionsBefore).toBe(MAX_REJECTIONS_BEFORE_HUMAN);
-      // **What the human is SHOWN is the current negotiation, not the whole history**, and that
-      // follows from §5.3 rather than from a display choice: a reset *ends* the negotiation and
-      // clears the transcript with the counter, so the eight rejections separated by approvals are
-      // eight negotiations of one round each. The prompt therefore carries exactly the round being
-      // ruled on. Pinned because it is the honest consequence and someone will read it as a bug.
-      expect(prompts[0].negotiationRounds).toHaveLength(1);
+      // **[[EXT-108]] — what the human is SHOWN is every round since they were last involved**,
+      // approvals in between or not, because reaching a person is now the only thing that clears
+      // the transcript. This run is therefore also the longest transcript the design can produce:
+      // one round per rejection counted against the bound that ended it. Pinned because the length
+      // is a consequence of the state change rather than a rendering choice — what a screen does
+      // with it is `NEGOTIATION_MAX_ROUNDS_SHOWN`, and this is what the screen is handed.
+      expect(prompts[0].negotiationRounds).toHaveLength(MAX_REJECTIONS_BEFORE_HUMAN);
+      // …and the first of them is from before the first approval — the round the old clearing
+      // destroyed. The human is shown the argument, not its last instalment.
+      expect(prompts[0].negotiationRounds?.[0].command).toBe('rm -rf ./build-0');
+      // The count and the rounds are now the same set, so the heading over them cannot disagree.
+      expect(prompts[0].negotiationAttempts).toBe(MAX_REJECTIONS_BEFORE_HUMAN);
     });
 
     /**
@@ -1526,28 +1617,29 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
    */
   describe('[[TUI-C75]] — the labels the human reads over the rounds', () => {
     /**
-     * **Built the way the defect was found: an APPROVED call BETWEEN rejections.**
+     * **Built the way the defect was found: an APPROVED call BETWEEN rejections** — the captured
+     * session stashed, on the rater's own advice, and then proposed the reset again.
      *
-     * A fixture of three uninterrupted rejections passes on the old renderer and proves nothing —
-     * it is precisely the fixture that let five attempts render as three unnoticed. §5.3 clears the
-     * transcript on an approved call, so the erasure only exists when something was approved
-     * mid-argument, which is what the captured session did (it stashed, on the rater's own advice).
+     * A fixture of uninterrupted rejections cannot see any of this: it is the same before and after
+     * [[EXT-108]], and it is precisely the fixture that let five attempts render as three
+     * unnoticed. This one carries both nodes' claims at once, because they are the same run.
      *
-     * The same run settles the node's one DERIVED finding, and settles it against the real rating
-     * calls rather than by reading `contextFor`: the justification rendered under the first
-     * surviving round never reached the rater, because a cleared transcript IS a round-1 context.
-     * The control is the next round, whose justification did reach it — so this is a withholding
-     * with a marker on it, not a field that is never sent.
+     * - **[[EXT-108]]** — the compliance call resets §5.3's counter and erases nothing, so the
+     *   retry after it is rated with the argument in view. Asserted on the prompt that was actually
+     *   sent, not derived from `contextFor`.
+     * - **[[TUI-C75]]** — the labels over those rounds. The first round of the transcript is still
+     *   the one §5.1 rated on the command alone, so its marker is still the one that must appear,
+     *   and it must appear exactly once.
      */
-    it('reports the attempts an approved call erased, and marks the round rated on the command alone', async () => {
+    it('renders every round since the human, numbered as the attempts they were, and marks the one rated on the command alone', async () => {
       const { prompts, ratings, results } = await drive({
         calls: [
           { command: 'git reset --hard' },
-          // Approved, on the rater's own advice — and it takes the argument so far with it.
+          // Approved, on the rater's own advice — and the argument so far survives it.
           { command: 'git stash' },
-          { command: 'git reset --hard', justification: 'JUSTIFICATION-ROUND-ONE' },
-          { command: 'git reset --hard HEAD', justification: 'JUSTIFICATION-ROUND-TWO' },
-          { command: 'git reset --hard', justification: 'JUSTIFICATION-ROUND-THREE' },
+          { command: 'git reset --hard', justification: 'JUSTIFICATION-ROUND-TWO' },
+          { command: 'git reset --hard HEAD', justification: 'JUSTIFICATION-ROUND-THREE' },
+          { command: 'git reset --hard', justification: 'JUSTIFICATION-ROUND-FOUR' },
         ],
         script: ['destructive', 'safe', 'destructive', 'destructive', 'destructive'],
         human: 'reject',
@@ -1555,20 +1647,20 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
       });
       expect(results).toEqual(['reject', 'approve', 'reject', 'reject', 'escalate']);
       expect(prompts).toHaveLength(1);
-      // The data is intact and truncated exactly as §5.3 says: four refused attempts, three rounds.
-      expect(prompts[0].negotiationRounds).toHaveLength(3);
+      // Four refused attempts and four rounds: nothing was erased, so the two numbers agree.
+      expect(prompts[0].negotiationRounds).toHaveLength(4);
       expect(prompts[0].negotiationAttempts).toBe(4);
 
-      // The rater never received the first surviving round's justification — MEASURED here, on the
-      // prompt that was actually sent, not derived from the source.
+      // **The retry after the compliance call was rated with its own argument in front of it.**
+      // This is the assertion the old behaviour failed, and it is read off the sent prompt.
       expect(ratings).toHaveLength(5);
-      expect(ratings[2].user).not.toContain('JUSTIFICATION-ROUND-ONE');
-      expect(ratings[2].user).not.toContain('NEGOTIATION CONTEXT');
-      expect(ratings[2].user, 'nor the user’s own words').not.toContain('<user_messages>');
-      // The control: the NEXT round's justification did reach it, so the round-1 rule is a delay
-      // and the marker below is about which rounds it applied to.
-      expect(ratings[3].user).toContain('JUSTIFICATION-ROUND-TWO');
-      expect(ratings[3].user).toContain('<user_messages>');
+      expect(ratings[2].user).toContain('JUSTIFICATION-ROUND-TWO');
+      expect(ratings[2].user).toContain('NEGOTIATION CONTEXT');
+      expect(ratings[2].user, 'and the user’s own words with it').toContain('<user_messages>');
+      // The control at the other end of the run: the FIRST rating saw none of it, so this is a
+      // round-1 rule that still exists rather than a channel that is now always open.
+      expect(ratings[0].user).not.toContain('NEGOTIATION CONTEXT');
+      expect(ratings[0].user).not.toContain('<user_messages>');
 
       const rendered = renderNegotiationRows(prompts[0].negotiationRounds!, {
         ...(prompts[0].negotiationAttempts !== undefined
@@ -1576,24 +1668,26 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
           : {}),
       }).map((row) => row.text);
 
-      // The heading counts the attempts, not the survivors, and no longer calls them all prior.
-      expect(rendered[0]).toBe('The agent argued with the auto-rater 4 times; the last 3 of them:');
+      // The heading counts the exchange, and no longer calls them all prior.
+      expect(rendered[0]).toBe('The agent argued with the auto-rater 4 times:');
       expect(rendered.join('\n')).not.toContain('before this');
       // The rounds are numbered as the attempts they were, so the heading's count and the rounds
-      // beneath it describe ONE exchange.
-      expect(rendered).toContain('  Round 2: git reset --hard');
+      // beneath it describe ONE exchange — including the round from before the approved call.
+      expect(rendered).toContain('  Round 1: git reset --hard');
       expect(rendered).toContain('  Round 3: git reset --hard HEAD');
       // The pending rating is on the transcript by design (§5.6) and is named as such, so the
       // command being decided appears once as the thing being decided rather than twice unexplained.
       expect(rendered).toContain('  Round 4 (this request): git reset --hard');
       expect(rendered.filter((row) => row.includes('(this request)'))).toHaveLength(1);
-      // The withheld justification is marked; the two that were admitted are rendered plainly.
+      // Round 1 argued nothing, and every justification below it reached the rater — so none of
+      // them is marked, and a marker that appeared on one would be false.
       expect(rendered.filter((row) => row.includes('agent justified'))).toEqual([
-        '    agent justified (not shown to the rater): JUSTIFICATION-ROUND-ONE',
         '    agent justified: JUSTIFICATION-ROUND-TWO',
         '    agent justified: JUSTIFICATION-ROUND-THREE',
+        '    agent justified: JUSTIFICATION-ROUND-FOUR',
       ]);
-      // ...and the answer to it says what it answered, so it cannot be read as brushing one aside.
+      // ...and the round that WAS rated on the command alone still says so, exactly once: the
+      // transcript's first round is that round, and an approved call no longer moves it.
       expect(rendered.filter((row) => row.includes('rater answered'))[0]).toContain(
         'rater answered (on the command alone):'
       );
@@ -1778,13 +1872,17 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
       expect(MAX_REJECTIONS_BEFORE_HUMAN).toBe(MAX_CONSECUTIVE_REJECTIONS * 3);
     });
 
-    it('noteProgress clears the transcript AND the counter, but NOT the reachability bound', () => {
+    it('noteProgress resets the counter, KEEPS the transcript, and does not refill the reachability bound', () => {
       const state = new ShellNegotiationState();
       expect(state.recordRejection(round('a'))).toBe('reject');
       expect(state.recordRejection(round('b'))).toBe('reject');
       state.noteProgress();
-      expect(state.transcript(), 'transcript cleared').toEqual([]);
-      // The consecutive counter restarted…
+      // [[EXT-108]] — the rounds stand, so the retry after this still answers a rejection.
+      expect(
+        state.transcript().map((r) => r.command),
+        'the argument survives'
+      ).toEqual(['a', 'b']);
+      // The consecutive counter restarted: two more rejections are rounds, not an escalation…
       expect(state.recordRejection(round('c'))).toBe('reject');
       expect(state.recordRejection(round('d'))).toBe('reject');
       // …but the reachability bound kept every one of the four, so it fires at nine regardless.
@@ -1794,6 +1892,32 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
       }
       state.noteProgress();
       expect(state.recordRejection(round('last')), 'the ninth rejection').toBe('escalate');
+      // **And that same bound is what bounds the TRANSCRIPT**, which is why keeping the rounds
+      // needs no cap of its own: nine rejections since a person is nine rounds, and the escalation
+      // hands them to that person and clears them.
+      expect(state.transcript()).toHaveLength(MAX_REJECTIONS_BEFORE_HUMAN);
+    });
+
+    /**
+     * **The invariant [[EXT-108]] created, and the reason the renderer's `attempts` parameter is
+     * now defence rather than a live discrepancy:** the rounds a rating can see and the rejections
+     * counted against the reachability bound are one set. `recordRejection` moves both, nothing
+     * moves one alone, and only `humanReached` clears either.
+     */
+    it('the transcript and the rejections-since-human count are the same set, through every event', () => {
+      const state = new ShellNegotiationState();
+      const sinceHuman = () => state.counters().rejectionsSinceHuman;
+      expect(state.transcript()).toHaveLength(sinceHuman());
+      state.recordRejection(round('a'));
+      expect(state.transcript()).toHaveLength(sinceHuman());
+      state.noteProgress();
+      expect(state.transcript(), 'an approved call moves neither').toHaveLength(sinceHuman());
+      state.recordRejection(round('b'));
+      state.recordRejection(round('c'));
+      expect(state.transcript()).toHaveLength(sinceHuman());
+      state.humanReached();
+      expect(state.transcript(), 'reaching a person clears both').toHaveLength(sinceHuman());
+      expect(sinceHuman()).toBe(0);
     });
 
     it('humanReached clears BOTH bounds, so the budget really is refilled', () => {
@@ -1818,19 +1942,30 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
       expect(state.transcript().map((r) => r.command)).toEqual(['a', 'b', 'c']);
     });
 
-    it('the context it hands over is a round-1 context whenever the transcript is clear', () => {
+    it('a round-1 context is what an EMPTY transcript hands over — before the first rejection, and again after a human', () => {
       const state = new ShellNegotiationState();
       state.noteUserMessages(['wipe today’s commits', '   ', 'just the last two']);
+      // §5.1 — **round 1 sees the command ALONE**: no rounds, no argument, no user messages.
+      expect(state.contextFor('why not').priorRounds).toEqual([]);
+      expect(state.contextFor('why not').justification).toBeUndefined();
+      expect(state.contextFor('why not').userMessages).toEqual([]);
       state.recordRejection(round('a'));
       expect(state.contextFor('why not').priorRounds).toHaveLength(1);
+      // [[EXT-108]] — an approved call does NOT put the negotiation back to round 1. It is the
+      // agent doing what the rejection asked, and the rating that follows has to be able to see it.
       state.noteProgress();
-      expect(state.contextFor().priorRounds).toEqual([]);
-      // §5.1 — **round 1 sees the command ALONE**, so a round-1 context carries no user messages
-      // either. This is the half of the reset that a counter-only implementation gets wrong in the
-      // other direction: it is not enough to clear the transcript if the messages still ride along.
-      expect(state.contextFor().userMessages).toEqual([]);
-      // …and they are not DELETED by the reset, only withheld from a round-1 context: the reply
-      // that narrows what the agent proposes has to be in view for the round-2 rating that follows.
+      expect(state.contextFor().priorRounds).toHaveLength(1);
+      expect(state.contextFor().userMessages).toEqual([
+        'wipe today’s commits',
+        'just the last two',
+      ]);
+      // Reaching a person does put it back: the exchange is over, not paused, so the next rating
+      // starts from the command alone again.
+      state.humanReached();
+      expect(state.contextFor('why not').priorRounds).toEqual([]);
+      expect(state.contextFor('why not').justification).toBeUndefined();
+      expect(state.contextFor('why not').userMessages).toEqual([]);
+      // …and the messages were withheld, not DELETED: the next rejection puts them back in view.
       state.recordRejection(round('b'));
       expect(state.contextFor().userMessages).toEqual([
         'wipe today’s commits',
@@ -1886,16 +2021,28 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
     /**
      * §5.1 — **a volunteered justification is round-2 context, exactly as the user messages are.**
      * It is the one channel the design allows to LOWER an outcome, so admitting it at round 1 would
-     * open that channel before any rejection has happened, pre-emptively. Keying it on the transcript
-     * is what makes §5.1's *"round 1 sees the command alone"* and §5.6's post-reset rule one fact.
+     * open that channel before any rejection has happened, pre-emptively.
+     *
+     * **[[EXT-108]] is entirely a question about WHEN this channel opens, so this is the assertion
+     * that must not be allowed to blur.** The two cases it separates are the compliance retry — the
+     * agent did what the rater asked, so its next attempt answers a live rejection — and a
+     * genuinely fresh negotiation, where nothing has been rejected and the channel stays shut. Both
+     * are here, one after the other, and they fail in opposite directions.
      */
-    it('withholds a volunteered justification from a round-1 context, and admits it at round 2', () => {
+    it('withholds a volunteered justification until a rejection exists — an approved call does not shut it, reaching a human does', () => {
       const state = new ShellNegotiationState();
+      // Fresh: nothing has been refused, so there is nothing for an argument to answer.
       expect(state.contextFor('let me explain').justification).toBeUndefined();
       state.recordRejection(round('a'));
       expect(state.contextFor('let me explain').justification).toBe('let me explain');
-      // …and a reset puts it back out of view, because a cleared transcript IS a round-1 context.
+      // The compliance call. The rejection it was made in response to is still the live one, so the
+      // retry is still round 2 — under the old reset this line read `toBeUndefined()`, and that is
+      // the whole defect: complying erased the record of the advice being complied with.
       state.noteProgress();
+      expect(state.contextFor('let me explain').justification).toBe('let me explain');
+      // …and the control that keeps this from being "always admitted": a human ended the exchange,
+      // so the next attempt is a first attempt and is rated on the command alone.
+      state.humanReached();
       expect(state.contextFor('let me explain').justification).toBeUndefined();
     });
   });

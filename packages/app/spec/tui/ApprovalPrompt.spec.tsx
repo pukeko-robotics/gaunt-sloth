@@ -239,23 +239,26 @@ describe('tui <ApprovalPrompt>', () => {
   });
 
   /**
-   * [[TUI-C75]] — **the count on the screen is the attempts made, not the rounds that survived**,
+   * [[TUI-C75]] — **the count on the screen is the attempts made, not the rounds that fit on it**,
    * and this is the surface the node was filed from.
    *
-   * §5.3 clears the transcript on an approved call, so a prompt that counted the array it was
-   * handed reports the attempts since the last *approval* rather than since the last *human*. In
-   * the captured session that turned five refused attempts at the same command into a screen
-   * saying three, with the two erased ones invisible — under-reporting persistence, which the
+   * A prompt that counts the array it was handed reports the rounds it has room to draw rather
+   * than the attempts the agent made. In the captured session the gap came from §5.3 clearing the
+   * transcript on an approved call: five refused attempts at the same command reached a screen
+   * saying three, the two erased ones invisible — under-reporting persistence, which the
    * renderer's own docblock calls the most decision-relevant fact this block carries, by nearly
-   * half and in the direction of approving.
+   * half and in the direction of approving. [[EXT-108]] removed that erasure; the renderer's own
+   * screen slice still opens the same gap, in the same direction, past a handful of rounds.
    *
    * **The fixture has to make the two numbers DIFFER, and that is the whole point of this case.**
+   * The runner can no longer hand over a short array with a high count, so the numbers below are
+   * synthetic on purpose — which is what keeps this able to fail.
    * Every other negotiation fixture here passes three rounds with a matching count or none at all,
    * so the renderer's fallback to `rounds.length` draws the identical screen: delete the `attempts`
    * pass-through in the component and they all stay green while the shipped defect is back. That is
    * this node's own defect class — a test that cannot fail on the thing it names.
    */
-  it('says how many times the agent tried, not how many rounds an approved call left behind', () => {
+  it('says how many times the agent tried, not how many rounds it was handed to draw', () => {
     const { lastFrame, unmount } = render(
       <ApprovalPrompt
         pending={{
@@ -268,7 +271,7 @@ describe('tui <ApprovalPrompt>', () => {
             outcome: 'destructive' as const,
             reason: `answer ${n}`,
           })),
-          // Five refused attempts; three survived the resets, which is what the prompt is handed.
+          // Five refused attempts, three rounds handed to this screen to draw.
           negotiationAttempts: 5,
         }}
       />

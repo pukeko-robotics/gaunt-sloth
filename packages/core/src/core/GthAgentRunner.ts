@@ -1545,8 +1545,8 @@ export class GthAgentRunner {
           // sees this state again — which is not the same as it being unobservable**, and the
           // difference decides whether the line is pinned. `neg-04d` asserts both halves through
           // the spec harness's private-state cast: the cleared transcript, and `sinceHuman` back at
-          // zero. That second one is what distinguishes this call from `noteProgress()`, which
-          // clears the transcript and the consecutive count and deliberately leaves the
+          // zero. Since [[EXT-108]] both halves distinguish this call from `noteProgress()`, which
+          // resets the consecutive count alone and deliberately leaves the rounds and the
           // reachability bound standing.
           this.negotiation.humanReached();
           // §6.1 — the banner, when an interactive surface wired one, and the halt otherwise. It
@@ -1625,11 +1625,12 @@ export class GthAgentRunner {
     // recorder having failed, which is the opposite of what happened.
     record.stage ??= 'unrated-rung';
     const negotiationRounds: readonly RaterNegotiationRound[] = this.negotiation.transcript();
-    // §5.3 — **the count the human is given, and it is NOT the transcript's length.** An approved
-    // call clears the transcript, so the rounds above are the attempts since the last approval
-    // while the fact the reader is weighing is how hard the agent pushed since the last person:
-    // the agent that stashed between refusals had five refused attempts and three surviving
-    // rounds. Read HERE, one line before `humanReached()` spends it — after, it is zero.
+    // §5.3 — **the count the human is given: how hard the agent pushed since the last person.**
+    // [[EXT-108]] brought it into agreement with the transcript's length, because an approved call
+    // now erases no rounds and reaching a person clears both together. It is still passed rather
+    // than left to the renderer's fallback: a screen too small for every round prints a slice, and
+    // this is the number the heading over that slice has to carry. Read HERE, one line before
+    // `humanReached()` spends it — after, it is zero.
     const negotiationAttempts = this.negotiation.counters().rejectionsSinceHuman;
     // Reaching a person ends the negotiation (§5.3) and is the ONE thing that clears the
     // reachability bound: an escalation the human is about to answer is exactly the event that

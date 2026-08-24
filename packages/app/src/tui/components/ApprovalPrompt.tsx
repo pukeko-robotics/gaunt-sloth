@@ -127,11 +127,13 @@ export function ApprovalPrompt({ pending }: { pending: PendingToolInterrupt }): 
   // which is the forgery the framing exists to prevent, reached through the one block that was not
   // framed.
   //
-  // [[TUI-C75]] — `attempts` is passed because the rounds are not the whole count: an approved call
-  // clears the transcript (§5.3), so a block that counted the array would tell the human the agent
-  // argued three times where it argued five. This prompt cannot scroll and nothing else on it can
-  // give up rows, so the renderer states that count in the heading it already draws and bounds each
-  // round's rows rather than adding any.
+  // [[TUI-C75]] — `attempts` is passed because the rounds this block PRINTS are not the whole
+  // count: the renderer shows only the most recent ones that fit, so a heading counting what it
+  // drew would tell the human the agent argued three times where it argued nine. (Until
+  // [[EXT-108]] an approved call erased rounds too, which is the under-report this was measured
+  // from; the screen slice is the half that remains.) This prompt cannot scroll and nothing else
+  // on it can give up rows, so the renderer states that count in the heading it already draws and
+  // bounds each round's rows rather than adding any.
   const negotiation = renderNegotiationRows(pending.negotiationRounds ?? [], {
     width,
     ...(pending.negotiationAttempts !== undefined ? { attempts: pending.negotiationAttempts } : {}),

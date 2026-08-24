@@ -268,9 +268,11 @@ export async function createInteractiveSession(
       // survives a monochrome terminal. The rows are bound to the terminal width for the same reason
       // the command is: a long justification left to the terminal's own wrap continues at column 0.
       //
-      // [[TUI-C75]] — the count comes from `negotiationAttempts`, not from the array: §5.3 clears
-      // the transcript on an approved call, so the rounds that survive to here are the attempts
-      // since the last approval and not the attempts the human is being asked to weigh.
+      // [[TUI-C75]] — the count comes from `negotiationAttempts`, not from the array. Since
+      // [[EXT-108]] the two are the same set at this call site, because only reaching a person
+      // empties the transcript and that also zeroes the count. Passing it stays load-bearing
+      // anyway: the renderer prints only the last few rounds, and the count is what stops the
+      // heading claiming less argument than the agent actually made.
       for (const row of renderNegotiationRows(pending.negotiationRounds ?? [], {
         width: frameWidth,
         ...(pending.negotiationAttempts !== undefined

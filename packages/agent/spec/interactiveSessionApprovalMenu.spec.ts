@@ -382,21 +382,20 @@ describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity
   });
 
   /**
-   * [[TUI-C75]] — **the count on the screen is the attempts made, not the rounds that survived**,
-   * and this surface is where that claim reaches a person.
+   * [[TUI-C75]] — **the count on the screen is the attempts made, not the rounds it prints**, and
+   * this surface is where that claim reaches a person.
    *
-   * §5.3 clears the transcript on an approved call, so a surface that counted the array it was
-   * handed reports the attempts since the last *approval* rather than since the last *human*: the
-   * measured escalation refused the same command five times, two approved calls erased the rounds
-   * before them, and the human was told three.
+   * A screen shows at most `NEGOTIATION_MAX_ROUNDS_SHOWN` rounds however long the argument was, and
+   * since [[EXT-108]] an argument reaching a person can carry every rejection since the last one —
+   * so the number in the heading has to come from the caller rather than from the array being
+   * printed, and the rounds under it have to be numbered as the attempts they were.
    *
-   * **The fixture has to make the two numbers DIFFER**, which is the whole of this case. Every
-   * other negotiation fixture on this surface passes three rounds and either no count or a matching
-   * one, so the renderer's fallback to `rounds.length` produces the identical screen and deleting
-   * the pass-through below leaves them all green — the node's own defect class, a test that cannot
-   * fail on the thing it names, reproduced on the surface the node exists to fix.
+   * **The fixture has to make the two numbers DIFFER**, which is the whole of this case. A fixture
+   * whose count matches its rounds produces the identical screen through the renderer's fallback to
+   * `rounds.length`, so deleting the pass-through below would leave it green — a test that cannot
+   * fail on the thing it names, on the surface that names it.
    */
-  it('reports the attempts the agent made, not the rounds an approved call left behind', async () => {
+  it('reports the attempts the agent made, not the rounds it was handed', async () => {
     await startSession();
     await ask('n', {
       name: 'run_shell_command',
@@ -407,7 +406,8 @@ describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity
         outcome: 'destructive',
         reason: `answer ${n}`,
       })),
-      // Five refused attempts; three survived the resets, which is what the surface is handed.
+      // Five refused attempts against three rounds to print — the divergence the pass-through
+      // exists for, declared here rather than produced, so the assertion below can fail.
       negotiationAttempts: 5,
     });
     expect(linesInTone('notice')).toContain(

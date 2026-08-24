@@ -16,12 +16,17 @@
  *
  * ## The lifetimes, which are the whole design
  *
- * - **The transcript and the consecutive counter have ONE lifetime, by construction** (§5.3). A
- *   successful intervening tool call resets the counter *and clears the transcript with it*, so the
- *   rating right after a reset is a round-1 context — the command alone, no transcript and no user
- *   messages. They are one field's worth of state precisely because the spec warns that an
- *   implementation clearing the counter alone *"looks correct and passes any obvious test"* while
- *   letting justification text accumulate across unbounded attempts.
+ * - **The transcript outlives the consecutive counter** ([[EXT-108]]). A successful intervening
+ *   tool call resets §5.3's counter and leaves the rounds standing, so the retry after it is rated
+ *   as round 2 with the argument so far in view. §5.3's reset bounds a *stalled* negotiation, and a
+ *   command run *because the rater asked for it* is that argument continuing rather than a new one:
+ *   clearing the rounds there made the agent's compliance erase the record of the advice it was
+ *   complying with, and demoted the retry to a round-1 rating whose explanation §5.1 withholds.
+ *   The spec's warning about justification text accumulating across unbounded attempts is answered
+ *   by the reachability bound rather than by the reset — the attempts are not unbounded.
+ * - **Only reaching a person clears the transcript** ({@link ShellNegotiationState.humanReached}),
+ *   which is also the only thing that clears the reachability bound. The rounds a rating can see
+ *   and the rejections counted against that bound are therefore the same set, always.
  * - **The reachability bound is monotonic and a reset does not refill it.** See
  *   {@link MAX_REJECTIONS_BEFORE_HUMAN}.
  */
@@ -49,10 +54,15 @@ export const MAX_CONSECUTIVE_REJECTIONS = 3;
  * add one without a fresh decision. **This is that decision (Andrew, EXT-29), and it answers a
  * different question than the one §5.3 asked.**
  *
- * §5.3's argument is about **safety**, and it is sound and untouched: every attempt is rated
- * independently, the rater does not weaken with repetition, and — because a reset also clears the
- * transcript — a gamed reset approves nothing that would not have been approved on the first try.
- * Nothing here contradicts that, and this bound must never be described as a security control.
+ * §5.3's argument is about **safety**, and its core is untouched: every attempt is rated
+ * independently, the rater does not weaken with repetition, and every deterministic floor is
+ * recomputed from the RAW command each round, so no amount of argument unlocks one. What
+ * [[EXT-108]] changed is that a reset no longer clears the rounds with the counter, so the
+ * justification channel §5.1 opens at round 2 stays open across an approved call — deliberately,
+ * because the round after a call the rater itself asked for is the same argument continuing. That
+ * is the one channel able to LOWER an outcome, which is why what bounds it matters: this count,
+ * which no reset refills, is what ends an argument nobody is winning. Nothing here contradicts
+ * §5.3, and this bound must never be described as a security control.
  *
  * The question §5.3 never asked is **reachability**: does the human terminus fire at all? Under its
  * own reset predicate it does not. An agent that alternates one approved `ls` with one rejection
@@ -118,14 +128,17 @@ export const NEGOTIATION_USER_MESSAGE_RETENTION = 10;
  * | event | transcript | consecutive | since-human |
  * |---|---|---|---|
  * | a rejection ({@link recordRejection}) | append | +1 | +1 |
- * | the gate approved a call ({@link noteProgress}) | **cleared** | 0 | unchanged |
+ * | the gate approved a call ({@link noteProgress}) | **kept** | 0 | unchanged |
  * | a human was reached ({@link humanReached}) | cleared | 0 | **0** |
  * | the run halted ({@link humanReached}) | cleared | 0 | 0 |
  */
 export class ShellNegotiationState {
-  /** §5.1's transcript: every round of the CURRENT negotiation, oldest first. */
+  /** §5.1's transcript: every round since a person was last involved, oldest first. */
   private rounds: RaterNegotiationRound[] = [];
-  /** §5.3's consecutive-rejection count. Shares the transcript's lifetime, by construction. */
+  /**
+   * §5.3's consecutive-rejection count. Reset by an approved call, which [[EXT-108]] stopped taking
+   * the rounds with it — so this is the shorter of the two lifetimes, not a shared one.
+   */
   private consecutive = 0;
   /** The reachability bound's count. Cleared ONLY by {@link humanReached}. */
   private sinceHuman = 0;
@@ -147,17 +160,17 @@ export class ShellNegotiationState {
    * doing the work twice and differently.
    *
    * An empty negotiation has no privileged spelling on the builder's side, so this always returns an
-   * object and never `undefined`: a cleared transcript IS the round-1 case, with no `if` at the call
-   * site — which is exactly what makes §5.6's *"a cleared transcript means a round-1 context"* fall
-   * out of the reset rather than out of a second branch that could disagree with it.
+   * object and never `undefined`: an EMPTY transcript is the round-1 case, with no `if` at the call
+   * site — which is what makes *"an empty transcript means a round-1 context"* fall out of the one
+   * array rather than out of a second branch that could disagree with it.
    *
    * **Everything except the command is admitted from round 2, never at round 1**, and the transcript
    * is what decides which round this is. §5.1 is unambiguous — *"Round 1 sees the command alone —
-   * nothing else"* — and §5.6 spells out the consequence for the round right after a reset: *"the
-   * command and nothing else — no transcript, no user messages, because that is what round 1 means"*.
+   * nothing else"* — and after [[EXT-108]] the transcript empties only when a person is reached, so
+   * round 1 is the first rating of a negotiation and nothing else is.
    *
-   * Keying them on the transcript rather than on a flag is what makes those two sentences the same
-   * fact, and it is why the justification is withheld by the same test rather than passed straight
+   * Keying them on the transcript rather than on a flag is what keeps that one fact in one place,
+   * and it is why the justification is withheld by the same test rather than passed straight
    * through. §5.1 lists the justification under what *"from round 2 the rater additionally sees"*,
    * and it is the one channel the design allows to LOWER an outcome — so a justification volunteered
    * before any rejection has happened would open that channel on the first attempt, pre-emptively,
@@ -165,12 +178,13 @@ export class ShellNegotiationState {
    * round 2 is what the spec's ordering buys, and a round-1 context is byte-identical to a plain
    * rating because of it.
    *
-   * The messages and the volunteered justification are NOT destroyed by a reset (they are the
-   * conversation and the pending call's own argument, not the exchange), so §5.6's convergence still
-   * works: the reply *"just the last two"* is out of view for the round-1 rating after the reset and
-   * in view for the round-2 rating that follows it — which is exactly the row the spec's table shows
-   * it arriving on. A justification the agent supplies again with its next attempt is admitted then,
-   * because by then there is a rejection for it to answer.
+   * The messages and the volunteered justification are the conversation and the pending call's own
+   * argument, not the exchange, so nothing here destroys them; they are withheld at round 1 and
+   * admitted afterwards. [[EXT-108]] is what decides when "afterwards" starts in §5.6's convergence
+   * case: an approved call between two attempts no longer empties the transcript, so the reply
+   * *"just the last two"* and the agent's own answer to the rejection are both in view for the very
+   * next rating. That round has a rejection to answer — the one the approved call was made in
+   * response to — which is the condition round 2 was ever about.
    */
   contextFor(justification?: string): RaterNegotiationContext {
     const roundOne = this.rounds.length === 0;
@@ -200,16 +214,24 @@ export class ShellNegotiationState {
   }
 
   /**
-   * §5.3 — a tool call the gate let through. Resets the consecutive counter **and clears the
-   * transcript with it**; the reachability bound is deliberately untouched.
+   * §5.3 — a tool call the gate let through. Resets the consecutive counter and **nothing else**:
+   * the rounds stand, and so does the reachability bound.
    *
-   * **What it must NOT truncate is the human's record of how hard the agent pushed.** The counter's
-   * reset is §5.3's and is sound; the reader at an escalation is asking a different question, and
-   * the answer to theirs is {@link NegotiationCounters.rejectionsSinceHuman}, which this leaves
-   * standing. {@link renderNegotiationRows} reports that count rather than the surviving rounds, so
-   * an argument this erased is still declared even though its rounds are gone; every erased round
-   * itself survives whole in [[TUI-C27]]'s archive, which captures per RATING CALL and so is not
-   * truncated by anything here.
+   * **The counter reset is §5.3's and is sound; taking the rounds with it was not** ([[EXT-108]]).
+   * The reset exists to bound a *stalled* negotiation — an agent that went away, gathered
+   * information and came back better informed is making progress, not ping-pong. But the approved
+   * call is very often the agent doing exactly what the rejection told it to do, and clearing the
+   * rounds there makes that compliance erase the record of the advice: the retry is then rated with
+   * an empty transcript, which {@link contextFor} correctly reads as round 1 and so withholds the
+   * justification and the user messages from. **Measured**: the rater refused `git reset --hard`
+   * advising a stash first, the agent stashed, and the rater then advised a stash twice more —
+   * recommending a thing already done, because on the evidence it was given it could not know.
+   *
+   * **What replaces the clearing as a bound is the count this deliberately leaves standing.** Every
+   * appended round increments {@link NegotiationCounters.rejectionsSinceHuman}, which no reset
+   * refills, so a transcript still cannot grow past {@link MAX_REJECTIONS_BEFORE_HUMAN} rounds
+   * before {@link humanReached} clears the lot. A cap on the retained rounds would bound something
+   * that is already bounded, and would re-introduce the erasure on a longer fuse.
    *
    * **"Approved" is what the gate can observe, and it is not quite §5.3's "successful".** The
    * decision site sees whether a call was allowed to run, never whether it then exited zero — and
@@ -219,7 +241,6 @@ export class ShellNegotiationState {
    * {@link MAX_REJECTIONS_BEFORE_HUMAN} is monotonic for.
    */
   noteProgress(): void {
-    this.rounds = [];
     this.consecutive = 0;
   }
 
@@ -400,10 +421,12 @@ const CONTINUATION_PREFIX = '      ┊ ';
 export const NEGOTIATION_MAX_ROWS_PER_ELEMENT = 2;
 
 /**
- * Rounds a screen shows, newest last. A backstop rather than today's binding constraint: §5.3
- * escalates at {@link MAX_CONSECUTIVE_REJECTIONS}, so a transcript reaching a human is never longer
- * than this — and an unscrollable prompt must not acquire an unbounded section the moment that
- * number is raised. What is dropped is said out loud in the heading, which carries the true count.
+ * Rounds a screen shows, newest last. **Binding rather than a backstop, since [[EXT-108]]**: an
+ * approved call no longer clears the transcript, so an agent that makes progress between refusals
+ * reaches a person carrying every round since the last one — up to
+ * {@link MAX_REJECTIONS_BEFORE_HUMAN} of them — and an unscrollable prompt cannot grow a section
+ * that long. What is dropped is said out loud in the heading, which carries the true count, and the
+ * markers keyed on a position in the transcript stay keyed on it across the slice.
  */
 export const NEGOTIATION_MAX_ROUNDS_SHOWN = 3;
 
@@ -436,18 +459,21 @@ export const NEGOTIATION_MAX_ROUNDS_SHOWN = 3;
  * and each of these lied toward approving, at the moment a human was deciding whether to overrule
  * a refusal.
  *
- * - **`attempts` is the count, and it is not `rounds.length`.** §5.3 clears the transcript on an
- *   approved call, so the rounds handed over are the attempts since the last *approval*, while the
- *   fact the reader is weighing is how hard the agent pushed since the last *human* — the caller's
- *   `rejectionsSinceHuman`. A measured escalation attempted the same command five times and
- *   rendered three. Omit it and this falls back to `rounds.length`, which is the honest reading of
- *   a caller that has no better number rather than a claim that none were erased.
+ * - **`attempts` counts the argument; the rounds below it are a slice of that argument.** A screen
+ *   shows at most {@link NEGOTIATION_MAX_ROUNDS_SHOWN} of them, so the heading has to report what
+ *   happened rather than what fits, and the rounds have to be numbered from the true attempt
+ *   number. The caller's `rejectionsSinceHuman` is that count. [[EXT-108]] brought it into
+ *   agreement with `rounds.length` for a caller holding the whole transcript — an approved call no
+ *   longer erases rounds, and one event clears both — so what this parameter still guards is the
+ *   slice, plus the `Math.max` below, which stops a stale or smaller number making the block claim
+ *   less argument than it is about to print. Omit it and this falls back to `rounds.length`, the
+ *   honest reading of a caller that has no better number.
  * - **The last round IS the pending rating, not a prior one.** {@link
  *   ShellNegotiationState.recordRejection} appends before either bound is tested, deliberately, so
  *   that the rating being escalated is on the transcript the human sees. The old heading called
  *   them all prior rounds, which both under-reported the argument and put the pending command on
  *   the screen twice with nothing saying they were the same call.
- * - **The first round was rated on the command alone.** A cleared transcript IS the round-1 case
+ * - **The first round was rated on the command alone.** An EMPTY transcript IS the round-1 case
  *   (see {@link ShellNegotiationState.contextFor}), so §5.1 withheld the justification and the user
  *   messages from that rating — while {@link ShellNegotiationState.recordRejection} stores the
  *   justification the agent supplied whatever the round. Printed unmarked, the round reads as a
@@ -502,10 +528,11 @@ export function renderNegotiationRows(
     // row they would be paid for in the one thing that row is for — the command, and how it
     // compares with the round above it — which at a narrow width is most of what fits on it.
     const pending = dropped + index === rounds.length - 1 ? ' (this request)' : '';
-    // A cleared transcript IS the round-1 case, so the transcript's FIRST round is the one §5.1
+    // An EMPTY transcript IS the round-1 case, so the transcript's FIRST round is the one §5.1
     // rated on the command alone. Derived from the position rather than carried on the round
-    // because it is a property of the transcript, not of the rating — but that makes it a fact a
-    // reset could quietly invalidate, so it is pinned against a real run rather than by reading.
+    // because it is a property of the transcript, not of the rating — which holds only while
+    // nothing but reaching a person empties it ([[EXT-108]] stopped an approved call doing so), so
+    // it is pinned against a real run rather than by reading.
     const roundOne = dropped + index === 0;
     rows.push({
       voice: 'agent',

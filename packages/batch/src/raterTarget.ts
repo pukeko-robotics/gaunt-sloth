@@ -391,8 +391,9 @@ function buildRationale(
  * PRODUCTION runner would have taken.
  *
  * It mirrors `GthAgentRunner`'s four arms and adds nothing: an approved call is progress (§5.3 —
- * clears the transcript *and* the consecutive counter), a halt reaches a human, and a `reject` is
- * recorded before either bound is tested, so the attempt being ruled on is itself on the transcript.
+ * resets the consecutive counter and, since [[EXT-108]], leaves the rounds standing, so the round
+ * after it is rated as a round 2), a halt reaches a human, and a `reject` is recorded before either
+ * bound is tested, so the attempt being ruled on is itself on the transcript.
  * The remaining arm carries the one assumption in here — that an action which is neither approved,
  * halted nor rejected has already reached a person — so it ends the negotiation and hands the
  * action back untouched.
@@ -533,7 +534,7 @@ async function classifyOneRound(
   negotiation.noteUserMessages(round.userMessages ?? []);
   // §5.2 — a rejection is addressed to the AGENT only at a negotiating rung, and saying so changes
   // the rating prompt. Read from the resolved rung rather than from whether a context exists: the
-  // two are independent by construction (a cleared transcript is still a round of a negotiation),
+  // two are independent by construction (an empty transcript is still a round of a negotiation),
   // and a corpus rated without it would be measuring a prompt production never sends.
   //
   // [[EXT-106]] §3 — which is also why it goes through core's `isNegotiableCall` and not through

@@ -187,24 +187,19 @@ describe('[[TUI-C27]] — the approvals gate records what it was shown, and reco
    * **THE acceptance test.** Round 1 with an empty user-messages window, round 2 with a populated
    * one, and the round-2 APPROVAL recorded with its outcome and its reason.
    *
-   * ## How this fixture defeats §5.3's `noteProgress()` reset
+   * ## Why the fixture is a rejection and then an APPROVAL
    *
-   * Every APPROVED tool call runs `noteProgress()`, which clears the transcript — and a cleared
-   * transcript IS a round-1 context by construction, because `contextFor` keys the justification
-   * and the user-messages window on `rounds.length === 0`. So the two obvious fixtures cannot see
-   * what this node is about: consecutive rejections never produce an approval to assert, and an
-   * approved call placed BETWEEN the two ratings resets the very thing the second rating is
-   * supposed to show.
-   *
-   * The fixture here is therefore two gated calls and nothing between them:
+   * The archive has to carry a round-1 record and a round-2 record, and the round-2 one has to be
+   * an approval — the branch that relays nothing to anyone, and so the one that used to leave no
+   * trace at all. A fixture of consecutive rejections never produces one.
    *
    * 1. `rm -rf ./dist` rated `destructive` ⇒ `reject` at `auto`. `recordRejection` appends the
-   *    round BEFORE anything else, so the transcript is now one round deep. No approval has
-   *    happened, so `noteProgress()` has not run.
+   *    round BEFORE anything else, so the transcript is now one round deep.
    * 2. `rm -rf ./dist --dry-run` rated `safe` ⇒ **approve**. `contextFor` sees a non-empty
    *    transcript, so this is a round-2 context: the justification is admitted and the user
-   *    messages enter the window. The `noteProgress()` this approval triggers fires AFTERWARDS, and
-   *    cannot touch a record that was captured at the moment of the call.
+   *    messages enter the window. The `noteProgress()` this approval triggers fires AFTERWARDS —
+   *    and since [[EXT-108]] it resets the consecutive counter alone, so it could not have reached
+   *    this record from either direction.
    *
    * The second call carries a justification of its own, because `contextFor(justification)`
    * withholds it at round 1 — without one, round 2's record would show `justification: undefined`
