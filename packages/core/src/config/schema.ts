@@ -1183,13 +1183,16 @@ const RETIRED_ESCALATE_THRESHOLD_MESSAGE =
  * setting on their behalf, at the moment they are least watching — the config already worked, so
  * nothing prompts them to re-read it.
  *
- * `manual`/`assisted`/`auto` are pure renames of `read-only`/`auto-safe`/`full-auto` and carry
- * identical behaviour, so they preserve it trivially. `ask` is the one entry that does not, and the
- * exception is worth stating rather than glossing: `write` auto-grants working-folder file edits
- * that `ask` prompted for, which is strictly a widening. It is safe here only because nothing is
- * remapped silently — every entry is a hard validation ERROR, and this one offers `write` or
- * `manual` as a labelled choice with the difference spelled out, so the user picks. An entry that
- * widened while merely warning, or while coercing, would break the property.
+ * `ask` is the sole entry, and it does not preserve that property trivially: `write` auto-grants
+ * working-folder file edits that `ask` prompted for, which is strictly a widening. It is safe here
+ * only because nothing is remapped silently — every entry is a hard validation ERROR, and this one
+ * offers `write` or `manual` as a labelled choice with the difference spelled out, so the user
+ * picks. An entry that widened while merely warning, or while coercing, would break the property.
+ *
+ * **A pure rename does not belong here.** A value whose meaning survived under a new spelling is a
+ * spelling nobody has, so an entry for it buys a nicer message for a config that was never
+ * released, at the cost of keeping a dead vocabulary alive in the product. Only a value whose
+ * MEANING changed — like `ask`, which splits across two modes — earns a row.
  *
  * `write` and `bypass` are deliberately ABSENT — they are live rung names, not retired ones.
  *
@@ -1201,9 +1204,6 @@ const RETIRED_ESCALATE_THRESHOLD_MESSAGE =
  * name a hard validation error on arrival.
  */
 const RETIRED_APPROVAL_MODES: ReadonlyArray<readonly [string, string]> = [
-  ['read-only', '"manual" (the same mode, renamed)'],
-  ['auto-safe', '"assisted" (the same mode, renamed)'],
-  ['full-auto', '"auto" (the same mode, renamed)'],
   [
     'ask',
     '"write" (Gaunt Sloth edits files freely and asks about everything else) or "manual" ' +

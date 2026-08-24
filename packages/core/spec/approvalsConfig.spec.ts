@@ -439,10 +439,9 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
 
     it('recognises only the five identifiers (the retired spellings are not aliases)', () => {
       for (const rung of APPROVAL_RUNGS) expect(isApprovalRung(rung)).toBe(true);
-      // CFG-39 — the three renamed spellings, plus the pre-2.0 vocabulary, a display label and the
-      // empty string. `auto` is deliberately NOT in this list: it is a live identifier now, and the
-      // cell below pins that.
-      for (const retired of ['read-only', 'auto-safe', 'full-auto', 'ask', 'yolo', 'Manual', '']) {
+      // The pre-2.0 vocabulary, a display label and the empty string. `auto` is deliberately NOT in
+      // this list: it is a live identifier now, and the cell below pins that.
+      for (const retired of ['ask', 'yolo', 'Manual', '']) {
         expect(isApprovalRung(retired)).toBe(false);
       }
     });
@@ -597,28 +596,6 @@ describe('resolveApprovals (CFG-27 ladder)', () => {
     it('rule 3: no description promises that Gaunt Sloth ALWAYS asks', () => {
       for (const rung of APPROVAL_RUNGS) {
         expect(APPROVAL_RUNG_DESCRIPTIONS[rung]).not.toMatch(/always asks|will always ask/i);
-      }
-    });
-
-    /**
-     * CFG-39 — rule 4 used to be spelled "the kebab-case identifiers never appear in the prose",
-     * and a substring test could enforce it because `read-only` / `auto-safe` / `full-auto` were
-     * not words anyone would write. The renamed identifiers ARE ordinary words, and two of them
-     * legitimately occur in this copy — "the auto-rater" contains `auto`, and `assisted`'s own
-     * sentence refers to what `write` grants. So a substring test now asserts something false
-     * rather than something useful.
-     *
-     * What it is re-pointed at is the failure the rename actually threatens: a RETIRED spelling
-     * surviving in copy the user reads, which would name a mode the gate no longer has.
-     */
-    it('rule 4: no retired mode spelling survives in the prose', () => {
-      for (const rung of APPROVAL_RUNGS) {
-        for (const retired of ['read-only', 'auto-safe', 'full-auto']) {
-          expect(
-            APPROVAL_RUNG_DESCRIPTIONS[rung],
-            `${rung}'s description still names the retired spelling "${retired}"`
-          ).not.toContain(retired);
-        }
       }
     });
 

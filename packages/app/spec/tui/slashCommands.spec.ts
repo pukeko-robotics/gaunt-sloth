@@ -182,26 +182,20 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
   });
 
   /**
-   * CFG-27 — the retired three-mode vocabulary is gone with NO aliases. `auto` and `ask` are not
-   * accepted as rung spellings, and `/auto-approve` / `/bypass-approve` are not commands: still
-   * alpha, and a silent alias would leave the user believing in a vocabulary the gate no longer
-   * has. `/auto-approve off` in particular had to mean one of two different rungs.
+   * CFG-27 — the pre-2.0 approvals vocabulary is gone with NO aliases. `ask` is not accepted as a
+   * mode spelling, and `/auto-approve` / `/bypass-approve` are not commands: a silent alias would
+   * leave the user believing in a vocabulary the gate no longer has, and `/auto-approve off` in
+   * particular had to mean one of two different rungs.
    */
-  it('the retired mode spellings and the /auto-approve, /bypass-approve commands are gone', async () => {
+  it('the retired `ask` spelling and the /auto-approve, /bypass-approve commands are gone', async () => {
     const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } =
       await import('@gaunt-sloth/agent/modules/slashCommands.js');
     const registry = createCommandRegistry();
-    // CFG-39 — `auto` is absent from this list because it is a LIVE mode name now; the cell below
-    // pins that `/approvals auto` is accepted rather than explained away.
-    for (const retired of ['read-only', 'auto-safe', 'full-auto', 'ask']) {
-      const result = dispatchSlashCommand(
-        parseSlashCommand(`/approvals ${retired}`)!,
-        registry,
-        ctx
-      );
-      expect(result.approvals).toBeUndefined();
-      expect(result.notice?.title).toContain(retired);
-    }
+    // CFG-39 — `auto` is NOT checked here because it is a LIVE mode name now; the cell below pins
+    // that `/approvals auto` is accepted rather than explained away.
+    const result = dispatchSlashCommand(parseSlashCommand('/approvals ask')!, registry, ctx);
+    expect(result.approvals).toBeUndefined();
+    expect(result.notice?.title).toContain('ask');
     for (const name of ['auto-approve', 'bypass-approve']) {
       expect(registry.some((c) => c.name === name)).toBe(false);
     }

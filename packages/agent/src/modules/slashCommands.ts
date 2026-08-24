@@ -796,10 +796,9 @@ export type ApprovalsAction =
  * `manual` rather than a posture of its own, so it leaves quick access — but it stays fully
  * settable here and in config, which is the whole of what "demoted" means.
  *
- * The retired `read-only` / `auto-safe` / `full-auto` / `ask` spellings are NOT accepted as
- * aliases — 2.0 is a deliberate break, and a silent alias would leave the user believing in a
- * vocabulary the gate no longer has. They are named, with their replacements, by the config-layer
- * error in `RETIRED_APPROVAL_MODES`.
+ * The retired `ask` spelling is NOT accepted as an alias — 2.0 is a deliberate break, and a silent
+ * alias would leave the user believing in a vocabulary the gate no longer has. It is named, with
+ * both of its replacements, by the config-layer error in `RETIRED_APPROVAL_MODES`.
  *
  * **Only the subcommand token is lower-cased.** A server key is the user's own `mcpServers` key
  * (§4.7.5) and is case-sensitive, so folding it would name a different server — one that believes
