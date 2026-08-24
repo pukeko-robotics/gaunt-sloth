@@ -716,6 +716,13 @@ export function isRatedRung(rung: ApprovalRung): boolean {
  * that counts the rounds. Two of them agreeing and the third not is exactly how the two rated rungs
  * would drift back into being the same posture with different names.
  *
+ * **It answers about the RUNG, never about a particular call.** [[EXT-106]] §3 withholds the
+ * negotiation from a command §4.6's deterministic preflight floors — one that cannot reach
+ * `approve` however the agent argues — and both the decision and the prompt read that through
+ * {@link import('../core/shell/rater.js').isNegotiableCall}, which composes this predicate with the
+ * preflight. Anything asking *"may the agent argue about THIS call"* wants that function; this one
+ * is a fact about the ladder and stays free of the shell module.
+ *
  * Written as a `=== 'auto'` test rather than as "rated but not assisted" so that a sixth rung has to
  * be classified deliberately rather than inheriting a negotiation by omission.
  */

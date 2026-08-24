@@ -7,8 +7,8 @@
  * The pre-EXT-58 message was the bare string *"User rejected the shell command."*, which tells the
  * model it failed and nothing about what to do instead — so it either re-runs the identical call or
  * abandons a legitimate task silently. §7 fixes both ends: state the refusal, carry the explanation
- * when one exists, and name the three moves (re-call with a justification, call a different
- * command, ask the user).
+ * when one exists, and name the moves it has (re-call with a justification, call a different
+ * command) — see {@link REJECTION_MOVES} for why that list names nothing else.
  *
  * When the rater named an already-granted alternative (§4.4), the message MUST carry it **and** say
  * that the alternative needs no approval. That last clause is the sentence that actually redirects
@@ -37,10 +37,24 @@ export type RejectionSource =
   /** The auto-rater refused during a negotiation (§5 / [[EXT-29]]). */
   | 'rater';
 
-/** The three moves §7 requires a JUDGED rejection to name. */
+/**
+ * The moves §7 requires a JUDGED rejection to name — and **only moves the model actually has.**
+ *
+ * [[EXT-106]] §5 — *"ask the user if there is no way around it"* was not one of them. It named no
+ * mechanism, so the model did the only thing the sentence could mean: it wrote prose asking for a
+ * confirmation and ended the turn. That text never reaches the gate. The confirmation cannot arrive,
+ * the next call meets the identical deterministic floor, and the run ends having handed the user
+ * homework that cannot be done — while the two remedies that would have worked (an `approvals.allow`
+ * entry, or a different rung) went unnamed.
+ *
+ * **Removing it costs the model nothing it could use.** Where these two moves genuinely run out, §5.3
+ * spends the negotiation bound and the call goes to a person through the gate — which is the
+ * escalation the removed sentence was pantomiming. Do not restore it, in this or any other wording,
+ * until there is a TOOL that escalates: the fault was never the phrasing, it was offering an exit
+ * with nothing behind it.
+ */
 export const REJECTION_MOVES =
-  'You may call the same command with a justification, call a different command, or ask the user ' +
-  'if there is no way around it.';
+  'You may call the same command with a justification, or call a different command.';
 
 /**
  * §7 — the clause that makes a suggestion actionable. Verbatim in substance from the spec:
@@ -72,7 +86,7 @@ export interface RejectionMessageOptions {
  * §7 shape, each part omitted when it does not apply:
  * 1. who refused what;
  * 2. the rater's explanation, when a rating exists;
- * 3. the three moves — always;
+ * 3. the moves — always;
  * 4. the granted alternative plus the no-approval-needed clause, when the rater named one.
  */
 export function buildRejectionMessage(options: RejectionMessageOptions): string {

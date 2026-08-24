@@ -45,7 +45,6 @@ import { checkHardline } from '@gaunt-sloth/core/core/shell/hardline.js';
 import type { GthConfig } from '@gaunt-sloth/core/config.js';
 import {
   APPROVAL_RUNGS,
-  isNegotiatingRung,
   isRatedRung,
   resolveApprovals,
 } from '@gaunt-sloth/core/config/shell-policy.js';
@@ -54,6 +53,7 @@ import { ShellNegotiationState } from '@gaunt-sloth/core/core/shell/negotiation.
 import {
   FAIL_CLOSED_VERDICT,
   RATER_OUTCOMES,
+  isNegotiableCall,
   mapVerdictToAction,
   preflightFloorFinding,
   rateShellCommand,
@@ -535,7 +535,13 @@ async function classifyOneRound(
   // the rating prompt. Read from the resolved rung rather than from whether a context exists: the
   // two are independent by construction (a cleared transcript is still a round of a negotiation),
   // and a corpus rated without it would be measuring a prompt production never sends.
-  const negotiable = isNegotiatingRung(rung);
+  //
+  // [[EXT-106]] §3 — which is also why it goes through core's `isNegotiableCall` and not through
+  // the rung alone: production withholds the same guidance from a command §4.6's preflight floors,
+  // because nothing the agent argues can move an outcome recomputed from the raw command every
+  // round. A corpus that kept the guidance on a floored command would be scoring a prompt against
+  // an instruction production no longer sends with it.
+  const negotiable = isNegotiableCall(rung, trimmed);
   // Gated on the rung exactly as production gates it, and handed over RAW. §5.1 withholds it from a
   // round-1 rating, and `contextFor` is the single implementation of that rule — while the
   // transcript records what the agent actually argued, whatever the round.

@@ -102,7 +102,10 @@ terminal you still have to decide in.
 - **destructive** — harmful, but you could undo it from inside the session: `rm -rf node_modules`,
   `git reset --hard`. Asks you, with every choice above; at Auto the agent gets a few rounds to
   narrow or justify it first, and you are asked when those run out — and you are shown that whole
-  argument, round by round, when you are.
+  argument, round by round, when you are. The exception is a command one of the checks below
+  decides on its own — naming a host, or expanding an environment variable into a script — which
+  comes straight to you with no rounds at all, because no answer the agent could give would
+  change it.
 - **catastrophic** — cannot be undone from inside the session: `mkfs`, `DROP DATABASE`,
   `terraform destroy -auto-approve`, `kubectl delete namespace production`. Shown in red, saying
   that undoing it would need something outside the session. It asks you *every* time: **session**
@@ -208,6 +211,13 @@ judgement where a plain one does not.
 
 What the floor guarantees is the other direction — where it does fire, no model opinion can wave the
 command through.
+
+**So at Auto it comes straight to you.** A floored command is re-checked from the raw text on
+every round, so there is no answer the agent could give that would clear it — asking it to try
+would spend your turn on an argument decided before it started. You are asked on the first
+attempt instead. In a run with nobody to ask (CI, `-m`, a one-shot), the error that ends the run
+points you at `approvals.allow` — and where it can name the command precisely enough to write one,
+it prints the entry for that exact command, ready to paste.
 
 The rater is only as good as the model behind it. On a small or local model, prefer the `write` mode
 (below) or point the rater at a stronger model with `approvals.rater`.

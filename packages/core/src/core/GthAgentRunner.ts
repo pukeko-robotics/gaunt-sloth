@@ -6,7 +6,6 @@ import {
   describeGrantedBuiltInTools,
   type GrantedToolSummary,
   GthConfig,
-  isNegotiatingRung,
   isRatedRung,
   type McpAnnotationTrustChange,
   type McpAnnotationTrustView,
@@ -18,6 +17,7 @@ import {
   resolveGatedToolNames,
   resolveShellApprovalGate,
   SHELL_TOOL_NAME,
+  type ShellApprovalEntry,
   TOOL_ANNOTATION_HINTS,
   type ToolAnnotationHint,
 } from '#src/config.js';
@@ -62,6 +62,7 @@ import {
 import {
   applyDestructiveFloor,
   isBelowDestructiveFloor,
+  isNegotiableCall,
   isRaterTimeout,
   mapAllowMatchedVerdictToAction,
   mapVerdictToAction,
@@ -156,6 +157,29 @@ function shellJustification(args: Record<string, unknown> | undefined): string |
   const value = args?.justification;
   if (typeof value !== 'string') return undefined;
   return value.trim().length === 0 ? undefined : value;
+}
+
+/**
+ * §3.1 — **the one `approvals.allow` entry that would cover this shell command**, or `undefined`
+ * when the grammar cannot hold one.
+ *
+ * Two readers, one answer: what the escalation menu's *always approve* control would store
+ * ({@link GthAgentRunner.stickyGrantFor}), and what [[EXT-106]] §4's refusal tells a user to add to
+ * their config. Those are the same entry, and deriving it twice is how a menu and a message come to
+ * promise different things about one command.
+ *
+ * **`exact`, never a pattern.** The entry has to be correct enough to paste, and a `glob` inferred
+ * from a command is a guess about which part of it may vary: widened one token too far it grants
+ * more than the user was ever shown. A subtly-too-broad pasteable entry is worse than none, so the
+ * breadth stays where {@link shellGrantEntry} puts it — this command, and only this command.
+ *
+ * `undefined` for a command the allow classifier cannot resolve, because **no allow entry of any
+ * matcher would match it**: rendering one would hand someone a line that changes nothing and looks
+ * as though it should.
+ */
+function shellApprovalEntryFor(command: string): ShellApprovalEntry | undefined {
+  if (classifyCommand(command, normalizeCommand) === null) return undefined;
+  return shellGrantEntry(command);
 }
 
 /**
@@ -1342,7 +1366,18 @@ export class GthAgentRunner {
         // in the rating prompt (`buildRaterPrompt`) and nothing else.
         // [[EXT-29]] §5.1 — the negotiation this rating is a round of. At `assisted` the context is
         // empty and `negotiable` is false, so the whole call is byte-identical to what it was.
-        const negotiable = isNegotiatingRung(approvals.rung);
+        //
+        // [[EXT-106]] §3 — and it is false at `auto` too for a command §4.6's preflight floors,
+        // through the SAME `isNegotiableCall` the decision below reads. Telling the rater to word a
+        // rejection "for an agent that may answer it" is simply FALSE there: nothing it writes can
+        // move an outcome the floor recomputes from the raw command every round. Two writers of one
+        // fact is what this shares a function to avoid.
+        //
+        // **It also withholds the justification and the transcript from that rating**, and that
+        // follows rather than being a side effect: both exist so a rating can be revised in the
+        // light of an argument, and there is no argument on this path — the call goes to a person
+        // on its first round instead.
+        const negotiable = isNegotiableCall(approvals.rung, subject.command);
         const justification = negotiable ? shellJustification(tool.args) : undefined;
         const context: RaterNegotiationContext | undefined = negotiable
           ? this.negotiation.contextFor(justification)
@@ -1417,10 +1452,10 @@ export class GthAgentRunner {
             reason: decision.verdict?.reason ?? '',
           });
           if (outcome === 'reject') {
-            // §7 — the refusal PLUS the moves: re-call with a justification (the tool argument
-            // exists for this), call a different command, or ask the user. Rendered through the
-            // one builder the human's own "no" uses, differing only in who refused, so the model
-            // never meets two shapes of the same event.
+            // §7 — the refusal PLUS the moves the model actually has: re-call with a
+            // justification (the tool argument exists for this), or call a different command.
+            // Rendered through the one builder the human's own "no" uses, differing only in who
+            // refused, so the model never meets two shapes of the same event.
             return {
               type: 'reject',
               message: buildRejectionMessage({
@@ -1488,12 +1523,21 @@ export class GthAgentRunner {
       // §6.2 — no one to ask. Exit non-zero with everything a person needs, rather than handing
       // the model a rejection it would just work around. The transcript goes into the message
       // because that message is the only thing anyone sees on this path.
+      //
+      // [[EXT-106]] §4 — including the `approvals.allow` entry that would let this run, derived
+      // HERE because only this scope knows the SUBJECT. The message's first argument falls back to
+      // a tool NAME when there is no command, and an entry derived from a tool name would be a
+      // pasteable line matching nothing; the shell arm is the one that can answer, so it is the
+      // only one that does.
+      const allowEntry =
+        subject.kind === 'shell' ? shellApprovalEntryFor(subject.command) : undefined;
       throw new NonInteractiveEscalationError(
         command ?? tool.name,
         safetyVerdict?.outcome,
         safetyVerdict?.reason,
         escalatedBy,
-        renderNegotiationTranscript(negotiationRounds, negotiationAttempts) ?? undefined
+        renderNegotiationTranscript(negotiationRounds, negotiationAttempts) ?? undefined,
+        allowEntry ? renderApprovalEntryObject(allowEntry) : undefined
       );
     }
 
@@ -1805,8 +1849,8 @@ export class GthAgentRunner {
   ): Omit<ApprovalGrant, 'grantedAt' | 'scope'> | undefined {
     if (this.sessionApprovals.rung === 'bypass') return undefined;
     if (subject.kind === 'shell') {
-      if (classifyCommand(subject.command, normalizeCommand) === null) return undefined;
-      return { entry: shellGrantEntry(subject.command) };
+      const entry = shellApprovalEntryFor(subject.command);
+      return entry ? { entry } : undefined;
     }
     if (subject.name === SHELL_TOOL_NAME) return undefined;
     // A snapshot is what invalidation compares against, so a grant with no readable effective set

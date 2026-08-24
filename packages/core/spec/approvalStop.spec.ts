@@ -309,6 +309,88 @@ describe('[[TUI-C71]] the stop MESSAGE is neutralised at construction', () => {
   });
 });
 
+/**
+ * [[EXT-106]] §4 — **a refusal that stands says what would lift it, for the command in hand.**
+ *
+ * `approvals.allow` is consulted before the rater and therefore before §4.6's deterministic
+ * preflight, so it is the one thing that lifts a floor the agent cannot argue past. Told once, in
+ * the refusal, with the entry DERIVED from the command rather than a fixed example a reader still
+ * has to translate.
+ *
+ * The ordering follows {@link AttackHaltError}: the allow-list first, `bypass` second and named as
+ * the blunter last resort it is.
+ */
+describe('[[EXT-106]] §4 — the escalation names the approvals.allow entry for THIS command', () => {
+  const ENTRY = '{ "type": "shell", "matcher": "exact", "pattern": "npm run deploy" }';
+
+  it('renders the derived entry in place of the generic example', () => {
+    const message = new NonInteractiveEscalationError(
+      'npm run deploy',
+      'destructive',
+      'it ships',
+      undefined,
+      undefined,
+      ENTRY
+    ).message;
+    expect(message).toContain('approvals.allow');
+    expect(message).toContain(ENTRY);
+    // The generic example is REPLACED, not accompanied: two entries in one refusal is a reader
+    // choosing between them, which is the confusion this is meant to remove.
+    expect(message).not.toContain('"pattern": "npm test"');
+    // Same ordering as the halt: the allow-list, then `bypass` as the blunter last resort.
+    expect(message.indexOf('approvals.allow')).toBeLessThan(message.indexOf('bypass'));
+  });
+
+  /**
+   * **The entry is UNTRUSTED text and is framed as such.** It embeds the normalized command, which
+   * the model wrote — so putting it in an `own` part would route model-authored bytes into the one
+   * part class every surface is licensed to paint raw, defeating [[TUI-C71]]'s whole defence.
+   */
+  it('carries the entry as a neutralised, labelled part rather than as the gate’s own sentence', () => {
+    const hostile = `{ "type": "shell", "matcher": "exact", "pattern": "echo ${CR}${FORGED_MENU}" }`;
+    const error = new NonInteractiveEscalationError(
+      'echo x',
+      'destructive',
+      'it echoes',
+      undefined,
+      undefined,
+      hostile
+    );
+    expect(ownTexts(error.parts), 'never the gate’s own voice').not.toContain(hostile);
+    for (const line of error.message.split('\n')) {
+      expect(line, `a raw unprintable survived in: ${JSON.stringify(line)}`).not.toMatch(
+        UNPRINTABLE
+      );
+    }
+    // …and it is inside the gutter at render, like every other untrusted value.
+    const rows = approvalStopRows(error.parts, { columns: 100 });
+    const own = ownTexts(error.parts);
+    for (const row of rows) {
+      if (own.includes(row) || !row.includes(FORGED_MENU)) continue;
+      expect(row, `the entry is not framed: ${JSON.stringify(row)}`).toMatch(GUTTERED);
+    }
+  });
+
+  /**
+   * **The `escalate`-entry branch keeps its own recovery.** A match on `approvals.escalate` outranks
+   * every `allow` entry, so pointing that reader at the allow-list sends them to a list that cannot
+   * win — the one documented anti-case, and it must survive this addition.
+   */
+  it('says nothing about approvals.allow when an escalate entry is what asked', () => {
+    const message = new NonInteractiveEscalationError(
+      'npm run deploy',
+      'destructive',
+      'it ships',
+      '{"type":"shell","matcher":"exact","pattern":"npm run deploy"}',
+      undefined,
+      ENTRY
+    ).message;
+    expect(message).toContain('An escalate entry always asks a human');
+    expect(message).not.toContain('Declare the commands this run is allowed to execute');
+    expect(message, 'and the derived entry is withheld with it').not.toContain(ENTRY);
+  });
+});
+
 describe('[[TUI-C71]] the stop ROWS are framed at render', () => {
   const COLUMNS = 100;
   const width = frameWidthFor(COLUMNS);
