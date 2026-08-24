@@ -384,7 +384,7 @@ describe('GthLangChainAgent', () => {
        * sentence that tells a user their shell calls are being rated is not "less noise".
        */
       const CODE_APPROVALS_NOTICE =
-        'Shell tool (run_shell_command) rated by the auto-rater (approvals: assisted); ' +
+        'Shell tool (run_shell_command) rated by the auto-rater (approvals: Assisted); ' +
         'anything it does not rate safe is still refused or escalated to you.';
 
       it('replaces the preamble with one attribution line on compact (code)', async () => {
@@ -868,7 +868,7 @@ describe('GthLangChainAgent', () => {
         expect(middlewareNames()).toContain('HumanInTheLoopMiddleware');
         expect(statusUpdateCallback).toHaveBeenCalledWith(
           StatusLevel.INFO,
-          'Shell tool (run_shell_command) rated by the auto-rater (approvals: assisted); ' +
+          'Shell tool (run_shell_command) rated by the auto-rater (approvals: Assisted); ' +
             'anything it does not rate safe is still refused or escalated to you.'
         );
       });
@@ -878,7 +878,7 @@ describe('GthLangChainAgent', () => {
         expect(middlewareNames()).toContain('HumanInTheLoopMiddleware');
         expect(statusUpdateCallback).toHaveBeenCalledWith(
           StatusLevel.INFO,
-          'Shell tool (run_shell_command) enabled with per-command approval (approvals: write).'
+          'Shell tool (run_shell_command) enabled with per-command approval (approvals: Write).'
         );
       });
 
@@ -932,7 +932,7 @@ describe('GthLangChainAgent', () => {
           expect(statusUpdateCallback).toHaveBeenCalledWith(
             StatusLevel.WARNING,
             'Shell tool (run_shell_command): commands run without asking and without rating ' +
-              '(approvals: bypass). Only your deny list still applies — type /approvals assisted ' +
+              '(approvals: Bypass). Only your deny list still applies — type /approvals assisted ' +
               'to rate commands again.'
           );
         }

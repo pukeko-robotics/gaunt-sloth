@@ -56,6 +56,7 @@ import type {
   TuiAgent,
   TuiDebugCapture,
 } from '#src/tui/types.js';
+import type { LiveNegotiationRound } from '@gaunt-sloth/core/core/shell/negotiation.js';
 import {
   collectMcpOverview,
   renderHistory,
@@ -326,6 +327,37 @@ function createApprovalBridge() {
  * still up, {@link abortPending} answers it so the suspended run cannot hang — and it answers with
  * the one value that does not run the command.
  */
+/**
+ * [[TUI-C69]] §5.4 — the same fan-out for the **negotiation's rounds**, so the gate can draw the
+ * argument between the agent and the auto-rater while it happens.
+ *
+ * A plain listener rather than a promise bridge, and that is the whole difference from the two
+ * above: nothing here is being answered, so nothing waits. A round is an event the run reports on
+ * its way past, and a surface that is slow to draw one must never be able to hold up the decision.
+ */
+function createNegotiationBridge() {
+  const listeners = new Set<(event: LiveNegotiationRound | null) => void>();
+  const emit = (event: LiveNegotiationRound | null) => {
+    for (const l of listeners) l(event);
+  };
+  return {
+    /** Wired to `runner.setNegotiationDisplay`. */
+    round: (event: LiveNegotiationRound) => emit(event),
+    /**
+     * §5.4 — the exchange ended, so the panel drops it. `null` rather than a second channel: the
+     * App folds one stream of events into one piece of state, and a separate subscription would be
+     * a second ordering for two facts that are strictly sequential.
+     */
+    end: () => emit(null),
+    subscribe: (cb: (event: LiveNegotiationRound | null) => void) => {
+      listeners.add(cb);
+      return () => {
+        listeners.delete(cb);
+      };
+    },
+  };
+}
+
 function createAttackHaltBridge() {
   const listeners = new Set<(record: PendingAttackBanner) => void>();
   const outstanding = new Set<PendingAttackBanner>();
@@ -496,6 +528,7 @@ export async function createTuiSession(
   const debugBridge = createDebugBridge(config, resolvers);
   const approvalBridge = createApprovalBridge();
   const attackHaltBridge = createAttackHaltBridge();
+  const negotiationBridge = createNegotiationBridge();
   // B5: TUI code/chat default to the LEAN backend; an explicit config.agent.backend overrides it
   // (deep is now opt-in / experimental). Mirrors the readline path in createInteractiveSession,
   // askCommand, and execCommand — the TUI is the default interactive surface, so it must match.
@@ -532,6 +565,12 @@ export async function createTuiSession(
     // what opts this session into being asked first; a surface that never wires it keeps the halt,
     // so forgetting fails safe. The readline counterpart is in createInteractiveSession.
     runner.setAttackHaltCallback((halt) => attackHaltBridge.request(halt));
+
+    // [[TUI-C69]] §5.4/§5.5 — **this surface has a live display**, so the §5 negotiation is drawn
+    // round by round as it happens and a negotiated approval is held visible before it takes
+    // effect. Wiring it is the opt-in for both: a surface that wires nothing (an `exec` run, CI)
+    // neither draws nor sleeps, which is what keeps the 800 ms off every headless run.
+    runner.setNegotiationDisplay(negotiationBridge);
 
     // Attach the debug sink to the live agent (opt-in; each backend's wrapModelCall middleware
     // reads it lazily, so this only enables capture for the TUI's /debug panel — the AG-UI
@@ -684,6 +723,7 @@ export async function createTuiSession(
         subscribeDebug={debugBridge.subscribe}
         subscribeApproval={approvalBridge.subscribe}
         subscribeAttackHalt={attackHaltBridge.subscribe}
+        subscribeNegotiation={negotiationBridge.subscribe}
         onTurnComplete={logTurn}
         onExit={async () => {
           // Fail-closed: resolve any approval still awaiting a decision before tearing down,

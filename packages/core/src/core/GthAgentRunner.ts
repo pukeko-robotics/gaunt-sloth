@@ -2,6 +2,7 @@ import {
   type AllowlistCounts,
   type ApprovalEntry,
   type ApprovalRung,
+  APPROVAL_RUNG_LABELS,
   DEFAULT_APPROVAL_RUNG,
   describeGrantedBuiltInTools,
   type GrantedToolSummary,
@@ -82,7 +83,13 @@ import {
   type ApprovalDecidingStage,
 } from '#src/core/shell/approvalCapture.js';
 import { buildHardlineRefusal, checkHardline } from '#src/core/shell/hardline.js';
-import { renderNegotiationTranscript, ShellNegotiationState } from '#src/core/shell/negotiation.js';
+import {
+  NEGOTIATED_APPROVAL_COOLDOWN_MS,
+  renderNegotiationTranscript,
+  ShellNegotiationState,
+  type LiveNegotiationRound,
+  type NegotiationDisplay,
+} from '#src/core/shell/negotiation.js';
 // [[EXT-106]] §4.6 — the user-provenance carve-out, read once per decision and handed to every
 // reader of it (the floor, the negotiation test, the rating prompt, the archive and the warning).
 import { carvedOpenWorldHosts } from '#src/core/shell/provenance.js';
@@ -307,6 +314,23 @@ export class GthAgentRunner {
    */
   private attackHaltCallback: AttackHaltCallback | null = null;
 
+  /**
+   * [[TUI-C69]] §5.4/§5.5 — **the surface showing this negotiation while it happens**, when one
+   * is. Set via {@link setNegotiationDisplay}.
+   *
+   * Its presence is the answer to *"is anyone watching?"*, and BOTH halves of the visible
+   * negotiation are keyed on it: the rounds are handed over as they are decided, and a negotiated
+   * approval is held on screen for {@link NEGOTIATED_APPROVAL_COOLDOWN_MS} before it takes effect.
+   *
+   * **`null` means neither happens, and that is the point.** An `exec` or CI run has nobody to
+   * show an approval to, so an 800 ms hold there would tax every headless run and every gate for a
+   * display that does not exist. Deliberately NOT keyed on {@link toolApprovalCallback}: that one
+   * answers *"is there a human to ASK"*, a different question with a different answer — a piped
+   * readline session can have one wired and no live display, and the §6.2 non-interactive path has
+   * a display and no one to ask.
+   */
+  private negotiationDisplay: NegotiationDisplay | null = null;
+
   /** The command the runner was initialized for; selects which `devTools` config applies. */
   private command: GthCommand | undefined = undefined;
 
@@ -426,6 +450,20 @@ export class GthAgentRunner {
    */
   public setAttackHaltCallback(callback: AttackHaltCallback | null): void {
     this.attackHaltCallback = callback;
+  }
+
+  /**
+   * [[TUI-C69]] §5.4/§5.5 — **declare that this surface is showing the negotiation as it happens.**
+   * Pass `null` to clear.
+   *
+   * §5.4's requirement is not decoration: *"the spec's own justification for letting the agent
+   * argue with the rater at all is that a human can watch it, and an argument conducted in the dark
+   * is a different thing from one that can be interrupted."* Wiring this is a surface saying it
+   * has somewhere to draw that, which is also what makes §5.5's hold meaningful — see
+   * {@link negotiationDisplay} for why one seam carries both.
+   */
+  public setNegotiationDisplay(display: NegotiationDisplay | null): void {
+    this.negotiationDisplay = display;
   }
 
   /**
@@ -825,7 +863,7 @@ export class GthAgentRunner {
     // standing from the previous one and clears BOTH bounds. The turn's own messages then enter
     // §5.1's last-5 window, which is what makes "just the last two" reach the rater at all — the
     // reply that narrows what the agent proposes is worthless to the gate if only the agent hears it.
-    this.negotiation.humanReached();
+    this.endNegotiation();
     this.negotiation.noteUserMessages(humanMessageTexts(messages));
 
     debugLog('Processing messages...');
@@ -1131,6 +1169,84 @@ export class GthAgentRunner {
     // must not, or the bound it is counted against could never be reached.
     if (decision.type === 'approve') this.negotiation.noteProgress();
     return decision;
+  }
+
+  /**
+   * [[TUI-C69]] §5.4 — **hand one round of the argument to the surface that is showing it**, the
+   * moment the gate decided it.
+   *
+   * The round travels raw. Every surface lays it out with the SAME `renderNegotiationRows` the
+   * escalation prompt draws, at its own terminal width, so the rounds a person watches and the
+   * rounds they later rule on cannot be two different renderings of one exchange — and the rater's
+   * turns are yellow in both because the rows carry the voice rather than a colour.
+   *
+   * No-ops when no surface is watching, which is the §5.5 seam as well as this one.
+   */
+  /**
+   * [[EXT-29]] §5.3 / [[TUI-C69]] §5.4 — **a person was reached, so the exchange is over**: the
+   * gate's own transcript is spent and the surface showing it is told, on the same event.
+   *
+   * Every direct `humanReached()` in this class goes through here, which is what keeps the two from
+   * drifting: a new site that spent the transcript without telling the display would leave a
+   * finished argument standing on screen, and at an escalation it would put the same exchange on an
+   * unscrollable dialog twice — once live, once in the prompt about to render all of it.
+   */
+  private endNegotiation(): void {
+    this.negotiation.humanReached();
+    this.negotiationDisplay?.end?.();
+  }
+
+  private showNegotiationRound(round: RaterNegotiationRound, position: number): void {
+    const display = this.negotiationDisplay;
+    if (!display) return;
+    const event: LiveNegotiationRound = { round, position };
+    try {
+      display.round(event);
+    } catch (e) {
+      // A surface that throws while drawing must never change what the gate decided.
+      debugLogError('negotiation display round', e);
+    }
+  }
+
+  /**
+   * [[TUI-C69]] §5.4/§5.5 — **the rater agreeing is the last round of the argument, and it is held
+   * on screen before it takes effect.**
+   *
+   * Two things, in this order, because the order is the requirement: the approving round is drawn,
+   * and only then does the minimum visible interval run. A hold before the draw would be a pause
+   * over nothing.
+   *
+   * **It is an abort window for something the user has just seen, not a reading window**, and it
+   * must never be relied on as an opportunity to evaluate the command — nobody reads a command in
+   * 800 ms. What it buys is that a decision the user disagrees with is still stoppable at the
+   * moment it appears: the runner has not yet resumed the graph, and the resume carries the run's
+   * abort signal, so a signal raised inside this interval ends the run with the tool unrun.
+   *
+   * **Both halves are gated on a surface being wired**, so a headless `exec`/CI run neither draws
+   * nor sleeps and pays nothing. See {@link negotiationDisplay}.
+   */
+  private async showNegotiatedApproval(
+    command: string,
+    justification: string | undefined,
+    verdict: ShellSafetyVerdict | undefined
+  ): Promise<void> {
+    if (!this.negotiationDisplay) return;
+    // A first attempt rated `safe` is not a negotiated approval: there is no argument behind it,
+    // nothing was refused, and there is nothing for a person to have watched happen.
+    const rejections = this.negotiation.transcript().length;
+    if (rejections === 0) return;
+    // The approving round sits AFTER every rejection, so its position is the rejection count
+    // rather than one less — which is what numbers it `Round rejections + 1` on screen.
+    this.showNegotiationRound(
+      {
+        command,
+        ...(justification ? { justification } : {}),
+        outcome: verdict?.outcome ?? 'safe',
+        reason: verdict?.reason ?? '',
+      },
+      rejections
+    );
+    await new Promise<void>((resolve) => setTimeout(resolve, NEGOTIATED_APPROVAL_COOLDOWN_MS));
   }
 
   /**
@@ -1525,10 +1641,26 @@ export class GthAgentRunner {
             this.statusUpdate(
               StatusLevel.WARNING,
               `\n⚠ Ran a command that reaches ${carvedHosts.join(', ')} without asking you, ` +
-                'because your own message named that host and approvals is set to auto. The ' +
-                'auto-rater found nothing wrong with it. Check the host is the one you meant.'
+                'because your own message named that host and approvals is set to ' +
+                // §10 rule 4 — the resolved rung is rendered in its DISPLAY spelling wherever the
+                // mode is stated, never in the §9.1 identifier. This branch is reachable only at
+                // that rung, so the label is read from the map rather than spelled here: a table
+                // nobody has to remember to update is what keeps the two from drifting.
+                `${APPROVAL_RUNG_LABELS.auto}. The auto-rater found nothing wrong with it. ` +
+                'Check the host is the one you meant.'
             );
           }
+          // [[TUI-C69]] §5.4/§5.5 — **the round that ENDS a negotiation is a round too**, and it
+          // is the one §5.5 holds on screen. A standing transcript is exactly what makes this a
+          // *negotiated* approval rather than a first-try `safe`: the rater refused this command
+          // at least once, the agent answered, and this is the rater agreeing. A first attempt
+          // rated `safe` has no argument behind it and is not held.
+          //
+          // Read BEFORE `decideToolApproval`'s wrapper calls `noteProgress()`. That call resets
+          // §5.3's consecutive counter and — since [[EXT-108]] — deliberately leaves the rounds
+          // standing, so the length would in fact survive it; reading first is what keeps that a
+          // property of this code rather than of the other method's current shape.
+          await this.showNegotiatedApproval(subject.command, justification, decision.verdict);
           // Scope `once`: rater approvals are NEVER persisted to the allow-list.
           return { type: 'approve', scope: 'once' };
         }
@@ -1548,7 +1680,7 @@ export class GthAgentRunner {
           // zero. Since [[EXT-108]] both halves distinguish this call from `noteProgress()`, which
           // resets the consecutive count alone and deliberately leaves the rounds and the
           // reachability bound standing.
-          this.negotiation.humanReached();
+          this.endNegotiation();
           // §6.1 — the banner, when an interactive surface wired one, and the halt otherwise. It
           // sits AFTER the reset above on purpose: a human is reached either way (that is what the
           // banner is), so the negotiation ends here whichever answer comes back, and neither
@@ -1562,13 +1694,29 @@ export class GthAgentRunner {
         if (decision.action === 'reject') {
           // §5 — `destructive` at `auto`. The round is recorded first, so the attempt being ruled
           // on is itself on the transcript the human sees (§5.6).
-          const outcome = this.negotiation.recordRejection({
+          const round: RaterNegotiationRound = {
             command: subject.command,
             ...(justification ? { justification } : {}),
             outcome: decision.verdict?.outcome ?? 'destructive',
             reason: decision.verdict?.reason ?? '',
-          });
+          };
+          const outcome = this.negotiation.recordRejection(round);
+          // [[TUI-C69]] §5.4 — **the round reaches the screen HERE, as it happens**, not only at
+          // the escalation this argument may never reach. Emitted for the escalating round too:
+          // the exchange is rendered as it happens, and the round that spends a bound is part of
+          // it. The prompt's own transcript is then the summary a person rules on, which is a
+          // different job from watching the argument run.
+          //
+          // Read AFTER `recordRejection`, so the count carries this round: the k-th rejection
+          // sits at position k-1, which numbers it `Round k` on screen — the number the
+          // escalation transcript would give the same round.
+          this.showNegotiationRound(round, this.negotiation.counters().rejectionsSinceHuman - 1);
           if (outcome === 'reject') {
+            // [[TUI-C69]] §5.4 — name the call the gate is about to refuse BACK TO THE AGENT, so
+            // both surfaces tone its result row as a clarification request rather than as a failed
+            // tool. Only this branch: an escalation, a human's "no", a deny entry and the §8
+            // floor's refusal are all refusals rather than rounds of an argument.
+            if (tool.id) this.agent?.noteRaterClarification?.(tool.id);
             // §7 — the refusal PLUS the moves the model actually has: re-call with a
             // justification (the tool argument exists for this), or call a different command.
             // Rendered through the one builder the human's own "no" uses, differing only in who
@@ -1635,7 +1783,7 @@ export class GthAgentRunner {
     // Reaching a person ends the negotiation (§5.3) and is the ONE thing that clears the
     // reachability bound: an escalation the human is about to answer is exactly the event that
     // bound exists to make happen, so it is spent here rather than accumulated across it.
-    this.negotiation.humanReached();
+    this.endNegotiation();
 
     if (!this.toolApprovalCallback) {
       // §6.2 — no one to ask. Exit non-zero with everything a person needs, rather than handing
@@ -2172,7 +2320,7 @@ export class GthAgentRunner {
     // standing from the previous one and clears BOTH bounds. The turn's own messages then enter
     // §5.1's last-5 window, which is what makes "just the last two" reach the rater at all — the
     // reply that narrows what the agent proposes is worthless to the gate if only the agent hears it.
-    this.negotiation.humanReached();
+    this.endNegotiation();
     this.negotiation.noteUserMessages(humanMessageTexts(messages));
     debugLog('Processing messages (event stream)...');
     debugLogObject('Input Messages', messages);
@@ -2278,6 +2426,7 @@ export class GthAgentRunner {
     // last-5 window is conversation context; leaving it behind a `/clear` would quote the user's
     // previous conversation into a rating made after they asked for it to be forgotten.
     this.negotiation.clear();
+    this.negotiationDisplay?.end?.();
     this.runConfig = getNewRunnableConfig();
     debugLogObject('Reset Runnable Config', this.runConfig);
   }

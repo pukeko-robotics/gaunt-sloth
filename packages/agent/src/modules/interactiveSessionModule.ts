@@ -506,6 +506,31 @@ export async function createInteractiveSession(
       return 'run-anyway';
     });
 
+    // [[TUI-C69]] §5.4/§5.5 — **this session has a live display, so the negotiation is watched
+    // rather than only reported.** Wiring it opts this surface into both halves: each round is
+    // drawn the moment the gate decides it, and a negotiated approval is held visible for the
+    // minimum interval before it takes effect. A surface that wires nothing — an `exec` run, CI —
+    // neither draws nor sleeps, which is why one seam carries both.
+    //
+    // Rendered through core's shared `renderNegotiationRows`, with this surface's own existing
+    // voice → tone mapping: the rater's turns `warn` (yellow) as §5.4 requires, the agent's plain,
+    // the chrome as a notice. The rows also NAME their speaker, which is the half of the
+    // distinction that survives a terminal with no colour at all. The Ink TUI renders the same
+    // rows, so the two surfaces cannot describe one exchange differently.
+    runner.setNegotiationDisplay({
+      round: ({ round, position }) => {
+        for (const row of renderNegotiationRows([round], {
+          width: frameWidthFor(output.columns),
+          mode: 'live',
+          from: position,
+        })) {
+          if (row.voice === 'rater') displayDialogLine(row.text, 'warn');
+          else if (row.voice === 'agent') displayDialogLine(row.text);
+          else displayDialogLine(row.text, 'notice');
+        }
+      },
+    });
+
     if (logFileName) {
       displayInfo(`${sessionConfig.mode} session will be logged to ${logFileName}\n`);
     }

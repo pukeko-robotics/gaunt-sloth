@@ -5,6 +5,7 @@ import {
   buildToolPreviewLines,
   getToolGlyph,
   summariseToolCall,
+  toolStatusDisplay,
   type ToolDisplayLine,
 } from '@gaunt-sloth/core/core/toolDisplay.js';
 import type {
@@ -16,15 +17,30 @@ import { displaySegments } from '#src/tui/viewModel.js';
 import { renderMarkdown } from '#src/tui/markdown.js';
 import { BlankRow } from '#src/tui/components/BlankRow.js';
 
-/** Status glyph + word for a tool call's compact summary line. */
+/**
+ * Status glyph + word + colour for a tool call's compact summary line.
+ *
+ * **Every affordance here is driven from a real tool-result signal, never from sniffing the result
+ * text** — legitimate output may simply begin with "Error handling…". `isError` is LangChain's
+ * `ToolMessage.status === 'error'`; `raterClarification` is the approvals gate's own account of a
+ * call it refused back to the agent as a §5 negotiation round ([[TUI-C69]]).
+ *
+ * The glyph/word/tone decision itself lives in core's {@link toolStatusDisplay}, shared with the
+ * plain surface, so the two cannot come to describe one event two ways — which is the whole reason
+ * a measured defect could sit on one surface and be invisible on the other. This function's own
+ * job is only the `running` case, which is a TUI state (the plain surface prints nothing until the
+ * result lands), and the tone → Ink colour mapping.
+ */
 function toolStatus(tc: ToolCallViewModel): { glyph: string; label: string; color: string } {
   if (tc.status === 'done') {
-    // Drive the error affordance from the real tool-result signal (LangChain
-    // `ToolMessage.status === 'error'`, threaded through as `isError`), never from sniffing
-    // the result text — legitimate output may simply begin with "Error handling…".
-    return tc.isError
-      ? { glyph: '✗', label: 'error', color: 'red' }
-      : { glyph: '✓', label: 'done', color: 'magenta' };
+    const status = toolStatusDisplay({
+      isError: tc.isError,
+      raterClarification: tc.raterClarification,
+    });
+    // `success` is magenta rather than green here: this surface reserves green for a diff's added
+    // lines, and a done row is not a diff.
+    const color = status.tone === 'error' ? 'red' : status.tone === 'warn' ? 'yellow' : 'magenta';
+    return { glyph: status.glyph, label: status.label, color };
   }
   return { glyph: '⋯', label: 'running', color: 'yellow' };
 }

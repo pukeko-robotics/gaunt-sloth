@@ -58,6 +58,7 @@ const runnerInstanceMock = {
   processMessages: vi.fn(),
   setToolApprovalCallback: vi.fn(),
   setAttackHaltCallback: vi.fn(),
+  setNegotiationDisplay: vi.fn(),
   setSessionApprovalRung: vi.fn(),
   getSessionApprovals: vi.fn(),
   getAllowlistCounts: vi.fn(),

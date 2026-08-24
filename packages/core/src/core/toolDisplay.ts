@@ -85,11 +85,67 @@ export interface ToolCallDisplayInput {
   /** The real `ToolMessage.status === 'error'` signal (TUI-C7) — never sniffed from text. */
   isError?: boolean;
   /**
+   * [[TUI-C69]] §5.4 — the gate refused this call BACK TO THE AGENT as a negotiation round, so the
+   * status row reads as a clarification request rather than as a failure. See
+   * {@link toolStatusDisplay}. Display-only, and additive to {@link isError}.
+   */
+  raterClarification?: boolean;
+  /**
    * True when the live child output ALREADY streamed raw to the user's terminal (the plain
    * surface's default sink). Formatters then suppress the duplicated output body and render
    * only the closing status — the TUI-C17 "output AND result repeat each other" dedupe.
    */
   liveOutputAlreadyShown?: boolean;
+}
+
+/**
+ * [[TUI-C69]] §5.4 — **what a finished tool call's status row says, glyph, word and tone**, for
+ * both surfaces at once.
+ *
+ * `tone` rather than a colour name, because the two surfaces paint through different systems (Ink
+ * `<Text color>` and raw ANSI) and only one of them has a `magenta`. What is shared is the
+ * DISTINCTION, which is the thing a divergence would break.
+ */
+export type ToolStatusTone = 'success' | 'warn' | 'error';
+
+/** Glyph + word + tone for one finished call. */
+export interface ToolStatusDisplay {
+  glyph: string;
+  label: string;
+  tone: ToolStatusTone;
+}
+
+/**
+ * [[TUI-C69]] §5.4 — **an intermediate rating rejection is a clarification request, never a
+ * failure**, and this is the one place that decides so for every surface.
+ *
+ * A `destructive` rating at `auto` does not end anything: it goes back to the agent naming what
+ * would make the command acceptable (§5.2), and on the happy path the very next round succeeds.
+ * Drawn in the same red `✗ … [error]` vocabulary a genuinely failed tool gets, it teaches the user
+ * that a working safety mechanism is a malfunction — which is the fastest way to make someone want
+ * it switched off. It is measured, not hypothetical: a live `auto` run rendered a round-1 rejection
+ * as `▾ ✗ 🔧 run_shell_command(command=git clone …)  [error]`.
+ *
+ * **The glyph and the word carry the distinction, not the colour.** A monochrome terminal — and a
+ * user who cannot tell red from orange — must still be able to tell a refused round from a broken
+ * command, so `⚠` and the words differ before any tone is applied.
+ *
+ * **`raterClarification` outranks `isError`, and both are facts.** The call did not run, so
+ * LangChain's error status is correct and every reader that grades on it is right to; what this
+ * answers is the different question of how to TONE the row. Neither is ever sniffed from the
+ * result text — legitimate output may begin with "Error handling…".
+ */
+export function toolStatusDisplay(
+  input: Pick<ToolCallDisplayInput, 'isError' | 'raterClarification'>
+): ToolStatusDisplay {
+  if (input.raterClarification) {
+    // **The words name the actor as well as the event.** "clarification requested" alone leaves
+    // the reader to guess who asked, and the one thing they must not conclude is that the command
+    // was wrong: the auto-rater asked the agent to narrow it, and the argument is still running.
+    return { glyph: '⚠', label: 'auto-rater: clarification requested', tone: 'warn' };
+  }
+  if (input.isError) return { glyph: '✗', label: 'error', tone: 'error' };
+  return { glyph: '✓', label: 'done', tone: 'success' };
 }
 
 /** One registry entry: glyph + which args the summary shows + an optional body formatter. */

@@ -114,6 +114,86 @@ describe('tui <LiveTurn>', () => {
       unmount();
     });
 
+    /**
+     * [[TUI-C69]] §5.4 — **the measured defect.** In a live `auto` run a round-1 rater rejection
+     * rendered as `▾ ✗ 🔧 run_shell_command(command=git clone …)  [error]` — the same red
+     * failed-tool vocabulary a genuinely broken command gets. It is not an error: the gate is
+     * asking the agent for clarification, and on the happy path the very next round succeeds.
+     * Rendering a working safety mechanism as a malfunction is the fastest way to make someone
+     * want it switched off.
+     *
+     * Asserted against the RENDERED TEXT rather than an internal enum, because the defect was
+     * entirely in what reached the screen.
+     */
+    it('renders an intermediate rating rejection as a clarification request, never as an error', () => {
+      const clarified = turn({
+        toolCalls: [
+          {
+            id: 't1',
+            name: 'run_shell_command',
+            argsText: '{"command":"git clone https://github.com/pukeko-robotics/te"}',
+            status: 'done',
+            result: 'Rejected. Clone into a directory you name, rather than the working folder.',
+            // Both flags, and both are facts: the call did not run (which is what the model, the
+            // eval tool-result assertions and the ACP bridge read), AND it was a round of an
+            // argument rather than a failure.
+            isError: true,
+            raterClarification: true,
+          },
+        ],
+      });
+      const { lastFrame, unmount } = render(<LiveTurn turn={clarified} toolsExpanded />);
+      const frame = lastFrame() ?? '';
+      // Whitespace-normalised: Ink wraps at the pane width wherever the copy happens to reach it,
+      // so a phrase straddling that break would fail on layout while the copy is perfectly
+      // correct. The words are what is being pinned, not where they land.
+      const f = stripAnsi(frame).replace(/\s+/g, ' ');
+      // The words say who asked and what they asked for.
+      expect(f).toContain('[auto-rater: clarification requested]');
+      expect(f).toContain('⚠');
+      // ...and NOT the failed-tool vocabulary. Asserted on the status token itself — the bracketed
+      // label and the glyph — never as a sweep of the surrounding prose, which the rater's own
+      // words could satisfy or defeat by accident.
+      expect(f).not.toContain('[error]');
+      expect(f).not.toContain('✗');
+      // **What was already right and must survive**: the rater's own words render beneath the
+      // command.
+      expect(f).toContain('Clone into a directory you name');
+      // The tone is warn, not error: yellow SGR on the summary row, no red anywhere on it.
+      const row = frame.split('\n').find((line) => stripAnsi(line).includes('run_shell_command'));
+      expect(row).toContain('[33m');
+      expect(row).not.toContain('[31m');
+      unmount();
+    });
+
+    /**
+     * The control for the case above: without the gate's signal the row is unchanged, so the new
+     * branch cannot be quietly repainting every failed tool as a negotiation round.
+     */
+    it('leaves a genuinely failed tool in the error vocabulary', () => {
+      const errored = turn({
+        toolCalls: [
+          {
+            id: 't1',
+            name: 'run_shell_command',
+            argsText: '{"command":"npm test"}',
+            status: 'done',
+            result: 'exit 1',
+            isError: true,
+          },
+        ],
+      });
+      const { lastFrame, unmount } = render(<LiveTurn turn={errored} toolsExpanded />);
+      const frame = lastFrame() ?? '';
+      const f = stripAnsi(frame).replace(/\s+/g, ' ');
+      expect(f).toContain('[error]');
+      expect(f).toContain('✗');
+      expect(f).not.toContain('clarification requested');
+      const row = frame.split('\n').find((line) => stripAnsi(line).includes('run_shell_command'));
+      expect(row).toContain('[31m');
+      unmount();
+    });
+
     it('previews live streamed output collapsed (TUI-C30) and shows the notice only expanded', () => {
       const withOutput = turn({
         toolCalls: [

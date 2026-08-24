@@ -17,6 +17,7 @@ import type {
 } from '@gaunt-sloth/core/config.js';
 import type { ApprovalGrant } from '@gaunt-sloth/core/core/approvals/grants.js';
 import type { ApprovalStopPart } from '@gaunt-sloth/core/core/shell/approvalStop.js';
+import type { LiveNegotiationRound } from '@gaunt-sloth/core/core/shell/negotiation.js';
 import type { CommandNoticeTone } from '#src/tui/components/CommandNotice.js';
 import type { DebugDumpInput } from '@gaunt-sloth/agent/modules/slashCommands.js';
 import type { MouseSubscribe } from '#src/tui/useMouse.js';
@@ -263,6 +264,21 @@ export interface TuiAppProps {
    * fixture and AG-UI paths simply omit it and keep the halt.
    */
   subscribeAttackHalt?: (cb: (record: PendingAttackBanner) => void) => () => void;
+  /**
+   * [[TUI-C69]] §5.4 — subscribe to the §5 negotiation's rounds as the gate decides them, so the
+   * argument between the agent and the auto-rater is watched rather than only reported at an
+   * escalation.
+   *
+   * **Optional, and absent means this surface has no live display** — which is also what tells the
+   * runner not to hold a negotiated approval on screen (§5.5). The fixture path omits it, so a
+   * fixture session neither draws rounds nor pays the hold.
+   *
+   * `null` means the exchange ENDED — a person was reached, the run halted, or a new turn began —
+   * so the panel drops what it was holding. It matters most at an escalation, where the prompt is
+   * about to render the whole argument itself and a live copy above it would put one exchange on an
+   * unscrollable screen twice.
+   */
+  subscribeNegotiation?: (cb: (event: LiveNegotiationRound | null) => void) => () => void;
   /** Called once a turn finishes, with the user input and the final assistant text. */
   onTurnComplete?: (userInput: string, assistantText: string) => void;
   /** Called on `exit`/`/exit` (or quit) for cleanup before the app unmounts. */

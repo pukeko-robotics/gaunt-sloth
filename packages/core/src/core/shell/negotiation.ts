@@ -390,6 +390,80 @@ export interface NegotiationRow {
 }
 
 /**
+ * §5.4 — **one round of the argument, handed to a surface the moment it happens.**
+ *
+ * The round travels raw rather than rendered, so each surface lays it out with
+ * {@link renderNegotiationRows} at its own terminal width — the same renderer, and the same
+ * voice-tagged rows, that the escalation prompt draws. A pre-rendered string would be the second
+ * renderer §5.4 exists to prevent, and it could not be bound to a width the runner cannot know.
+ */
+export interface LiveNegotiationRound {
+  /** The round: the command proposed, the agent's justification, the rater's outcome and reason. */
+  round: RaterNegotiationRound;
+  /**
+   * **Where this round sits in the exchange since a human was last involved, counting from zero.**
+   *
+   * It is passed rather than derived because the two facts {@link renderNegotiationRows} marks —
+   * *this was rated on the command alone* (§5.1's round 1) and *this is round N* — are properties
+   * of a POSITION IN THE TRANSCRIPT, and a caller handing over one round at a time has taken the
+   * array's length away as a source for them. A live block that derived them would call every
+   * round the first one.
+   *
+   * The approving round that ENDS a negotiation sits after every rejection, so its position is the
+   * rejection count rather than one less.
+   */
+  position: number;
+}
+
+/**
+ * §5.4/§5.5 — **the surface that is showing this negotiation while it happens.**
+ *
+ * Wiring one is a surface saying *"I have a live display, and a person is looking at it"*, and it
+ * is what both halves of the visible negotiation are keyed on:
+ *
+ * - each round is handed to {@link round} as it is decided, rather than only at an escalation;
+ * - a negotiated approval is held for {@link NEGOTIATED_APPROVAL_COOLDOWN_MS} before it takes
+ *   effect.
+ *
+ * **A surface that wires nothing neither renders nor sleeps**, which is the whole reason the two
+ * are one seam. An `exec` or CI run has nobody to show an approval to, so an 800 ms hold there
+ * would tax every headless run and every gate to display something to no one.
+ */
+export interface NegotiationDisplay {
+  /** One round of the exchange, the moment the gate decided it. */
+  round(event: LiveNegotiationRound): void;
+  /**
+   * **The exchange is over** — a person was reached, the run halted, or a new turn began. Called
+   * wherever {@link ShellNegotiationState.humanReached} is spent, so a surface holding the rounds
+   * can drop them on the same event the gate drops its transcript on.
+   *
+   * It matters most at an ESCALATION, where the prompt is about to render the whole argument
+   * itself: a live copy left standing above it puts the same exchange on an unscrollable screen
+   * twice, and the rows it spends are rows the dialog needs.
+   *
+   * **Optional, because an append-only surface has nothing to end.** The readline session prints
+   * each round as a line of scrollback; there is no panel to clear, and a surface that implements
+   * nothing simply keeps what it printed.
+   */
+  end?(): void;
+}
+
+/**
+ * §5.5 — **the minimum interval a negotiated approval is visible before it takes effect.**
+ *
+ * It is an **abort window for something the user has just seen**, and it must never be described
+ * or relied upon as an opportunity to evaluate the command: nobody reads a command in 800 ms, and
+ * a design that assumed they did would be resting a safety property on a glance. What it buys is
+ * that a decision the user disagrees with is still stoppable at the moment they see it, rather
+ * than already done by the time it is drawn.
+ *
+ * **A minimum visible interval, not a delay added to a finished decision.** The real window is
+ * longer at both ends — the rater call's own latency precedes it, and the tool takes time to start
+ * after it — so this bounds the short end of a window that mostly already exists.
+ */
+export const NEGOTIATED_APPROVAL_COOLDOWN_MS = 800;
+
+/**
  * The prefix a row too wide for the terminal is continued with.
  *
  * **A continuation is where this block could be forged, and an indent alone does not stop it.** The
@@ -497,37 +571,75 @@ export function renderNegotiationRows(
      * ShellNegotiationState.counters}, read BEFORE the escalation spends it.
      */
     attempts?: number;
+    /**
+     * [[TUI-C69]] §5.4 — **which block this is, and it changes three things.**
+     *
+     * - `escalation` (the default, and every caller that predates §5.4's live render) — the whole
+     *   transcript, put in front of a person who is about to rule on it. It opens with the heading
+     *   that counts the argument, and its last round IS the request being ruled on.
+     * - `live` — one round, drawn the moment it happened. **Nobody has been asked anything**, so
+     *   the `(this request)` marker would be a lie, and a heading counting the argument would be
+     *   re-printed on every round. The context sentence is drawn once, over the round that opens
+     *   the exchange.
+     *
+     * What does NOT change is everything the rows say: the same labels, the same voices, the same
+     * width binding and the same row bound. The live view and the escalation prompt are one
+     * renderer precisely so the exchange a person watched and the exchange they are shown cannot
+     * be two different accounts of it.
+     */
+    mode?: 'escalation' | 'live';
+    /**
+     * [[TUI-C69]] §5.4 — the transcript position of `rounds[0]`, counting from zero, when the
+     * CALLER took the slice. Omitted, this block takes the slice itself and knows the answer.
+     *
+     * It exists because the markers below are properties of a position in the transcript rather
+     * than of a rating, and `rounds.length` stops being able to supply one the moment a caller
+     * hands over a single round.
+     */
+    from?: number;
   }
 ): NegotiationRow[] {
   if (rounds.length === 0) return [];
   const width = options?.width;
+  const live = options?.mode === 'live';
   // A screen shows the newest rounds; a consumer with no screen (§6.2's exception message) shows
   // them all, for the same reason it is handed no width.
   const shown = width === undefined ? rounds : rounds.slice(-NEGOTIATION_MAX_ROUNDS_SHOWN);
   // Never fewer attempts than rounds on the screen: a caller that passes a stale or smaller number
   // must not be able to make this block claim less argument than it is about to print.
   const attempts = Math.max(options?.attempts ?? rounds.length, rounds.length);
+  // How many of the transcript's own rounds precede the first one shown, so a marker keyed on a
+  // POSITION IN THE TRANSCRIPT (round one, the pending round) stays keyed on it after the slice.
+  // A caller that took its own slice says so; otherwise this block took it and knows.
+  const dropped = options?.from ?? rounds.length - shown.length;
   // The shown rounds are the most recent ones, so they are attempts `attempts - shown + 1` … N.
   // Numbering them by their true attempt number is what stops the heading's count and the rounds
-  // beneath it describing two different exchanges.
-  const firstNumber = attempts - shown.length + 1;
-  // How many of the transcript's own rounds this screen had to drop, so a marker keyed on a
-  // POSITION IN THE TRANSCRIPT (round one, the pending round) stays keyed on it after the slice.
-  const dropped = rounds.length - shown.length;
-  const rows: NegotiationRow[] = [
-    {
+  // beneath it describing two different exchanges. A live block has no such heading to agree with
+  // and knows exactly where its round sits, so it numbers from the position itself.
+  const firstNumber = live ? dropped + 1 : attempts - shown.length + 1;
+  const rows: NegotiationRow[] = [];
+  if (!live) {
+    rows.push({
       voice: 'chrome',
       text:
         attempts > shown.length
           ? `The agent argued with the auto-rater ${attempts} times; the last ${shown.length} of them:`
           : `The agent argued with the auto-rater ${attempts} ${attempts === 1 ? 'time' : 'times'}:`,
-    },
-  ];
+    });
+  } else if (dropped === 0) {
+    // §5.4 — one context sentence per exchange, over the round that opens it. Repeating it on
+    // every round would spend a row per round saying the same thing, and saying nothing at all
+    // leaves a bare `Round 1:` with no account of what is talking to what.
+    rows.push({ voice: 'chrome', text: 'The agent is negotiating with the auto-rater:' });
+  }
   shown.forEach((round, index) => {
     // **Each marker rides the row whose reading it corrects, and no other.** Put on the `Round`
     // row they would be paid for in the one thing that row is for — the command, and how it
     // compares with the round above it — which at a narrow width is most of what fits on it.
-    const pending = dropped + index === rounds.length - 1 ? ' (this request)' : '';
+    //
+    // §5.4 — a LIVE round is never the pending request: nothing is being ruled on yet, and the
+    // marker means *this is the call you are being asked about*.
+    const pending = !live && dropped + index === rounds.length - 1 ? ' (this request)' : '';
     // An EMPTY transcript IS the round-1 case, so the transcript's FIRST round is the one §5.1
     // rated on the command alone. Derived from the position rather than carried on the round
     // because it is a property of the transcript, not of the rating — which holds only while

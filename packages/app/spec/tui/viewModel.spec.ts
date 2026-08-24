@@ -82,6 +82,37 @@ describe('tui/viewModel foldEvents', () => {
     expect(turnToolCalls(ok)[0].isError).toBeUndefined();
   });
 
+  /**
+   * [[TUI-C69]] §5.4 — the gate's account of WHY a result is an error, folded beside `isError`
+   * rather than instead of it. Dropped here, the panel would have the fact and no way to read it,
+   * and a working negotiation round would go on rendering as a broken tool.
+   */
+  it('threads the tool_result raterClarification signal on, without disturbing isError', async () => {
+    const { foldEventSequence, turnToolCalls } = await import('#src/tui/viewModel.js');
+    const clarified = foldEventSequence([
+      { type: 'tool_start', id: 't1', name: 'run_shell_command' },
+      {
+        type: 'tool_result',
+        id: 't1',
+        content: 'Rejected. Narrow it.',
+        isError: true,
+        raterClarification: true,
+      },
+    ]);
+    expect(turnToolCalls(clarified)[0]).toMatchObject({
+      status: 'done',
+      isError: true,
+      raterClarification: true,
+    });
+
+    // An ordinary failure carries neither the flag nor a claim about one.
+    const failed = foldEventSequence([
+      { type: 'tool_start', id: 't1', name: 'run_shell_command' },
+      { type: 'tool_result', id: 't1', content: 'exit 1', isError: true },
+    ]);
+    expect(turnToolCalls(failed)[0].raterClarification).toBeUndefined();
+  });
+
   it('interleaves multiple tool calls preserving first-seen order', async () => {
     const { foldEventSequence, turnToolCalls } = await import('#src/tui/viewModel.js');
     const vm = foldEventSequence([

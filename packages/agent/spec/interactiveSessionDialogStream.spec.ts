@@ -87,6 +87,7 @@ const runnerInstanceMock = {
   setToolApprovalCallback: vi.fn((cb) => {
     capturedApprovalCallback = cb;
   }),
+  setNegotiationDisplay: vi.fn(),
   setAttackHaltCallback: vi.fn((cb) => {
     capturedAttackCallback = cb;
   }),

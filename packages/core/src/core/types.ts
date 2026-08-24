@@ -160,6 +160,21 @@ export type AgentStreamEvent =
        * producers that predate the field.
        */
       isError?: boolean;
+      /**
+       * [[TUI-C69]] §5.4 — **this result is the auto-rater asking the agent to narrow the call,
+       * not a tool that failed.** A round-1 rejection is the middle of a working negotiation, and
+       * on the happy path the very next round succeeds.
+       *
+       * **Additive, and {@link isError} stays true beside it.** The error status is the real
+       * LangChain signal and three readers grade on it — the model, which must know the call did
+       * not run; `gth eval`'s `must_error` tool-result assertions; and the ACP bridge's
+       * `failed` status. Clearing it to fix the rendering would quietly rewrite all three. This
+       * field is display-only: it says how to TONE the row, never what happened to the call.
+       *
+       * Set from the gate's own decision, threaded on the call's id — never from the result text,
+       * because legitimate output may begin with "Error handling…".
+       */
+      raterClarification?: boolean;
     };
 
 /**
@@ -193,6 +208,23 @@ export interface GthCompiledGraph {
 export interface PendingToolInterrupt {
   name: string;
   args: Record<string, unknown>;
+  /**
+   * [[TUI-C69]] §5.4 — **the LangChain `tool_call` id this interrupt is holding**, so a decision
+   * about the call can be attributed to the call on screen.
+   *
+   * LangChain's HITL `ActionRequest` is `{ name, args, description }` and carries no id, so the
+   * suspended-state reader recovers it from the AI message the requests were built from: the
+   * same `getState` snapshot that holds `tasks[].interrupts` also holds `values.messages`, whose
+   * last `AIMessage` carries the very `tool_calls` the middleware filtered. Matched back by name
+   * and arguments within that one message, in order, so it is the call's own id rather than a
+   * correlation.
+   *
+   * **It is a display attribution, never a decision input.** Nothing about whether a call is
+   * allowed may read it: the gate decides on the command and the subject, and an id is neither.
+   * Optional because the recovery is defensive at every step — an unexpected state shape yields an
+   * interrupt with no id, and every consumer of the id treats its absence as "attribute nothing".
+   */
+  id?: string;
   /**
    * [[TUI-C67]] — **what kind of call this is, as the gate itself decided it** (§3.1/§4.7.5): a
    * `shell` subject carrying the command, a `tool` subject, or an `mcpTool` subject carrying the
@@ -486,6 +518,19 @@ export interface GthAgentInterface {
    * approve/reject confirmation loop.
    */
   getPendingToolInterrupts?(runConfig: RunnableConfig): Promise<PendingToolInterrupt[]>;
+
+  /**
+   * [[TUI-C69]] §5.4 — **name the tool calls the auto-rater bounced back for clarification**, so
+   * both display paths can tone those rows as a negotiation round rather than as a failed tool.
+   *
+   * Called by {@link GthAgentRunner} with the id of a call it has just refused BACK TO THE MODEL
+   * under §5 — never for a human's "no", a deny entry or the §8 floor, which are refusals rather
+   * than rounds of an argument. The agent holds the ids only until the results carrying them have
+   * been rendered, and a run that never negotiates never calls this.
+   *
+   * Optional: an agent that renders nothing simply omits it, and every row keeps today's tone.
+   */
+  noteRaterClarification?(toolCallId: string): void;
 
   /**
    * EXT-58 (spec §4.4) — the names of the tools registered with the graph at `init`. The runner

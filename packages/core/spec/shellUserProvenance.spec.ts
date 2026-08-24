@@ -615,6 +615,13 @@ describe('[[EXT-106]] §4.6 — the user-provenance carve-out', () => {
     const notice = warnings.find((line) => line.includes(CARVED_HOST));
     expect(notice, 'a carved approval must tell the user it happened').toBeDefined();
     expect(notice).toContain('without asking you');
+    // [[TUI-C69]] §10 rule 4 — this line STATES THE MODE IN FORCE, so it renders the rung in the
+    // display spelling. The §9.1 identifier is a config value and a slash-command argument; it is
+    // never what a sentence about the live posture puts on the screen. Asserted on the rung token
+    // itself, with a literal spelling rather than the production label map, because comparing
+    // against that map would only restate whatever it currently says.
+    expect(notice).toContain('approvals is set to Auto.');
+    expect(notice).not.toContain('approvals is set to auto');
 
     // §5 — the diagnostic archive records fired-AND-carved, so the audit trail for the new
     // behaviour survives. The finding is still reported; what changed is that no reader applied it.

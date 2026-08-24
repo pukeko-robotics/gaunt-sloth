@@ -112,6 +112,77 @@ describe('plainToolIndication (TUI-C30 — the --no-tui / piped surface)', () =>
   });
 
   /**
+   * [[TUI-C69]] §5.4 — **the measured defect's twin on this surface.** A rating rejection at `auto`
+   * is the gate asking the agent to narrow the command, not a tool that failed, and rendering it in
+   * the ✗ vocabulary teaches the user that a working safety mechanism is a malfunction. The Ink TUI
+   * had the visible instance; this surface reads the same `status === 'error'` signal and would
+   * have drawn the same thing, so the fix has to land on both or it is half a fix.
+   *
+   * **The signal is asked for by tool-call id, from the gate's own decision** — never sniffed from
+   * the result text, which legitimately begins with "Rejected." here and could as legitimately
+   * begin with "Error handling…" on a real failure.
+   */
+  it('renders a rater clarification request in warn words, never the failed-tool ✗', async () => {
+    const { createPlainToolIndication } = await import('#src/core/plainToolIndication.js');
+    const sink = vi.fn();
+    const observer = createPlainToolIndication(sink, (id) => id === 'c1');
+    observer.observe(
+      new AIMessageChunk({
+        content: '',
+        tool_call_chunks: [
+          {
+            name: 'run_shell_command',
+            args: '{"command":"git clone https://example.invalid/x"}',
+            id: 'c1',
+            index: 0,
+            type: 'tool_call_chunk',
+          },
+        ],
+      })
+    );
+    observer.observe(
+      new ToolMessage({
+        content: 'Rejected. Clone into a directory you name.',
+        tool_call_id: 'c1',
+        status: 'error',
+      })
+    );
+    const text = sink.mock.calls[0][0] as string;
+    // The glyph and the WORDS both differ, so the distinction survives a terminal with no colour
+    // — which is every piped run on this surface.
+    expect(text).toContain('⚠');
+    expect(text).toContain('[auto-rater: clarification requested]');
+    expect(text).not.toContain('✗');
+    // The rater's own words still render beneath the command.
+    expect(text).toContain('Clone into a directory you name');
+  });
+
+  /**
+   * The control: the same error status with no signal from the gate stays in the ✗ vocabulary, so
+   * the new branch cannot be repainting every failed tool as a negotiation round.
+   */
+  it('leaves an unflagged error result in the ✗ vocabulary', async () => {
+    const { createPlainToolIndication } = await import('#src/core/plainToolIndication.js');
+    const sink = vi.fn();
+    const observer = createPlainToolIndication(sink, () => false);
+    observer.observe(
+      new AIMessageChunk({
+        content: '',
+        tool_call_chunks: [
+          { name: 'run_lint', args: '{}', id: 'c1', index: 0, type: 'tool_call_chunk' },
+        ],
+      })
+    );
+    observer.observe(
+      new ToolMessage({ content: 'lint failed', tool_call_id: 'c1', status: 'error' })
+    );
+    const text = sink.mock.calls[0][0] as string;
+    expect(text).toContain('✗');
+    expect(text).not.toContain('⚠');
+    expect(text).not.toContain('clarification requested');
+  });
+
+  /**
    * The monochrome guarantee for an ordinary piped run, which is what the surface's users
    * actually rely on. It is pinned separately from the case below BECAUSE that one moved: with
    * the local `&& stdout.isTTY` gone, this is now the assertion carrying "captured output stays

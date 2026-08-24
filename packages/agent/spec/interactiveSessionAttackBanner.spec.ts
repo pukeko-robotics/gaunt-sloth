@@ -71,6 +71,7 @@ const runnerInstanceMock = {
   init: vi.fn().mockResolvedValue(undefined),
   processMessages: vi.fn().mockResolvedValue(undefined),
   setToolApprovalCallback: vi.fn(),
+  setNegotiationDisplay: vi.fn(),
   setAttackHaltCallback: vi.fn((cb) => {
     capturedAttackCallback = cb;
   }),

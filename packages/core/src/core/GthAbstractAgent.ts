@@ -155,6 +155,83 @@ function pickReasoningDelta(kwargs: Record<string, unknown> | undefined): string
 }
 
 /**
+ * [[TUI-C69]] §5.4 — **the tool-call ids a suspended graph's pending requests were built from.**
+ *
+ * LangChain's HITL middleware assembles its `actionRequests` from the last AI message's
+ * `tool_calls`, keeping `{ name, args, description }` and dropping the id — so a decision about a
+ * pending call has nothing to attribute it to on screen. The ids are still right there: the same
+ * `getState` snapshot that carries `tasks[].interrupts` carries `values.messages`, whose last
+ * `AIMessage` holds the very calls the middleware filtered. Measured against a real suspended
+ * graph rather than reasoned from the library's source, because a middleware hook that ran inside
+ * the model node instead of after it would leave this empty.
+ *
+ * Returns them in message order, for {@link claimToolCallId} to consume. Defensive throughout: an
+ * unexpected shape yields an empty list, and every id is then simply absent.
+ */
+function pendingToolCallIds(
+  state: unknown
+): { name: string; args: string; id: string; claimed: boolean }[] {
+  const messages = (state as { values?: { messages?: unknown } })?.values?.messages;
+  if (!Array.isArray(messages)) return [];
+  // The LAST message carrying tool calls is the one the interrupt suspended on. Earlier AI
+  // messages in the thread carry calls that already ran, and their ids must never be claimed.
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const toolCalls = (messages[index] as { tool_calls?: unknown })?.tool_calls;
+    if (!Array.isArray(toolCalls) || toolCalls.length === 0) continue;
+    const claimable: { name: string; args: string; id: string; claimed: boolean }[] = [];
+    for (const call of toolCalls) {
+      const name = (call as { name?: unknown })?.name;
+      const id = (call as { id?: unknown })?.id;
+      if (typeof name !== 'string' || typeof id !== 'string' || id.length === 0) continue;
+      claimable.push({
+        name,
+        args: stableArgs((call as { args?: unknown })?.args),
+        id,
+        claimed: false,
+      });
+    }
+    return claimable;
+  }
+  return [];
+}
+
+/**
+ * Match one pending action request back to its tool call and take that call's id.
+ *
+ * Name AND arguments, then FIRST unclaimed — which is exact rather than a correlation, because the
+ * request was built from that very object. The claim flag is what keeps two identical calls in one
+ * message (a model proposing the same command twice) from both taking the first id.
+ */
+function claimToolCallId(
+  candidates: { name: string; args: string; id: string; claimed: boolean }[],
+  name: string,
+  args: Record<string, unknown>
+): string | undefined {
+  const wanted = stableArgs(args);
+  const match = candidates.find((c) => !c.claimed && c.name === name && c.args === wanted);
+  if (!match) return undefined;
+  match.claimed = true;
+  return match.id;
+}
+
+/**
+ * A tool call's arguments as one comparable string, with the keys sorted so two objects that
+ * differ only in insertion order still match. Fail-soft: an unserialisable argument (a BigInt, a
+ * cycle) yields a token that matches nothing, so the id is simply not attributed.
+ */
+function stableArgs(args: unknown): string {
+  if (!args || typeof args !== 'object') return '{}';
+  try {
+    const entries = Object.entries(args as Record<string, unknown>).sort(([a], [b]) =>
+      a < b ? -1 : a > b ? 1 : 0
+    );
+    return JSON.stringify(entries);
+  } catch {
+    return '<unserialisable>';
+  }
+}
+
+/**
  * Shared, graph-agnostic agent plumbing.
  *
  * A backend differs from another only in how it builds the compiled LangGraph in {@link init} —
@@ -476,7 +553,9 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
         // tool call gets its `✓ 📁 name(args…)` block here too. Only the plain surface reaches
         // invoke (the TUI uses processMessagesWithEvents); observe() is fail-soft internally.
         const allMessages = Array.isArray(response.messages) ? response.messages : [];
-        const toolIndication = createPlainToolIndication();
+        const toolIndication = createPlainToolIndication(undefined, (id) =>
+          this.raterClarifications.has(id)
+        );
         for (const m of allMessages.slice(priorMessageCount)) {
           this.recordRunStats(m);
           toolIndication.observe(m);
@@ -601,7 +680,15 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
     // canonical 10-line greyed preview when each ToolMessage lands). Per-stream state; emits at
     // INFO level so the existing consoleLevel gate governs it like the historical tool notices.
     // The TUI never runs this string path (it renders the typed event stream itself).
-    const toolIndication = createPlainToolIndication();
+    //
+    // [[TUI-C69]] §5.4 — the plain surface's twin of the typed event's `raterClarification`, read
+    // through a closure rather than handed a snapshot: the set is filled WHILE this stream is
+    // drained, because the runner notes the id at the moment it refuses the call, which is after
+    // this observer was built and before the refusal's own result arrives.
+    const raterClarifications = this.raterClarifications;
+    const toolIndication = createPlainToolIndication(undefined, (id) =>
+      raterClarifications.has(id)
+    );
     const interruptState = { escape: false, messageShown: false };
     const abortController = new AbortController();
     const showInterruptMessage = () => {
@@ -886,6 +973,8 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
     if (!Array.isArray(tasks)) {
       return [];
     }
+    // [[TUI-C69]] — the ids the action requests were built from, ready to be claimed in order.
+    const unclaimedIds = pendingToolCallIds(state);
     const pending: PendingToolInterrupt[] = [];
     for (const task of tasks) {
       const interrupts = (task as { interrupts?: unknown })?.interrupts;
@@ -898,15 +987,34 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
           const name = (action as { name?: unknown })?.name;
           if (typeof name !== 'string') continue;
           const args = (action as { args?: unknown })?.args;
+          const resolvedArgs =
+            args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
+          const id = claimToolCallId(unclaimedIds, name, resolvedArgs);
           pending.push({
             name,
-            args: args && typeof args === 'object' ? (args as Record<string, unknown>) : {},
+            args: resolvedArgs,
+            ...(id === undefined ? {} : { id }),
           });
         }
       }
     }
     return pending;
   }
+
+  /**
+   * [[TUI-C69]] §5.4 — remember that this call was bounced back to the agent as a negotiation
+   * round, so both display paths can tone its result row as a clarification request.
+   *
+   * A plain set rather than a queue: the ids are LangChain tool-call ids, unique per call, and the
+   * two display paths read the same one without either consuming it — a session drives one of them,
+   * never both. It is emptied with the rest of the turn's state, so a long run cannot accumulate.
+   */
+  noteRaterClarification(toolCallId: string): void {
+    if (toolCallId) this.raterClarifications.add(toolCallId);
+  }
+
+  /** [[TUI-C69]] — the ids {@link noteRaterClarification} has been told about this session. */
+  protected raterClarifications = new Set<string>();
 
   protected async *processEventStream(
     stream: IterableReadableStream<[BaseMessage, Record<string, unknown>]>
@@ -1080,11 +1188,17 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
         // Surface the real tool-result error signal (LangChain `ToolMessage.status`) so
         // consumers render the ✗/error affordance from fact, not from sniffing the result
         // text. Only attach the flag on error to keep the success event shape unchanged.
+        // [[TUI-C69]] §5.4 — the gate's own account of WHY this result is an error, when it was
+        // the auto-rater asking for a clarification rather than a tool that failed. Additive:
+        // `isError` still says the call did not run, which is what the model, `gth eval`'s
+        // tool-result assertions and the ACP bridge all read.
+        const toolCallId = chunk.tool_call_id as string;
         yield {
           type: 'tool_result',
-          id: chunk.tool_call_id as string,
+          id: toolCallId,
           content,
           ...(chunk.status === 'error' ? { isError: true } : {}),
+          ...(this.raterClarifications.has(toolCallId) ? { raterClarification: true } : {}),
         };
       }
     }

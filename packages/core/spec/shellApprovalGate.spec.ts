@@ -12,15 +12,29 @@ type PolicyConfig = Pick<GthConfig, 'commands' | 'builtInTools' | 'askWriteMode'
 
 const config = (partial: Partial<PolicyConfig>): PolicyConfig => partial as PolicyConfig;
 
-const GATED_NOTICE = (rung: string) =>
-  `Shell tool (run_shell_command) enabled with per-command approval (approvals: ${rung}).`;
-const RATED_NOTICE = (rung: string, tail: string) =>
-  `Shell tool (run_shell_command) rated by the auto-rater (approvals: ${rung}); ` +
+/**
+ * [[TUI-C69]] §10 rule 4 — **the display spelling of each rung, written out here rather than read
+ * from `APPROVAL_RUNG_LABELS`.** These notices state the mode in force, so the identifier of §9.1
+ * must never be what reaches the screen. Restating the production map would make every assertion
+ * below agree with whatever that map currently says, including a map someone had lower-cased.
+ */
+const DISPLAY = {
+  manual: 'Manual',
+  write: 'Write',
+  assisted: 'Assisted',
+  auto: 'Auto',
+  bypass: 'Bypass',
+} as const;
+
+const GATED_NOTICE = (rung: keyof typeof DISPLAY) =>
+  `Shell tool (run_shell_command) enabled with per-command approval (approvals: ${DISPLAY[rung]}).`;
+const RATED_NOTICE = (rung: keyof typeof DISPLAY, tail: string) =>
+  `Shell tool (run_shell_command) rated by the auto-rater (approvals: ${DISPLAY[rung]}); ` +
   `anything it does not rate safe is still ${tail}`;
 const BYPASS_NOTICE =
   'Shell tool (run_shell_command): commands run without asking and without rating ' +
-  '(approvals: bypass). Only your deny list still applies — type /approvals assisted to ' +
-  'rate commands again.';
+  `(approvals: ${DISPLAY.bypass}). Only your deny list still applies — type ` +
+  '/approvals assisted to rate commands again.';
 
 describe('resolveShellApprovalGate (EXT-52 shared gate policy, CFG-27 ladder)', () => {
   describe('shell tool disabled — nothing gated, nothing announced', () => {

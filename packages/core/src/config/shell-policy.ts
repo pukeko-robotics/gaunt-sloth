@@ -1486,8 +1486,8 @@ export function resolveShellApprovalGate(
         level: StatusLevel.WARNING,
         message:
           'Shell tool (run_shell_command): commands run without asking and without rating ' +
-          '(approvals: bypass). Only your deny list still applies — type /approvals assisted to ' +
-          'rate commands again.',
+          `(approvals: ${APPROVAL_RUNG_LABELS.bypass}). Only your deny list still applies — type ` +
+          '/approvals assisted to rate commands again.',
       },
     };
   }
@@ -1504,7 +1504,7 @@ export function resolveShellApprovalGate(
       notice: {
         level: StatusLevel.INFO,
         message:
-          `Shell tool (run_shell_command) rated by the auto-rater (approvals: ${rung}); ` +
+          `Shell tool (run_shell_command) rated by the auto-rater (approvals: ${APPROVAL_RUNG_LABELS[rung]}); ` +
           'anything it does not rate safe is still refused or escalated to you.',
       },
     };
@@ -1513,7 +1513,7 @@ export function resolveShellApprovalGate(
     gateShell,
     notice: {
       level: StatusLevel.INFO,
-      message: `Shell tool (run_shell_command) enabled with per-command approval (approvals: ${rung}).`,
+      message: `Shell tool (run_shell_command) enabled with per-command approval (approvals: ${APPROVAL_RUNG_LABELS[rung]}).`,
     },
   };
 }

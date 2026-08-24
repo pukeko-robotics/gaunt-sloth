@@ -26,6 +26,7 @@ vi.mock('@gaunt-sloth/core/core/GthAgentRunner.js', () => {
   GthAgentRunner.prototype.resetThread = vi.fn();
   GthAgentRunner.prototype.setToolApprovalCallback = vi.fn();
   GthAgentRunner.prototype.setAttackHaltCallback = vi.fn();
+  GthAgentRunner.prototype.setNegotiationDisplay = vi.fn();
   // CFG-26 — the session module seeds the status bar from the resolved posture and wires the
   // `/approvals` family through the runner.
   // CFG-26 — the session module seeds the status bar from the RESOLVED posture and wires the

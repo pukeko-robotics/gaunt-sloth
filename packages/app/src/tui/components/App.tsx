@@ -17,6 +17,7 @@ import type {
   TuiAppProps,
 } from '#src/tui/types.js';
 import type { AttackHaltAnswer, ToolApprovalScope } from '@gaunt-sloth/core/core/types.js';
+import type { LiveNegotiationRound } from '@gaunt-sloth/core/core/shell/negotiation.js';
 import type { ApprovalRung } from '@gaunt-sloth/core/config.js';
 import { buildRejectionMessage } from '@gaunt-sloth/core/core/shell/rejection.js';
 import { ApprovalStopError } from '@gaunt-sloth/core/core/shell/approvalStop.js';
@@ -28,6 +29,7 @@ import { TranscriptViewport } from '#src/tui/components/TranscriptViewport.js';
 import { ApprovalPrompt } from '#src/tui/components/ApprovalPrompt.js';
 import { AttackBanner } from '#src/tui/components/AttackBanner.js';
 import { LiveTurn, ChecklistPanel } from '#src/tui/components/LiveTurn.js';
+import { NegotiationPanel } from '#src/tui/components/NegotiationPanel.js';
 import { extractActiveChecklist } from '#src/tui/viewModel.js';
 import { StatusBar } from '#src/tui/components/StatusBar.js';
 import { NoticeBar, McpFailureBar } from '#src/tui/components/NoticeBar.js';
@@ -172,6 +174,10 @@ export function App(props: TuiAppProps): React.ReactElement {
   // head is what is on screen AND what owns the keyboard, from one expression.
   const [attackQueue, setAttackQueue] = useState<PendingAttackBanner[]>([]);
   const pendingAttack = attackQueue[0] ?? null;
+  // [[TUI-C69]] §5.4 — the §5 negotiation's rounds as they happen. A LIST rather than a queue,
+  // because nothing is being answered: it is the argument so far, accumulating while the turn is
+  // in flight and cleared when the next user turn ends the negotiation.
+  const [negotiationRounds, setNegotiationRounds] = useState<LiveNegotiationRound[]>([]);
   // What the human has typed into the banner. Held in a ref BESIDE the state because Ink dispatches
   // every keypress parsed out of one stdin chunk in a synchronous loop: typing `run` can run the
   // handler three times before a single re-render, and reading the state would give all three the
@@ -326,6 +332,10 @@ export function App(props: TuiAppProps): React.ReactElement {
       // the fresh conversation.
       setClearedBanner(false);
       push({ kind: 'user', text: userInput });
+      // [[TUI-C69]] §5.4 — a new user turn is a person being reached, which ENDS any negotiation
+      // still standing (the runner clears its own transcript on the same event). Rounds from the
+      // previous turn left on the dock would claim an argument that is over.
+      setNegotiationRounds([]);
       const ac = new AbortController();
       abortRef.current = ac;
       runningRef.current = true;
@@ -1225,6 +1235,20 @@ export function App(props: TuiAppProps): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // [[TUI-C69]] §5.4 — the negotiation's rounds bridged from the runner, appended as they are
+  // decided so the argument is watched while it runs rather than only reported at an escalation.
+  // Absent on the fixture path, where nothing negotiates.
+  useEffect(() => {
+    if (!props.subscribeNegotiation) return;
+    return props.subscribeNegotiation((event) => {
+      // `null` is the gate saying the exchange is over. Dropping the rounds here is what stops the
+      // escalation prompt — which renders the whole argument itself — being drawn beneath a live
+      // copy of the same rounds on a screen that cannot scroll.
+      setNegotiationRounds((rounds) => (event === null ? [] : [...rounds, event]));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // The greeting is an intro, not a permanent fixture: show it only before the first
   // exchange, so it stops padding the bottom dock once the conversation is underway.
   const showIntro = !initialMessage && transcript.length === 0 && !live;
@@ -1308,6 +1332,11 @@ export function App(props: TuiAppProps): React.ReactElement {
           read as a distinct control zone rather than blending into the conversation. */}
             {/* Pinned active checklist panel */}
             {activeChecklist ? <ChecklistPanel items={activeChecklist} /> : null}
+            {/* [[TUI-C69]] §5.4 — the agent arguing with the auto-rater, drawn while it happens.
+          It sits ABOVE the approval prompt slot because it is the argument that prompt would be
+          asking about: when a bound is spent and the dialog opens beneath it, the two read in the
+          order they occurred. It owns no keyboard — nothing here is being answered. */}
+            <NegotiationPanel rounds={negotiationRounds} />
             {/* Tool-approval affordance (EXT-9 Phase B2): when an approval is pending it sits just above
           the input dock, owns the keyboard, and suspends the normal prompt below. */}
             {/* [[TUI-C68]] §6.1 — the attack banner. Same dock slot as the approval prompt and it

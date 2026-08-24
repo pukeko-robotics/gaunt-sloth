@@ -42,6 +42,14 @@ export interface ToolCallViewModel {
    * the ✗/error glyph from this, never from sniffing the result text.
    */
   isError?: boolean;
+  /**
+   * [[TUI-C69]] §5.4 — true when the `tool_result` event reported `raterClarification`: the gate
+   * refused this call back to the AGENT as a negotiation round, so the row is warn-toned and
+   * labelled a clarification request rather than drawn in the failed-tool vocabulary.
+   *
+   * Additive to {@link isError}, which stays true beside it and still says the call did not run.
+   */
+  raterClarification?: boolean;
 }
 
 /** One run of assistant text, uninterrupted by a tool call or a run of reasoning. */
@@ -249,6 +257,7 @@ export function foldEvents(state: TurnViewModel, event: AgentStreamEvent): TurnV
           status: 'done',
           result: event.content,
           isError: event.isError,
+          raterClarification: event.raterClarification,
         })),
       };
     case 'tool_output': {

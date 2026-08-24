@@ -35,6 +35,7 @@ import {
   isShellShapedResult,
   renderToolLineAnsi,
   summariseToolCall,
+  toolStatusDisplay,
 } from '#src/core/toolDisplay.js';
 import { displayToolIndication } from '#src/utils/consoleUtils.js';
 import { getUseColour } from '#src/utils/systemUtils.js';
@@ -64,7 +65,17 @@ export interface PlainToolIndicationObserver {
  * `emit` is injectable for tests; production uses the INFO-level `displayToolIndication`.
  */
 export function createPlainToolIndication(
-  emit: (text: string) => void = displayToolIndication
+  emit: (text: string) => void = displayToolIndication,
+  /**
+   * [[TUI-C69]] §5.4 — **was this call refused back to the agent as a negotiation round?** Asked
+   * per tool-call id at the moment the result is rendered, never earlier: the gate decides while
+   * this stream is being drained, so a snapshot taken when the observer was built would always
+   * say no.
+   *
+   * Defaults to *"nothing is a clarification"*, which is what a surface with no gate behind it
+   * (and every existing caller) means.
+   */
+  isRaterClarification: (toolCallId: string) => boolean = () => false
 ): PlainToolIndicationObserver {
   /** Streaming tool-call deltas for the CURRENT round, keyed by tool_call_chunk index. */
   const streaming = new Map<number, TrackedToolCall>();
@@ -86,6 +97,9 @@ export function createPlainToolIndication(
     const result =
       typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
     const isError = message.status === 'error';
+    // [[TUI-C69]] §5.4 — asked on the id, at render time, from the gate's own decision. Never
+    // from the result text: legitimate output may begin with "Error handling…".
+    const raterClarification = id ? isRaterClarification(id) : false;
     // TUI-C35 — colour is exactly what the resolved ladder says, with no local narrowing.
     // This used to AND in `stdout.isTTY`, which was redundant in every case but one: rung 4 of
     // `config/colour.ts` already auto-detects from stdout's TTY status, so an unconfigured piped
@@ -93,16 +107,18 @@ export function createPlainToolIndication(
     // it suppressed, defeating the only thing that variable is for.
     const colour = getUseColour();
 
-    const statusGlyph = isError
-      ? colour
-        ? '\x1b[31m✗\x1b[0m'
-        : '✗'
-      : colour
-        ? '\x1b[32m✓\x1b[0m'
-        : '✓';
+    // [[TUI-C69]] §5.4 — one decision, shared with the Ink surface, about what a finished call's
+    // status row says. This surface prints no `[label]` after the summary, so the WORDS are added
+    // as their own tail on the clarification row: the glyph alone would leave the distinction to
+    // a symbol, and §5.4's requirement has to survive a terminal with no colour at all.
+    const status = toolStatusDisplay({ isError, raterClarification });
+    const ansi = status.tone === 'error' ? '31' : status.tone === 'warn' ? '33' : '32';
+    const statusGlyph = colour ? `\x1b[${ansi}m${status.glyph}\x1b[0m` : status.glyph;
     const summary = summariseToolCall(name, tracked?.argsText);
     const summaryText = colour ? `\x1b[2m${summary}\x1b[0m` : summary;
-    const head = `${statusGlyph} ${getToolGlyph(name)} ${summaryText}`;
+    const note = raterClarification ? `  [${status.label}]` : '';
+    const noteText = colour && note ? `\x1b[33m${note}\x1b[0m` : note;
+    const head = `${statusGlyph} ${getToolGlyph(name)} ${summaryText}${noteText}`;
 
     const preview = buildToolPreviewLines({
       name,
