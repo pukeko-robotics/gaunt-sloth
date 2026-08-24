@@ -239,8 +239,8 @@ a tool, or fetching a page — authorises nothing, and a command naming two host
 still asks.
 
 The file **you** fed the command is a different thing from a file the agent opened, and it does
-count as your input: an `exec` prompt file, `ask -f`, piped stdin — see
-[Setting a command to `auto`](#the-extras-rater-allow-deny-escalate). What `review` and `pr` are
+count as your input: an `exec` prompt file, `ask -f`, piped stdin — each command takes its own rung
+under [`commands`](#the-extras-rater-allow-deny-escalate). What `review` and `pr` are
 handed does not: the diff, and the pull request's own description, are fetched by Gaunt Sloth and
 handed to the agent to *examine*, so they never authorise a fetch however those verbs are
 configured. Everything else is unchanged — **the rater
