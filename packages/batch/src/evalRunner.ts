@@ -275,13 +275,17 @@ export async function runEvalSuite(
         // Passed on as DECLARED, per round. The runner is target-agnostic and forms no opinion
         // about what a mechanism implies — `ClassifyRequest.forcedBy` says why that split matters.
         //
-        // Where one round declares SEVERAL mechanisms (`ob-05` is the corpus case: an ambiguity
-        // preflight AND the floor), a mechanism needing a permissive rating is preferred over one
-        // that does not, rather than simply taking the first block. Taking the first made the
-        // verdict depend on BLOCK ORDER — `[ambiguity, floor]` passed and `[floor, ambiguity]`
-        // failed on identical assertions — because a round left undriven can never let its
-        // preflight speak. Preferring the preflight satisfies BOTH claims: the floor's marker comes
-        // from `checkHardline`, which is unaffected by the rating either way.
+        // Where one round declares SEVERAL mechanisms, a mechanism needing a permissive rating is
+        // preferred over one that does not, rather than simply taking the first block. Taking the
+        // first made the verdict depend on BLOCK ORDER — two blocks passed in one order and failed
+        // reversed, on identical assertions — because a round left undriven can never let its
+        // preflight speak.
+        //
+        // BATCH-37 — this no longer arbitrates a preflight against the FLOOR, and the marker it
+        // used to reconcile is now unreachable on that path: a floored round is refused before
+        // `forcedBy` is read at all (every rung but `bypass`), so it can carry the floor's marker
+        // and no other. The preference governs what is left — a round whose declared mechanisms
+        // are all preflights.
         forcedBy: unit.evalCase.turns.map(
           (turn) =>
             turn.expectations.find((block) => mechanismNeedsPermissiveRating(block.forcedBy))
