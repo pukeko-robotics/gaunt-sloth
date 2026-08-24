@@ -11,7 +11,7 @@
  * module decides that one question — **was every host in this command named verbatim by the
  * human?** — and it decides it deterministically, with no model call.
  *
- * ## The four rules that make it safe, and none of them is optional
+ * ## The six rules that make it safe, and none of them is optional
  *
  * 1. **It lifts the FLOOR, never the RATING.** What is carved is the claim *"this command names a
  *    host"*, never *"this command is safe"*. The rater still runs, still rates, and a
@@ -23,6 +23,15 @@
  * 3. **Token EQUALITY, never substring.** See {@link userNamedTokens}.
  * 4. **`auto` only** ({@link isUserProvenanceRung}), enforced HERE rather than at the call site, so
  *    a caller that forgets cannot widen the scope.
+ * 5. **The literal must name a host in the RAW command too**, not only in the normalized form the
+ *    match was found in — because the raw string is what runs. See {@link rawCommandHostLiterals}.
+ * 6. **Only a command whose human turn really is the user's own words has any provenance at all.**
+ *    A `human` message the product SYNTHESISED from content it fetched — `review`/`pr`'s diff, the
+ *    PR description `gth pr` interpolates into its discovery prompt — never enters the window this
+ *    module reads. That rule lives where the window does
+ *    ({@link import('./negotiation.js').ShellNegotiationState.admitUserProvenance}) and is keyed on
+ *    the CLI verb, never on anything inside a message: the bytes are attacker-controlled, so a
+ *    marker in them can be forged by the text it is meant to classify.
  *
  * ## The residual hole, stated once
  *
@@ -40,7 +49,11 @@
  */
 import type { ApprovalRung } from '#src/config.js';
 import { isUserProvenanceRung } from '#src/config.js';
-import { findOpenWorldHostLiterals } from '#src/core/shell/openWorld.js';
+import { tokenize } from '#src/core/shell/arity.js';
+import {
+  findOpenWorldHostLiterals,
+  findOpenWorldHostLiteralsInArgv,
+} from '#src/core/shell/openWorld.js';
 
 /**
  * The trailing characters stripped from a USER's token before it is compared — a small closed set,
@@ -57,6 +70,39 @@ function trimTrailingPunctuation(token: string): string {
   let end = token.length;
   while (end > 0 && TRAILING_PUNCTUATION.has(token[end - 1])) end -= 1;
   return token.slice(0, end);
+}
+
+/**
+ * The host literals the **raw** command names — the string that will actually be handed to the
+ * shell — as opposed to the ones {@link findOpenWorldHostLiterals} may have found only after
+ * normalization.
+ *
+ * **The carve is decided on a normalized form; the RAW string is what runs.**
+ * {@link findOpenWorldHostLiterals} prefers the hits of `normalizeCommand(command)`, which applies
+ * NFKC to the whole command and strips ANSI escapes and NUL bytes. `spawn` gets the raw string. So
+ * `https://exam<ESC>[0mple.com/x`, a fullwidth `．` or `ｅ` inside the host, and an embedded NUL all
+ * fold to a clean literal that the user really did type — while the bytes the program receives name
+ * something else. Whether any of those then resolves back to the same host is a property of one
+ * resolver's mapping table (curl's libidn2 maps the fullwidth forms; an `scp`/`ssh` target goes
+ * straight to `getaddrinfo`), not something this code establishes — and the warning would name the
+ * FOLDED host either way, telling the user a host that is not the one that ran.
+ *
+ * So the carve-out requires the literal in **both** forms and floors otherwise, which is exactly
+ * what the command did before the carve-out existed. Two consequences worth stating: a host written
+ * with a shell backslash-escape (`https://exa\mple.com/x`) also floors, though `sh` would collapse
+ * it to the same bytes — a prompt, in the fail-closed direction; and the warning can only ever name
+ * a literal that is present in the string that runs.
+ *
+ * Re-runs the extractor over the raw argv rather than testing for the literal by hand: a second
+ * notion of "in a host position" is how the raw check and the floor would come to disagree, and the
+ * shapes it would have to know about (an inline `--registry=<url>`, an `scp` `host:path`) are
+ * precisely the ones a hand-written test gets wrong.
+ */
+function rawCommandHostLiterals(command: string): Set<string> {
+  const argv = tokenize(command);
+  // An unbalanced quote is unparseable, so nothing is established about it: no carve.
+  if (argv === null) return new Set();
+  return new Set(findOpenWorldHostLiteralsInArgv(argv));
 }
 
 /**
@@ -127,6 +173,9 @@ export function carvedOpenWorldHosts(
   if (provenance.length === 0) return [];
   const hosts = findOpenWorldHostLiterals(command);
   if (hosts.length === 0) return [];
+  // Rule 5 — the carve must be decided on the string that RUNS. See `rawCommandHostLiterals`.
+  const raw = rawCommandHostLiterals(command);
+  if (!hosts.every((host) => raw.has(host))) return [];
   const named = userNamedTokens(provenance);
   // Rule 2 — EVERY host, never the first. `every` on a non-empty array, so a command naming a
   // user-requested host and one the user never mentioned is not carved at all.

@@ -12,6 +12,7 @@ import {
   type McpApprovalsConfig,
   type McpToolApprovalEntry,
   type ResolvedApprovals,
+  commandCarriesUserProvenance,
   isToolGatedAtRung,
   resolveApprovals,
   resolveGatedToolNames,
@@ -61,6 +62,7 @@ import {
 } from '#src/core/shell/approvalStop.js';
 import {
   applyDestructiveFloor,
+  effectivePreflightFloorFinding,
   isBelowDestructiveFloor,
   isNegotiableCall,
   isRaterTimeout,
@@ -253,7 +255,15 @@ export interface GthAgentRunnerInitOptions {
    * the mode prompt (`readModePrompt`), the per-command approvals posture (`resolveApprovals`) and
    * the command-specific filesystem config, so a helper agent that must run on the chat prompt —
    * the `gth pr` change-requirements discovery agent — cannot borrow it to say which verb it serves.
-   * Nothing but the wording of a notice reads this.
+   *
+   * **It is read for the wording of a notice, and for one safety decision.** [[EXT-106]] §4.6 asks
+   * whether this run's human messages are the user's own words, and answers it from
+   * `command ?? owningCommand` ({@link import('../config/shell-policy.js').commandCarriesUserProvenance}
+   * at the top of {@link GthAgentRunner#init}) — precisely because a command-less helper agent whose
+   * human turn is content the product FETCHED must not be classified by the absence of a verb. The
+   * key has to be out-of-band metadata like this field: a marker inside the message would be
+   * forgeable by the attacker-controlled text it is supposed to classify. Both that predicate and
+   * the provenance window itself fail closed, so leaving this unset never widens anything.
    */
   owningCommand?: GthCommand;
 
@@ -711,6 +721,23 @@ export class GthAgentRunner {
     // remains switchable (`/approvals write`). Resolved per-command, mirroring where the shell
     // tool is actually emitted; no effect where the tool is ungated.
     this.sessionApprovals = resolveApprovals(configIn, command);
+
+    // [[EXT-106]] §4.6 — **whose words this session's human messages are.** The provenance carve-out
+    // reads the retained human turns as *"the user's own verbatim words"*, and on `review` and `pr`
+    // they are nothing of the kind: the product itself fetched the diff and the PR description and
+    // then framed them as a human message, and the review prompt tells the agent to EXAMINE that
+    // content. Material under examination is not the voice of the person who asked for the
+    // examination, so admitting it would make the product contradict itself about identical input.
+    //
+    // **Decided from the VERB and never from anything inside a message.** Those bytes are
+    // attacker-controlled, so a marker in them can be forged by the text it is meant to classify;
+    // out-of-band metadata is the only admissible key. `owningCommand` is the fallback because a
+    // command-less helper agent — the `gth pr` discovery run — must be classified by the verb it
+    // serves rather than by the absence of one. Both the predicate and the window's own default
+    // fail closed, so a driver nobody has classified floors exactly as it did before the carve-out.
+    this.negotiation.admitUserProvenance(
+      commandCarriesUserProvenance(command ?? options?.owningCommand)
+    );
 
     // §3/§9.1 — the DECLARED lists are read-only config input, consulted through the EXT-71 rule
     // matcher (`core/approvals/matcher.ts`) and NEVER copied into the runtime stores, which hold
@@ -1406,8 +1433,25 @@ export class GthAgentRunner {
         // round 1 — the user asks, the agent proposes, nothing has been refused yet — is the round
         // the carve-out exists to act on. §5.1 bounds what the RATER may see; the floor is not the
         // rater.
+        //
+        // **And "was this call carved?" is asked of the DECISION's own reader, once.** The carve is
+        // one arm of a floor with two, and only `effectivePreflightFloorFinding` resolves which arm
+        // wins: a command that trips the script-env-leak arm as well is floored by that one and is
+        // not carved at all, whatever the open-world arm would have said on its own. Reading
+        // `carvedOpenWorldHosts` directly for the archive, the prompt or the warning is a SECOND
+        // derivation of the same fact that does not know about arm precedence — so those three would
+        // report a carve on a command that was floored and did go to a human. Deriving the hosts
+        // from the effective finding keeps them empty whenever the floor stood, which is what makes
+        // "carved" mean the same thing to every reader of it.
         const provenance = this.negotiation.retainedUserMessages();
-        const carvedHosts = carvedOpenWorldHosts(approvals.rung, subject.command, provenance);
+        const effectiveFloor = effectivePreflightFloorFinding(subject.command, {
+          rung: approvals.rung,
+          provenance,
+        });
+        const carvedHosts =
+          effectiveFloor === null
+            ? carvedOpenWorldHosts(approvals.rung, subject.command, provenance)
+            : [];
         const negotiable = isNegotiableCall(approvals.rung, subject.command, provenance);
         const justification = negotiable ? shellJustification(tool.args) : undefined;
         const context: RaterNegotiationContext | undefined = negotiable
@@ -1450,12 +1494,19 @@ export class GthAgentRunner {
         // opening a dump of their own session most needs to find the case where an open-world
         // command ran with nobody asked, and a record nulled out by the carve is precisely the one
         // that would be missing.
+        //
+        // **`floorApplied` is read off the decision's own reader, not derived a second time.** It
+        // answers "did the readers act on this finding?", which is `effectivePreflightFloorFinding`
+        // and nothing else: computing it from the carved hosts instead would say "carved, not
+        // floored" about a command whose script-env-leak arm floored it and sent it to a human. Both
+        // fields therefore come from `effectiveFloor`, which is also what the decision, the
+        // negotiability test and the prompt above were built from.
         const preflight = preflightFloorFinding(subject.command);
         if (preflight) {
           record.preflight = {
             ...preflight,
             rewroteRating: isBelowDestructiveFloor(verdict.outcome),
-            floorApplied: carvedHosts.length === 0,
+            floorApplied: effectiveFloor !== null,
             ...(carvedHosts.length > 0 ? { carvedHosts: [...carvedHosts] } : {}),
           };
         }

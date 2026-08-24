@@ -131,6 +131,12 @@ export class ShellNegotiationState {
   private sinceHuman = 0;
   /** §5.1's last user messages, oldest first, capped at {@link NEGOTIATION_USER_MESSAGE_RETENTION}. */
   private userMessages: string[] = [];
+  /**
+   * [[EXT-106]] §4.6 — whether {@link retainedUserMessages} may hand this session's human turns out
+   * as **the user's own words**. See {@link admitUserProvenance}; `false` until something positively
+   * establishes otherwise, which is the whole of its safety.
+   */
+  private userProvenanceAdmitted = false;
 
   /**
    * §5.1 — the context for the rating about to be made: the justification the agent supplied for
@@ -271,9 +277,38 @@ export class ShellNegotiationState {
    * The window is cumulative across the turns of a thread (capped and de-duplicated by
    * {@link noteUserMessages}), so a host named in an earlier turn still carves a command proposed in
    * a later one. {@link clear} drops it with the thread.
+   *
+   * **Empty until {@link admitUserProvenance} says otherwise**, which is why this is the provenance
+   * window rather than {@link noteUserMessages}'s store: the store also feeds §5.1's negotiation
+   * context, a different question with a different reader, and one that a command's fetched content
+   * is legitimately part of. What must never be answered *"yes, the human said this"* is this
+   * accessor, so the gate lives on it and defaults to refusing.
    */
   retainedUserMessages(): readonly string[] {
+    if (!this.userProvenanceAdmitted) return [];
     return [...this.userMessages];
+  }
+
+  /**
+   * [[EXT-106]] §4.6 — **declare whether this session's human turns are the user's own words**, and
+   * therefore whether {@link retainedUserMessages} may return them at all.
+   *
+   * A human message the product SYNTHESISED from content it fetched must never enter the provenance
+   * window: `review` and `pr` hand the agent a diff and a PR description that gaunt-sloth went and
+   * got, and the review prompt tells the agent to examine them. Reading the same bytes as the user's
+   * verbatim words would make the product contradict itself about identical input — and the words
+   * are written by whoever opened the pull request.
+   *
+   * **It defaults to `false` and the caller must positively establish otherwise**, so a surface that
+   * never calls this — or a future driver nobody has classified — floors exactly as it did before
+   * the carve-out existed. The one caller is
+   * {@link import('../GthAgentRunner.js').GthAgentRunner.init}, which decides it from the CLI verb
+   * ({@link import('../../config/shell-policy.js').commandCarriesUserProvenance}) and never from
+   * anything inside a message: those bytes are attacker-controlled, so a marker in them can be
+   * forged by the text it is supposed to classify.
+   */
+  admitUserProvenance(admitted: boolean): void {
+    this.userProvenanceAdmitted = admitted;
   }
 
   /**

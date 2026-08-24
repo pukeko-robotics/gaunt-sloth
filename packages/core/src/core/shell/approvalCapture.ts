@@ -217,6 +217,12 @@ export interface PreflightFloorCapture {
    * diagnostic archive a user opens about their own session, and a command that reached the open
    * world without anyone confirming it is exactly the one they most need to find in it. Nulling the
    * record out on a carve would delete the audit trail for the whole of the new behaviour.
+   *
+   * **Written from the decision's own reader** (`effectivePreflightFloorFinding`), never derived a
+   * second time from the carved hosts: the floor has two arms, only that function resolves which of
+   * them wins, and a command tripping both is floored by the script-env-leak arm while the
+   * open-world arm would have carved. A second derivation says "carved, not floored" about a call
+   * that was floored and did reach a human.
    */
   floorApplied: boolean;
   /**

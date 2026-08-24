@@ -234,8 +234,16 @@ you are **told** the fetch happened rather than **asked** whether it may:
 
 Asking you to confirm a URL you had just typed was the whole of what `auto` was interrupting you
 for. The comparison is exact and word-for-word: a URL you pasted authorises *that* URL and nothing
-that merely starts with it, a host the agent found in a file or a web page authorises nothing, and a
-command naming two hosts where you named one still asks. Everything else is unchanged — **the rater
+that merely starts with it, a host the agent went and **found for itself** — by opening a file with
+a tool, or fetching a page — authorises nothing, and a command naming two hosts where you named one
+still asks.
+
+The file **you** fed the command is a different thing from a file the agent opened, and it does
+count as your input: an `exec` prompt file, `ask -f`, piped stdin — see
+[Setting a command to `auto`](#the-extras-rater-allow-deny-escalate). What `review` and `pr` are
+handed does not: the diff, and the pull request's own description, are fetched by Gaunt Sloth and
+handed to the agent to *examine*, so they never authorise a fetch however those verbs are
+configured. Everything else is unchanged — **the rater
 still rates the command**, so a lookalike hostname it recognises is still named to you, anything it
 rates worse than safe still does not run, and the `deny` and `escalate` lists still decide first. If
 you want a particular host confirmed every time even so, put it in `approvals.escalate`.
@@ -460,14 +468,21 @@ A per-command value overrides **only the fields it names**. `"commands": { "pr":
 setting is — and that is *all* it says: the mode changes, and `rater`, `raterTimeoutMs` and the
 lists still come from the root.
 
-**Setting a command to `auto`: the file you point it at counts as your own input.** Four commands
-are fed by something other than what you type — `exec` runs a prompt file read from disk, `ask -f`
-reads a file and piped stdin, and `review`/`pr` carry the whole diff. All of it reaches the agent as
-*your* side of the conversation, so anything that treats your words as authority treats those bytes
-the same way. The one thing that does today is the host rule below: at `auto`, a host named in that
-file will let the fetch run without asking you, exactly as if you had typed the URL. That is what
-`auto` on a file-fed command means — it is a deliberate setting, not a default, and the difference
-from `assisted` is precisely that the file gets to speak for you.
+**Setting a command to `auto`: the file you point it at counts as your own input.** Two commands are
+fed by something other than what you type: `exec` runs a prompt file read from disk, and `ask -f`
+reads a file and piped stdin. Both reach the agent as *your* side of the conversation, so anything
+that treats your words as authority treats those bytes the same way. The one thing that does today is
+[the host rule above](#at-auto-a-host-you-named-yourself-is-a-warning-instead-of-a-question): at
+`auto`, a host named in that file will let the fetch run without asking you, exactly as if you had
+typed the URL. That is what `auto` on a file-fed command means — it is a deliberate setting, not a
+default, and the difference from `assisted` is precisely that the file gets to speak for you.
+
+**`review` and `pr` are not in that group, and the difference is who chose the content.** Their diff
+— and the pull request description `pr` reads — is fetched by Gaunt Sloth and handed to the agent as
+material to *examine*, written by whoever opened the pull request rather than by you. It reaches the
+agent as a human turn for want of anywhere else to put it, and it is never read as your own words:
+setting `commands.review` or `commands.pr` to `auto` does not let a host mentioned in a diff or a PR
+description authorise a fetch.
 
 The lists do not all merge the same way, and the difference is deliberate:
 
