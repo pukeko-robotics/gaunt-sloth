@@ -731,6 +731,33 @@ export function isNegotiatingRung(rung: ApprovalRung): boolean {
 }
 
 /**
+ * [[EXT-106]] (§4.6) — the rung at which **the user's own verbatim words lift the open-world
+ * floor**: where every host a command names was named by the human themselves, the deterministic
+ * preflight does not floor it, and the user is *warned* that it ran rather than *asked* whether it
+ * may.
+ *
+ * **`auto` and nothing else, and the scope is load-bearing rather than a default.**
+ * {@link DEFAULT_APPROVAL_RUNG} is `assisted` for every command including `exec`, whose whole
+ * purpose is running a prompt file read from disk — and file contents, piped stdin and a whole diff
+ * all arrive as `human` messages. A carve-out reaching `assisted` would therefore be live on the
+ * default rung with no config edit at all, on exactly the verbs whose "user message" is a file.
+ * `auto` is chosen deliberately, by someone who has read what the rung does.
+ *
+ * It answers about the RUNG, never about a particular call: whether THIS command is carved is
+ * {@link import('../core/shell/provenance.js').carvedOpenWorldHosts}, which composes this predicate with
+ * the open-world preflight and the user's retained messages. This one is a fact about the ladder and
+ * stays free of the shell module, exactly as {@link isNegotiatingRung} does.
+ *
+ * Written as a `=== 'auto'` test rather than as "the negotiating rung", even though the two agree
+ * today: they answer different questions — *may the agent argue* versus *does the user's word lift a
+ * deterministic floor* — and collapsing them into one would carry a sixth rung into both by
+ * omission.
+ */
+export function isUserProvenanceRung(rung: ApprovalRung): boolean {
+  return rung === 'auto';
+}
+
+/**
  * The rungs that decide a gated call **without a model** — `manual` and `write` (§2.1, §2.2).
  * Everything they do not auto-grant goes to the human, so these are the two rungs a user picks in
  * order to read and approve every tool call themselves.

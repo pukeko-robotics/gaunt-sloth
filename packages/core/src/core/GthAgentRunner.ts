@@ -81,6 +81,9 @@ import {
 } from '#src/core/shell/approvalCapture.js';
 import { buildHardlineRefusal, checkHardline } from '#src/core/shell/hardline.js';
 import { renderNegotiationTranscript, ShellNegotiationState } from '#src/core/shell/negotiation.js';
+// [[EXT-106]] §4.6 — the user-provenance carve-out, read once per decision and handed to every
+// reader of it (the floor, the negotiation test, the rating prompt, the archive and the warning).
+import { carvedOpenWorldHosts } from '#src/core/shell/provenance.js';
 import { buildRejectionMessage } from '#src/core/shell/rejection.js';
 import {
   type ApprovalRuleDecision,
@@ -187,8 +190,18 @@ function shellApprovalEntryFor(command: string): ShellApprovalEntry | undefined 
  *
  * Structural and fail-soft, like `runStats`'s accumulator: the runner is handed `BaseMessage`s from
  * several surfaces (readline, TUI, ACP, AG-UI) and a multimodal turn's `content` is an array of
- * blocks rather than a string. Only the text is taken — §4.3 admits no file contents, no tool
- * output and no fetched pages, and an image block is none of the three.
+ * blocks rather than a string. Only the text of a `human` message is taken, and the filter beside
+ * the loop is why: a multimodal turn's non-text blocks (an image) contribute nothing.
+ *
+ * **What this does NOT do is exclude file contents, tool output or fetched pages, and the
+ * distinction matters.** §4.3 admits none of those *as messages of their own*, and none of them
+ * arrives as one — but a `human` message's own text is taken whole, whatever put it there. On the
+ * file-fed verbs that is a great deal: `exec` reads a prompt FILE from disk, `ask -f` reads a file
+ * and piped stdin, and `review`/`pr` carry the entire diff — all of them as `human` messages, all of
+ * them therefore in this window. Anything that treats these strings as *"what the user typed"* is
+ * treating a file the agent was pointed at as the user's own words; [[EXT-106]] §4.6's provenance
+ * carve-out does exactly that, deliberately and only at `auto`, and it is documented as such in
+ * `docs/guides/shell-tool-and-approvals.md`.
  */
 function humanMessageTexts(messages: readonly Message[]): string[] {
   const texts: string[] = [];
@@ -1377,7 +1390,25 @@ export class GthAgentRunner {
         // follows rather than being a side effect: both exist so a rating can be revised in the
         // light of an argument, and there is no argument on this path — the call goes to a person
         // on its first round instead.
-        const negotiable = isNegotiableCall(approvals.rung, subject.command);
+        //
+        // [[EXT-106]] §4.6 — **the provenance is read ONCE here, and every reader of the carve-out
+        // is given that one snapshot.** `this.negotiation` is mutable and the rating below is
+        // awaited, so three separate reads of it — the negotiability test before the call, the
+        // decision after it, the archive after that — would be the two-writer hazard these doc
+        // blocks exist to prevent, rebuilt around an await. One read fixes the input; the derivation
+        // itself is then a pure function of (rung, raw command, snapshot) that each reader runs
+        // through the one shared helper, exactly as both readers already recompute the preflight
+        // from the raw command rather than being handed a result to trust. That is also what makes
+        // the rung scope unforgeable: `carvedOpenWorldHosts` enforces `auto` itself, so this call
+        // site cannot widen it by forgetting.
+        //
+        // **NOT `contextFor()`.** That returns no user messages at round 1 by design (§5.1), and
+        // round 1 — the user asks, the agent proposes, nothing has been refused yet — is the round
+        // the carve-out exists to act on. §5.1 bounds what the RATER may see; the floor is not the
+        // rater.
+        const provenance = this.negotiation.retainedUserMessages();
+        const carvedHosts = carvedOpenWorldHosts(approvals.rung, subject.command, provenance);
+        const negotiable = isNegotiableCall(approvals.rung, subject.command, provenance);
         const justification = negotiable ? shellJustification(tool.args) : undefined;
         const context: RaterNegotiationContext | undefined = negotiable
           ? this.negotiation.contextFor(justification)
@@ -1394,24 +1425,59 @@ export class GthAgentRunner {
             allowMatched: false,
             negotiation: context,
             negotiable,
+            // [[EXT-106]] §4.6 — the rating PROMPT has to know too. Two of its blocks assert that
+            // §4.6's floor already fired and that the rater's hostname judgement is therefore not
+            // what decides; on a carved command both are backwards, and on this one command the
+            // rater's assessment really is the last line.
+            carved: carvedHosts.length > 0,
           },
           record
         );
-        const decision = mapVerdictToAction(subject.command, verdict, { rung: approvals.rung });
+        const decision = mapVerdictToAction(subject.command, verdict, {
+          rung: approvals.rung,
+          provenance,
+        });
         // [[TUI-C27]] — WHICH deterministic preflight fired, and whether it actually rewrote the
         // rating. The two are separate facts: a preflight only ever RAISES, and only `safe` sits
         // below the floor, so a finding on a `destructive` verdict is the floor AGREEING with the
         // rater rather than overriding it — and attributing the decision to the floor in that case
         // would be wrong. Recomputed from the same raw command `mapVerdictToAction` recomputes it
         // from, through the same one function, so the two cannot disagree.
+        //
+        // [[EXT-106]] §4.6 — **the PURE finding, deliberately, so a carve does not empty the
+        // archive.** The decision above reads the carve-aware form; this reads what the preflights
+        // found in the string, and the carve is recorded BESIDE it as its own two facts. A user
+        // opening a dump of their own session most needs to find the case where an open-world
+        // command ran with nobody asked, and a record nulled out by the carve is precisely the one
+        // that would be missing.
         const preflight = preflightFloorFinding(subject.command);
         if (preflight) {
           record.preflight = {
             ...preflight,
             rewroteRating: isBelowDestructiveFloor(verdict.outcome),
+            floorApplied: carvedHosts.length === 0,
+            ...(carvedHosts.length > 0 ? { carvedHosts: [...carvedHosts] } : {}),
           };
         }
         if (decision.action === 'approve') {
+          // [[EXT-106]] §4.6 — **a carved command that RUNS is announced.** The carve-out removes
+          // the confirmation dialog; it must never remove the visibility, or an open-world fetch
+          // reaches the network with the user told nothing at all. Visible for the same reason the
+          // hardline refusal above is: an event the user never sees reads as the agent quietly
+          // deciding things on their behalf.
+          //
+          // **The trigger is carved AND approved, never either alone.** A carved command the rater
+          // independently rated `destructive` does not run, so a notice saying it did would be
+          // false — and the residual risk this warning covers is exactly the one case the rater saw
+          // nothing in.
+          if (carvedHosts.length > 0) {
+            this.statusUpdate(
+              StatusLevel.WARNING,
+              `\n⚠ Ran a command that reaches ${carvedHosts.join(', ')} without asking you, ` +
+                'because your own message named that host and approvals is set to auto. The ' +
+                'auto-rater found nothing wrong with it. Check the host is the one you meant.'
+            );
+          }
           // Scope `once`: rater approvals are NEVER persisted to the allow-list.
           return { type: 'approve', scope: 'once' };
         }
@@ -1655,6 +1721,13 @@ export class GthAgentRunner {
       negotiation?: RaterNegotiationContext;
       /** [[EXT-29]] §5.2 — whether the rejection will be handed back to the agent. */
       negotiable?: boolean;
+      /**
+       * [[EXT-106]] §4.6 — whether §4.6's open-world floor was lifted on this command because the
+       * user named every host in it themselves. Never set on the tripwire path: an allow match
+       * already lifts that floor by its own rule (§4.6's fourth bullet), so there is no carve to
+       * report and nothing in the prompt to correct.
+       */
+      carved?: boolean;
     },
     /** [[TUI-C27]] — the decision's record; the rating attaches itself to it at the send site. */
     record: ApprovalDecisionCapture
@@ -1664,6 +1737,7 @@ export class GthAgentRunner {
       home: env?.HOME,
       negotiation: opts.negotiation,
       negotiable: opts.negotiable,
+      carved: opts.carved,
       // [[TUI-C27]] — the sink fires BEFORE the model is invoked, with the prompt that is about to
       // be sent, so the record carries what the rater was SHOWN rather than a later re-render of
       // it. Assigning it here (rather than pushing a finished record afterwards) is what makes a

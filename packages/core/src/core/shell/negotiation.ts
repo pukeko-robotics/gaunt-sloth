@@ -257,6 +257,26 @@ export class ShellNegotiationState {
   }
 
   /**
+   * [[EXT-106]] §4.6 — **the user's own words, for the provenance carve-out that lifts the
+   * open-world floor.** A snapshot, oldest first, of the whole retained window.
+   *
+   * **This is deliberately NOT {@link contextFor}, and the difference is the point.** That function
+   * returns `userMessages: []` at round 1 by design — §5.1's *"round 1 sees the command alone"* —
+   * and round 1 is exactly the round the carve-out exists to act on: the user asks for a fetch, the
+   * agent proposes it, and there has been no rejection for a round 2 to exist. §5.1 bounds what the
+   * **rater** may see, and the floor is not the rater. Reading `contextFor()` here would make the
+   * carve-out fire only after the command had already been refused once, i.e. never in the case it
+   * was built for.
+   *
+   * The window is cumulative across the turns of a thread (capped and de-duplicated by
+   * {@link noteUserMessages}), so a host named in an earlier turn still carves a command proposed in
+   * a later one. {@link clear} drops it with the thread.
+   */
+  retainedUserMessages(): readonly string[] {
+    return [...this.userMessages];
+  }
+
+  /**
    * §6 — the rounds to show the human, oldest first. A snapshot: the caller holds it across the
    * {@link humanReached} that immediately follows, and nothing it holds may change underneath it.
    */
