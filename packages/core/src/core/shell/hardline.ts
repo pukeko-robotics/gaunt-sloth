@@ -156,7 +156,7 @@ const WRAPPER_ARMS: readonly string[] = [
  * Matches a position where the shell would begin parsing a NEW command: start of string, after a
  * separator (`;` `&` `|` newline), after `$(` or a backtick, optionally consuming any run of the
  * leading wrappers in {@link WRAPPER_ARMS}. Used by every destructive-verb pattern so a verb in an
- * ordinary argument (`echo reboot`, `grep -c mkfs docs/*.md`) is not a refusal.
+ * ordinary argument (`echo mkfs.ext4 /dev/sda1`, `grep -c mkfs docs/*.md`) is not a refusal.
  *
  * **What this deliberately does NOT model. This is the worked example of the header's drop rule —
  * read it before proposing an addition.**
