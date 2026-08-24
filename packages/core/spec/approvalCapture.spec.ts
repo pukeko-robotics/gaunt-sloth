@@ -518,7 +518,11 @@ describe('[[TUI-C27]] — the approvals gate records what it was shown, and reco
     expect(overridden.records[0].preflight?.kind).toBe('open-world');
     expect(overridden.records[0].preflight?.rewroteRating).toBe(true);
     expect(overridden.records[0].rating?.verdict?.outcome).toBe('safe');
-    expect(overridden.records[0].action).toBe('reject');
+    // [[EXT-106]] §3 — a floored command goes to the HUMAN rather than back to the agent, so this
+    // is the action a reader of the archive sees for one. The two facts above are the ones this
+    // case exists for; the action is read here so the record's own account of the decision stays
+    // pinned to what the gate did.
+    expect(overridden.records[0].action).toBe('escalate');
 
     // Same command, same floor — but the rater already said `destructive`, so nothing was rewritten.
     const agreed = await driveAndDump({ calls: [{ command }], script: ['destructive'] });

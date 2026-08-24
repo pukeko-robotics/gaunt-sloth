@@ -186,7 +186,9 @@ describe('interactiveSessionModule EXT-18 (--no-tui readline stdin re-ref)', () 
     expect(decision.message).toContain('The user rejected your call to run_shell_command.');
     expect(decision.message).toContain('call the same command with a justification');
     expect(decision.message).toContain('call a different command');
-    expect(decision.message).toContain('ask the user if there is no way around it');
+    // [[EXT-106]] §5 — and NOT "ask the user": that exit was prose the model wrote, it never
+    // reached the gate, and the confirmation it asked for could not arrive.
+    expect(decision.message?.toLowerCase()).not.toContain('ask the user');
   });
 
   /**

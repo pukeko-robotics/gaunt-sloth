@@ -1628,6 +1628,37 @@ export function preflightFloorFinding(command: string): PreflightFloorFinding | 
 }
 
 /**
+ * [[EXT-106]] §3 — **may the AGENT be invited to argue about this call?** The ONE discriminator for
+ * that question, read by every writer of it.
+ *
+ * Two facts have to agree and they are computed at different moments: the rating PROMPT tells the
+ * rater to word its rejection for an agent that may answer it ({@link
+ * RATER_NEGOTIABLE_REJECTION_GUIDANCE}, built before the call), and the DECISION returns `reject`
+ * rather than `escalate` ({@link mapVerdictToAction}, after it). A fact with two writers is one no
+ * test can pin, so both read this, and it is a pure function of the rung and the raw command so
+ * that both *can*.
+ *
+ * **Why the preflight decides it.** {@link mapVerdictToAction} recomputes {@link
+ * preflightFloorFinding} from the raw command on every round and {@link applyDestructiveFloor} only
+ * ever raises, so a floored command's reachable action set is `{reject, escalate, halt}` and never
+ * `approve` — whatever the rater returns on any round, and whatever the agent argues. A negotiation
+ * opened on one cannot succeed: it costs a round, a rating call and a turn, and the agent ends up
+ * narrating a refusal to a user who was never asked. Routing it to the human instead is the same
+ * answer arrived at without the theatre.
+ *
+ * **It keys on the PREFLIGHT, never on whether the floor RAISED the rater's own outcome.** Those
+ * are different questions ({@link isBelowDestructiveFloor} answers the second, for the diagnostic
+ * archive). A command the rater independently rated `destructive` is unwinnable for exactly the
+ * same reason when a preflight also fires on it, so reading the rater's outcome here would leave
+ * the commonest case — a floor and a rater that agree — negotiating an argument it has already
+ * decided. Where NO preflight fires, a `destructive` rating is a real negotiation the agent can win
+ * by narrowing the command, and this returns true for it exactly as before.
+ */
+export function isNegotiableCall(rung: ApprovalRung, command: string): boolean {
+  return isNegotiatingRung(rung) && preflightFloorFinding(command) === null;
+}
+
+/**
  * CFG-27 — pure, testable mapping from a {@link ShellSafetyVerdict} + the raw command to a
  * {@link RaterAction}, keyed on the **rung** (spec §4.2, §8):
  *
@@ -1635,7 +1666,7 @@ export function preflightFloorFinding(command: string): PreflightFloorFinding | 
  * |---|---|---|---|---|
  * | — (no rating) | escalate | | | approve |
  * | `safe` | — | approve | approve | — |
- * | `destructive` | — | escalate | **reject** — §5's negotiation ([[EXT-29]]) | — |
+ * | `destructive` | — | escalate | **reject** — §5's negotiation ([[EXT-29]]); **escalate** when a preflight floored the command ([[EXT-106]]) | — |
  * | `catastrophic` | — | escalate | escalate — **never negotiate** | — |
  * | `attack` | — | **halt** | **halt** | — |
  *
@@ -1671,8 +1702,10 @@ export function preflightFloorFinding(command: string): PreflightFloorFinding | 
  *    above, silently trading an unnegotiable escalation for a negotiable one at `auto`.)
  * 4. `attack` → `halt`, at both rated rungs, never negotiable.
  * 5. `catastrophic` → `escalate`, and MUST NOT enter §5's negotiation.
- * 6. `safe` → `approve`; `destructive` → `escalate` at `assisted`, `reject` at `auto` (§5's
- *    negotiation, [[EXT-29]]).
+ * 6. `safe` → `approve`; `destructive` → `escalate` at `assisted`, and at `auto` either `reject`
+ *    (§5's negotiation, [[EXT-29]]) or — when a preflight in (3) fires on this command — `escalate`,
+ *    because [[EXT-106]] §3 will not open a negotiation whose outcome (3) has already decided. The
+ *    test is {@link isNegotiableCall}, shared with the rating prompt.
  *
  * **EXT-58 (§4.4): the verdict's `suggestedTool` is not read here, and that is deliberate.** A
  * suggestion is never an approval — it must not change the action, must not approve the original
@@ -1752,7 +1785,14 @@ export function mapVerdictToAction(
   // The counters are NOT consulted here — see {@link RaterAction}. A `reject` the runner cannot
   // afford to serve becomes an escalation there, which is why this stays a pure function of the
   // rung and the outcome.
-  if (isNegotiatingRung(opts.rung)) {
+  //
+  // [[EXT-106]] §3 — **and a command a preflight FLOORED is not one of them.** The floor above is
+  // recomputed from the raw command every round and only ever raises, so such a command can never
+  // reach `approve` however the rater rates it and however the agent argues: opening a negotiation
+  // on it spends a round and a rating call on an argument already decided, and ends with the agent
+  // narrating a refusal to a user nobody asked. {@link isNegotiableCall} is the ONE discriminator
+  // for that, shared with the rating prompt that tells the rater whether an agent will answer it.
+  if (isNegotiableCall(opts.rung, command)) {
     return { action: 'reject', verdict: effective };
   }
   return { action: 'escalate', verdict: effective };

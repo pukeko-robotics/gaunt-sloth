@@ -20,6 +20,10 @@ import {
 import { frameWidthFor, MIN_FRAME_WIDTH } from '#src/core/shell/framing.js';
 import { maxDisplayWidth } from '#src/utils/displayWidth.js';
 import type { RaterNegotiationRound } from '#src/core/shell/rater.js';
+import {
+  preflightFloorFinding,
+  RATER_NEGOTIABLE_REJECTION_GUIDANCE,
+} from '#src/core/shell/rater.js';
 import { REJECTION_MOVES } from '#src/core/shell/rejection.js';
 import { checkHardline } from '#src/core/shell/hardline.js';
 import { classifyCommand } from '#src/core/shell/arity.js';
@@ -931,6 +935,129 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
       expect(checkHardline('rm -rf ./build')).toBeNull();
       expect(ratings).toHaveLength(1);
       expect(results).toEqual(['reject']);
+    });
+  });
+
+  // ────────────────────────────────────────────────────────────────────────────────────────────
+  // [[EXT-106]] §4.6 — the DETERMINISTIC PREFLIGHT floor, which is a different floor from §8's.
+  // ────────────────────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * [[EXT-106]] §3 — **a command the preflight floors is put to a person, not to the agent.**
+   *
+   * The mechanism, and the reason none of this is cosmetic: `mapVerdictToAction` recomputes the
+   * preflight from the RAW command every round, and `applyDestructiveFloor` only ever raises. A
+   * command the preflight floors therefore has a reachable action set of `{reject, escalate, halt}`
+   * and can never reach `approve` — **whatever the rater says on any round, and whatever the agent
+   * argues**. A negotiation opened on one is theatre: it costs a round, a rating call and a turn,
+   * and its outcome was decided before the first token.
+   *
+   * So the discriminator is the PREFLIGHT, not the rater's own outcome. Both fixture commands below
+   * are driven with a `safe` rating precisely so the floor is what produces the `destructive`; the
+   * CONTROL at the end is the other half, and it is what stops this being implemented by turning
+   * the negotiation off.
+   */
+  describe('[[EXT-106]] §3 — a preflight-floored command escalates instead of opening a negotiation', () => {
+    /** §4.6's open-world arm: a host literal in a fetch position. The node's captured scenario. */
+    const OPEN_WORLD = 'git clone https://github.com/pukeko-robotics/testing-gaunt-sloth.git';
+    /** The script-env-leak arm: an environment variable expanded into a script. */
+    const ENV_LEAK = 'node probe.js $PROBE_ENV_VALUE';
+    /** Floored by neither arm, and rated `destructive` on its own merits. */
+    const CONTROL = 'git reset --hard origin/main';
+
+    /**
+     * **The fixtures are what this suite thinks they are.** Each command must be floored by the arm
+     * it is named for and by NOTHING ELSE — a §8 hardline match would refuse all three before any
+     * of the behaviour below is reached, and the whole block would pass while measuring the wrong
+     * floor.
+     */
+    it('the three fixture commands are floored by the arm each is named for, and by nothing else', () => {
+      expect(preflightFloorFinding(OPEN_WORLD)?.kind).toBe('open-world');
+      expect(preflightFloorFinding(ENV_LEAK)?.kind).toBe('script-env-leak');
+      expect(preflightFloorFinding(CONTROL), 'the control is not floored at all').toBeNull();
+      for (const command of [OPEN_WORLD, ENV_LEAK, CONTROL]) {
+        expect(checkHardline(command), command).toBeNull();
+      }
+    });
+
+    for (const [arm, command] of [
+      ['open-world', OPEN_WORLD],
+      ['script-env-leak', ENV_LEAK],
+    ] as const) {
+      it(`the ${arm} arm reaches the HUMAN, and spends no negotiation round`, async () => {
+        const { results, prompts, ratings } = await drive({
+          calls: [{ command }],
+          // `safe` on purpose: the floor is what makes this `destructive`, so a change that read
+          // the rater's own outcome instead of the preflight would leave this case untouched.
+          script: ['safe'],
+          human: 'approve',
+        });
+        expect(results).toEqual(['escalate']);
+        expect(ratings, 'the command was still RATED — a floor is not a skip').toHaveLength(1);
+        expect(prompts).toHaveLength(1);
+        expect(prompts[0].safetyVerdict?.outcome).toBe('destructive');
+        // **No round was recorded**, and this is the observable that can say so. The escalation
+        // spends `humanReached()`, which clears the transcript AND zeroes the reachability count,
+        // so a counter read after the run is zero either way — an assertion that cannot fail. The
+        // prompt carries the snapshot taken one line BEFORE that reset, and both fields are
+        // attached together only when a round exists.
+        expect(prompts[0].negotiationRounds, 'no round was opened').toBeUndefined();
+        expect(prompts[0].negotiationAttempts, 'and none was counted').toBeUndefined();
+      });
+
+      it(`the ${arm} arm is not told to word a rejection the agent may answer`, async () => {
+        const { ratings } = await drive({
+          calls: [{ command }],
+          script: ['safe'],
+          human: 'approve',
+        });
+        expect(ratings[0].system).not.toContain(RATER_NEGOTIABLE_REJECTION_GUIDANCE);
+      });
+    }
+
+    /**
+     * **The CONTROL, and without it item 3 could be implemented by disabling the negotiation.** A
+     * command the rater itself rated `destructive`, with no preflight firing, is a REAL negotiation:
+     * the agent can narrow it, justify it, and win. Every assertion above would still pass against a
+     * build that had simply stopped negotiating; this one would not.
+     */
+    it('CONTROL: the rater’s own `destructive`, unfloored, still goes back to the AGENT', async () => {
+      const { results, prompts, messages, ratings, transcriptAfterRun } = await drive({
+        calls: [{ command: CONTROL }],
+        script: ['destructive'],
+        human: 'approve',
+      });
+      expect(results).toEqual(['reject']);
+      expect(prompts, 'nobody was interrupted — the agent was answered').toHaveLength(0);
+      expect(messages[0]).toContain(REJECTION_MOVES);
+      expect(ratings[0].system, 'and the rater was told to write for that reader').toContain(
+        RATER_NEGOTIABLE_REJECTION_GUIDANCE
+      );
+      expect(transcriptAfterRun, 'the round is on the transcript').toHaveLength(1);
+    });
+
+    /**
+     * [[EXT-106]] §4 — **the refusal says what would actually lift the floor, for THIS command.**
+     *
+     * `approvals.allow` is consulted before the rater and therefore before the preflight, so an
+     * entry there is the supported way to run a floored command unattended. Asserted on the
+     * RENDERED string rather than on a field, because a dropped notice leaves a happy path
+     * identical to the correct one — the shape in which a requirement like this is quietly lost.
+     */
+    it('§6.2 — the refusal names approvals.allow and renders the entry for THIS command', async () => {
+      const { error } = await drive({
+        calls: [{ command: OPEN_WORLD }],
+        script: ['safe'],
+        human: null,
+      });
+      expect(error).toBeInstanceOf(NonInteractiveEscalationError);
+      const message = (error as Error).message;
+      expect(message).toContain('approvals.allow');
+      expect(message).toContain(
+        '{ "type": "shell", "matcher": "exact", "pattern": "git clone https://github.com/pukeko-robotics/testing-gaunt-sloth.git" }'
+      );
+      // DERIVED, not the generic example — which is the whole of the requirement.
+      expect(message).not.toContain('"pattern": "npm test"');
     });
   });
 

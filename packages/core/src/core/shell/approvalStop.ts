@@ -219,6 +219,23 @@ export abstract class ApprovalStopError extends Error {
 }
 
 /**
+ * The **blunter** of the two recoveries a stop may name, and it is named second wherever both
+ * appear.
+ *
+ * §4.2 makes `approvals.allow` the supported way to run a specific command unattended: it is
+ * consulted before the rater and therefore before §4.6's deterministic preflight, so a command
+ * declared there never reaches a halt or an escalation at all. `bypass` also works and is far
+ * blunter — it turns off the rater, the prompts and the halt together, for every command, for the
+ * whole run. The ordering is the message: the answer first, the last resort after it, with what it
+ * costs stated rather than implied.
+ *
+ * One sentence, shared, so the two stops that offer it cannot come to describe it differently.
+ */
+const BYPASS_LAST_RESORT =
+  `Dropping to approvals "bypass" also works, but it turns off the rater, ` +
+  `the prompts and the halt for every command in the run.`;
+
+/**
  * §4.2 — an `attack` outcome: the command's own **structure** evidenced compromise (§4.1.1 —
  * credential targeting, privilege escalation, persistence, deception, obfuscation). Ends the agent
  * loop; the model is told nothing and offered nothing.
@@ -253,8 +270,7 @@ export class AttackHaltError extends ApprovalStopError {
           text:
             `This is not negotiable. If this command is legitimate and you need it to run, declare ` +
             `it in approvals.allow — that list is consulted before the auto-rater, so it never ` +
-            `reaches a halt. Dropping to approvals "bypass" also works, but it turns off the rater, ` +
-            `the prompts and the halt for every command in the run.`,
+            `reaches a halt. ${BYPASS_LAST_RESORT}`,
         },
       ],
       command
@@ -289,12 +305,34 @@ export class NonInteractiveEscalationError extends ApprovalStopError {
    */
   readonly negotiation: string | undefined;
 
+  /**
+   * [[EXT-106]] §4 — **the `approvals.allow` entry that would let THIS command run**, rendered in the
+   * object form a user writes in a config file, or `undefined` when none can soundly be derived.
+   *
+   * A refusal that stands has to say what would lift it, and a generic example leaves the reader to
+   * translate it — for a command the deterministic preflight floors, that translation is the entire
+   * remedy. `approvals.allow` is consulted before the rater and therefore before §4.6's preflight,
+   * so it is the one thing that lifts a floor the agent cannot argue past.
+   *
+   * **Derived by the caller, never here**, because only the caller knows the subject: this class is
+   * also thrown for a tool call, where the first constructor argument is a TOOL NAME and an entry
+   * derived from it would be a pasteable line that silently matches nothing. `undefined` falls back
+   * to the general form, which is the right answer whenever a specific one would be wrong — an entry
+   * that is subtly too broad, or simply inert, is worse than none.
+   *
+   * **It is untrusted text.** It embeds the command the model proposed, so it is carried as a
+   * labelled `value` part and neutralised with every other untrusted string; putting it in an `own`
+   * part would route model-authored bytes into the one part class a surface may paint raw.
+   */
+  readonly allowEntry: string | undefined;
+
   constructor(
     command: string,
     outcome?: string,
     reason?: string,
     escalatedBy?: string,
-    negotiation?: string
+    negotiation?: string,
+    allowEntry?: string
   ) {
     const parts: ApprovalStopPart[] = [
       { kind: 'own', text: 'Approval required, but this session has no one to ask.' },
@@ -312,6 +350,21 @@ export class NonInteractiveEscalationError extends ApprovalStopError {
           `entry in approvals.allow can answer it. Remove the escalate entry if this command ` +
           `should run unattended.`,
       });
+    } else if (allowEntry) {
+      // [[EXT-106]] §4 — the same recovery `AttackHaltError` names, in the same order (the
+      // allow-list, then `bypass` as the blunter last resort), with the entry filled in for the
+      // command in hand. "Before the auto-rater" is stated as reaching further than the rater
+      // because that is the fact a floored command's reader needs: §4.6's preflight runs inside the
+      // rating decision, so an allow match is ahead of the floor as well as ahead of the model.
+      parts.push({
+        kind: 'own',
+        text:
+          `Declare the commands this run is allowed to execute in approvals.allow — that list is ` +
+          `consulted before the auto-rater, ahead of its deterministic preflights, and never ` +
+          `escalates. For this command, add:`,
+      });
+      parts.push({ kind: 'value', label: 'approvals.allow entry', text: allowEntry });
+      parts.push({ kind: 'own', text: BYPASS_LAST_RESORT });
     } else {
       parts.push({
         kind: 'own',
@@ -327,5 +380,6 @@ export class NonInteractiveEscalationError extends ApprovalStopError {
     this.reason = reason;
     this.escalatedBy = escalatedBy;
     this.negotiation = negotiation;
+    this.allowEntry = allowEntry;
   }
 }

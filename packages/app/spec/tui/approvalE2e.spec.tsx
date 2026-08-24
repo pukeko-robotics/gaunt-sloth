@@ -480,7 +480,10 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     const message = (decision as { message?: string }).message ?? '';
     expect(message).toContain('The user rejected your call to run_shell_command.');
     expect(message).toContain('call the same command with a justification');
-    expect(message).toContain('ask the user if there is no way around it');
+    expect(message).toContain('call a different command');
+    // [[EXT-106]] §5 — and NOT "ask the user": an exit the model could only take by writing
+    // prose, which never reaches this gate.
+    expect(message.toLowerCase()).not.toContain('ask the user');
     expect(message).toContain(
       '`edit_file` does this and is already approved at this level, so it will not interrupt the user.'
     );

@@ -1235,11 +1235,15 @@ describe('mapVerdictToAction — §4.6 floors an open-world command even when th
         const decision = mapVerdictToAction(command, RATER_SAYS_SAFE, { rung });
         expect(decision.verdict?.outcome, command).toBe('destructive');
         // §4.6's promise is that the model saying `safe` changes nothing — so what is asserted is
-        // that the command does NOT run. Where it goes after that is the rung's business ([[EXT-29]]
-        // sends `destructive` into §5's negotiation at `auto`), and pinning one rung's answer here
-        // would make a floor test fail on a change that never touched the floor.
+        // that the command does NOT run. Where it goes after that is the rung's business, and
+        // pinning one rung's answer here would make a floor test fail on a change that never
+        // touched the floor.
         expect(decision.action, command).not.toBe('approve');
-        expect(decision.action, command).toBe(rung === 'auto' ? 'reject' : 'escalate');
+        // [[EXT-106]] §3 — and a FLOORED command goes to the human at both rated rungs, rather than
+        // into §5's negotiation at `auto`. It is floored on every round by a rule recomputed from
+        // the raw command, so it can never reach `approve` whatever the agent argues: the rounds
+        // would be spent on an argument this very assertion proves cannot be won.
+        expect(decision.action, command).toBe('escalate');
         expect(decision.verdict?.reason).not.toBe(RATER_SAYS_SAFE.reason);
       }
     }

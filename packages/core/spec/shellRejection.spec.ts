@@ -15,12 +15,30 @@ import {
 } from '#src/core/shell/rejection.js';
 
 describe('§7 rejection message', () => {
-  it('names all three moves, always', () => {
+  it('names both moves, always', () => {
     const message = buildRejectionMessage({ source: 'user', toolName: 'run_shell_command' });
     expect(message).toContain('call the same command with a justification');
     expect(message).toContain('call a different command');
-    expect(message).toContain('ask the user if there is no way around it');
     expect(message).toContain(REJECTION_MOVES);
+  });
+
+  /**
+   * [[EXT-106]] §5 — **the model is not offered a move it does not have.**
+   *
+   * *"Ask the user"* here meant the agent writes prose and the turn ends. That text never reaches
+   * the gate, so the confirmation it asks for cannot arrive: the next call meets the identical
+   * deterministic floor and is refused identically. A run that ends this way hands the user homework
+   * that cannot be done, and the moves list is what taught the model to do it.
+   *
+   * Asserted on the substring rather than on the whole constant, because the failure to guard
+   * against is the exit being *reworded* back in rather than restored verbatim.
+   */
+  it('[[EXT-106]] offers no "ask the user" exit — it does not reach the gate', () => {
+    for (const source of ['user', 'rater'] as const) {
+      const message = buildRejectionMessage({ source, toolName: 'run_shell_command' });
+      expect(message.toLowerCase(), source).not.toContain('ask the user');
+    }
+    expect(REJECTION_MOVES.toLowerCase()).not.toContain('ask the user');
   });
 
   it('says who refused and what', () => {

@@ -554,10 +554,10 @@ export function App(props: TuiAppProps): React.ReactElement {
       // identical call never reaches a person. `once` is the ordinary refusal and the fallthrough
       // every unbound key lands on.
       const sticky = decision === 'reject-always';
-      // EXT-58 (§7): hand the model the moves it has (re-call with a justification, a different
-      // command, or ask the user) plus — when the rater named an already-granted alternative
-      // (§4.4) — that tool and the clause saying it will not interrupt the user. This is the
-      // message the MODEL sees; the on-screen notice below is unchanged.
+      // EXT-58 (§7): hand the model the moves it has (re-call with a justification, or a
+      // different command) plus — when the rater named an already-granted alternative (§4.4) —
+      // that tool and the clause saying it will not interrupt the user. This is the message the
+      // MODEL sees; the on-screen notice below is unchanged.
       head.resolve({
         type: 'reject',
         ...(sticky ? { scope: 'session' as const } : {}),
