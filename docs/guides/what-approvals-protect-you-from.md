@@ -29,8 +29,8 @@ were last involved are capped, so the argument ends at a person rather than goin
 own description — the one `/approvals` prints, and the one
 [the ladder](shell-tool-and-approvals.md#the-ladder-approvals) lists — is the current word on what
 it does. So plan to come back to prompts either way: anything the rater will not clear is brought to
-a person — at once when it cannot be undone or when a deterministic check settled it, and once
-those rounds are spent otherwise — while a
+a person — at once when it cannot be undone or when a deterministic check settled it, and once those
+rounds are spent otherwise — while a
 command whose structure is hostile ends the run, stopping on a red banner you can type your way
 past one command at a time. Whether that is a wait or a failure is
 decided by the surface rather than the mode —

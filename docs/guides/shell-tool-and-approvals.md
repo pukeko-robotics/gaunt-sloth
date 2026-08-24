@@ -216,7 +216,8 @@ command through.
 every round, so there is no answer the agent could give that would clear it — asking it to try
 would spend your turn on an argument decided before it started. You are asked on the first
 attempt instead. In a run with nobody to ask (CI, `-m`, a one-shot), the error that ends the run
-prints the `approvals.allow` entry for that exact command, ready to paste.
+points you at `approvals.allow` — and where it can name the command precisely enough to write one,
+it prints the entry for that exact command, ready to paste.
 
 The rater is only as good as the model behind it. On a small or local model, prefer the `write` mode
 (below) or point the rater at a stronger model with `approvals.rater`.
