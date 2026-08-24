@@ -109,6 +109,7 @@ export type {
 // drives gth's own approvals rater over a corpus of commands.
 export {
   buildRaterClassifier,
+  HARDLINE_NO_RATING_REASON,
   HARDLINE_REFUSAL_MARKER,
   NEGOTIATION_BOUND_MARKER,
   NO_RATING_CALL_MARKER,
