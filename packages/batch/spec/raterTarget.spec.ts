@@ -1335,6 +1335,10 @@ describe('buildRaterClassifier (BATCH-25 Half B — the `rater` target)', () => 
         const summary = await runEvalSuite(suite, {
           classify: await buildRaterClassifier(suite.target as never, configOf(), { model }),
         });
+        // Load-bearing, not boilerplate: it is what proves the preflight marker below came from the
+        // STUBBED permissive rating the preference selects, and not from a real model call. Without
+        // it, a change that started ringing the model on a `model_free` case would leave the marker
+        // assertions passing for the wrong reason.
         expect(invoke).not.toHaveBeenCalled();
         return summary.cases[0].answer ?? '';
       };
