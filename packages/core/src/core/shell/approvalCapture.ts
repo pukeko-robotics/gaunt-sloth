@@ -202,8 +202,35 @@ export interface PreflightFloorCapture {
    * Whether the floor changed the outcome. A preflight only ever RAISES, and only `safe` sits below
    * the floor — so a finding on a `destructive` verdict is the floor AGREEING with the rater, not
    * overriding it, and reporting those two the same way would misattribute the decision.
+   *
+   * Read together with {@link floorApplied}: this says whether the rating SAT below the floor, and
+   * that says whether the floor was applied to the call at all.
    */
   rewroteRating: boolean;
+  /**
+   * [[EXT-106]] §4.6 — **whether the decision readers actually applied the finding above.** `false`
+   * when the user-provenance carve-out lifted it, i.e. the preflight fired on the command and the
+   * floor, the negotiation test and the action all ignored it because the user had named every host
+   * themselves.
+   *
+   * **The finding is still reported when this is `false`, and that is the point.** This block is a
+   * diagnostic archive a user opens about their own session, and a command that reached the open
+   * world without anyone confirming it is exactly the one they most need to find in it. Nulling the
+   * record out on a carve would delete the audit trail for the whole of the new behaviour.
+   *
+   * **Written from the decision's own reader** (`effectivePreflightFloorFinding`), never derived a
+   * second time from the carved hosts: the floor has two arms, only that function resolves which of
+   * them wins, and a command tripping both is floored by the script-env-leak arm while the
+   * open-world arm would have carved. A second derivation says "carved, not floored" about a call
+   * that was floored and did reach a human.
+   */
+  floorApplied: boolean;
+  /**
+   * [[EXT-106]] §4.6 — the host literals the carve-out matched, present only when
+   * {@link floorApplied} is `false`. Every host in the command is here, because the carve-out
+   * requires every one of them to have been named by the user.
+   */
+  carvedHosts?: string[];
 }
 
 /** One gated tool call, from arrival to outcome. */

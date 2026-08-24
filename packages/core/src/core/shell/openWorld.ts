@@ -558,6 +558,9 @@ function candidatesFor(
  * Kept separate from {@link findOpenWorldHostLiterals} because that function runs this over **two**
  * forms of the same command — see there for why.
  *
+ * Exported as {@link findOpenWorldHostLiteralsInArgv} for the one caller that needs to ask this
+ * question of a form it tokenized itself.
+ *
  * @returns every host literal found, in argv order. Empty when the command names no counterparty.
  */
 function matchArgv(argv: readonly string[]): string[] {
@@ -609,6 +612,24 @@ function matchArgv(argv: readonly string[]): string[] {
  * argv[0] whose last path segment is literally `curl` or `wget` is a network binary under any
  * reading. The normalized pass still runs first and still owns the anti-obfuscation guarantees.
  *
+ * ## [[EXT-106]] — this function now has TWO readers, and their error costs are OPPOSITE
+ *
+ * Everything above is written for the FLOOR, whose question is *"does this command name a
+ * counterparty?"* and whose miss costs one prompt — which is why declining on anything
+ * {@link classifyCommand} cannot resolve is safe there.
+ *
+ * §4.6's user-provenance carve-out asks a second question of the same answer: *"were **all** the
+ * counterparties in this command named by the user?"* ({@link
+ * import('./provenance.js').carvedOpenWorldHosts}). A miss there costs an **unprompted fetch**: a
+ * host this function declines to report is a host the carve-out never has to find in the user's own
+ * words. So a change that makes this decline more — a new abstention, a narrower head gate, a
+ * position quietly dropped — is no longer automatically safe, and "this layer can only raise" is
+ * no longer the whole argument for one. Weigh both readers before widening a decline.
+ *
+ * The carve-out does not rest on this alone: it also requires the literal to survive the extraction
+ * over the **raw** argv ({@link findOpenWorldHostLiteralsInArgv}), so a host that exists only after
+ * normalization floors rather than carves.
+ *
  * @param command The raw command string as the model proposed it.
  * @returns The matched host literals, in argv order (used verbatim in the escalation reason).
  */
@@ -628,6 +649,25 @@ export function findOpenWorldHostLiterals(command: string): string[] {
   // …then the raw form, which is the only one that still has its Windows path separators.
   const rawArgv = tokenize(command);
   return rawArgv === null ? [] : matchArgv(rawArgv);
+}
+
+/**
+ * [[EXT-106]] §4.6 — the same extraction {@link findOpenWorldHostLiterals} runs, asked of an argv
+ * the caller tokenized itself.
+ *
+ * It exists so the user-provenance carve-out can ask *"does the RAW command name this host too?"*
+ * without owning a second rule for what a host position is. `findOpenWorldHostLiterals` prefers the
+ * hits of the **normalized** form, which has had NFKC applied and ANSI escapes and NUL bytes
+ * stripped; the string that actually reaches `spawn` is the raw one. A literal that exists only
+ * after that folding therefore names a host the program will never be asked for — and a second,
+ * hand-written notion of "present in the raw command" is exactly the two-derivations hazard this
+ * module keeps warning about, so the carve-out re-runs THIS instead.
+ *
+ * @param argv A tokenized command, from {@link tokenize}.
+ * @returns The matched host literals, in argv order.
+ */
+export function findOpenWorldHostLiteralsInArgv(argv: readonly string[]): string[] {
+  return matchArgv(argv);
 }
 
 /* ───────────────────────────────────────────────────────────────────────────────────────────────

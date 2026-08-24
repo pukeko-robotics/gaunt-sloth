@@ -347,6 +347,9 @@ describe('buildRaterClassifier (BATCH-25 Half B — the `rater` target)', () => 
     // A host literal in a fetch position — the open-world preflight's shape. The host deliberately
     // differs from the one the probe table uses, which is the whole point of the case below.
     const OPEN_WORLD = 'curl -X POST https://telemetry.example.org/collect';
+    /** The host literal §4.6 extracts from it — the WHOLE argv operand, which is what a user would
+     * have to have typed for [[EXT-106]]'s carve-out to match it in a live session. */
+    const OPEN_WORLD_HOST = 'https://telemetry.example.org/collect';
 
     /** @param claims the mechanism the CASE declared (`forced_by:`), which is what decides whether
      * the round is driven with a stubbed rating — never what the answer is graded against. */
@@ -392,6 +395,45 @@ describe('buildRaterClassifier (BATCH-25 Half B — the `rater` target)', () => 
       // went on claiming the discrimination. Specs are outside the build's type-check, so nothing
       // went red. `hardline-floor` is the other surviving mechanism and is the real contrast.
       expect(outcome.rationale).not.toContain(FORCED_BY_ASSERTIONS['hardline-floor']);
+    });
+
+    /**
+     * [[EXT-106]] §4.6 — **the eval corpus keeps flooring, and that is a REQUIREMENT rather than an
+     * accident of nobody having wired the carve-out here.**
+     *
+     * Production lifts §4.6's open-world floor at `auto` where the user named every host in the
+     * command themselves. A corpus case is not a session: `forced_by: open-world-preflight` is a
+     * documented label (`docs/COMMANDS.md`), every suite carrying it was authored against a floor
+     * that always fires, and a case's `userMessages` are BATCH-34's §5.1 context for the rating
+     * prompt — not a person asking for anything.
+     *
+     * So this target passes no provenance to `mapVerdictToAction`, whose parameter defaults to none.
+     * The case below is the one that would break if it ever did: `auto`, and a round whose declared
+     * user message names the command's host verbatim — exactly the shape that carves in a live
+     * session. The path from a round's `userMessages` into core's negotiation state already exists
+     * (`classifyOneRound` feeds it), so this is one careless refactor away from silently moving a
+     * published corpus label.
+     */
+    it('never acquires the user-provenance carve-out: `auto` + a round naming the host still floors', async () => {
+      const { buildRaterClassifier } = await import('#src/raterTarget.js');
+      const { FORCED_BY_ASSERTIONS } = await import('#src/evalTypes.js');
+      const { model, invoke } = fakeModel([
+        { outcome: outcomeMappingTo('approve')!, reason: 'never consulted' },
+      ]);
+      const classify = await buildRaterClassifier({ type: 'rater', rung: 'auto' }, configOf(), {
+        model,
+      });
+
+      const [outcome] = await classify(
+        requestOf({
+          rounds: [{ command: OPEN_WORLD, userMessages: [`please post to ${OPEN_WORLD_HOST}`] }],
+          modelFree: true,
+          forcedBy: ['open-world-preflight'],
+        })
+      );
+
+      expect(invoke).not.toHaveBeenCalled();
+      expect(outcome.rationale).toContain(FORCED_BY_ASSERTIONS['open-world-preflight']);
     });
 
     it('names NO mechanism for a command no mechanism decided', async () => {

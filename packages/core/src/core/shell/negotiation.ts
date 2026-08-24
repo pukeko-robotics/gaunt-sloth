@@ -131,6 +131,12 @@ export class ShellNegotiationState {
   private sinceHuman = 0;
   /** §5.1's last user messages, oldest first, capped at {@link NEGOTIATION_USER_MESSAGE_RETENTION}. */
   private userMessages: string[] = [];
+  /**
+   * [[EXT-106]] §4.6 — whether {@link retainedUserMessages} may hand this session's human turns out
+   * as **the user's own words**. See {@link admitUserProvenance}; `false` until something positively
+   * establishes otherwise, which is the whole of its safety.
+   */
+  private userProvenanceAdmitted = false;
 
   /**
    * §5.1 — the context for the rating about to be made: the justification the agent supplied for
@@ -254,6 +260,55 @@ export class ShellNegotiationState {
     if (this.userMessages.length > NEGOTIATION_USER_MESSAGE_RETENTION) {
       this.userMessages = this.userMessages.slice(-NEGOTIATION_USER_MESSAGE_RETENTION);
     }
+  }
+
+  /**
+   * [[EXT-106]] §4.6 — **the user's own words, for the provenance carve-out that lifts the
+   * open-world floor.** A snapshot, oldest first, of the whole retained window.
+   *
+   * **This is deliberately NOT {@link contextFor}, and the difference is the point.** That function
+   * returns `userMessages: []` at round 1 by design — §5.1's *"round 1 sees the command alone"* —
+   * and round 1 is exactly the round the carve-out exists to act on: the user asks for a fetch, the
+   * agent proposes it, and there has been no rejection for a round 2 to exist. §5.1 bounds what the
+   * **rater** may see, and the floor is not the rater. Reading `contextFor()` here would make the
+   * carve-out fire only after the command had already been refused once, i.e. never in the case it
+   * was built for.
+   *
+   * The window is cumulative across the turns of a thread (capped and de-duplicated by
+   * {@link noteUserMessages}), so a host named in an earlier turn still carves a command proposed in
+   * a later one. {@link clear} drops it with the thread.
+   *
+   * **Empty until {@link admitUserProvenance} says otherwise**, which is why this is the provenance
+   * window rather than {@link noteUserMessages}'s store: the store also feeds §5.1's negotiation
+   * context, a different question with a different reader, and one that a command's fetched content
+   * is legitimately part of. What must never be answered *"yes, the human said this"* is this
+   * accessor, so the gate lives on it and defaults to refusing.
+   */
+  retainedUserMessages(): readonly string[] {
+    if (!this.userProvenanceAdmitted) return [];
+    return [...this.userMessages];
+  }
+
+  /**
+   * [[EXT-106]] §4.6 — **declare whether this session's human turns are the user's own words**, and
+   * therefore whether {@link retainedUserMessages} may return them at all.
+   *
+   * A human message the product SYNTHESISED from content it fetched must never enter the provenance
+   * window: `review` and `pr` hand the agent a diff and a PR description that gaunt-sloth went and
+   * got, and the review prompt tells the agent to examine them. Reading the same bytes as the user's
+   * verbatim words would make the product contradict itself about identical input — and the words
+   * are written by whoever opened the pull request.
+   *
+   * **It defaults to `false` and the caller must positively establish otherwise**, so a surface that
+   * never calls this — or a future driver nobody has classified — floors exactly as it did before
+   * the carve-out existed. The one caller is
+   * {@link import('../GthAgentRunner.js').GthAgentRunner.init}, which decides it from the CLI verb
+   * ({@link import('../../config/shell-policy.js').commandCarriesUserProvenance}) and never from
+   * anything inside a message: those bytes are attacker-controlled, so a marker in them can be
+   * forged by the text it is supposed to classify.
+   */
+  admitUserProvenance(admitted: boolean): void {
+    this.userProvenanceAdmitted = admitted;
   }
 
   /**

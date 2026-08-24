@@ -731,6 +731,99 @@ export function isNegotiatingRung(rung: ApprovalRung): boolean {
 }
 
 /**
+ * [[EXT-106]] (§4.6) — the rung at which **the user's own verbatim words lift the open-world
+ * floor**: where every host a command names was named by the human themselves, the deterministic
+ * preflight does not floor it, and the user is *warned* that it ran rather than *asked* whether it
+ * may.
+ *
+ * **`auto` and nothing else, and the scope is load-bearing rather than a default.**
+ * {@link DEFAULT_APPROVAL_RUNG} is `assisted` for every command including `exec`, whose whole
+ * purpose is running a prompt file read from disk — and file contents, piped stdin and a whole diff
+ * all arrive as `human` messages. A carve-out reaching `assisted` would therefore be live on the
+ * default rung with no config edit at all, on exactly the verbs whose "user message" is a file.
+ * `auto` is chosen deliberately, by someone who has read what the rung does.
+ *
+ * It answers about the RUNG, never about a particular call: whether THIS command is carved is
+ * {@link import('../core/shell/provenance.js').carvedOpenWorldHosts}, which composes this predicate with
+ * the open-world preflight and the user's retained messages. This one is a fact about the ladder and
+ * stays free of the shell module, exactly as {@link isNegotiatingRung} does.
+ *
+ * Written as a `=== 'auto'` test rather than as "the negotiating rung", even though the two agree
+ * today: they answer different questions — *may the agent argue* versus *does the user's word lift a
+ * deterministic floor* — and collapsing them into one would carry a sixth rung into both by
+ * omission.
+ */
+export function isUserProvenanceRung(rung: ApprovalRung): boolean {
+  return rung === 'auto';
+}
+
+/**
+ * [[EXT-106]] (§4.6) — **whose words a command's `human` messages actually are.** `true` only where
+ * the human turn is something a person typed, or a file they themselves pointed the command at;
+ * `false` where the PRODUCT fetched the content and then framed it as a human message.
+ *
+ * **`review` and `pr` are the false ones, and the product's own framing is the reason.** Both hand
+ * the agent text gaunt-sloth went and got: `pr` interpolates the fetched PR view — the description
+ * body, written by whoever opened the pull request, included — into a synthesized human message,
+ * and both run on a diff that arrives the same way. The review system prompt then instructs the
+ * agent to **examine** that content, so the product's own reading of those bytes is *material under
+ * examination* — explicitly not the voice of the person who asked for the examination. A provenance
+ * window that simultaneously read them as *"the user's own verbatim words"* would make the product
+ * contradict itself about identical input. That reason stands on its own, independently of how
+ * likely any particular path is to reach a shell call.
+ *
+ * **Keyed on the COMMAND, never on anything inside the message, and that is not a detail.** The
+ * bytes in question are attacker-controlled, so any marker *in* them — a wrapper element, a prefix,
+ * a sentinel — can be forged by the very text it is meant to classify. Out-of-band metadata is the
+ * only admissible key.
+ *
+ * `ask` (its `-f` file and piped stdin) and `exec` (a prompt file read from disk) stay `true`
+ * deliberately: there the user chose the file and typed the command that reads it. That is the risk
+ * Andrew accepted on the record, and it is documented for the user in
+ * `docs/guides/shell-tool-and-approvals.md`.
+ *
+ * **Total over {@link GthCommand} on purpose**, exactly like {@link COMMAND_ANSWERS_APPROVALS}: an
+ * eighth command must be classified here before it compiles, rather than defaulting silently into
+ * "the user typed it".
+ */
+const COMMAND_CARRIES_USER_PROVENANCE: Record<GthCommand, boolean> = {
+  /** What the user typed, the file they passed to `-f`, or the stdin they piped in. */
+  ask: true,
+  chat: true,
+  code: true,
+  /** The prompt file the user pointed this command at. */
+  exec: true,
+  /** The PR view fetched from GitHub — third-party text, handed over to be examined. */
+  pr: false,
+  /** The diff the product produced and handed over to be examined. */
+  review: false,
+  /**
+   * The AG-UI server: the human turns arrive from a remote client over the wire, and this surface's
+   * approvals story is [[EXT-30]]'s to build. Nothing here has established them as the operator's
+   * own typing, so they do not carve.
+   */
+  api: false,
+};
+
+/**
+ * {@link COMMAND_CARRIES_USER_PROVENANCE} as a predicate — **and it fails closed**: anything not
+ * positively established as the user's own words answers `false`, `undefined` included.
+ *
+ * The `?? false` coalesce and the `undefined` arm are the fail-closed half, not defensive noise.
+ * `undefined` is a runner initialized without a command — today the `gth pr` change-requirements
+ * discovery agent, which passes `owningCommand: 'pr'` for its label and deliberately no `command`
+ * at all — and a lookup outside {@link GthCommand} can only reach here from an untyped consumer of
+ * the published barrel. Both must answer "not the user's words", because a carve-out granted by
+ * default is a carve-out nobody chose.
+ *
+ * Callers pass `command ?? owningCommand`, so a command-less helper agent is classified by the verb
+ * it serves rather than by the absence of a verb.
+ */
+export function commandCarriesUserProvenance(command: GthCommand | undefined): boolean {
+  return command === undefined ? false : (COMMAND_CARRIES_USER_PROVENANCE[command] ?? false);
+}
+
+/**
  * The rungs that decide a gated call **without a model** — `manual` and `write` (§2.1, §2.2).
  * Everything they do not auto-grant goes to the human, so these are the two rungs a user picks in
  * order to read and approve every tool call themselves.

@@ -166,7 +166,8 @@ match needs a command the gate can resolve (below).
 
 When one of the usual network tools — `curl`, `wget`, `ssh`, `scp`, `rsync`, `nc`, `aws`, `git
 clone`/`push`/`fetch`, an `npm`/`pip` install — is pointed at a host it names outright (a URL, an IP,
-a `user@host`, an `scp`-style `host:path`), it is **never** rated safe, whatever the model says:
+a `user@host`, an `scp`-style `host:path`), it is **never** rated safe, whatever the model says —
+with one exception at `auto`, for a host you named yourself, [below](#at-auto-a-host-you-named-yourself-is-a-warning-instead-of-a-question):
 
 ```
 The agent wants to run a shell command via run_shell_command
@@ -218,6 +219,46 @@ would spend your turn on an argument decided before it started. You are asked on
 attempt instead. In a run with nobody to ask (CI, `-m`, a one-shot), the error that ends the run
 points you at `approvals.allow` — and where it can name the command precisely enough to write one,
 it prints the entry for that exact command, ready to paste.
+
+#### At Auto, a host you named yourself is a warning instead of a question
+
+There is one exception, and only at `auto`: where **you** wrote the host — every host the command
+names, verbatim, in one of your own messages this conversation — the rule above does not fire, and
+you are **told** the fetch happened rather than **asked** whether it may:
+
+```
+⚠ Ran a command that reaches https://example.com/install.sh without asking you, because your own
+  message named that host and approvals is set to auto. The auto-rater found nothing wrong with it.
+  Check the host is the one you meant.
+```
+
+Asking you to confirm a URL you had just typed was the whole of what `auto` was interrupting you
+for. The comparison is exact and word-for-word: a URL you pasted authorises *that* URL and nothing
+that merely starts with it, a host the agent went and **found for itself** — by opening a file with
+a tool, or fetching a page — authorises nothing, and a command naming two hosts where you named one
+still asks.
+
+The file **you** fed the command is a different thing from a file the agent opened, and it does
+count as your input: an `exec` prompt file, `ask -f`, piped stdin — each command takes its own rung
+under [`commands`](#the-extras-rater-allow-deny-escalate). What `review` and `pr` are
+handed does not: the diff, and the pull request's own description, are fetched by Gaunt Sloth and
+handed to the agent to *examine*, so they never authorise a fetch however those verbs are
+configured.
+
+**One gap in the other direction, worth knowing if you drive Gaunt Sloth from an editor.** Over ACP,
+a file or link you attach is composed into the same message as your own words, so an address it
+carries reads as one you named — even though the editor put it there and you may never have opened
+it. At `auto`, attaching a link you have not checked can therefore authorise a fetch to it. Until
+that is closed, treat an attachment as something you have vouched for.
+
+Everything else is unchanged — **the rater
+still rates the command**, so a lookalike hostname it recognises is still named to you, anything it
+rates worse than safe still does not run, and the `deny` and `escalate` lists still decide first. If
+you want a particular host confirmed every time even so, put it in `approvals.escalate`.
+
+What you are trading is one case: a deception good enough that the rater sees nothing wrong with it.
+Where that happens you now find out from the warning above instead of from a prompt — which is why
+the warning names the host and asks you to look at it.
 
 The rater is only as good as the model behind it. On a small or local model, prefer the `write` mode
 (below) or point the rater at a stronger model with `approvals.rater`.
@@ -434,6 +475,22 @@ A per-command value overrides **only the fields it names**. `"commands": { "pr":
 "manual" } }` above says the `pr` command has no business writing files, whatever the root
 setting is — and that is *all* it says: the mode changes, and `rater`, `raterTimeoutMs` and the
 lists still come from the root.
+
+**Setting a command to `auto`: the file you point it at counts as your own input.** Two commands are
+fed by something other than what you type: `exec` runs a prompt file read from disk, and `ask -f`
+reads a file and piped stdin. Both reach the agent as *your* side of the conversation, so anything
+that treats your words as authority treats those bytes the same way. The one thing that does today is
+[the host rule above](#at-auto-a-host-you-named-yourself-is-a-warning-instead-of-a-question): at
+`auto`, a host named in that file will let the fetch run without asking you, exactly as if you had
+typed the URL. That is what `auto` on a file-fed command means — it is a deliberate setting, not a
+default, and the difference from `assisted` is precisely that the file gets to speak for you.
+
+**`review` and `pr` are not in that group, and the difference is who chose the content.** Their diff
+— and the pull request description `pr` reads — is fetched by Gaunt Sloth and handed to the agent as
+material to *examine*, written by whoever opened the pull request rather than by you. It reaches the
+agent as a human turn for want of anywhere else to put it, and it is never read as your own words:
+setting `commands.review` or `commands.pr` to `auto` does not let a host mentioned in a diff or a PR
+description authorise a fetch.
 
 The lists do not all merge the same way, and the difference is deliberate:
 
