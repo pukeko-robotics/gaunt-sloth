@@ -567,9 +567,12 @@ export interface ClassifyRequest {
    * first made two blocks pass in one order and fail reversed, on identical assertions, because a
    * round left undriven can never let its preflight speak.
    *
-   * BATCH-37 — the floor is no longer among the mechanisms this arbitrates. A round the floor
-   * refuses is decided before `forcedBy` is read (every rung but `bypass`), so it carries the
-   * floor's marker and no other; the preference governs rounds whose mechanisms are all preflights.
+   * BATCH-37 narrowed where the preference is load-bearing. A round whose command the floor MATCHES
+   * is decided before `forcedBy` is read (every rung but `bypass`), so it carries the floor's marker
+   * and no other and both orders agree regardless. Since `hardline-floor` is the only mechanism with
+   * `mechanismNeedsPermissiveRating === false`, what is left is the one case where a `hardline-floor`
+   * block is declared AHEAD of a preflight on a command the floor does NOT match; for an
+   * all-preflight round both branches pick the same block and the preference decides nothing.
    *
    * Only ONE mechanism can be carried per round regardless, because the request is not
    * identity-scoped: a per-identity distinction could not be honoured here even if it were written.

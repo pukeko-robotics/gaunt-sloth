@@ -574,6 +574,12 @@ async function classifyOneRound(
   // BATCH-34 §5.1 — what the user said before this round enters the conversation's memory FIRST, so
   // this round's own context can carry it. Core owns the retention bound and the last-5 window; a
   // round declaring none adds none, which is how a single-round case keeps a byte-identical prompt.
+  //
+  // **This must stay ABOVE the floor arm below, and `raterTarget.spec.ts` pins that it does.**
+  // Production notes the user's words at a turn boundary, upstream of the approvals gate entirely,
+  // so a mandate given alongside a floor-matching command still has to reach the §5.1 window that
+  // LATER rounds are rated against. Hoisting the arm above this line reads like a harmless
+  // guard-clause tidy and silently drops that mandate from every later rating.
   negotiation.noteUserMessages(round.userMessages ?? []);
 
   // BATCH-37 — **§8's floor refuses BEFORE any rating, exactly as `GthAgentRunner` does.**
