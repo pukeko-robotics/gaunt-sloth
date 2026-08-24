@@ -316,10 +316,9 @@ export interface PendingToolInterrupt {
    * them. [[EXT-108]] removed that erasure, so the array and this count are now the same set as
    * they leave the state machine.
    *
-   * It stays a separate number for the reason that survives: a surface shows only the most recent
-   * rounds it has room for, so `negotiationRounds.length` is what fits on a screen and this is what
-   * the agent did. Sending both is what lets the renderer number the rounds it prints by their true
-   * attempt number instead of from one.
+   * It stays a separate number for the reason that survives: both values are handed over whole and
+   * the renderer is what slices for the screen, so sending both is what lets it number the rounds it
+   * prints by their true attempt number instead of from one.
    *
    * Present exactly when {@link negotiationRounds} is, and never smaller than its length.
    */

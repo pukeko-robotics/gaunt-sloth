@@ -11,6 +11,7 @@ import { AttackHaltError, NonInteractiveEscalationError } from '#src/core/shell/
 import {
   MAX_CONSECUTIVE_REJECTIONS,
   MAX_REJECTIONS_BEFORE_HUMAN,
+  NEGOTIATION_MAX_ROUNDS_SHOWN,
   NEGOTIATION_MAX_ROWS_PER_ELEMENT,
   NEGOTIATION_USER_MESSAGE_RETENTION,
   renderNegotiationRows,
@@ -1695,6 +1696,95 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
     });
 
     /**
+     * **The same three facts when the screen shows a SLICE of the transcript** — the regime
+     * [[EXT-108]] created and the one no other case here reaches.
+     *
+     * An approved call no longer clears the rounds, so a human can be reached holding {@link
+     * MAX_REJECTIONS_BEFORE_HUMAN} of them, and both surfaces pass a width — so what they draw is
+     * the last {@link NEGOTIATION_MAX_ROUNDS_SHOWN}. Each marker this block puts on a round is keyed
+     * on a position in the TRANSCRIPT, not on a position in that slice, and the two are the same
+     * number in every case where nothing was dropped: a case with no width, or with three rounds or
+     * fewer, cannot tell them apart.
+     *
+     * Asserted as a **discriminating pair on one transcript**: sliced, no round may carry the
+     * round-1 markers, because round 1 is not on the screen; unsliced, exactly one round does, and
+     * it is round 1. The absence alone would also pass if the markers simply stopped being emitted.
+     *
+     * What the pair is worth: keyed on the slice instead, this screen labels **round 7** *"rated on
+     * the command alone"* with its justification *"not shown to the rater"*. Round 7 was rated with
+     * the whole argument and the user's own words in front of it, so both sentences are false — and
+     * false in the direction §5.4 names as the dangerous one, toward approving, at the moment a
+     * human is deciding whether to overrule a refusal.
+     */
+    it('keeps the round-1 and pending markers keyed on the transcript when a screen shows a slice of it', async () => {
+      const calls: { command: string; justification?: string }[] = [];
+      const script: ScriptedOutcome[] = [];
+      // One approved call after every rejection, so bound one never fires and the human is reached
+      // on the ninth rejection still holding all nine rounds — the longest transcript the design
+      // can produce, and the only shape that makes a slice reachable at all.
+      for (let n = 1; n <= MAX_REJECTIONS_BEFORE_HUMAN; n++) {
+        calls.push(
+          { command: `rm -rf ./build-${n}`, justification: `JUSTIFICATION-${n}` },
+          { command: `ls dir-${n}` }
+        );
+        script.push('destructive', 'safe');
+      }
+      const { prompts } = await drive({ calls, script, human: 'reject' });
+      expect(prompts).toHaveLength(1);
+      const rounds = prompts[0].negotiationRounds!;
+      const attempts = prompts[0].negotiationAttempts!;
+      // The premise, from production values rather than a hand-built array: a transcript LONGER
+      // than a screen shows. Without this the case degenerates into the unsliced one above.
+      expect(rounds).toHaveLength(MAX_REJECTIONS_BEFORE_HUMAN);
+      expect(attempts).toBe(MAX_REJECTIONS_BEFORE_HUMAN);
+      expect(rounds.length).toBeGreaterThan(NEGOTIATION_MAX_ROUNDS_SHOWN);
+
+      // Rendered the way BOTH surfaces render it: the whole transcript, the true count, a width.
+      const rendered = renderNegotiationRows(rounds, { width: frameWidthFor(100), attempts });
+      const rows = rendered.map((row) => row.text);
+      const heading = rendered
+        .filter((row) => row.voice === 'chrome')
+        .map((row) => row.text.replace(/^ *┊ /u, ''))
+        .join('');
+
+      // It really did slice, and the heading says what it dropped rather than what it kept.
+      expect(rows.filter((row) => /^ {2}Round \d+/u.test(row))).toHaveLength(
+        NEGOTIATION_MAX_ROUNDS_SHOWN
+      );
+      expect(heading).toContain(
+        `${MAX_REJECTIONS_BEFORE_HUMAN} times; the last ${NEGOTIATION_MAX_ROUNDS_SHOWN} of them`
+      );
+      // ...and the dropped rounds are really gone, not merely unnumbered.
+      expect(rows.join('\n')).not.toContain('rm -rf ./build-1');
+      expect(rows.join('\n')).not.toContain('JUSTIFICATION-1');
+
+      // Numbered by their TRUE attempt number: the last three of nine are 7, 8 and 9, so the
+      // heading's count and the rounds beneath it describe one exchange.
+      expect(rows.some((row) => row.startsWith('  Round 7: rm -rf ./build-7'))).toBe(true);
+      expect(rows.some((row) => row.startsWith('  Round 8: rm -rf ./build-8'))).toBe(true);
+      expect(rows.some((row) => row.startsWith('  Round 9 (this request): rm -rf ./build-9'))).toBe(
+        true
+      );
+      // The pending marker sits on the transcript's LAST round and on nothing else.
+      expect(rows.filter((row) => row.includes('(this request)'))).toHaveLength(1);
+
+      // **Round 1 was sliced away, so nothing on this screen may claim to be it.**
+      expect(rows.filter((row) => row.includes('(on the command alone)'))).toHaveLength(0);
+      expect(rows.filter((row) => row.includes('(not shown to the rater)'))).toHaveLength(0);
+      // The control, on the SAME rounds: unsliced, both markers appear exactly once and on round
+      // one — so their absence above is a POSITION, not a marker that stopped being emitted.
+      const whole = renderNegotiationRows(rounds, { attempts }).map((row) => row.text);
+      expect(whole.filter((row) => row.includes('(on the command alone)'))).toHaveLength(1);
+      expect(whole.filter((row) => row.includes('(not shown to the rater)'))).toHaveLength(1);
+      expect(whole.filter((row) => row.includes('agent justified'))[0]).toBe(
+        '    agent justified (not shown to the rater): JUSTIFICATION-1'
+      );
+      expect(whole.filter((row) => row.includes('rater answered'))[0]).toContain(
+        'rater answered (on the command alone):'
+      );
+    });
+
+    /**
      * The count is a claim about the exchange, so it may not be talked DOWN by a caller either: a
      * stale or absent number falls back to the rounds actually being printed rather than letting
      * the block declare less argument than it is about to show.
@@ -1716,8 +1806,9 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
     /**
      * **The prompt this feeds cannot scroll, and nothing else on it can give up rows.** Measured at
      * 80 columns: three rounds of paragraph-length argument cost 37 rows, one round of them 12 —
-     * so the bound has to be on ROWS PER ELEMENT and not on the number of rounds, which §5.3
-     * already caps at three. Dropping whole rounds would attack the one thing §5.6 calls the most
+     * so the bound has to be on ROWS PER ELEMENT and not on the number of rounds. The measured case
+     * was three rounds, exactly what {@link NEGOTIATION_MAX_ROUNDS_SHOWN} allows a screen, and it
+     * still cost 37 rows. Dropping whole rounds would attack the one thing §5.6 calls the most
      * important thing on the screen while saving nothing in the measured case.
      */
     it('bounds every element of a round to a fixed number of rows, and says what it hid', () => {

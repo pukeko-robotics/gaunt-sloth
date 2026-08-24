@@ -408,10 +408,10 @@ const CONTINUATION_PREFIX = '      ┊ ';
  * **MEASURED, and it is the height bound this block needs rather than a cap on rounds.** At 80
  * columns three rounds of paragraph-length argument cost 37 rows, of which one round was 12; the
  * whole prompt was 64 rows against a 20-row budget, so the human saw the command and the verdict
- * and neither the later rounds nor the menu line. A cap on the NUMBER of rounds would have changed
- * none of that — §5.3 already bounds the transcript at
- * {@link MAX_CONSECUTIVE_REJECTIONS} — because the cost is per row, not per round. Bounding each
- * element keeps every round structurally on the screen, which is what §5.6 calls the most important
+ * and neither the later rounds nor the menu line. A cap on the NUMBER of rounds does not answer
+ * that — the measured case was three rounds, exactly what {@link NEGOTIATION_MAX_ROUNDS_SHOWN}
+ * allows a screen, and it still cost 37 rows — because the cost is per row, not per round. Bounding
+ * each element keeps every round structurally on the screen, which is what §5.6 calls the most important
  * thing on it, and pays for it out of the tail of a paragraph the reader was never going to need in
  * full: the archive keeps every round whole ([[TUI-C27]]'s capture is per rating call).
  *
