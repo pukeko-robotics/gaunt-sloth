@@ -183,7 +183,9 @@ describe('EXT-80 — a mid-session rung change decides the gate (real createAgen
 
   const makeRunner = async (
     rung: ApprovalRung,
-    calls: { name: string; args: Record<string, unknown> }[]
+    calls: { name: string; args: Record<string, unknown> }[],
+    /** Extra config fields — `mcpServers`, whose keys are the only identity a server has (§4.7.5). */
+    extraConfig: Record<string, unknown> = {}
   ): Promise<InstanceType<typeof GthAgentRunner>> => {
     const runner = new GthAgentRunner(vi.fn(), {
       resolveTools: vi.fn().mockResolvedValue(makeTools()),
@@ -191,6 +193,7 @@ describe('EXT-80 — a mid-session rung change decides the gate (real createAgen
     });
     const config = {
       ...BASE_CONFIG,
+      ...extraConfig,
       llm: new ScriptedToolCallingModel(calls),
       approvals: rung,
     } as unknown as GthConfig;
@@ -444,5 +447,81 @@ describe('EXT-80 — a mid-session rung change decides the gate (real createAgen
         expect(ran).toEqual(['write_file:notes.md']);
       }
     );
+  });
+
+  /**
+   * [[EXT-115]] §6.2 — **the message a non-shell call is refused with names what it actually is.**
+   *
+   * The wiring is what these cells prove, and it is the half a class-level test cannot see: the
+   * runner must hand the stop the very `ApprovalSubject` its own decision ran on, rather than
+   * letting the message fall back to the shell shape a hand-built error gets. They run at `manual`
+   * with no approval callback — the CI / one-shot case — through the real graph and the real
+   * runner, so the subject reaching the message is the one `approvalSubjectFor` built.
+   *
+   * The suggested `approvals.allow` entry is asserted with them because it is derived at the same
+   * call site from the same subject: a message that named the call correctly and then offered a
+   * `shell` entry would still be handing the reader a line `matchEntry` refuses on the type alone.
+   */
+  describe('§6.2 with nobody to ask — the refusal names the kind of call it refused', () => {
+    /** The stop `runTurn` throws, as the error it is. */
+    const stopFrom = async (
+      runner: InstanceType<typeof GthAgentRunner>,
+      prompt: string
+    ): Promise<Error> => {
+      const error = await runTurn(runner, prompt).then(
+        () => null,
+        (e: unknown) => e as Error
+      );
+      expect(error, 'the run was expected to end with an approval stop').not.toBeNull();
+      return error as Error;
+    };
+
+    it('a gated write_file is reported as a Tool, never as a Command', async () => {
+      const runner = await makeRunner('manual', [
+        { name: 'write_file', args: { path: 'notes.md', content: 'hi' } },
+      ]);
+      // No approval callback — nobody to ask.
+
+      const error = await stopFrom(runner, 'write the notes');
+
+      expect(error.message).toContain('Approval required, but this session has no one to ask.');
+      expect(error.message).toContain('\n  Tool: write_file\n');
+      // The defect: `Command: write_file`.
+      expect(error.message).not.toContain('Command:');
+      // …and the remedy is of the matching kind, DERIVED for this very tool rather than the
+      // general example — the wording is what tells the two apart, since a general `tool` example
+      // is the same shape.
+      expect(error.message).toContain('For this command, add:');
+      expect(error.message).toContain(
+        '{ "type": "tool", "matcher": "exact", "pattern": "write_file"'
+      );
+      expect(error.message).not.toContain('"type": "shell"');
+      // Nothing ran.
+      expect(ran).toEqual([]);
+    });
+
+    it('a gated MCP call is reported as an MCP tool, with the server it reaches', async () => {
+      const runner = await makeRunner(
+        'manual',
+        [{ name: 'mcp__docs__search', args: { query: 'gates' } }],
+        // §4.7.5 — the user's own key is the only identity a server has, so the subject only
+        // carries one when the call resolves against a CONFIGURED key.
+        { mcpServers: { docs: { command: 'node', args: [] } } }
+      );
+
+      const error = await stopFrom(runner, 'search the docs');
+
+      expect(error.message).toContain('\n  MCP tool: mcp__docs__search\n');
+      expect(error.message).toContain('\n  MCP server: docs\n');
+      expect(error.message).not.toContain('Command:');
+      expect(error.message).toContain(
+        '{ "type": "mcpTool", "server": "docs", "matcher": "exact", "pattern": "search"'
+      );
+      expect(ran).toEqual([]);
+    });
+
+    // The CONTROL that stops a blanket relabel passing these two — a gated SHELL command still
+    // reported as a `Command`, through the same runner — lives in `GthAgentRunner.spec.ts`, where
+    // the shell tool is wired: `chat` emits no dev tools, so this file's tool list has none.
   });
 });
