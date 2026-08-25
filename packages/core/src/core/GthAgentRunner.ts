@@ -425,7 +425,10 @@ export class GthAgentRunner {
    * reason the menu's most emphatic answer is no longer its most forgetful one.
    *
    * Null when the file cannot be loaded at all, in which case an `always` refusal degrades to a
-   * session one — a re-prompt next session, never an execution.
+   * session one. **Not "a re-prompt next session, never an execution":** nothing in the unreadable
+   * file applies to any call, so next session a call it covered is left to the rest of the gate — it
+   * may be refused by another rule, it may be prompted for, or it may run without asking, under
+   * `bypass` or a matching saved allow. The user is told at load time.
    */
   private persistedDenials: PersistedApprovalGrants | null = null;
   private persistedDenialsLoaded = false;
@@ -2547,6 +2550,9 @@ export class GthAgentRunner {
       const filePath = getGslothConfigWritePath(SHELL_ALLOWLIST_FILE);
       this.persistedGrants = new PersistedApprovalGrants(filePath, {
         onNotice: (notice) => this.statusUpdate(notice.level, notice.message),
+        // [[EXT-143]] — the word a load-failure notice uses for what this file holds. The store is
+        // list-agnostic and stays so; only the message needs to know, and only the caller can say.
+        holds: 'approvals',
       });
     } catch (e) {
       // Path/IO failure → behave as no persisted store (still safe: just prompts more).
@@ -2582,12 +2588,17 @@ export class GthAgentRunner {
       this.persistedDenials = new PersistedApprovalGrants(filePath, {
         onNotice: (notice) => this.statusUpdate(notice.level, notice.message),
         legacyPrefixMigration: false,
+        // [[EXT-143]] — the mirror of the allow store's word, and the reason the store takes one at
+        // all: a broken deny file loses refusals, and a message that said "approvals" would name
+        // the wrong loss in the one place the user has to act on it.
+        holds: 'refusals',
       });
     } catch (e) {
       // Path/IO failure → behave as no persisted refusals. This one is NOT safe in the way the
-      // allow side's failure is: it loses refusals rather than approvals, so it re-prompts where it
-      // would have refused by rule. A prompt is still a human deciding, which is why it degrades
-      // rather than ending the run.
+      // allow side's failure is: it loses refusals rather than approvals, so nothing here refuses
+      // any more and the call falls to whatever else covers it — a prompt at most rungs, and no
+      // prompt at all at `bypass` or under a matching allow entry, where it simply runs. It still
+      // degrades rather than ending the run, and [[EXT-143]]'s notice is what makes it visible.
       debugLogError('Loading persisted shell refusals', e);
       this.persistedDenials = null;
     }
@@ -2717,10 +2728,13 @@ export class GthAgentRunner {
    * that back. A `writeFileSync` that fails on a read-only checkout is a different case: the store
    * swallows it and {@link PersistedApprovalGrants.add} returns void, so there is nothing here to
    * observe and the refusal is still shown as saved. The allow side has the identical gap, for the
-   * identical reason — the in-memory copy keeps the refusal in force for this run either way, and
-   * the cost of the overstatement is one re-prompt next session, the direction refusals are allowed
-   * to fail in. Closing it means the store reporting its write result on both sides, not a comment
-   * here.
+   * identical reason — the in-memory copy keeps the refusal in force for this run either way.
+   * **Do not describe the cost as "one re-prompt next session":** the entry is not on disk, so next
+   * session it applies to nothing and the call is left to the rest of the gate — another rule may
+   * refuse it, it may be prompted for, or it may run without asking under `bypass` or a matching
+   * saved allow. Unlike the load-failure path, a swallowed *write* failure is not reported to the
+   * user at all, which is what makes it worth closing. Closing it means the store reporting its
+   * write result on both sides, not a comment here.
    */
   private recordDenial(entry: ApprovalEntry, scope: ToolRejectScope): void {
     if (scope === 'once') return;

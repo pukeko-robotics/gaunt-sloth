@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HumanMessage } from '@langchain/core/messages';
 import type { GthConfig } from '#src/config.js';
+import { StatusLevel } from '#src/core/types.js';
 import type { PendingToolInterrupt, StatusUpdateCallback } from '#src/core/types.js';
 import { peekProjectDir, setProjectDir } from '#src/utils/systemUtils.js';
 import { SHELL_ALLOWLIST_FILE, SHELL_DENYLIST_FILE } from '#src/constants.js';
@@ -264,6 +265,131 @@ describe('GthAgentRunner — [[EXT-107]] the persisted deny store', () => {
     expect(decide).not.toHaveBeenCalled();
     // And the file is byte-for-byte what was there.
     expect(readFileSync(denyFile, 'utf8')).toBe(handWritten);
+  });
+
+  /**
+   * [[EXT-143]] — **a broken file tells the user, in the words of the file that broke.**
+   *
+   * The store is list-agnostic and stays so; the noun it prints is the one thing the caller has to
+   * supply, and these are the two cases that prove each side supplies its own. Asserted through the
+   * runner rather than the store, because the store passing its own tests proves nothing about a
+   * runner that wired the same word into both files — which is the mistake available here, and the
+   * one that would put "approvals" in front of a user whose refusals are the thing not in force.
+   *
+   * The fallback is asserted alongside the message every time: the human is still asked. Reporting
+   * the failure is the change; failing to a re-prompt is [[EXT-107]]'s design and is not.
+   */
+  it('reports a deny file it cannot read — once, naming that file and the REFUSALS lost', async () => {
+    writeFileSync(denyFile, '{ "version": 2, "grants": [ {"entry": ] }', 'utf8');
+
+    const { decide } = await runWith({
+      commands: ['npm publish', 'npm publish'],
+      decide: approveOnce,
+    });
+
+    const notices = statusUpdateCallback.mock.calls.filter(([, message]) =>
+      String(message).includes(denyFile)
+    );
+    // ONE notice for the session, not one per gated call: the store is loaded once per runner.
+    expect(notices).toHaveLength(1);
+    expect(notices[0][0]).toBe(StatusLevel.ERROR);
+    expect(String(notices[0][1])).toContain('refusals');
+    expect(String(notices[0][1])).not.toContain('approvals');
+    // The fallback, unchanged: nothing was refused by rule, so the human was asked instead.
+    expect(decide).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports an allow file it cannot read, naming that file and the APPROVALS lost', async () => {
+    writeFileSync(allowFile, 'not json at all', 'utf8');
+
+    const { decide } = await runWith({ commands: ['npm test'], decide: approveOnce });
+
+    const notices = statusUpdateCallback.mock.calls.filter(([, message]) =>
+      String(message).includes(allowFile)
+    );
+    expect(notices).toHaveLength(1);
+    expect(notices[0][0]).toBe(StatusLevel.ERROR);
+    expect(String(notices[0][1])).toContain('approvals');
+    expect(String(notices[0][1])).not.toContain('refusals');
+    expect(decide).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * [[EXT-143]] — **the notice may say what is certain, and a prompt is not certain.**
+   *
+   * The first wording promised the calls a broken file covered "will be asked about again". These
+   * two cases are the configurations where that is false, and they are the ones where losing the
+   * file has teeth. The mechanism is [[EXT-107]]'s precedence working as designed: the failed load
+   * hands `resolveApprovalRules` an empty deny list, an empty deny list refuses nothing, and
+   * whatever else covers the command decides — the `bypass` return in the first case, a saved
+   * approval for the same command in the second. In both the command RUNS and the human is never
+   * reached, while the notice is on screen saying it is not.
+   *
+   * Each case carries its intact-file control, because the claim is not that `bypass` approves —
+   * it is that the SAME command, at the SAME rung, is refused when the file reads. That is what
+   * makes these tests about the sentence rather than about the precedence, which is unchanged.
+   *
+   * The negative assertion is the load-bearing one: a wording that predicted a prompt would satisfy
+   * every positive assertion here.
+   */
+  it('does not promise a prompt: at bypass a broken deny file lets the command run', async () => {
+    writeFileSync(denyFile, '{ "version": 2, "grants": [ {"entry": ] }', 'utf8');
+
+    const { decide, decisions } = await runWith({
+      commands: ['npm publish'],
+      approvals: 'bypass',
+      decide: approveOnce,
+    });
+
+    // Nobody was asked, and the command the file refused ran.
+    expect(decide).not.toHaveBeenCalled();
+    expect(decisions[0]).toMatchObject({ type: 'approve' });
+
+    const notices = statusUpdateCallback.mock.calls.filter(([, message]) =>
+      String(message).includes(denyFile)
+    );
+    expect(notices).toHaveLength(1);
+    expect(notices[0][0]).toBe(StatusLevel.ERROR);
+    expect(String(notices[0][1])).not.toContain('asked about again');
+    expect(String(notices[0][1])).toContain('may run without asking');
+
+    // CONTROL: same command, same rung, a file that reads — refused by rule, no prompt.
+    writeFileSync(denyFile, shellGrantFile(['npm publish']), 'utf8');
+    const control = await runWith({
+      commands: ['npm publish'],
+      approvals: 'bypass',
+      decide: approveOnce,
+    });
+    expect(control.decide).not.toHaveBeenCalled();
+    expect(control.decisions[0]).toMatchObject({ type: 'reject' });
+  });
+
+  it('does not promise a prompt: a saved approval decides when the deny file breaks', async () => {
+    writeFileSync(denyFile, '{ "version": 2, "grants": [ {"entry": ] }', 'utf8');
+    writeFileSync(allowFile, shellGrantFile(['npm publish']), 'utf8');
+
+    // `write`, not `bypass`: the gate is fully on and the command still runs unasked.
+    const { decide, decisions } = await runWith({
+      commands: ['npm publish'],
+      decide: approveOnce,
+    });
+
+    expect(decide).not.toHaveBeenCalled();
+    expect(decisions[0]).toMatchObject({ type: 'approve' });
+
+    const notices = statusUpdateCallback.mock.calls.filter(([, message]) =>
+      String(message).includes(denyFile)
+    );
+    expect(notices).toHaveLength(1);
+    expect(String(notices[0][1])).not.toContain('asked about again');
+    expect(String(notices[0][1])).toContain('may run without asking');
+
+    // CONTROL: the same pair of files, the deny one readable — the saved refusal wins, so the
+    // approval above is the empty deny list and not the allow store outranking anything.
+    writeFileSync(denyFile, shellGrantFile(['npm publish']), 'utf8');
+    const control = await runWith({ commands: ['npm publish'], decide: approveOnce });
+    expect(control.decide).not.toHaveBeenCalled();
+    expect(control.decisions[0]).toMatchObject({ type: 'reject' });
   });
 
   /**

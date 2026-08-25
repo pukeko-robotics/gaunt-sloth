@@ -78,6 +78,20 @@ command that spans twenty lines is shown whole rather than cut down to its first
   were shown, and nothing widens it on your behalf. For a whole family, write a `glob` or `regexp`
   entry in `approvals.deny` (below), or broaden the saved entry in the file by hand.
 
+**If you break one of those files by hand, the session that reads it says so.** A file that cannot be
+read at all is reported as an error naming the file, and nothing saved in it is in force until you fix
+it. A single entry that cannot be read is reported the same way, naming its position in the file; the
+entries around it still hold. The denylist is read at every approval mode, so a break there is
+reported straight away; the allowlist is not consulted at `bypass` at all, so a break in that one goes
+unmentioned until a session that does read it.
+
+**What is lost is not simply asked about again.** An entry that is not in force does not exist as far
+as the gate is concerned, so a call it covered is left to the rest of the gate: it may be refused by
+another rule, it may run without asking — at `bypass`, or where a saved approval matches the same
+command — or you may be prompted. A broken denylist is the case to watch, because there the calls you
+refused are the ones now decided by something else. Fix the file rather than leaving it: the next
+answer you save rewrites it, and what could not be read is not carried over.
+
 ### Where the prompt is written
 
 This depends on which surface you are in, and it matters only when you are capturing a session to a
