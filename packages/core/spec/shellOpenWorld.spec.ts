@@ -1862,7 +1862,9 @@ describe('mapVerdictToAction — §4.6 floors an open-world command even when th
 
   /**
    * **The arm names the remote execution and says NOTHING about where the substitution expands** —
-   * because quoting decides that and the quoting is gone by the time the arm runs.
+   * because quoting and escaping decide that, and both are gone by the time the arm runs. This test
+   * pins the quoting half on the pair below; the escaping half, where the escaped spellings make the
+   * gate's own displayed command misleading, is the test after this one.
    *
    * The two commands below differ by ONE character class: `'…'` and `"…"`. Under double quotes the
    * local shell expands the substitution before ssh starts; under single quotes it expands nothing,
