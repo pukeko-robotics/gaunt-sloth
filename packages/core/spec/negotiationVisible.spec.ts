@@ -7,6 +7,8 @@ import type { GthConfig } from '#src/config.js';
 import type { PendingToolInterrupt, StatusUpdateCallback } from '#src/core/types.js';
 import {
   NEGOTIATED_APPROVAL_COOLDOWN_MS,
+  NEGOTIATION_MAX_ROUNDS_SHOWN,
+  renderLiveNegotiationRows,
   renderNegotiationRows,
   type LiveNegotiationRound,
   type NegotiationDisplay,
@@ -36,7 +38,9 @@ const mockAgent = {
   cleanup: vi.fn(),
   getPendingToolInterrupts: vi.fn(),
   streamResume: vi.fn(),
+  streamWithEventsResume: vi.fn(),
   noteRaterClarification: vi.fn(),
+  clearRaterClarifications: vi.fn(),
 };
 
 vi.mock('#src/core/shell/raterModel.js', () => ({ resolveRaterModel: vi.fn() }));
@@ -70,6 +74,14 @@ interface DriveOptions {
   display?: boolean;
   /** What the human answers at an escalation. Absent → no human at all (§6.2). */
   human?: 'approve' | 'reject';
+  /**
+   * Drive `processMessagesWithEvents` instead of `processMessages`.
+   *
+   * **The event path is the Ink TUI's**, which is the surface the pinned panel lives on, so a
+   * lifecycle guarantee asserted only against the string path would leave the one that matters
+   * untested — and the two methods have separate bodies.
+   */
+  events?: boolean;
 }
 
 /**
@@ -93,6 +105,8 @@ interface DriveHandle {
   rounds: LiveNegotiationRound[];
   /** The pending interrupts the human was shown. */
   prompts: PendingToolInterrupt[];
+  /** The runner itself, for cases that drive a lifecycle call (`/clear`) after the turn. */
+  runner: InstanceType<typeof import('#src/core/GthAgentRunner.js').GthAgentRunner>;
 }
 
 describe('[[TUI-C69]] §5.4/§5.5 — the visible negotiation and the cooldown', () => {
@@ -147,6 +161,8 @@ describe('[[TUI-C69]] §5.4/§5.5 — the visible negotiation and the cooldown',
     pending.mockResolvedValue([]);
     mockAgent.streamResume.mockReset().mockResolvedValue(streamOf(''));
     mockAgent.stream.mockReset().mockResolvedValue(streamOf('x'));
+    mockAgent.streamWithEvents.mockReset().mockImplementation(async function* () {});
+    mockAgent.streamWithEventsResume.mockReset().mockImplementation(async function* () {});
 
     const runner = new GthAgentRunner(statusUpdate);
     const rounds: LiveNegotiationRound[] = [];
@@ -163,12 +179,24 @@ describe('[[TUI-C69]] §5.4/§5.5 — the visible negotiation and the cooldown',
           return answer === 'approve' ? { type: 'approve', scope: 'once' } : { type: 'reject' };
         });
       }
+      const messages = [new HumanMessage('wipe today’s commits')];
+      if (options.events) {
+        return (async () => {
+          // Drained rather than inspected: these cases are about what reaches the DISPLAY, and the
+          // generator has to run to completion for its `finally` to be part of what is asserted.
+          for await (const _event of runner.processMessagesWithEvents(messages)) {
+            /* drain */
+          }
+        })()
+          .then(() => undefined)
+          .catch((e: unknown) => e);
+      }
       return runner
-        .processMessages([new HumanMessage('wipe today’s commits')])
+        .processMessages(messages)
         .then(() => undefined)
         .catch((e: unknown) => e);
     })();
-    return { run, rounds, prompts };
+    return { run, rounds, prompts, runner };
   }
 
   /**
@@ -498,8 +526,72 @@ describe('[[TUI-C69]] §5.4/§5.5 — the visible negotiation and the cooldown',
       // standing from the previous turn is over before this one starts. Then three rounds, then the
       // exchange declared over, which happens BEFORE the human is asked: the prompt is what renders
       // the whole argument next, and a live copy above it would draw the same exchange twice.
-      expect(ended).toEqual(['end', 'round', 'round', 'round', 'end']);
+      expect(ended.slice(0, 5)).toEqual(['end', 'round', 'round', 'round', 'end']);
+      // ...and the turn's own end clears the panel again on the way out. Asserted separately from
+      // the sequence above so the escalation property — end BEFORE the prompt — keeps failing on
+      // its own terms if it breaks, rather than being absorbed into one longer literal that a
+      // future reader can only check by counting.
+      expect(ended.at(-1)).toBe('end');
+      expect(ended).toHaveLength(6);
       expect(rounds).toHaveLength(3);
+    });
+
+    /**
+     * **The case an escalation cannot cover.** A negotiation that CONVERGES reaches nobody, so
+     * nothing spends `humanReached()` and nothing told the surface the argument was over: the rounds
+     * stayed pinned in the non-scrolling dock until the user's NEXT message — across exactly the
+     * idle period in which they are reading the result and typing that message into a prompt those
+     * rows have pushed toward the bottom of the screen.
+     *
+     * The turn ending is what clears it, which is why this asserts the LAST event rather than any
+     * end at all: the turn opens with one too, and a cell satisfied by that would pass on the
+     * unfixed code.
+     */
+    it('takes a CONVERGED exchange off the screen when the turn ends', async () => {
+      const events: string[] = [];
+      const runner = await driveWithDisplay(
+        { round: () => events.push('round'), end: () => events.push('end') },
+        {
+          calls: [
+            { command: 'git reset --hard origin/main' },
+            { command: 'git reset --soft HEAD~2', justification: 'keeps the tree' },
+          ],
+          script: ['destructive', 'safe'],
+        }
+      );
+      // Nobody was reached: the argument converged, so no escalation cleared the panel for us.
+      expect(runner.prompts).toEqual([]);
+      expect(events.filter((event) => event === 'round')).toHaveLength(2);
+      expect(events.at(-1)).toBe('end');
+    });
+
+    /**
+     * **And on the EVENT path**, which is the Ink TUI's — the surface the pinned panel actually
+     * lives on, and therefore the one the unbounded-panel finding is about. The two turn methods
+     * have separate bodies, so a `finally` added to one of them leaves the other exactly as it was;
+     * asserting only against the string path would have pinned the half that does not matter here.
+     */
+    it('takes a CONVERGED exchange off the screen on the event path too', async () => {
+      const events: string[] = [];
+      suppliedDisplay = {
+        round: () => events.push('round'),
+        end: () => events.push('end'),
+      };
+      try {
+        const handle = drive({
+          events: true,
+          calls: [
+            { command: 'git reset --hard origin/main' },
+            { command: 'git reset --soft HEAD~2', justification: 'keeps the tree' },
+          ],
+          script: ['destructive', 'safe'],
+        });
+        await handle.run;
+        expect(events.filter((event) => event === 'round')).toHaveLength(2);
+        expect(events.at(-1)).toBe('end');
+      } finally {
+        suppliedDisplay = undefined;
+      }
     });
 
     /** A new user turn is a person being reached too, so a stale argument cannot outlive its turn. */
@@ -510,6 +602,88 @@ describe('[[TUI-C69]] §5.4/§5.5 — the visible negotiation and the cooldown',
         { calls: [{ command: 'ls' }], script: ['safe'] }
       );
       expect(ended.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('§5.4 — the live panel is BOUNDED, like the prompt it shares a renderer with', () => {
+    /**
+     * A nine-round argument — {@link MAX_REJECTIONS_BEFORE_HUMAN}, the most the gate lets happen
+     * before a person is reached — with prose long enough to wrap at a real width.
+     */
+    const nineRounds = (): LiveNegotiationRound[] =>
+      Array.from({ length: 9 }, (_unused, index) => ({
+        round: {
+          command: `git reset --hard origin/main --quiet --attempt-number-${index + 1}`,
+          justification: `the user asked me to wipe today's commits, attempt ${index + 1}, and I still believe this is the command they meant`,
+          outcome: 'destructive' as const,
+          reason: `refused because it discards committed work irreversibly (attempt ${index + 1})`,
+        },
+        position: index,
+      }));
+
+    /**
+     * **The defect this pins was a cap that applied to nothing.** `renderNegotiationRows` slices to
+     * {@link NEGOTIATION_MAX_ROUNDS_SHOWN}, but the live path handed it ONE round at a time — where
+     * `slice(-3)` is an identity operation — and the panel accumulated the results. Measured at 46
+     * rows for this argument at 80 columns, against 16 for the same argument in the escalation
+     * prompt, inside a dock that is explicitly told not to shrink.
+     *
+     * Asserted as a comparison with the prompt rather than as a bare number, because "is it too
+     * many rows" has no answer in the abstract: the prompt renders the SAME argument under the same
+     * constraint, so it is the honest yardstick. The absolute bound is asserted too, since a
+     * regression that inflated both would slip past a purely relative test.
+     */
+    it('draws a nine-round argument in a screenful, not in a screenful per round', () => {
+      const rounds = nineRounds();
+      const live = renderLiveNegotiationRows(rounds, { width: 80 });
+      const prompt = renderNegotiationRows(
+        rounds.map((entry) => entry.round),
+        { width: 80, attempts: 9 }
+      );
+
+      // One context row, then at most three rounds of at most three elements, each element bound to
+      // NEGOTIATION_MAX_ROWS_PER_ELEMENT = 2 terminal rows: 1 + 3 * 3 * 2 = 19.
+      expect(live.length).toBeLessThanOrEqual(19);
+      // The prompt shows a heading where the panel shows a context sentence, and both show three
+      // rounds, so neither may cost meaningfully more than the other for one argument.
+      expect(live.length).toBeLessThanOrEqual(prompt.length + 1);
+      // Not vacuous: this fixture really does have nine rounds to drop, so an unsliced render is
+      // far larger than the bound above and this cell fails when the slice goes.
+      expect(rounds).toHaveLength(9);
+      expect(live.length).toBeLessThan(rounds.length * 3);
+    });
+
+    /**
+     * The rounds a watcher keeps are the NEWEST ones, numbered by their true position — the same
+     * numbers the escalation prompt will give those same rounds. A panel that showed the first
+     * three would freeze on the opening of an argument and never show the state it is in.
+     */
+    it('keeps the newest rounds, still numbered by their place in the argument', () => {
+      const live = renderLiveNegotiationRows(nineRounds(), { width: 80 });
+      expect(numbered(live).map(([number]) => number)).toEqual([7, 8, 9]);
+      expect(live.some((row) => row.text.includes('Round 1:'))).toBe(false);
+    });
+
+    /**
+     * The context sentence is drawn on every render rather than only over round one, because once
+     * the window has slid past the opening round the alternative is a bare `Round 7:` heading
+     * nothing — an unattributed command in the chrome of a tool asking the user to trust it.
+     */
+    it('still says whose argument this is after the opening round scrolls out', () => {
+      const live = renderLiveNegotiationRows(nineRounds(), { width: 80 });
+      expect(live[0]?.text).toBe('The agent is negotiating with the auto-rater:');
+      expect(live[0]?.voice).toBe('chrome');
+      expect(
+        live.filter((row) => row.text.includes('negotiating with the auto-rater'))
+      ).toHaveLength(1);
+    });
+
+    /** Below the cap nothing is dropped, so a short argument is shown whole. */
+    it('shows a short argument in full', () => {
+      const live = renderLiveNegotiationRows(nineRounds().slice(0, NEGOTIATION_MAX_ROUNDS_SHOWN), {
+        width: 80,
+      });
+      expect(numbered(live).map(([number]) => number)).toEqual([1, 2, 3]);
     });
   });
 
@@ -550,6 +724,48 @@ describe('[[TUI-C69]] §5.4/§5.5 — the visible negotiation and the cooldown',
       // Three consecutive rejections escalate (§5.3), so the third call reached the human.
       expect(handle.prompts).toHaveLength(1);
       expect(mockAgent.noteRaterClarification.mock.calls).toEqual([['c1'], ['c2']]);
+    });
+  });
+
+  describe('§5.4 — the noted tool-call ids do not outlive their turn', () => {
+    /**
+     * **The ids are a per-turn tone hint, and nothing was emptying them.** The set had one writer
+     * and no `clear` anywhere, so it grew for the life of the process — one string per rater
+     * rejection, which is small — and, less small, a later call that reused a noted id would render
+     * as a clarification request whatever it actually was. That reuse is unreachable with today's
+     * providers because they all mint unique ids, which makes it a property of the PROVIDERS rather
+     * than of this code: nothing here held it, and no dependency bump has to keep it.
+     */
+    it('drops them when a new turn begins', async () => {
+      const handle = drive({ calls: [{ command: 'ls' }], script: ['safe'] });
+      await handle.run;
+      expect(mockAgent.clearRaterClarifications).toHaveBeenCalled();
+    });
+
+    /**
+     * `/clear` too, and for the reason `resetThread` already gives about the negotiation itself:
+     * state from before the user asked for the conversation to be forgotten must not decide how the
+     * conversation after it is drawn.
+     */
+    it('drops them on a thread reset', async () => {
+      const handle = drive({ calls: [{ command: 'ls' }], script: ['safe'] });
+      await handle.run;
+      mockAgent.clearRaterClarifications.mockClear();
+      handle.runner.resetThread();
+      expect(mockAgent.clearRaterClarifications).toHaveBeenCalledTimes(1);
+    });
+
+    /** An agent that renders nothing simply omits the method; a turn must not fail on its absence. */
+    it('does not require the agent to implement it', async () => {
+      const clear = mockAgent.clearRaterClarifications;
+      // @ts-expect-error — deliberately modelling an agent that predates the method.
+      mockAgent.clearRaterClarifications = undefined;
+      try {
+        const handle = drive({ calls: [{ command: 'ls' }], script: ['safe'] });
+        await expect(handle.run).resolves.not.toBeInstanceOf(Error);
+      } finally {
+        mockAgent.clearRaterClarifications = clear;
+      }
     });
   });
 
@@ -634,6 +850,124 @@ describe('[[TUI-C69]] §5.4/§5.5 — the visible negotiation and the cooldown',
       // 1 ms in the one that matters.
       expect(Date.now() - started).toBeLessThan(400);
       expect(mockAgent.streamResume).toHaveBeenCalledTimes(2);
+    });
+
+    /**
+     * **The approval that ANSWERS the refusal is held; the calls that merely follow it are not.**
+     *
+     * The condition used to be *"is the transcript non-empty"* — a fact about the TURN, not about
+     * the command in front of the gate. Since [[EXT-108]] an approved call deliberately leaves the
+     * rounds standing, so that stayed true for the whole rest of the turn: one refusal followed by
+     * six ordinary read-only commands was measured at **4817 ms of holds in a single turn**, each
+     * one drawing a row that said the auto-rater had agreed to a command it had never seen.
+     *
+     * It also inverted the requirement. §5.5 exists to give the approval an argument produced its
+     * own salience; spent on `ls src` the window marks nothing, and the genuinely negotiated
+     * approval — when it comes — is the seventh identical pause rather than the only one.
+     *
+     * `consecutiveRejections` is the question actually being asked: is a refusal standing
+     * unanswered right now. `noteProgress()` zeroes it the moment any call gets through, so the
+     * first approval after a refusal ends the argument and the rest of the turn is ordinary.
+     *
+     * **The timing is pinned with a fake clock and one interval's worth of advance**, which is what
+     * makes this fail on the old behaviour: three holds need 2400 ms, so the run is still
+     * outstanding at 800 and `finished` is false.
+     */
+    it('holds the approval that answers the refusal, and no later call in the turn', async () => {
+      vi.useFakeTimers();
+      const handle = drive({
+        calls: [
+          { command: 'git reset --hard origin/main' },
+          { command: 'ls src' },
+          { command: 'cat package.json' },
+          { command: 'ls docs' },
+        ],
+        script: ['destructive', 'safe', 'safe', 'safe'],
+      });
+      try {
+        let finished = false;
+        void handle.run.then(() => {
+          finished = true;
+        });
+
+        // Everything except the timer has settled: one hold is outstanding.
+        await vi.advanceTimersByTimeAsync(0);
+        expect(finished).toBe(false);
+
+        // Exactly ONE interval finishes the whole turn. Three holds would not.
+        //
+        // Asserted BEFORE awaiting the run, deliberately: awaiting first would make the old
+        // behaviour hang until vitest's timeout, and a timeout is a failure whose message names the
+        // clock rather than the defect. This way the regression reads `expected false to be true`.
+        await vi.advanceTimersByTimeAsync(NEGOTIATED_APPROVAL_COOLDOWN_MS);
+        expect(finished).toBe(true);
+
+        // And the screen says so: the refusal, then the one call that ended the argument. The two
+        // ordinary commands after it are not rounds of anything.
+        expect(handle.rounds.map((r) => [r.round.command, r.agreed === true])).toEqual([
+          ['git reset --hard origin/main', false],
+          ['ls src', true],
+        ]);
+      } finally {
+        // Drain whatever is still outstanding before handing the mocks to the next case. Without
+        // this a FAILING run stays in flight, and the next test's `mockReset` pulls the rug out
+        // from under it — which is how one real failure turns into two confusing ones.
+        await vi.advanceTimersByTimeAsync(NEGOTIATED_APPROVAL_COOLDOWN_MS * 5);
+        await handle.run;
+        vi.useRealTimers();
+      }
+    });
+
+    /**
+     * **`Agreed` is a claim about the rater's opinion of THIS command; `Accepted` is a claim only
+     * about what it let through.** Both end an argument and both are held — §5.3 counts either as
+     * progress — but only one of them can truthfully be said about a given command, and the wrong
+     * one prints a false statement about the auto-rater in the chrome of the thing asking the user
+     * to trust it.
+     *
+     * Read out of the RENDERED TEXT of both surfaces, because the flag being right on the event and
+     * wrong on the screen is the failure this is for.
+     */
+    it('says AGREED only of a command the rater refused, and ACCEPTED of a revision', async () => {
+      const rendered = async (calls: { command: string }[]): Promise<string[]> => {
+        const handle = drive({ calls, script: ['destructive', 'safe'] });
+        await handle.run;
+        const ending = handle.rounds.filter((round) => round.agreed === true);
+        expect(ending).toHaveLength(1);
+        return [
+          ...renderLiveNegotiationRows(handle.rounds, { width: 80 }),
+          // The readline surface renders the same ending round on its own, one at a time.
+          ...renderNegotiationRows([ending[0]!.round], {
+            width: 80,
+            mode: 'live',
+            from: ending[0]!.position,
+            agreed: true,
+            ...(ending[0]!.revised ? { revised: true } : {}),
+          }),
+        ].map((row) => row.text);
+      };
+
+      // The agent narrowed the command until the rater passed it: the rater never argued about
+      // `git reset --soft HEAD~2`, so it did not agree to it.
+      const revised = await rendered([
+        { command: 'git reset --hard origin/main' },
+        { command: 'git reset --soft HEAD~2' },
+      ]);
+      expect(
+        revised.filter((text) => text.includes('Accepted: git reset --soft HEAD~2'))
+      ).toHaveLength(2);
+      expect(revised.some((text) => text.includes('Agreed:'))).toBe(false);
+
+      // The agent re-proposed the very command that was refused, with a justification, and the
+      // rater changed its mind. That, and only that, is the rater agreeing.
+      const same = await rendered([
+        { command: 'git reset --hard origin/main' },
+        { command: 'git reset --hard origin/main' },
+      ]);
+      expect(
+        same.filter((text) => text.includes('Agreed: git reset --hard origin/main'))
+      ).toHaveLength(2);
+      expect(same.some((text) => text.includes('Accepted:'))).toBe(false);
     });
 
     /**

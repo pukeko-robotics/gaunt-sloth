@@ -429,6 +429,26 @@ export interface LiveNegotiationRound {
    * Left unset for a rejection.
    */
   agreed?: boolean;
+  /**
+   * [[TUI-C69]] §5.4 — **the command that ended the argument is not the command that started it**,
+   * so the row says the rater ACCEPTED a revision rather than AGREED to what it refused.
+   *
+   * Both are ways an argument ends and both are held, because §5.3 counts either as progress. They
+   * are not the same claim, and only one of them can be made about a given command:
+   *
+   * - unset — the rater refused this exact command and has now passed it. *Agreed.*
+   * - set — the approved command is not one the transcript holds. The agent narrowed
+   *   `git reset --hard origin/main` to `git reset --soft HEAD~2` and the rater passed the new one;
+   *   or it went off to run something else entirely first. *Accepted*, which says what happened
+   *   without claiming the rater ever argued about this command.
+   *
+   * The distinction is the whole of the wrong-output half of the defect this fixes: the label used
+   * to read `Agreed: ls src` over a command nobody had refused, which is a false statement about
+   * the auto-rater printed in the chrome of the thing asking the user to trust it.
+   *
+   * Meaningful only with {@link agreed}; ignored on a rejection, which is numbered.
+   */
+  revised?: boolean;
 }
 
 /**
@@ -449,17 +469,30 @@ export interface NegotiationDisplay {
   /** One round of the exchange, the moment the gate decided it. */
   round(event: LiveNegotiationRound): void;
   /**
-   * **The exchange is over** — a person was reached, the run halted, or a new turn began. Called
-   * wherever {@link ShellNegotiationState.humanReached} is spent, so a surface holding the rounds
-   * can drop them on the same event the gate drops its transcript on.
+   * **The exchange is over** — a person was reached, the run halted, the turn ended, or a new one
+   * began. Called wherever {@link ShellNegotiationState.humanReached} is spent, and also at the end
+   * of a turn, so a surface holding the rounds drops them whenever there is no longer a live
+   * argument for them to be the state of.
+   *
+   * **The turn-end call is the one a converging negotiation depends on.** An escalation clears
+   * itself, because a person is reached; a negotiation that SUCCEEDS reaches nobody, so without it
+   * the rounds stay pinned through the idle period after the turn — the period in which the user is
+   * reading the result and typing the next thing.
    *
    * It matters most at an ESCALATION, where the prompt is about to render the whole argument
    * itself: a live copy left standing above it puts the same exchange on an unscrollable screen
    * twice, and the rows it spends are rows the dialog needs.
    *
-   * **Optional, because an append-only surface has nothing to end.** The readline session prints
-   * each round as a line of scrollback; there is no panel to clear, and a surface that implements
-   * nothing simply keeps what it printed.
+   * **Optional, because an append-only surface cannot honour it.** The readline session prints each
+   * round as a line of scrollback; there is nothing to clear, and a surface that implements nothing
+   * simply keeps what it printed.
+   *
+   * *That is a limitation rather than a justification*, and the difference is visible at an
+   * escalation: the readline prompt re-renders the whole transcript, so a user who has just watched
+   * rounds 1-3 scroll past is shown rounds 1-3 again inside the prompt. Nothing here can prevent
+   * that — you cannot unprint scrollback — and the duplicate is the cheaper half of the trade,
+   * since the prompt must show what it is asking about. Recorded so the next reader meets the cost
+   * rather than the excuse.
    */
   end?(): void;
 }
@@ -467,11 +500,17 @@ export interface NegotiationDisplay {
 /**
  * §5.5 — **the minimum interval a negotiated approval is visible before it takes effect.**
  *
- * It is an **abort window for something the user has just seen**, and it must never be described
- * or relied upon as an opportunity to evaluate the command: nobody reads a command in 800 ms, and
- * a design that assumed they did would be resting a safety property on a glance. What it buys is
- * that a decision the user disagrees with is still stoppable at the moment they see it, rather
- * than already done by the time it is drawn.
+ * It must never be described or relied upon as an opportunity to evaluate the command: nobody
+ * reads a command in 800 ms, and a design that assumed they did would be resting a safety property
+ * on a glance. What it buys is that the approving round exists on screen as its own event, rather
+ * than being drawn and overwritten by the tool's own output in the same frame.
+ *
+ * **It is NOT a guaranteed abort window on either surface**, and the claim must not be restored
+ * without the mechanism: on the event/TUI path an abort during the interval does stop the tool,
+ * but because LangGraph refuses an already-aborted signal rather than because this code re-checks
+ * one; on the plain/readline path no signal is threaded and the Esc handler is torn down before
+ * the interval begins, so the command runs. See `GthAgentRunner.showNegotiatedApproval`, which
+ * carries the full statement of what is true where.
  *
  * **A minimum visible interval, not a delay added to a finished decision.** The real window is
  * longer at both ends — the rater call's own latency precedes it, and the tool takes time to start
@@ -624,6 +663,12 @@ export function renderNegotiationRows(
      * no approved rounds to label.
      */
     agreed?: boolean;
+    /**
+     * [[TUI-C69]] §5.4 — with {@link agreed}, whether the approved command is one the transcript
+     * never held, which changes the label from *Agreed* to *Accepted*. See
+     * {@link LiveNegotiationRound.revised}. `live` + `agreed` only.
+     */
+    revised?: boolean;
   }
 ): NegotiationRow[] {
   if (rounds.length === 0) return [];
@@ -671,35 +716,130 @@ export function renderNegotiationRows(
     // §5.4 — a LIVE round is never the pending request: nothing is being ruled on yet, and the
     // marker means *this is the call you are being asked about*.
     const pending = !live && dropped + index === rounds.length - 1 ? ' (this request)' : '';
-    // An EMPTY transcript IS the round-1 case, so the transcript's FIRST round is the one §5.1
-    // rated on the command alone. Derived from the position rather than carried on the round
-    // because it is a property of the transcript, not of the rating — which holds only while
-    // nothing but reaching a person empties it ([[EXT-108]] stopped an approved call doing so), so
-    // it is pinned against a real run rather than by reading.
-    const roundOne = dropped + index === 0;
     // **The round that ENDS the argument is labelled, not numbered.** Numbering it would spend a
     // number the transcript is about to reuse — the approved call never joins the transcript, so
     // the next rejection sits at the very position this round was drawn at, and the escalation
     // prompt then gives that number to a third command. A label cannot collide with a count.
+    rows.push(
+      ...negotiationRoundRows(
+        round,
+        agreed ? endingLabel(options?.revised) : `Round ${firstNumber + index}${pending}`,
+        // An EMPTY transcript IS the round-1 case, so the transcript's FIRST round is the one §5.1
+        // rated on the command alone. Derived from the position rather than carried on the round
+        // because it is a property of the transcript, not of the rating.
+        //
+        // An `agreed` round is never it, and that is a fact about the transcript rather than about
+        // today's call sites: the approved call is not ON the transcript, so it cannot be the first
+        // thing on it whatever position it is drawn at. Said here rather than left to the caller's
+        // arithmetic so no future emitter can make the §5.1 marker lie by drawing an agreement at
+        // position zero.
+        !agreed && dropped + index === 0
+      )
+    );
+  });
+  if (width === undefined) return rows;
+  return rows.flatMap((row) => wrapRow(row, width));
+}
+
+/**
+ * [[TUI-C69]] §5.4 — the label over the round that ENDS an argument, in the one place both the live
+ * list and the single-round live render read it from, so the two surfaces cannot say different
+ * things about the same event.
+ *
+ * *Agreed* is a claim about the rater's opinion of THIS command; *Accepted* is a claim only about
+ * what it let through. Using the first where the second is true prints a false statement about the
+ * auto-rater, which is worse than the vaguer word.
+ */
+const endingLabel = (revised: boolean | undefined): string =>
+  revised === true ? 'Accepted' : 'Agreed';
+
+/**
+ * The three rows one round of the argument occupies — the command, the agent's justification if it
+ * gave one, and the rater's answer — with the label already decided by the caller.
+ *
+ * **Extracted so the live panel and the escalation prompt cannot drift.** They differ in what they
+ * put ABOVE the rounds (a heading, a context sentence) and in how many rounds they show; they must
+ * not differ by so much as a colon in the rounds themselves, because the whole claim §5.4 rests on
+ * is that the exchange a person watched and the exchange they are later asked to rule on are one
+ * account of one argument. Two copies of this body is precisely how that claim would rot.
+ */
+function negotiationRoundRows(
+  round: RaterNegotiationRound,
+  label: string,
+  roundOne: boolean
+): NegotiationRow[] {
+  const rows: NegotiationRow[] = [
+    { voice: 'agent', text: `  ${label}: ${oneLine(round.command)}` },
+  ];
+  const justification = round.justification?.trim();
+  if (justification) {
     rows.push({
       voice: 'agent',
-      text: agreed
-        ? `  Agreed: ${oneLine(round.command)}`
-        : `  Round ${firstNumber + index}${pending}: ${oneLine(round.command)}`,
+      text: `    agent justified${roundOne ? ' (not shown to the rater)' : ''}: ${oneLine(justification)}`,
     });
-    const justification = round.justification?.trim();
-    if (justification) {
-      rows.push({
-        voice: 'agent',
-        text: `    agent justified${roundOne ? ' (not shown to the rater)' : ''}: ${oneLine(justification)}`,
-      });
-    }
-    const reason = round.reason.trim();
-    rows.push({
-      voice: 'rater',
-      text: `    rater answered${roundOne ? ' (on the command alone)' : ''}: ${round.outcome}${reason ? ` — ${oneLine(reason)}` : ''}`,
-    });
+  }
+  const reason = round.reason.trim();
+  rows.push({
+    voice: 'rater',
+    text: `    rater answered${roundOne ? ' (on the command alone)' : ''}: ${round.outcome}${reason ? ` — ${oneLine(reason)}` : ''}`,
   });
+  return rows;
+}
+
+/**
+ * [[TUI-C69]] §5.4 — **the whole live exchange as a bounded screen**, for a surface that redraws a
+ * pinned region rather than appending to scrollback.
+ *
+ * ## Why this exists rather than the caller looping over {@link renderNegotiationRows}
+ *
+ * **A cap applied one round at a time is not a cap.** The escalation prompt hands the renderer its
+ * whole transcript, so `slice(-NEGOTIATION_MAX_ROUNDS_SHOWN)` bounds it; a live surface that
+ * rendered each round as it arrived and kept the output handed the renderer a ONE-element array
+ * every time, where that slice is an identity operation, and then accumulated the results. The
+ * bound was still in the code and applied to nothing. **Measured**: a nine-round argument cost 46
+ * rows at 80 columns that way, against 16 for the same argument in the prompt.
+ *
+ * That is not a tidiness problem. The Ink surface pins this inside a `flexShrink={0}` dock —
+ * [[TUI-C75]]'s governing constraint is that the dialog does not scroll, so rows spent here are
+ * taken from the conversation, and past a couple of dozen they push the input prompt off the
+ * bottom of an 80×24 terminal. Every other occupant of that dock is bounded; this was the one that
+ * was not.
+ *
+ * ## What it shows
+ *
+ * The newest {@link NEGOTIATION_MAX_ROUNDS_SHOWN} rounds, **unconditionally** — a screen is what
+ * this is for, so unlike {@link renderNegotiationRows} it does not let an absent `width` mean "show
+ * everything". A caller that wants the whole exchange unbounded wants the escalation renderer.
+ *
+ * Each round keeps the number of its own position in the transcript, so the numbers a watcher sees
+ * are the numbers the escalation prompt will use for the same rounds even after the earlier ones
+ * scroll out of this window — and an `agreed` round is labelled rather than numbered, for the
+ * reason {@link LiveNegotiationRound.agreed} gives.
+ *
+ * The context sentence is drawn **every time** rather than only over round one. Once the window
+ * slides, the round that carried it is gone, and the alternative is a bare `Round 7:` heading
+ * nothing — an unattributed command sitting in the chrome of a tool that is asking the user to
+ * trust it. One row is the right price for saying whose argument this is.
+ */
+export function renderLiveNegotiationRows(
+  rounds: readonly LiveNegotiationRound[],
+  options?: { width?: number }
+): NegotiationRow[] {
+  if (rounds.length === 0) return [];
+  const width = options?.width;
+  const shown = rounds.slice(-NEGOTIATION_MAX_ROUNDS_SHOWN);
+  const rows: NegotiationRow[] = [
+    { voice: 'chrome', text: 'The agent is negotiating with the auto-rater:' },
+  ];
+  for (const entry of shown) {
+    rows.push(
+      ...negotiationRoundRows(
+        entry.round,
+        entry.agreed === true ? endingLabel(entry.revised) : `Round ${entry.position + 1}`,
+        entry.agreed !== true && entry.position === 0
+      )
+    );
+  }
   if (width === undefined) return rows;
   return rows.flatMap((row) => wrapRow(row, width));
 }

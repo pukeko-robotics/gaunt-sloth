@@ -112,8 +112,30 @@ const rejectedRound = (position: number): LiveNegotiationRound => ({
   position,
 });
 
-/** The round the rater agreed to — the one that ends the argument, and the one §5.5 holds. */
+/**
+ * The round the rater agreed to — the one that ends the argument, and the one §5.5 holds.
+ *
+ * **The SAME command {@link rejectedRound} carries**, deliberately: `Agreed` is a claim about the
+ * rater's opinion of this command, so a fixture that paired the label with a command the rater had
+ * never seen would be modelling a state the runner does not produce.
+ */
 const agreedRound = (position: number): LiveNegotiationRound => ({
+  round: {
+    command: 'git reset --hard origin/main',
+    justification: 'the user confirmed they want today’s commits gone',
+    outcome: 'safe',
+    reason: 'the user asked for exactly this',
+  },
+  position,
+  agreed: true,
+});
+
+/**
+ * The argument ending because the agent proposed something ELSE and the rater passed it — the
+ * common shape of convergence, and the one that must not claim the rater agreed to a command it
+ * never argued about.
+ */
+const revisedRound = (position: number): LiveNegotiationRound => ({
   round: {
     command: 'git stash',
     justification: 'saves the work first, as the rating asked',
@@ -122,6 +144,7 @@ const agreedRound = (position: number): LiveNegotiationRound => ({
   },
   position,
   agreed: true,
+  revised: true,
 });
 
 describe('interactiveSessionModule — [[TUI-C69]] §5.4 the live negotiation on the readline surface', () => {
@@ -226,12 +249,12 @@ describe('interactiveSessionModule — [[TUI-C69]] §5.4 the live negotiation on
   it('labels the round the rater agreed to, so no number names two commands', async () => {
     await startSession();
     capturedDisplay!.round(rejectedRound(0));
-    capturedDisplay!.round(agreedRound(1));
+    capturedDisplay!.round(revisedRound(1));
     capturedDisplay!.round(rejectedRound(1));
 
     const lines = written().map(([line]) => line);
     const text = lines.join('\n');
-    expect(text).toContain('Agreed: git stash');
+    expect(text).toContain('Accepted: git stash');
     expect(text).toContain('rater answered: safe — nothing is discarded');
     // Round 2 belongs to the rejection that followed the approved call, and to nothing else.
     expect(lines.filter((line) => /^\s*Round 2:/.test(line))).toHaveLength(1);
@@ -250,7 +273,7 @@ describe('interactiveSessionModule — [[TUI-C69]] §5.4 the live negotiation on
     expect(lines.find(([text]) => text.includes('rater answered'))?.[1]).toBe('warn');
     // Found FIRST, then asserted on. `find(...)?.[1]` alone reads as a tone assertion and is not
     // one: a row that is not there yields `undefined`, which is the value the assertion wants.
-    const command = lines.find(([text]) => text.includes('Agreed: git stash'));
+    const command = lines.find(([text]) => text.includes('Agreed: git reset --hard origin/main'));
     expect(command).toBeDefined();
     expect(command?.[1]).toBeUndefined();
   });

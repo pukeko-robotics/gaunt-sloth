@@ -864,6 +864,10 @@ export class GthAgentRunner {
     // §5.1's last-5 window, which is what makes "just the last two" reach the rater at all — the
     // reply that narrows what the agent proposes is worthless to the gate if only the agent hears it.
     this.endNegotiation();
+    // [[TUI-C69]] §5.4 — and the tone hints go with it. The ids matter only while the results
+    // carrying them are on screen; the previous turn's are spent, and an id that outlived its turn
+    // could only ever mis-tone a later row.
+    this.clearRaterClarifications();
     this.negotiation.noteUserMessages(humanMessageTexts(messages));
 
     debugLog('Processing messages...');
@@ -960,6 +964,13 @@ export class GthAgentRunner {
         `Agent processing failed: ${enhancedMessage}`,
         error instanceof Error ? { cause: error } : undefined
       );
+    } finally {
+      // [[TUI-C69]] §5.4 — the turn is over, so the argument is over. The reasoning is the same as
+      // in {@link processMessagesWithEvents}; it is here too so the seam is a property of *ending a
+      // turn* rather than of the event path, and a string-path surface that grows an `end` is not
+      // the one place the panel outlives its turn. Display-only, and a no-op on today's readline
+      // surface, which appends to scrollback and implements no `end`.
+      this.clearNegotiationDisplay();
     }
   }
 
@@ -1172,17 +1183,6 @@ export class GthAgentRunner {
   }
 
   /**
-   * [[TUI-C69]] §5.4 — **hand one round of the argument to the surface that is showing it**, the
-   * moment the gate decided it.
-   *
-   * The round travels raw. Every surface lays it out with the SAME `renderNegotiationRows` the
-   * escalation prompt draws, at its own terminal width, so the rounds a person watches and the
-   * rounds they later rule on cannot be two different renderings of one exchange — and the rater's
-   * turns are yellow in both because the rows carry the voice rather than a colour.
-   *
-   * No-ops when no surface is watching, which is the §5.5 seam as well as this one.
-   */
-  /**
    * [[EXT-29]] §5.3 / [[TUI-C69]] §5.4 — **a person was reached, so the exchange is over**: the
    * gate's own transcript is spent and the surface showing it is told, on the same event.
    *
@@ -1193,9 +1193,59 @@ export class GthAgentRunner {
    */
   private endNegotiation(): void {
     this.negotiation.humanReached();
-    this.negotiationDisplay?.end?.();
+    this.clearNegotiationDisplay();
   }
 
+  /**
+   * [[TUI-C69]] §5.4 — **take the finished argument off the screen WITHOUT spending the gate's
+   * transcript.**
+   *
+   * The two are separate on purpose. `humanReached()` clears the rounds *and* the reachability
+   * bound, which is correct only when a person was actually reached; calling it merely to tidy the
+   * panel would hand the agent a fresh {@link MAX_REJECTIONS_BEFORE_HUMAN} budget it had already
+   * spent, turning a display concern into a way to argue indefinitely. [[EXT-108]] made an approved
+   * call stop clearing the transcript for exactly this reason, so the tidy-up cannot be the thing
+   * that puts it back.
+   *
+   * Guarded, like {@link showNegotiationRound}: a surface that throws while clearing must never
+   * change what the gate decided, or become the reason a turn ends.
+   */
+  private clearNegotiationDisplay(): void {
+    try {
+      this.negotiationDisplay?.end?.();
+    } catch (e) {
+      debugLogError('negotiation display end', e);
+    }
+  }
+
+  /**
+   * [[TUI-C69]] §5.4 — **tell the agent to forget the tool-call ids the rater bounced**, on every
+   * event that ends a turn's display state: a new turn, and `/clear`.
+   *
+   * The runner decides *when* because it owns the turn boundary; the agent holds the set because it
+   * owns the rendering. Fail-soft in the shape {@link resetRunStats} uses — an agent without the
+   * method (a test double, a renderer-less agent) is simply skipped, and a tone hint must never be
+   * the reason a turn fails to start.
+   */
+  private clearRaterClarifications(): void {
+    try {
+      this.agent?.clearRaterClarifications?.();
+    } catch (e) {
+      debugLogError('clear rater clarifications', e);
+    }
+  }
+
+  /**
+   * [[TUI-C69]] §5.4 — **hand one round of the argument to the surface that is showing it**, the
+   * moment the gate decided it.
+   *
+   * The round travels raw. Every surface lays it out from the SAME rows the escalation prompt
+   * draws, at its own terminal width, so the rounds a person watches and the rounds they later rule
+   * on cannot be two different renderings of one exchange — and the rater's turns are yellow in
+   * both because the rows carry the voice rather than a colour.
+   *
+   * No-ops when no surface is watching, which is the §5.5 seam as well as this one.
+   */
   private showNegotiationRound(event: LiveNegotiationRound): void {
     const display = this.negotiationDisplay;
     if (!display) return;
@@ -1215,11 +1265,28 @@ export class GthAgentRunner {
    * and only then does the minimum visible interval run. A hold before the draw would be a pause
    * over nothing.
    *
-   * **It is an abort window for something the user has just seen, not a reading window**, and it
-   * must never be relied on as an opportunity to evaluate the command — nobody reads a command in
-   * 800 ms. What it buys is that a decision the user disagrees with is still stoppable at the
-   * moment it appears: the runner has not yet resumed the graph, and the resume carries the run's
-   * abort signal, so a signal raised inside this interval ends the run with the tool unrun.
+   * **It is a visibility pause, not a reading window**, and it must never be relied on as an
+   * opportunity to evaluate the command — nobody reads a command in 800 ms. What it buys is that
+   * the approving round is on screen as its own event instead of being overwritten by the tool
+   * output that follows it immediately.
+   *
+   * **What it is NOT, on either surface, is a guaranteed abort window — do not restore that claim
+   * without building the mechanism.** Stated precisely, because the previous wording asserted a
+   * mechanism that is not here and a comment like that stops the next reader checking:
+   *
+   * - **Event/TUI path.** An abort raised during the hold does end the run with the tool unrun, but
+   *   *this code is not why*. The runner never re-checks the signal after the hold — it issues the
+   *   approving resume regardless — and what stops the tool is that LangGraph refuses an
+   *   already-aborted signal downstream. True today, and true by someone else's invariant.
+   * - **Plain/readline path.** Not true at all. `resolveToolInterrupts` threads no signal, and
+   *   `waitForEscape` is armed inside `streamFromInput` and torn down before the hold begins — the
+   *   hold happens *between* streams. Esc during it is not handled, so the command runs. The pause
+   *   still buys the visibility above, which is why it is not conditioned on the surface.
+   *
+   * Making the affordance real by construction — checking the signal here, and threading one into
+   * the readline path so there is something to check — is deliberately left out of scope rather
+   * than half-built, since a window honoured on one surface and not the other is the more dangerous
+   * shape: it is what teaches the user the gesture that then silently fails.
    *
    * **Both halves are gated on a surface being wired**, so a headless `exec`/CI run neither draws
    * nor sleeps and pays nothing. See {@link negotiationDisplay}.
@@ -1230,10 +1297,36 @@ export class GthAgentRunner {
     verdict: ShellSafetyVerdict | undefined
   ): Promise<void> {
     if (!this.negotiationDisplay) return;
-    // A first attempt rated `safe` is not a negotiated approval: there is no argument behind it,
-    // nothing was refused, and there is nothing for a person to have watched happen.
-    const rejections = this.negotiation.transcript().length;
-    if (rejections === 0) return;
+    // **A negotiated approval is one that ANSWERS A REFUSAL THAT IS STILL STANDING** — not merely
+    // one that happens later in a turn where something was refused.
+    //
+    // `consecutiveRejections` is exactly that question, already maintained for §5.3: it counts
+    // rejections since the last approval, so it is non-zero only while the argument is unanswered
+    // and `noteProgress()` puts it back to zero the moment any call gets through. Testing the
+    // TRANSCRIPT instead is what made this wrong — since [[EXT-108]] an approved call deliberately
+    // leaves the rounds standing, so a transcript test stays true for the whole rest of the turn,
+    // and the six read-only commands an agent runs after one refusal each got a hold and a row
+    // claiming the rater had agreed to them.
+    //
+    // Not cosmetic: it inverts §5.5. The hold exists to give the approval an argument produced its
+    // own salience, and a window that opens on everything marks nothing.
+    //
+    // **Deliberately NOT "the transcript contains this exact command".** That reads well and is
+    // wrong: the case this node exists for is a negotiation that CONVERGES, and an agent converges
+    // by narrowing — `git reset --hard origin/main` becomes `git reset --soft HEAD~2`, which the
+    // transcript has never held. Gating on an exact match would make the node's own canonical
+    // scenario draw nothing at all. The exact match decides the LABEL below, where being wrong
+    // costs a word instead of the feature.
+    //
+    // A first attempt rated `safe` is not a negotiated approval either: nothing was refused, so
+    // there is no argument for a person to have watched, and the counter is zero.
+    if (this.negotiation.counters().consecutiveRejections === 0) return;
+    const transcript = this.negotiation.transcript();
+    const rejections = transcript.length;
+    // Did the rater refuse THIS command and then pass it, or pass something else? Only the first is
+    // the rater agreeing; the second is it accepting a different command. Saying "Agreed" over a
+    // command nobody argued about prints a false statement about the auto-rater.
+    const revised = !transcript.some((round) => round.command === command);
     // The approving round sits AFTER every rejection, so the whole transcript precedes it — but it
     // is `agreed`, so it is LABELLED rather than numbered. A number here would be the very one the
     // next rejection takes: this call never joins the transcript, and the escalation prompt renders
@@ -1247,6 +1340,7 @@ export class GthAgentRunner {
       },
       position: rejections,
       agreed: true,
+      ...(revised ? { revised: true } : {}),
     });
     await new Promise<void>((resolve) => setTimeout(resolve, NEGOTIATED_APPROVAL_COOLDOWN_MS));
   }
@@ -1653,15 +1747,16 @@ export class GthAgentRunner {
             );
           }
           // [[TUI-C69]] §5.4/§5.5 — **the round that ENDS a negotiation is a round too**, and it
-          // is the one §5.5 holds on screen. A standing transcript is exactly what makes this a
-          // *negotiated* approval rather than a first-try `safe`: the rater refused this command
-          // at least once, the agent answered, and this is the rater agreeing. A first attempt
-          // rated `safe` has no argument behind it and is not held.
+          // is the one §5.5 holds on screen. What makes this a *negotiated* approval rather than a
+          // first-try `safe` is that THIS COMMAND is on the transcript: the rater refused it at
+          // least once, the agent answered, and this is the rater agreeing. A first attempt rated
+          // `safe` has no argument behind it and is not held — and neither does an unrelated
+          // command that merely happens to follow someone else's argument.
           //
           // Read BEFORE `decideToolApproval`'s wrapper calls `noteProgress()`. That call resets
           // §5.3's consecutive counter and — since [[EXT-108]] — deliberately leaves the rounds
-          // standing, so the length would in fact survive it; reading first is what keeps that a
-          // property of this code rather than of the other method's current shape.
+          // standing, so the transcript would in fact survive it; reading first is what keeps that
+          // a property of this code rather than of the other method's current shape.
           await this.showNegotiatedApproval(subject.command, justification, decision.verdict);
           // Scope `once`: rater approvals are NEVER persisted to the allow-list.
           return { type: 'approve', scope: 'once' };
@@ -2326,11 +2421,30 @@ export class GthAgentRunner {
     // §5.1's last-5 window, which is what makes "just the last two" reach the rater at all — the
     // reply that narrows what the agent proposes is worthless to the gate if only the agent hears it.
     this.endNegotiation();
+    // [[TUI-C69]] §5.4 — and the tone hints go with it. The ids matter only while the results
+    // carrying them are on screen; the previous turn's are spent, and an id that outlived its turn
+    // could only ever mis-tone a later row.
+    this.clearRaterClarifications();
     this.negotiation.noteUserMessages(humanMessageTexts(messages));
     debugLog('Processing messages (event stream)...');
     debugLogObject('Input Messages', messages);
-    yield* this.agent.streamWithEvents(messages, this.runConfig, signal);
-    yield* this.resolveToolInterruptsWithEvents(signal);
+    try {
+      yield* this.agent.streamWithEvents(messages, this.runConfig, signal);
+      yield* this.resolveToolInterruptsWithEvents(signal);
+    } finally {
+      // [[TUI-C69]] §5.4 — **the turn is over, so the argument is over.** Until this existed the
+      // panel was cleared only by the NEXT turn's `endNegotiation`, so a negotiation that CONVERGED
+      // — the case this node exists to make visible — left its rounds pinned in the non-scrolling
+      // dock across exactly the idle period in which the user is trying to type into a prompt those
+      // rows have pushed off the screen. An escalation cleared itself; success did not.
+      //
+      // Display-only: see {@link clearNegotiationDisplay}. The gate's transcript belongs to the
+      // negotiation, not to the screen, and the next turn spends it on the human being reached.
+      //
+      // In `finally` because an abort and a thrown stream end the turn just as much as a return
+      // does, and those are the paths where rows left standing are least likely to be noticed.
+      this.clearNegotiationDisplay();
+    }
   }
 
   /**
@@ -2431,7 +2545,11 @@ export class GthAgentRunner {
     // last-5 window is conversation context; leaving it behind a `/clear` would quote the user's
     // previous conversation into a rating made after they asked for it to be forgotten.
     this.negotiation.clear();
-    this.negotiationDisplay?.end?.();
+    this.clearNegotiationDisplay();
+    // [[TUI-C69]] §5.4 — the noted tool-call ids are state from before the `/clear` too, and the
+    // sentence above is the whole argument for dropping them: they would decide how rows are drawn
+    // in a conversation the user has just asked to start fresh.
+    this.clearRaterClarifications();
     this.runConfig = getNewRunnableConfig();
     debugLogObject('Reset Runnable Config', this.runConfig);
   }

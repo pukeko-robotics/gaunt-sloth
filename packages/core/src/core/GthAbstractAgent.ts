@@ -1013,13 +1013,36 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
    *
    * A plain set rather than a queue: the ids are LangChain tool-call ids, unique per call, and the
    * two display paths read the same one without either consuming it — a session drives one of them,
-   * never both. It is emptied with the rest of the turn's state, so a long run cannot accumulate.
+   * never both. {@link clearRaterClarifications} empties it with the rest of the turn's state, so a
+   * long run cannot accumulate.
    */
   noteRaterClarification(toolCallId: string): void {
     if (toolCallId) this.raterClarifications.add(toolCallId);
   }
 
-  /** [[TUI-C69]] — the ids {@link noteRaterClarification} has been told about this session. */
+  /**
+   * [[TUI-C69]] §5.4 — **forget the noted ids**, called at the top of every turn and on `/clear`.
+   *
+   * The set is keyed on tool-call ids, and an id is only meaningful while the result carrying it is
+   * being rendered. Holding them past that costs a string per rater rejection for the life of the
+   * process — small — and risks the thing that is not small: a LATER call that reuses a noted id
+   * renders as a clarification request whatever it actually was, so a successful command inherits
+   * the tone of an argument it had no part in.
+   *
+   * That reuse is not reachable with the providers installed today — `@langchain/ollama` mints
+   * `v4()` uuids, `@langchain/google` `lc-tool-call-${v4()}`, and OpenAI and Anthropic supply their
+   * own unique ids — but **the protection was the providers', not this code's**, which is a
+   * property no test here can hold and no bump has to preserve.
+   *
+   * On `/clear` it is the same argument `GthAgentRunner.resetThread` makes about the negotiation:
+   * state from before the user asked for the conversation to be forgotten must not decide how the
+   * conversation after it is drawn.
+   */
+  clearRaterClarifications(): void {
+    this.raterClarifications.clear();
+  }
+
+  /** [[TUI-C69]] — the ids {@link noteRaterClarification} has been told about this turn. */
   protected raterClarifications = new Set<string>();
 
   protected async *processEventStream(

@@ -518,12 +518,17 @@ export async function createInteractiveSession(
     // distinction that survives a terminal with no colour at all. The Ink TUI renders the same
     // rows, so the two surfaces cannot describe one exchange differently.
     runner.setNegotiationDisplay({
-      round: ({ round, position, agreed }) => {
+      round: ({ round, position, agreed, revised }) => {
+        // One round at a time, and on THIS surface that is correct: scrollback is append-only, so
+        // each round is printed once as it happens and nothing redraws. The Ink dock is the one that
+        // needs the whole list (`renderLiveNegotiationRows`), because there the accumulated rounds
+        // are re-rendered into a region that cannot scroll and must therefore be bounded.
         for (const row of renderNegotiationRows([round], {
           width: frameWidthFor(output.columns),
           mode: 'live',
           from: position,
           ...(agreed ? { agreed } : {}),
+          ...(revised ? { revised } : {}),
         })) {
           if (row.voice === 'rater') displayDialogLine(row.text, 'warn');
           else if (row.voice === 'agent') displayDialogLine(row.text);

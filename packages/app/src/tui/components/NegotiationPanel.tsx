@@ -1,7 +1,7 @@
 import React from 'react';
 import { Box, Text, useStdout } from 'ink';
 import {
-  renderNegotiationRows,
+  renderLiveNegotiationRows,
   type LiveNegotiationRound,
   type NegotiationVoice,
 } from '@gaunt-sloth/core/core/shell/negotiation.js';
@@ -34,35 +34,36 @@ const voiceColour = (voice: NegotiationVoice): string | undefined =>
  * cleared when the next turn starts. The record survives independently — each refused round is
  * also a tool-call panel in the transcript, carrying the rater's own words beneath the command.
  *
- * **Rendered through core's shared `renderNegotiationRows`, one round at a time**, at this
- * terminal's framing width. It is the same renderer, the same labels and the same row bound the
- * escalation prompt draws, so the exchange a person watched and the exchange they are later asked
- * to rule on cannot be two different accounts of one argument. The width matters for the same
- * reason it does there: a long justification left to Ink's own wrap continues at column 0, which
- * is the flush-left forgery the framing exists to prevent.
+ * **Rendered through core's shared `renderLiveNegotiationRows`, as a LIST**, at this terminal's
+ * framing width. It is the same row bodies, the same labels and the same row bound the escalation
+ * prompt draws, so the exchange a person watched and the exchange they are later asked to rule on
+ * cannot be two different accounts of one argument. The width matters for the same reason it does
+ * there: a long justification left to Ink's own wrap continues at column 0, which is the flush-left
+ * forgery the framing exists to prevent.
+ *
+ * **The whole accumulated exchange goes in on every draw, and that is load-bearing rather than
+ * incidental.** Handing the renderer one round at a time turned its `NEGOTIATION_MAX_ROUNDS_SHOWN`
+ * cap into a no-op — a slice of a one-element array — and this panel sits in a dock that cannot
+ * give up rows, so an unbounded exchange here is taken out of the conversation and eventually out
+ * of the input prompt. Passing the list is what lets the bound bind.
  */
 export function NegotiationPanel({
   rounds,
 }: {
   rounds: readonly LiveNegotiationRound[];
 }): React.ReactElement | null {
+  // Before the early return, deliberately: a hook must not sit behind a condition, or Ink's hook
+  // order changes on the render where the exchange starts.
   const { stdout } = useStdout();
   const width = frameWidthFor(stdout?.columns);
   if (rounds.length === 0) return null;
   return (
     <Box flexDirection="column">
-      {rounds.map(({ round, position, agreed }, index) =>
-        renderNegotiationRows([round], {
-          width,
-          mode: 'live',
-          from: position,
-          ...(agreed ? { agreed } : {}),
-        }).map((row, r) => (
-          <Text key={`${index}-${r}`} color={voiceColour(row.voice)}>
-            {row.text}
-          </Text>
-        ))
-      )}
+      {renderLiveNegotiationRows(rounds, { width }).map((row, index) => (
+        <Text key={index} color={voiceColour(row.voice)}>
+          {row.text}
+        </Text>
+      ))}
     </Box>
   );
 }

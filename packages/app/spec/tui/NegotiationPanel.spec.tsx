@@ -18,7 +18,12 @@ import type { LiveNegotiationRound } from '@gaunt-sloth/core/core/shell/negotiat
  * same core rows, which is what stops them describing one exchange two ways.
  */
 
-const round = (over: Partial<LiveNegotiationRound['round']> = {}, position = 0, agreed = false) =>
+const round = (
+  over: Partial<LiveNegotiationRound['round']> = {},
+  position = 0,
+  agreed = false,
+  revised = false
+) =>
   ({
     round: {
       command: over.command ?? 'git reset --hard origin/main',
@@ -28,6 +33,7 @@ const round = (over: Partial<LiveNegotiationRound['round']> = {}, position = 0, 
     },
     position,
     ...(agreed ? { agreed } : {}),
+    ...(revised ? { revised } : {}),
   }) as LiveNegotiationRound;
 
 /** The raw (ANSI-bearing) row containing `text`, so a colour claim is read off the real frame. */
@@ -109,8 +115,14 @@ describe('tui <NegotiationPanel>', () => {
       <NegotiationPanel
         rounds={[
           round({}, 0),
+          // The SAME command the rater refused, re-proposed and now passed — which is what makes
+          // `Agreed` a true thing to say about it.
           round(
-            { command: 'git reset --soft HEAD~2', outcome: 'safe', reason: 'keeps the tree' },
+            {
+              command: 'git reset --hard origin/main',
+              outcome: 'safe',
+              reason: 'keeps the tree',
+            },
             1,
             true
           ),
@@ -118,10 +130,69 @@ describe('tui <NegotiationPanel>', () => {
       />
     );
     const flat = stripAnsi(lastFrame() ?? '').replace(/\s+/g, ' ');
-    expect(flat).toContain('Agreed: git reset --soft HEAD~2');
+    expect(flat).toContain('Agreed: git reset --hard origin/main');
     expect(flat).toContain('rater answered: safe — keeps the tree');
     // The number this round would have taken belongs to the rejection that may follow it.
     expect(flat).not.toContain('Round 2');
+    unmount();
+  });
+
+  /**
+   * When the command that ended the argument is NOT one the rater refused, the row says the rater
+   * accepted it rather than agreed to it. `Agreed` over a command nobody argued about is a false
+   * statement about the auto-rater, printed in the chrome of the thing asking the user to trust it.
+   */
+  it('says the rater ACCEPTED a command it never argued about', () => {
+    const { lastFrame, unmount } = render(
+      <NegotiationPanel
+        rounds={[
+          round({}, 0),
+          round(
+            { command: 'git reset --soft HEAD~2', outcome: 'safe', reason: 'keeps the tree' },
+            1,
+            true,
+            true
+          ),
+        ]}
+      />
+    );
+    const flat = stripAnsi(lastFrame() ?? '').replace(/\s+/g, ' ');
+    expect(flat).toContain('Accepted: git reset --soft HEAD~2');
+    expect(flat).not.toContain('Agreed:');
+    unmount();
+  });
+
+  /**
+   * **The panel sits in a dock that is explicitly told not to shrink** (`flexShrink={0}` — the
+   * conversation gives up rows, not the controls), so an unbounded panel is not untidy, it is rows
+   * taken from the transcript and eventually from the input prompt on an 80×24 terminal.
+   *
+   * It was unbounded: the renderer's own three-round cap was defeated by handing it ONE round at a
+   * time, where the slice is an identity operation, and every event was accumulated. Measured at 46
+   * rows for a nine-round argument at 80 columns against 16 for the same argument in the escalation
+   * prompt. Asserted HERE, on a real Ink frame, as well as at the renderer, because the bound is
+   * only worth anything if this component is what passes the whole list in.
+   */
+  it('stays a screenful for an argument that runs to the reachability bound', () => {
+    const rounds = Array.from({ length: 9 }, (_unused, index) =>
+      round(
+        {
+          command: `git reset --hard origin/main --attempt-${index + 1}`,
+          justification: `attempt ${index + 1}: the user asked me to wipe today’s commits and I still think this is what they meant`,
+          reason: `refused: discards committed work irreversibly (attempt ${index + 1})`,
+        },
+        index
+      )
+    );
+    const { lastFrame, unmount } = render(<NegotiationPanel rounds={rounds} />);
+    const rows = stripAnsi(lastFrame() ?? '')
+      .split('\n')
+      .filter((row) => row.trim() !== '');
+    expect(rows.length).toBeLessThanOrEqual(19);
+    // The newest rounds, not the oldest: a panel frozen on the opening of an argument would never
+    // show the state the run is actually in.
+    expect(rows.join('\n')).toContain('Round 9');
+    expect(rows.join('\n')).not.toContain('Round 1:');
     unmount();
   });
 });

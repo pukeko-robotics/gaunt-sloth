@@ -526,11 +526,25 @@ export interface GthAgentInterface {
    * Called by {@link GthAgentRunner} with the id of a call it has just refused BACK TO THE MODEL
    * under §5 — never for a human's "no", a deny entry or the §8 floor, which are refusals rather
    * than rounds of an argument. The agent holds the ids only until the results carrying them have
-   * been rendered, and a run that never negotiates never calls this.
+   * been rendered — {@link clearRaterClarifications} is what makes that true — and a run that never
+   * negotiates never calls this.
    *
    * Optional: an agent that renders nothing simply omits it, and every row keeps today's tone.
    */
   noteRaterClarification?(toolCallId: string): void;
+
+  /**
+   * [[TUI-C69]] §5.4 — **drop the ids {@link noteRaterClarification} collected**, at the top of
+   * every turn and on `/clear`.
+   *
+   * The runner owns the *when* because it owns the turn; the agent owns the set because it owns the
+   * rendering. Without this the ids live as long as the process, and a later call reusing one would
+   * be drawn as a negotiation round it had no part in.
+   *
+   * Optional and fail-soft, like its sibling: an agent that never notes anything need not implement
+   * it.
+   */
+  clearRaterClarifications?(): void;
 
   /**
    * EXT-58 (spec §4.4) — the names of the tools registered with the graph at `init`. The runner
