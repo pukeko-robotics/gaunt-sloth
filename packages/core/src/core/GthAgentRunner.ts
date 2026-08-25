@@ -425,7 +425,10 @@ export class GthAgentRunner {
    * reason the menu's most emphatic answer is no longer its most forgetful one.
    *
    * Null when the file cannot be loaded at all, in which case an `always` refusal degrades to a
-   * session one — a re-prompt next session, never an execution.
+   * session one. **Not "a re-prompt next session, never an execution":** nothing in the unreadable
+   * file applies to any call, so next session a call it covered is left to the rest of the gate — it
+   * may be refused by another rule, it may be prompted for, or it may run without asking, under
+   * `bypass` or a matching saved allow. The user is told at load time.
    */
   private persistedDenials: PersistedApprovalGrants | null = null;
   private persistedDenialsLoaded = false;
@@ -2725,10 +2728,13 @@ export class GthAgentRunner {
    * that back. A `writeFileSync` that fails on a read-only checkout is a different case: the store
    * swallows it and {@link PersistedApprovalGrants.add} returns void, so there is nothing here to
    * observe and the refusal is still shown as saved. The allow side has the identical gap, for the
-   * identical reason — the in-memory copy keeps the refusal in force for this run either way, and
-   * the cost of the overstatement is one re-prompt next session, the direction refusals are allowed
-   * to fail in. Closing it means the store reporting its write result on both sides, not a comment
-   * here.
+   * identical reason — the in-memory copy keeps the refusal in force for this run either way.
+   * **Do not describe the cost as "one re-prompt next session":** the entry is not on disk, so next
+   * session it applies to nothing and the call is left to the rest of the gate — another rule may
+   * refuse it, it may be prompted for, or it may run without asking under `bypass` or a matching
+   * saved allow. Unlike the load-failure path, a swallowed *write* failure is not reported to the
+   * user at all, which is what makes it worth closing. Closing it means the store reporting its
+   * write result on both sides, not a comment here.
    */
   private recordDenial(entry: ApprovalEntry, scope: ToolRejectScope): void {
     if (scope === 'once') return;

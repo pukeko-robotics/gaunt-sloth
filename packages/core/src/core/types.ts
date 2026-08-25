@@ -390,7 +390,11 @@ export type ToolApprovalScope = 'once' | 'session' | 'always';
  * **A caller may still ask for `session`**, and the runner honours it rather than upgrading it: the
  * lifetime that lands is reported back through the `/approvals` display, so a refusal held only for
  * this session is never shown as a saved one. It is also where an `always` refusal lands when the
- * project file cannot be opened — which costs a re-prompt next session and never an execution.
+ * project file cannot be opened. **That is NOT merely "a re-prompt next session":** the refusal is
+ * held for this run only, the unreadable file is left as it is, and next session nothing in it
+ * applies — so the same call is left to the rest of the gate, which may refuse it under another
+ * rule, prompt for it, or run it without asking (`bypass`, or a matching saved allow). The user is
+ * told at load time; see `PersistedApprovalGrants`.
  */
 export type ToolRejectScope = 'once' | 'session' | 'always';
 
