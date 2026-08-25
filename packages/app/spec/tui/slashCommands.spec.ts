@@ -270,7 +270,7 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
         escalate: [],
       } as any,
       { session: 3, always: undefined },
-      ['npm publish']
+      [{ index: 1, description: 'npm publish', origin: 'config' }]
     );
     expect(notice.title).toBe('Approvals: Assisted');
     const body = notice.lines.join(' ');

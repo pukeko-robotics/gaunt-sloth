@@ -2712,11 +2712,15 @@ export class GthAgentRunner {
    * concatenates the three), so a refusal the human made at the prompt and one they wrote in their
    * config are one list to the matcher.
    *
-   * **The recorded scope is the lifetime that actually landed, never the one that was asked for.**
-   * An `always` refusal with no writable store is held as a `session` one, and the `/approvals`
-   * display reads the scope back — so a refusal that could not be saved is never shown as saved.
-   * The failure direction is a re-prompt next session, which is the direction refusals are allowed
-   * to fail in.
+   * **The recorded scope says whether the store could be OPENED, not whether the write landed.**
+   * With no store at all the refusal is held as a `session` one and the `/approvals` display reads
+   * that back. A `writeFileSync` that fails on a read-only checkout is a different case: the store
+   * swallows it and {@link PersistedApprovalGrants.add} returns void, so there is nothing here to
+   * observe and the refusal is still shown as saved. The allow side has the identical gap, for the
+   * identical reason — the in-memory copy keeps the refusal in force for this run either way, and
+   * the cost of the overstatement is one re-prompt next session, the direction refusals are allowed
+   * to fail in. Closing it means the store reporting its write result on both sides, not a comment
+   * here.
    */
   private recordDenial(entry: ApprovalEntry, scope: ToolRejectScope): void {
     if (scope === 'once') return;
