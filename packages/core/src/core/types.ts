@@ -44,6 +44,10 @@ export type {
   RaterOutcome,
   ShellSafetyVerdict,
 } from '#src/core/shell/rater.js';
+// [[EXT-127]] — reachable from {@link RaterNegotiationRound}'s own `alignment` field, so an embedder
+// that can name a round must be able to name what the alignment checker decided about it. The
+// checker's runtime surface stays at its deep path, exactly as the rater's does.
+export type { AlignmentDecision, AlignmentDecisionKind } from '#src/core/shell/alignment.js';
 
 export type Message = BaseMessage;
 

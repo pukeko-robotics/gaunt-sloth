@@ -856,8 +856,17 @@ export async function runAlignmentCheck(
       }
       for (const call of calls) {
         const target = byName.get(call.name);
+        // **`type: 'tool_call'` is what makes this a TOOL CALL rather than an argument object**, and
+        // it is spelled out rather than relied upon: a tool invoked without it treats the whole
+        // object as its arguments and hands back a bare string, which then joins the conversation as
+        // something no provider will accept. The symptom is a check that silently never decides.
         const result = target
-          ? await target.invoke(call)
+          ? await target.invoke({
+              name: call.name,
+              args: call.args ?? {},
+              id: call.id ?? '',
+              type: 'tool_call',
+            })
           : new ToolMessage({
               content: `No such tool: ${call.name}.`,
               tool_call_id: call.id ?? '',

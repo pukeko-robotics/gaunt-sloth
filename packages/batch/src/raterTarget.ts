@@ -375,7 +375,8 @@ function buildRationale(
   decision: RaterDecision,
   noRatingReason: string | undefined,
   ratingIn: ShellSafetyVerdict | undefined,
-  boundSpent: boolean
+  boundSpent: boolean,
+  alignment: AlignmentDecision | undefined
 ): string | undefined {
   const parts: string[] = [];
   if (floorDescription !== undefined) {
@@ -408,6 +409,17 @@ function buildRationale(
     );
   } else if (reason !== undefined) {
     parts.push(reason);
+  }
+  // [[EXT-127]] — **what the ALIGNMENT CHECKER said, when one was consulted.** It belongs in the
+  // rationale for the same reason the rater's own sentence does: after the split the gate speaks
+  // with two voices, and a report carrying only the classifier's would attribute an action the
+  // checker took to a component that did not take it. Named, so a reader can tell the two apart.
+  if (alignment !== undefined) {
+    parts.push(
+      alignment.reason.trim()
+        ? `alignment check (${alignment.kind}): ${alignment.reason.trim()}`
+        : `alignment check (${alignment.kind})`
+    );
   }
   // BATCH-34 — last, because it is the only part that describes the ACTION rather than the rating:
   // the rating said `destructive` and the negotiation is what turned it into a human's decision.
@@ -630,7 +642,8 @@ async function classifyOneRound(
         { action: 'reject', verdict: undefined },
         HARDLINE_NO_RATING_REASON,
         undefined,
-        false
+        false,
+        undefined
       ),
       modelCalls: 0,
     };
@@ -731,10 +744,19 @@ async function classifyOneRound(
         ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       }
     );
-    modelCalls += 1;
     // A check that never happened changes nothing — the classifier's action stands, exactly as it
     // does in production. See core's ALIGNMENT_FAIL_CLOSED.
-    if (isAlignmentFailClosed(alignment)) alignment = undefined;
+    //
+    // **And it is not COUNTED either.** `modelCalls` is what a suite author reads as the cost of a
+    // case and what a reporter divides by; a check the gate could not obtain contributed no label,
+    // no action and no judgement, so counting it would report a rating that nobody made. A check
+    // that DID happen is counted, because an `auto` suite spending two calls per declined command
+    // must not report one.
+    if (isAlignmentFailClosed(alignment)) {
+      alignment = undefined;
+    } else {
+      modelCalls += 1;
+    }
   }
   if (alignment !== undefined) {
     decision.action =
@@ -760,7 +782,8 @@ async function classifyOneRound(
       decision,
       noRatingReason,
       verdict,
-      negotiated.boundSpent
+      negotiated.boundSpent,
+      alignment
     ),
     modelCalls,
   };

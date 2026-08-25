@@ -195,17 +195,23 @@ describe('[[TUI-C27]] — the approvals gate records what it was shown, and reco
    *
    * 1. `rm -rf ./dist` rated `destructive` ⇒ `reject` at `auto`. `recordRejection` appends the
    *    round BEFORE anything else, so the transcript is now one round deep.
-   * 2. `rm -rf ./dist --dry-run` rated `safe` ⇒ **approve**. `contextFor` sees a non-empty
-   *    transcript, so this is a round-2 context: the justification is admitted and the user
-   *    messages enter the window. The `noteProgress()` this approval triggers fires AFTERWARDS —
-   *    and since [[EXT-108]] it resets the consecutive counter alone, so it could not have reached
-   *    this record from either direction.
+   * 2. `rm -rf ./dist --dry-run` rated `safe` ⇒ **approve**. The `noteProgress()` this approval
+   *    triggers fires AFTERWARDS — and since [[EXT-108]] it resets the consecutive counter alone,
+   *    so it could not have reached this record from either direction.
    *
-   * The second call carries a justification of its own, because `contextFor(justification)`
-   * withholds it at round 1 — without one, round 2's record would show `justification: undefined`
-   * and a reader would take a working design for a defect.
+   * ## [[EXT-127]] — and this is the acceptance test for deliverable (a), ON THE PROMPT THAT WAS SENT
+   *
+   * The classifier now rates the command and nothing else, at **every** round. This case is what
+   * makes that falsifiable rather than asserted: the second call is a genuine round 2 — the
+   * transcript is one round deep, the user has stated a mandate, the agent has attached a
+   * justification, and the runner has driven all of it through the real gate. Under the old
+   * mechanism that round's prompt carried `<user_messages>`, `<justification>` and
+   * `<negotiation_so_far>`; here NONE of them may appear, in either round.
+   *
+   * **It is `rating.prompt`, which is captured at the send site**, so this asserts on the string
+   * that reached the model rather than on what a builder would return if asked again.
    */
-  it('records round 1 with an EMPTY user-messages window, round 2 with a POPULATED one, and the round-2 APPROVAL with its outcome and reason', async () => {
+  it('sends the classifier the command alone at EVERY round — no user messages, no justification, no transcript', async () => {
     const mandate = 'please clear out the dist folder for me, it is stale';
     const { records } = await driveAndDump({
       calls: [
@@ -219,31 +225,28 @@ describe('[[TUI-C27]] — the approvals gate records what it was shown, and reco
     expect(records).toHaveLength(2);
     const [round1, round2] = records;
 
-    // ── Round 1: rejected, and its window is empty BY DESIGN (§5.1) ──────────────────────────
+    // ── Round 1: rejected, and the prompt carries the command alone ──────────────────────────
     expect(round1.stage).toBe('rater');
     expect(round1.action).toBe('reject');
-    expect(round1.rating?.negotiation.round).toBe(1);
-    expect(round1.rating?.negotiation.roundOne).toBe(true);
-    expect(round1.rating?.negotiation.userMessages).toEqual([]);
-    expect(round1.rating?.negotiation.userMessagesPopulated).toBe(false);
-    // Legibility: the archive says WHY it is empty, so a reader does not have to guess.
-    expect(round1.rating?.negotiation.userMessagesNote).toContain('BY DESIGN');
-    // …and the prompt that was actually sent agrees with the structured field.
-    expect(round1.rating?.prompt.user).not.toContain('<user_messages>');
-    expect(round1.rating?.prompt.user).not.toContain(mandate);
 
-    // ── Round 2: the user's own message WAS in the rater's view ──────────────────────────────
-    expect(round2.rating?.negotiation.round).toBe(2);
-    expect(round2.rating?.negotiation.roundOne).toBe(false);
-    // The mandate itself, not merely "a non-empty array" — the question the node asks is whether
-    // the USER's message was in view, and any array satisfies a truthiness check.
-    expect(round2.rating?.negotiation.userMessages).toEqual([mandate]);
-    expect(round2.rating?.negotiation.userMessagesPopulated).toBe(true);
-    expect(round2.rating?.negotiation.justification).toBe('narrowed to a dry run first');
-    expect(round2.rating?.negotiation.priorRounds).toHaveLength(1);
-    // The captured prompt is the one that was SENT, so it carries the same message inside the fence.
-    expect(round2.rating?.prompt.user).toContain('<user_messages>');
-    expect(round2.rating?.prompt.user).toContain(mandate);
+    // ── Round 2: a REAL round 2 — one round on the transcript, a mandate stated, a justification
+    //    attached — and its prompt is still the command alone. This is the pair that fails the
+    //    moment any of the three channels is reopened.
+    for (const [label, record] of [
+      ['round 1', round1],
+      ['round 2', round2],
+    ] as const) {
+      const sent = record.rating?.prompt.user ?? '';
+      expect(sent, `${label} sent a command`).toContain('<command_to_evaluate>');
+      expect(sent, `${label} user messages`).not.toContain('<user_messages>');
+      expect(sent, `${label} the mandate itself`).not.toContain(mandate);
+      expect(sent, `${label} justification`).not.toContain('<justification>');
+      expect(sent, `${label} the justification itself`).not.toContain('narrowed to a dry run');
+      expect(sent, `${label} transcript`).not.toContain('<negotiation_so_far>');
+      // The first round's command must not reach the second round's prompt by any other route.
+      expect(record.rating?.prompt.system ?? '', `${label} system`).not.toContain(mandate);
+    }
+    expect(round2.rating?.prompt.user).not.toContain('rm -rf ./dist<');
 
     // ── THE branch that used to write nothing: the APPROVAL, with its outcome and its reason ──
     expect(round2.action).toBe('approve');
@@ -301,15 +304,15 @@ describe('[[TUI-C27]] — the approvals gate records what it was shown, and reco
   });
 
   /**
-   * [[GS2-47]]/[[GS2-54]] redaction reaches the captured prompt, through the SAME pass every other
-   * artifact goes through. The prompt carries the user's own messages verbatim, so this is the one
-   * artifact where a secret the user pasted into a message would otherwise land in a bug report.
+   * [[GS2-47]]/[[GS2-54]] redaction reaches the captured archive, through the SAME pass every other
+   * artifact goes through. The command a user asks for can carry a secret they pasted, so this is
+   * an artifact where one would otherwise land in a bug report.
    */
-  it('redacts a secret carried into the captured rating prompt by a user message', async () => {
+  it('redacts a secret carried into the captured approvals archive', async () => {
     process.env[ENV_SECRET_NAME] = ENV_SECRET_VALUE;
     const { archiveDir, records } = await driveAndDump({
       calls: [
-        { command: 'rm -rf ./dist' },
+        { command: `rm -rf ./dist --token=${ENV_SECRET_VALUE}` },
         { command: 'rm -rf ./dist --dry-run', justification: 'narrowed it' },
       ],
       script: ['destructive', 'safe'],
@@ -318,10 +321,9 @@ describe('[[TUI-C27]] — the approvals gate records what it was shown, and reco
     const text = readFileSync(resolve(archiveDir, 'approvals.json'), 'utf8');
     expect(text).not.toContain(ENV_SECRET_VALUE);
     expect(text).toContain('<redacted>');
-    // The message is still THERE — redaction masks the secret, it does not drop the evidence that
-    // the user's message was in the rater's view, which is the whole point of the record.
-    expect(records[1].rating?.negotiation.userMessagesPopulated).toBe(true);
-    expect(records[1].rating?.negotiation.userMessages[0]).toContain('clean up, my key is');
+    // The command is still THERE — redaction masks the secret, it does not drop the evidence of
+    // what was rated, which is the whole point of the record.
+    expect(records[0].rating?.prompt.user).toContain('rm -rf ./dist --token=');
   });
 
   /**

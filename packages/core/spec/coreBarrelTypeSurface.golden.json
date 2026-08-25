@@ -12,6 +12,16 @@
       "arity": 0
     },
     {
+      "name": "AlignmentDecision",
+      "file": "core/shell/alignment.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "AlignmentDecisionKind",
+      "file": "core/shell/alignment.d.ts",
+      "arity": 0
+    },
+    {
       "name": "ApprovalEntry",
       "file": "config/shell-policy.d.ts",
       "arity": 0

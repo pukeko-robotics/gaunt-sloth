@@ -1284,6 +1284,7 @@ describe('GthAgentRunner', () => {
       expect(runner.getSessionApprovals()).toEqual({
         rung: 'auto',
         rater: 'safety-rater',
+        alignmentChecker: 'safety-rater',
         allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm test' }],
         deny: [{ type: 'shell', matcher: 'exact', pattern: 'npm publish' }],
         escalate: [{ type: 'shell', matcher: 'exact', pattern: 'terraform apply' }],
@@ -1437,7 +1438,7 @@ describe('GthAgentRunner', () => {
 
       await runner.processMessages([new HumanMessage('go')]);
 
-      expect(resolveRaterModelMock).toHaveBeenCalledWith('safety-rater');
+      expect(resolveRaterModelMock).toHaveBeenCalledWith('safety-rater', 'approvals.rater');
       // The profile's model rated...
       expect(profile.withStructuredOutput).toHaveBeenCalled();
       // ...and the SESSION model was never consulted for rating. This negative is the assertion
@@ -1495,7 +1496,7 @@ describe('GthAgentRunner', () => {
       const runner = new GthAgentRunner(statusUpdateCallback);
       const config = { ...mockConfig, approvals: { rater: 'safety-rater' } } as any;
       await runner.init(command, config);
-      expect(resolveRaterModelMock).toHaveBeenCalledWith('safety-rater');
+      expect(resolveRaterModelMock).toHaveBeenCalledWith('safety-rater', 'approvals.rater');
       expect(runner.getSessionApprovals().rater).toBe('safety-rater');
     });
   });
