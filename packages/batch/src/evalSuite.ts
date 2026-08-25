@@ -168,8 +168,13 @@ const RawCaseSchema = RawAssertionsSchema.extend({
   // property of the case, identical across identities and rounds — so they are legal on a multi-turn
   // case too.
   tags: z.array(z.string()).optional(),
-  // BATCH-25: this case must be decided with zero model calls (the hardline-floor / ambiguity
-  // families). Requires a target that can classify deterministically; rejected otherwise.
+  // BATCH-25: this case must be decided with zero model calls. Requires a target that can classify
+  // deterministically; rejected otherwise.
+  //
+  // BATCH-37: a case whose command the §8 floor refuses does not need it — the rater target refuses
+  // such a command before rating at every rung but `bypass`, as the runner does, so the declaration
+  // is redundant there rather than load-bearing. It stays REQUIRED for the deterministic families
+  // the floor does not cover, which is what it was added for.
   model_free: z.boolean().optional(),
   // BATCH-34: accepted at case level ONLY so a misplaced one is an error instead of a silence.
   // Negotiation context is per-round and belongs on a `turns:` entry — see the guard in the parse.

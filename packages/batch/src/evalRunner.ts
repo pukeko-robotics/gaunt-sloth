@@ -275,13 +275,24 @@ export async function runEvalSuite(
         // Passed on as DECLARED, per round. The runner is target-agnostic and forms no opinion
         // about what a mechanism implies — `ClassifyRequest.forcedBy` says why that split matters.
         //
-        // Where one round declares SEVERAL mechanisms (`ob-05` is the corpus case: an ambiguity
-        // preflight AND the floor), a mechanism needing a permissive rating is preferred over one
-        // that does not, rather than simply taking the first block. Taking the first made the
-        // verdict depend on BLOCK ORDER — `[ambiguity, floor]` passed and `[floor, ambiguity]`
-        // failed on identical assertions — because a round left undriven can never let its
-        // preflight speak. Preferring the preflight satisfies BOTH claims: the floor's marker comes
-        // from `checkHardline`, which is unaffected by the rating either way.
+        // Where one round declares SEVERAL mechanisms, a mechanism needing a permissive rating is
+        // preferred over one that does not, rather than simply taking the first block. Taking the
+        // first made the verdict depend on BLOCK ORDER — two blocks passed in one order and failed
+        // reversed, on identical assertions — because a round left undriven can never let its
+        // preflight speak.
+        //
+        // BATCH-37 narrowed where this is load-bearing, and the marker it used to reconcile is now
+        // unreachable on the common path: a round whose command the floor MATCHES is refused before
+        // `forcedBy` is read at all (every rung but `bypass`), so it carries the floor's marker and
+        // no other, and both orders agree whatever the preference does.
+        //
+        // It still decides exactly one shape, and `raterTarget.spec.ts` pins it there:
+        // `hardline-floor` is the ONLY mechanism whose `mechanismNeedsPermissiveRating` is false, so
+        // the preference can only ever differ from a plain "take the first" when a `hardline-floor`
+        // block is declared AHEAD of a preflight on a command the floor does NOT match — a
+        // mis-declaration, which is a real authoring mistake. Note what this rules out: for a round
+        // whose mechanisms are all preflights both branches select the same block, so the preference
+        // decides nothing there.
         forcedBy: unit.evalCase.turns.map(
           (turn) =>
             turn.expectations.find((block) => mechanismNeedsPermissiveRating(block.forcedBy))

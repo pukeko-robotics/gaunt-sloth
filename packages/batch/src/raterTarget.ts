@@ -98,7 +98,8 @@ export { HARDLINE_REFUSAL_MARKER };
 
 /**
  * The marker a rationale carries when the decision cost NO rating call, followed by which of the
- * two reasons applied (the case declared `model_free`, or the rung is not rated).
+ * **three** reasons applied: the §8 hardline floor refused the command before any rating
+ * ({@link HARDLINE_NO_RATING_REASON}), the case declared `model_free`, or the rung is not rated.
  *
  * It exists because the honest alternative was worse. `mapVerdictToAction` treats a missing verdict
  * as core's fail-closed one, whose reason says the rater "could not evaluate" the command — true
@@ -106,8 +107,20 @@ export { HARDLINE_REFUSAL_MARKER };
  * written into every model-free case's per-case JSON, and a reader diagnosing a corpus would have
  * concluded the rater was broken. So the placeholder reason is dropped on this path and replaced by
  * this: what actually happened.
+ *
+ * **The reasons are not mutually exclusive, and the floor outranks the other two** — it is the one
+ * production acts on, so a `model_free` case whose command the floor also refuses reports the floor.
+ * Its `model_free` declaration is then redundant rather than wrong: both say zero calls.
  */
 export const NO_RATING_CALL_MARKER = 'no rating call';
+
+/**
+ * The {@link NO_RATING_CALL_MARKER} reason for a command §8's floor refuses outright.
+ *
+ * Named rather than spelled at the call site so a suite (and the unit suite) can assert the
+ * short-circuit by the reason it reports, without pinning prose in two places.
+ */
+export const HARDLINE_NO_RATING_REASON = 'refused at the floor before rating';
 
 /**
  * BATCH-34 — the marker a rationale carries when the round's `reject` became an **escalation because
@@ -329,10 +342,21 @@ function resolveRung(target: RaterTarget, config: GthConfig): ApprovalRung {
  * floor marker when the floor refuses this command, which preflight forced the decision when one
  * did, and the reason behind it.
  *
- * All of it is present on BOTH paths. The floor check is deterministic and free, so it is run
- * whether or not the case is model-free — a rated case whose command the floor also refuses says so
- * too, which is the honest reading of production (the gate rates it, and the shell refuses it
- * anyway).
+ * All of it is present on every path. The floor check is deterministic and free, so it is run
+ * whether or not the case is model-free.
+ *
+ * **What production does with a floor match, stated because a stale reading of it is what this
+ * function's rationale used to assert:** the approvals gate consults `checkHardline` ITSELF, one arm
+ * below the `bypass` early return, and refuses there — before any rating call and before any §5
+ * round. It does not rate the command and let the shell refuse it afterwards. The exec-time check in
+ * `GthDevToolkit.executeCommand` still stands behind that and is what makes the refusal a guarantee,
+ * but it is the second line of the two, not the only one.
+ *
+ * So a rated case whose command the floor refuses does not exist, and cannot: the two rated rungs
+ * are refused at the floor arm before reaching a rating ({@link classifyOneRound}), and `bypass` —
+ * the one rung that arm does not cover — is not a rated rung either. The marker therefore never
+ * accompanies a rater verdict. At `bypass` it accompanies an `approve`, which is the honest report:
+ * the gate approved before the arm and only the exec-time check refuses.
  *
  * **The mechanism markers are what make a deterministic case gradeable at all**, because the ACTION
  * is not: with no verdict, `mapVerdictToAction` returns the same action for every command at a rated
@@ -456,13 +480,23 @@ function advanceNegotiation(
 /**
  * Classify ONE round: one command, rated (or not) and mapped to an action.
  *
- * **When no model is rung.** Two conditions short-circuit the rating call, and both report
+ * **When no model is rung.** THREE conditions short-circuit the rating call, and all report
  * `modelCalls: 0`:
+ * - **[[BATCH-37]] §8's hardline floor refuses the command, at every rung but `bypass`** — the
+ *   runner's own pre-rating arm, mirrored here so the target does not measure a rating production
+ *   never buys. It is the only one of the three that also fixes the ACTION (`reject`, the runner's
+ *   word) and the only one that skips {@link advanceNegotiation}: the refusal opens no §5 round, so
+ *   it spends neither bound. See the arm's own comment below;
  * - the case declares `model_free` — the suite asserting that this command is decided by the
  *   deterministic layer alone, which is what makes 17-odd cases of an approvals corpus free to run
  *   and is the EXT-55 regression gate;
  * - the rung is not a RATED rung — `manual`, `write` and `bypass` consult no model in production
  *   either, so ringing one here would bill for a call the gate would never make.
+ *
+ * The first outranks the other two where they overlap, because it is the one production acts on.
+ * Anything that enumerates these — a docblock, a marker's reason list, a suite's guidance — has to
+ * grow with them; a corrected statement in one place above a stale list in another is the same
+ * defect one screen down.
  *
  * **A model-free decision reports NO label.** The action is real — `mapVerdictToAction` produces it
  * from the rung and its own preflights, exactly as production would before the rater is consulted —
@@ -487,18 +521,27 @@ function advanceNegotiation(
  * flatter the case — when the claimed preflight really fires the action is the same either way, and
  * when it does not, the marker and the action go red together.
  *
- * **BATCH-34 — the negotiation state advances on EVERY path, including the model-free one.** It is
- * driven by the ACTION the gate returned, never by how the round was decided, for the same reason
- * the rest of this file is: what a `reject` costs the negotiation is a property of the decision, and
- * a target that spent the bound only on rounds it happened to ring a model for would report a
- * different exchange than production for the same corpus. At a rung that rates nothing there is
- * nothing to spend either way — no round is ever rejected there.
+ * **BATCH-34 — the negotiation state advances on every path that reaches a DECISION, the model-free
+ * one included.** It is driven by the ACTION the gate returned, never by how the round was decided,
+ * for the same reason the rest of this file is: what a `reject` costs the negotiation is a property
+ * of the decision, and a target that spent the bound only on rounds it happened to ring a model for
+ * would report a different exchange than production for the same corpus. At a rung that rates
+ * nothing there is nothing to spend either way — no round is ever rejected there.
+ *
+ * **[[BATCH-37]] — the floor arm is the one exception, and it is production's exception, not ours.**
+ * A round §8 refuses returns above without advancing the state at all, because the runner's floor
+ * arm does the same: the refusal opens no round, and counting it would walk an unappealable refusal
+ * toward a human escalation §4.2 says it must not reach. So a floored round costs a case neither of
+ * its §5.3 bounds, and the rounds around it are rated with the exchange they would have had if it
+ * had not been attempted.
  *
  * **At a rung that DOES rate, `model_free` spends the bound for real, and that is worth knowing
  * before authoring one.** With no verdict, `mapVerdictToAction` reads core's fail-closed verdict,
  * whose outcome is `destructive`; at a negotiating rung that is a `reject`, so every model-free round
  * of such a case is recorded as one and the third ends at a human carrying
- * {@link NEGOTIATION_BOUND_MARKER} — a full §5.3 negotiation for zero model calls. The rounds are
+ * {@link NEGOTIATION_BOUND_MARKER} — a full §5.3 negotiation for zero model calls. (A model-free
+ * round whose command §8 refuses is NOT one of those: it returns at the floor arm, spending
+ * nothing.) The rounds are
  * not fabrications (this is production's own action for a rating nobody rendered) but they are
  * indistinguishable from one another, so an author reading only the action column sees an escalation
  * the corpus never argued for. `model_free` is CASE-level, so it costs a multi-round case all of its
@@ -525,13 +568,62 @@ async function classifyOneRound(
     };
   }
 
-  // Free and deterministic, so it runs on both paths — see buildRationale.
+  // Free and deterministic, so it runs on every path — see buildRationale.
   const floor = checkHardline(trimmed);
 
   // BATCH-34 §5.1 — what the user said before this round enters the conversation's memory FIRST, so
   // this round's own context can carry it. Core owns the retention bound and the last-5 window; a
   // round declaring none adds none, which is how a single-round case keeps a byte-identical prompt.
+  //
+  // **This must stay ABOVE the floor arm below, and `raterTarget.spec.ts` pins that it does.**
+  // Production notes the user's words at a turn boundary, upstream of the approvals gate entirely,
+  // so a mandate given alongside a floor-matching command still has to reach the §5.1 window that
+  // LATER rounds are rated against. Hoisting the arm above this line reads like a harmless
+  // guard-clause tidy and silently drops that mandate from every later rating.
   negotiation.noteUserMessages(round.userMessages ?? []);
+
+  // BATCH-37 — **§8's floor refuses BEFORE any rating, exactly as `GthAgentRunner` does.**
+  //
+  // The runner consults `checkHardline` in the approvals gate itself, one arm below the `bypass`
+  // early return, and returns `reject` there: "without this line `auto` spends three rating calls
+  // and a human dialog arguing about a fork bomb that was never going to run". A target that rated
+  // such a command would be measuring a rating production never buys — the divergence this node
+  // exists to close.
+  //
+  // **The condition is the runner's, not a new one.** `bypass` is excluded because the runner
+  // approves a gated shell call and returns before this arm is reached, NOT because the floor stops
+  // applying there — the exec-time check in `GthDevToolkit.executeCommand` still refuses it, which
+  // is why the marker is still emitted below at `bypass`. Every other rung reaches the arm
+  // deliberately, the deterministic ones included: §4.2 is a statement about the COMMAND, not about
+  // who was going to be asked about it.
+  //
+  // **`advanceNegotiation` is deliberately NOT called**, and that is the half of this a rating count
+  // alone would miss. The runner's floor arm returns without touching either §5.3 bound: "this
+  // refusal opens no round, so counting it would walk an unappealable refusal toward the human
+  // escalation §4.2 says it must not reach". A target that short-circuited the rating but still
+  // spent the bound would replace one divergence with another in the same direction.
+  //
+  // **No label**, for the model-free path's reason: the label is the rater's judgement and on this
+  // path nobody was asked. The mechanism lands in the rationale, where a `forced_by: hardline-floor`
+  // case grades it.
+  if (floor !== null && rung !== 'bypass') {
+    return {
+      ok: true,
+      // The runner's own word for it — `{ type: 'reject' }` at stage `hardline-floor`. It is the
+      // only refusal in `RATER_ACTIONS`; that this `reject` opens no round, while a §5 `reject`
+      // does, is what the floor marker in the rationale says.
+      action: 'reject',
+      rationale: buildRationale(
+        trimmed,
+        floor.description,
+        { action: 'reject', verdict: undefined },
+        HARDLINE_NO_RATING_REASON,
+        undefined,
+        false
+      ),
+      modelCalls: 0,
+    };
+  }
   // §5.2 — a rejection is addressed to the AGENT only at a negotiating rung, and saying so changes
   // the rating prompt. Read from the resolved rung rather than from whether a context exists: the
   // two are independent by construction (an empty transcript is still a round of a negotiation),
