@@ -1747,16 +1747,34 @@ export class GthAgentRunner {
             );
           }
           // [[TUI-C69]] §5.4/§5.5 — **the round that ENDS a negotiation is a round too**, and it
-          // is the one §5.5 holds on screen. What makes this a *negotiated* approval rather than a
-          // first-try `safe` is that THIS COMMAND is on the transcript: the rater refused it at
-          // least once, the agent answered, and this is the rater agreeing. A first attempt rated
-          // `safe` has no argument behind it and is not held — and neither does an unrelated
-          // command that merely happens to follow someone else's argument.
+          // is the one §5.5 holds on screen. What makes an approval *negotiated* is that an
+          // argument is STILL UNANSWERED when it arrives — `showNegotiatedApproval` gates on
+          // §5.3's `consecutiveRejections` — and **not** that this exact command is on the
+          // transcript. Read that method's docblock before changing anything here; the two
+          // statements below are the ones people get wrong.
           //
-          // Read BEFORE `decideToolApproval`'s wrapper calls `noteProgress()`. That call resets
-          // §5.3's consecutive counter and — since [[EXT-108]] — deliberately leaves the rounds
-          // standing, so the transcript would in fact survive it; reading first is what keeps that
-          // a property of this code rather than of the other method's current shape.
+          // **What is and is not held.** A first attempt rated `safe` is not held: nothing was
+          // refused, so the counter is zero and there is no argument anyone could have watched.
+          // But a command that merely follows someone else's argument **is** held and **is**
+          // drawn — labelled `Accepted:` rather than `Agreed:`, because the rater never refused
+          // that particular command. That is deliberate. The unit of the feature is the ARGUMENT,
+          // and whichever call gets through is the one that ends it.
+          //
+          // **The exact-command rule was rejected on measurement, not taste.** An agent converges
+          // by NARROWING, so the node's own canonical scenario is approved on a command the
+          // transcript has never held (`git reset --hard origin/main` → `git reset --soft
+          // HEAD~2`). Gating on a literal match would make that case draw nothing at all, firing
+          // only when the agent FAILS to narrow — the inverse of what §5.5 is for. The match still
+          // decides the LABEL below, where being wrong costs a word instead of the feature.
+          //
+          // **Read BEFORE `decideToolApproval`'s wrapper calls `noteProgress()` — this ordering is
+          // REQUIRED, not defensive.** That wrapper resets §5.3's consecutive counter on every
+          // approve, and this call site sits inside the decision it wraps, so the reset lands just
+          // after the `approve` returned below. The counter it zeroes is the exact one the gate
+          // reads: run it first and `showNegotiatedApproval` returns at that gate without drawing
+          // or sleeping, so the hold never fires on any path — no row, no error, every surface.
+          // The negotiation specs pin it (moving the reset above this call reds the §5.4/§5.5
+          // cells), which is the only reason a silent, total failure is catchable here.
           await this.showNegotiatedApproval(subject.command, justification, decision.verdict);
           // Scope `once`: rater approvals are NEVER persisted to the allow-list.
           return { type: 'approve', scope: 'once' };
