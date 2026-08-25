@@ -807,6 +807,7 @@ describe('config schema (GS2-1 B1)', () => {
           expect(arms).toHaveLength(2);
           expect(arms[0].enum).toEqual([...RUNGS]);
           expect(Object.keys(arms[1].properties as object).sort()).toEqual([
+            'alignmentChecker',
             'allow',
             'deny',
             'escalate',

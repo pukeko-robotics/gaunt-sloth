@@ -561,6 +561,12 @@ export function renderApprovalEntryForString(pattern: string): string {
  *   extras have a home when they are needed, not so there are two ways to say the same thing.
  * - `rater` is a **bare identity-profile name**, not an object (strict resolution, GS2-62: a name
  *   that does not resolve is a hard config error, never a silent fallback).
+ * - `alignmentChecker` ([[EXT-127]]) is the same thing for the **alignment checker** — the second
+ *   model, reached only when the rater has declined, that decides whether the declined command is
+ *   what the user actually asked for. Same grammar and the same strict resolution; absent, the
+ *   checker runs on the `rater` profile, which is applied at the read site rather than here. There
+ *   is deliberately no second timeout: `raterTimeoutMs` is the budget for ONE model call and a
+ *   check is one call.
  * - `raterTimeoutMs` (EXT-66) is the wall-clock budget for ONE rating call, defaulting to
  *   `RATER_DEFAULT_TIMEOUT_MS` (30s) at the read site. **It exists because 30s is a hosted-model
  *   number and a local model is knowably slower**: measured 2026-07-31, `gemma4:12b` over Ollama
@@ -594,6 +600,14 @@ const approvalsSchema = z.union([
   z.object({
     mode: z.enum(APPROVAL_RUNG_VALUES).optional(),
     rater: z.string().optional(),
+    // [[EXT-127]] §9.1 — the identity profile the ALIGNMENT CHECKER runs under, in exactly the
+    // shape `rater` takes: a bare name, strictly resolved. The two are separate keys because the
+    // split gave them different cost profiles — the classifier is cheap and runs on every gated
+    // command, the checker is reached only when the classifier has declined — so pointing the
+    // checker at a larger model is the whole point of having two. Absent falls back to `rater` at
+    // the read site (`resolveApprovals`), never here, so the effective-config snapshot does not
+    // churn.
+    alignmentChecker: z.string().optional(),
     // EXT-71 §3.1 — the three rule lists. Same entry grammar in all three; the list decides only
     // what a match DOES (§3: deny over escalate over allow).
     allow: z.array(approvalEntrySchema).optional(),
@@ -707,8 +721,9 @@ const prCommandSchema = z.object({
   requirementSource: z.string().optional(),
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
-  // CFG-27/§9.1 — per-command approvals. It overrides only the fields it names: `mode`,
-  // `rater`, `raterTimeoutMs` and `allow` replace the root's; `deny`/`escalate` concatenate.
+  // CFG-27/§9.1 — per-command approvals. It overrides only the fields it names: `mode`, `rater`,
+  // `alignmentChecker`, `raterTimeoutMs` and `allow` replace the root's; `deny`/`escalate`
+  // concatenate.
   approvals: approvalsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
@@ -722,8 +737,9 @@ const reviewCommandSchema = z.object({
   requirementSource: z.string().optional(),
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
-  // CFG-27/§9.1 — per-command approvals. It overrides only the fields it names: `mode`,
-  // `rater`, `raterTimeoutMs` and `allow` replace the root's; `deny`/`escalate` concatenate.
+  // CFG-27/§9.1 — per-command approvals. It overrides only the fields it names: `mode`, `rater`,
+  // `alignmentChecker`, `raterTimeoutMs` and `allow` replace the root's; `deny`/`escalate`
+  // concatenate.
   approvals: approvalsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
@@ -734,8 +750,9 @@ const reviewCommandSchema = z.object({
 const askCommandSchema = z.object({
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
-  // CFG-27/§9.1 — per-command approvals. It overrides only the fields it names: `mode`,
-  // `rater`, `raterTimeoutMs` and `allow` replace the root's; `deny`/`escalate` concatenate.
+  // CFG-27/§9.1 — per-command approvals. It overrides only the fields it names: `mode`, `rater`,
+  // `alignmentChecker`, `raterTimeoutMs` and `allow` replace the root's; `deny`/`escalate`
+  // concatenate.
   approvals: approvalsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
@@ -745,8 +762,9 @@ const askCommandSchema = z.object({
 const chatCommandSchema = z.object({
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
-  // CFG-27/§9.1 — per-command approvals. It overrides only the fields it names: `mode`,
-  // `rater`, `raterTimeoutMs` and `allow` replace the root's; `deny`/`escalate` concatenate.
+  // CFG-27/§9.1 — per-command approvals. It overrides only the fields it names: `mode`, `rater`,
+  // `alignmentChecker`, `raterTimeoutMs` and `allow` replace the root's; `deny`/`escalate`
+  // concatenate.
   approvals: approvalsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
@@ -756,8 +774,9 @@ const chatCommandSchema = z.object({
 const codeCommandSchema = z.object({
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
-  // CFG-27/§9.1 — per-command approvals. It overrides only the fields it names: `mode`,
-  // `rater`, `raterTimeoutMs` and `allow` replace the root's; `deny`/`escalate` concatenate.
+  // CFG-27/§9.1 — per-command approvals. It overrides only the fields it names: `mode`, `rater`,
+  // `alignmentChecker`, `raterTimeoutMs` and `allow` replace the root's; `deny`/`escalate`
+  // concatenate.
   approvals: approvalsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
@@ -767,8 +786,9 @@ const codeCommandSchema = z.object({
 const execCommandSchema = z.object({
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
-  // CFG-27/§9.1 — per-command approvals. It overrides only the fields it names: `mode`,
-  // `rater`, `raterTimeoutMs` and `allow` replace the root's; `deny`/`escalate` concatenate.
+  // CFG-27/§9.1 — per-command approvals. It overrides only the fields it names: `mode`, `rater`,
+  // `alignmentChecker`, `raterTimeoutMs` and `allow` replace the root's; `deny`/`escalate`
+  // concatenate.
   approvals: approvalsSchema.optional(),
   customTools: customToolsOrFalseSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
@@ -778,8 +798,9 @@ const execCommandSchema = z.object({
 const apiCommandSchema = z.object({
   filesystem: filesystemSchema.optional(),
   builtInTools: builtInToolsSchema.optional(),
-  // CFG-27/§9.1 — per-command approvals. It overrides only the fields it names: `mode`,
-  // `rater`, `raterTimeoutMs` and `allow` replace the root's; `deny`/`escalate` concatenate.
+  // CFG-27/§9.1 — per-command approvals. It overrides only the fields it names: `mode`, `rater`,
+  // `alignmentChecker`, `raterTimeoutMs` and `allow` replace the root's; `deny`/`escalate`
+  // concatenate.
   approvals: approvalsSchema.optional(),
   port: z.number().optional(),
   cors: z

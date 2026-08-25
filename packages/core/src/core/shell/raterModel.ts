@@ -1,10 +1,15 @@
 /**
  * @module core/shell/raterModel
  *
- * CFG-26 — resolve the model the AI rater rates with when `approvals.rater.profile` names an
- * identity profile. Without this the profile is validated and then IGNORED: the config parses,
- * `gth config validate` passes, CFG-24's first-run dialog promises "set a stronger model as the
- * rater later via approvals.rater.profile" — and the runtime quietly rates with the main model.
+ * CFG-26 — resolve the model a gate model runs on when a config key names an identity profile.
+ * Without this the profile is validated and then IGNORED: the config parses, `gth config validate`
+ * passes, CFG-24's first-run dialog promises a stronger model can be set as the rater later — and
+ * the runtime quietly rates with the main model.
+ *
+ * [[EXT-127]] — **it serves two keys now**, `approvals.rater` and `approvals.alignmentChecker`,
+ * which is why the key name is a parameter rather than a literal. The two resolve identically and
+ * fail identically; only the sentence the user is shown differs, and pointing them at one wrong key
+ * is a user-facing defect in the one message that is supposed to tell them what to fix.
  *
  * Why it matters concretely (QA-5 rater baseline, 2026-07-26): rating quality varies enormously by
  * model. A local `gemma4:12b` scored 61.7% tier accuracy; `llama3.2:1b` scored 25.5% and rated
@@ -21,7 +26,7 @@ import { initConfig } from '#src/config/loader.js';
 import { peekProjectDir, setProjectDir } from '#src/utils/systemUtils.js';
 
 /**
- * Load the identity profile named by `approvals.rater.profile` and return ITS model.
+ * Load the identity profile named by `configKey` and return ITS model.
  *
  * Strict, per [[GS2-62]]: a profile that cannot be loaded, or that resolves to a config with no
  * usable model, is an ERROR — never a silent fallback to the session's main model. A silent
@@ -38,11 +43,18 @@ import { peekProjectDir, setProjectDir } from '#src/utils/systemUtils.js';
  * silently repoint every `getProjectDir()` consumer — prompt files, output paths, the shell
  * allow-list file, debug dumps. So the project dir is snapshotted and restored in a `finally`.
  *
- * @param profile The identity profile name from `approvals.rater.profile`.
- * @returns The profile's chat model, ready to be handed to `rateShellCommand`'s `model` option.
+ * @param profile The identity profile name the key carried.
+ * @param configKey The config key that named it, for the error messages — `approvals.rater` or
+ *   `approvals.alignmentChecker`. It is the only thing the user can act on, so it is required
+ *   rather than defaulted: a default is how one of the two call sites would come to report the
+ *   other one's key.
+ * @returns The profile's chat model, ready to be handed to a gate call's `model` option.
  * @throws When the profile's config cannot be loaded or carries no usable model.
  */
-export async function resolveRaterModel(profile: string): Promise<BaseChatModel> {
+export async function resolveRaterModel(
+  profile: string,
+  configKey: string
+): Promise<BaseChatModel> {
   // Snapshot BEFORE initConfig's discovery mutates it (see the note above). `peekProjectDir`
   // rather than `getProjectDir` so an UNSET dir is restored as unset, not pinned to today's cwd.
   const projectDirBefore = peekProjectDir();
@@ -51,7 +63,7 @@ export async function resolveRaterModel(profile: string): Promise<BaseChatModel>
     raterConfig = await initConfig({ identityProfile: profile });
   } catch (error) {
     throw new Error(
-      `Could not load the AI rater profile "${profile}" named by approvals.rater.profile: ` +
+      `Could not load the identity profile "${profile}" named by ${configKey}: ` +
         `${error instanceof Error ? error.message : String(error)}`,
       error instanceof Error ? { cause: error } : undefined
     );
@@ -65,9 +77,8 @@ export async function resolveRaterModel(profile: string): Promise<BaseChatModel>
   // reintroduce the very silent fallback this module removes.
   if (!model || typeof model.withStructuredOutput !== 'function') {
     throw new Error(
-      `The AI rater profile "${profile}" resolved to a config with no usable model. ` +
-        'Give that profile a valid `llm`, or remove approvals.rater.profile to rate with the ' +
-        'session model.'
+      `The identity profile "${profile}" resolved to a config with no usable model. ` +
+        `Give that profile a valid \`llm\`, or remove ${configKey} to use the session model.`
     );
   }
   return model;

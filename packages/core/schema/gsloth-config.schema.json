@@ -427,6 +427,9 @@
             "rater": {
               "type": "string"
             },
+            "alignmentChecker": {
+              "type": "string"
+            },
             "allow": {
               "type": "array",
               "items": {
@@ -776,6 +779,9 @@
                     "rater": {
                       "type": "string"
                     },
+                    "alignmentChecker": {
+                      "type": "string"
+                    },
                     "allow": {
                       "type": "array",
                       "items": {
@@ -1097,6 +1103,9 @@
                     "rater": {
                       "type": "string"
                     },
+                    "alignmentChecker": {
+                      "type": "string"
+                    },
                     "allow": {
                       "type": "array",
                       "items": {
@@ -1409,6 +1418,9 @@
                     "rater": {
                       "type": "string"
                     },
+                    "alignmentChecker": {
+                      "type": "string"
+                    },
                     "allow": {
                       "type": "array",
                       "items": {
@@ -1699,6 +1711,9 @@
                       ]
                     },
                     "rater": {
+                      "type": "string"
+                    },
+                    "alignmentChecker": {
                       "type": "string"
                     },
                     "allow": {
@@ -1993,6 +2008,9 @@
                     "rater": {
                       "type": "string"
                     },
+                    "alignmentChecker": {
+                      "type": "string"
+                    },
                     "allow": {
                       "type": "array",
                       "items": {
@@ -2285,6 +2303,9 @@
                     "rater": {
                       "type": "string"
                     },
+                    "alignmentChecker": {
+                      "type": "string"
+                    },
                     "allow": {
                       "type": "array",
                       "items": {
@@ -2575,6 +2596,9 @@
                       ]
                     },
                     "rater": {
+                      "type": "string"
+                    },
+                    "alignmentChecker": {
                       "type": "string"
                     },
                     "allow": {

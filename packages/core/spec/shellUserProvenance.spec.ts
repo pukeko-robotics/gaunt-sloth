@@ -859,9 +859,11 @@ describe('[[EXT-106]] §4.6 — the user-provenance carve-out', () => {
    * fail-closed default is the whole of what protects a surface nobody has classified yet, exactly
    * the property that is easiest to add and impossible to notice losing.
    *
-   * It also pins the SCOPE of the gate: §5.1's negotiation context is a different question with a
-   * different reader — a rejected command's later rounds may legitimately show the rater what the
-   * conversation contains — and it keeps working while provenance answers nothing.
+   * It also pins the SCOPE of the gate: the RAW store is a different question with a different
+   * reader, and it keeps working while provenance answers nothing. [[EXT-127]] made that separation
+   * load-bearing a second time — the alignment checker's `user` role is fed from this gated window
+   * and never from the store, so a store that kept answering while the gate refused is exactly the
+   * shape a caller reaching for the obvious accessor would get wrong.
    */
   it('cell 11a: the provenance window is empty until a caller positively admits the session', async () => {
     const { ShellNegotiationState } = await import('#src/core/shell/negotiation.js');
@@ -874,9 +876,13 @@ describe('[[EXT-106]] §4.6 — the user-provenance carve-out', () => {
     state.admitUserProvenance(false);
     expect(state.retainedUserMessages()).toEqual([]);
 
-    // …and §5.1's context is untouched by any of it: from round 2 the rater still sees the turn.
+    // …and the RAW store is untouched by any of it — the gate governs the accessor, not the store.
+    // Read through the private field for the same reason the negotiation specs read `sinceHuman`
+    // that way: a production getter for the ungated store is precisely the thing that must not
+    // exist, since it is what a future caller would reach for by mistake.
     state.recordRejection({ command: CARVED_COMMAND, reason: 'no', outcome: 'destructive' });
-    expect(state.contextFor().userMessages).toEqual([USER_ASKED]);
+    expect((state as unknown as { userMessages: string[] }).userMessages).toEqual([USER_ASKED]);
+    expect(state.retainedUserMessages()).toEqual([]);
   });
 
   /**

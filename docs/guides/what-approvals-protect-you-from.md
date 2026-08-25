@@ -25,7 +25,11 @@ a bad hour is whatever a remote or a backup still holds.
 for an unattended run, and it is the one where a risky command is put back to the agent — with the
 rater's reason — instead of straight to you. That buys fewer stops, not none: the agent gets a few
 rounds to narrow or justify what it asked for, and both the run of rounds and the total since you
-were last involved are capped, so the argument ends at a person rather than going round. Each mode's
+were last involved are capped, so the argument ends at a person rather than going round. Ahead of
+those rounds, a second model call asks the one question the rater is deliberately not given the
+material to answer — whether this command is what *you* asked for. It can let a recoverable command
+through on that ground, and it can never let through one that cannot be undone, or one whose
+structure is hostile. Each mode's
 own description — the one `/approvals` prints, and the one
 [the ladder](shell-tool-and-approvals.md#the-ladder-approvals) lists — is the current word on what
 it does. So plan to come back to prompts either way: anything the rater will not clear is brought to
@@ -93,6 +97,11 @@ doing the wrong thing while trying to do the right thing: the destructive cleanu
 consequences it did not think through, the flag it got wrong. Intent — a prompt injection that
 lands, or a model steered to act against you — steps around command-text analysis in one move.
 
+The second check at Auto does not change that. It is shown more than the command — your own messages
+as well — so it can answer something the rater cannot, namely whether you asked for this. But it is
+still a model reading text, and `bash payload.sh` tells it exactly as little as it tells everything
+else.
+
 That is not an argument for turning the gate off, because accidents are the common case and the gate
 does stop them. Measured over a corpus of commands that should not run unattended, the checks that
 need no model at all stop 17 more of them at Assisted and Auto than at Bypass — before the rater has
@@ -132,14 +141,22 @@ The layers are deliberately conservative about opposite things.
   that, it hands to the model.
 - The **auto-rater** approves only when it is sure a command is safe. Anything short of that, it
   comes to you — at Auto, at once when what it asked for cannot be undone, at once when a
-  deterministic check settled it and the agent therefore has no answer to give, and otherwise
-  once the agent has spent its rounds answering the rater.
+  deterministic check settled it and neither the agent nor the check below has an answer that bears
+  on it, and otherwise once the agent has spent its rounds answering the rater.
+- The **alignment check**, at Auto only and reached only once the rater has declined, approves only
+  where it can see that you asked for this. Handed nothing of yours to read, it has no mandate in
+  view, and the honest answer is to bring the command to you.
 
 A pattern is trustworthy about the form of a command and knows nothing about its meaning, so its
 uncertainty is not evidence and must not spend your attention. The model is the only layer that
 reads meaning, so its uncertainty *is* evidence, and it is exactly the thing worth interrupting you
 for. An approval prompt that carries a rater's explanation is therefore a report of a model's doubt
 about this command, not a rule that fired.
+
+The two model layers are split by **what they are shown**, not by how good they are. The rater is
+shown the command and nothing else, so nothing in the conversation is there to argue it round; the
+alignment check is the one layer shown what you asked for. That split is the reason the second one
+is allowed only to widen what may run, and never to reach past a refusal the first two settled.
 
 ## A rater that stops you a lot is not broken
 
@@ -151,7 +168,9 @@ local model rated essentially every command unsafe, and a 12B one still escalate
 set of ordinary commands that hosted models passed without comment.
 
 The fix is a better rater, not a quieter one: point `approvals.rater` at a stronger model than the
-one driving the session. Suppressing those escalations would only make a number look better.
+one driving the session. That profile backs the Auto second check too, unless
+`approvals.alignmentChecker` names a different one, so the single setting moves both. Suppressing
+those escalations would only make a number look better.
 
 ## Manual and Write are for a few commands, not a long run
 

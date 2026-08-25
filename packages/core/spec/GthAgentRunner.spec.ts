@@ -1284,6 +1284,7 @@ describe('GthAgentRunner', () => {
       expect(runner.getSessionApprovals()).toEqual({
         rung: 'auto',
         rater: 'safety-rater',
+        alignmentChecker: 'safety-rater',
         allow: [{ type: 'shell', matcher: 'exact', pattern: 'npm test' }],
         deny: [{ type: 'shell', matcher: 'exact', pattern: 'npm publish' }],
         escalate: [{ type: 'shell', matcher: 'exact', pattern: 'terraform apply' }],
@@ -1437,7 +1438,7 @@ describe('GthAgentRunner', () => {
 
       await runner.processMessages([new HumanMessage('go')]);
 
-      expect(resolveRaterModelMock).toHaveBeenCalledWith('safety-rater');
+      expect(resolveRaterModelMock).toHaveBeenCalledWith('safety-rater', 'approvals.rater');
       // The profile's model rated...
       expect(profile.withStructuredOutput).toHaveBeenCalled();
       // ...and the SESSION model was never consulted for rating. This negative is the assertion
@@ -1495,8 +1496,62 @@ describe('GthAgentRunner', () => {
       const runner = new GthAgentRunner(statusUpdateCallback);
       const config = { ...mockConfig, approvals: { rater: 'safety-rater' } } as any;
       await runner.init(command, config);
-      expect(resolveRaterModelMock).toHaveBeenCalledWith('safety-rater');
+      expect(resolveRaterModelMock).toHaveBeenCalledWith('safety-rater', 'approvals.rater');
       expect(runner.getSessionApprovals().rater).toBe('safety-rater');
+    });
+
+    /**
+     * [[EXT-127]] — **the alignment checker is a SECOND profile, resolved under its own key.**
+     *
+     * The two are resolved by the same function, and the key it is given is the only thing that
+     * tells a user which of the two they mis-typed. Nothing asserted the checker's half: the string
+     * `approvals.alignmentChecker` appeared in no spec anywhere, so the call site could have
+     * reported the rater's key — or resolved the rater's profile — with everything green.
+     *
+     * Two names on purpose, since the same name twice is the DEFAULT and would let a wiring that
+     * ignored the checker key entirely pass this cell.
+     */
+    it('resolves the checker under `approvals.alignmentChecker`, separately from the rater', async () => {
+      resolveRaterModelMock.mockResolvedValue(fakeModel('safe').model);
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      await runner.init('code', {
+        ...mockConfig,
+        approvals: { mode: 'auto', rater: 'safety-rater', alignmentChecker: 'big-checker' },
+      } as any);
+      expect(resolveRaterModelMock).toHaveBeenCalledWith('safety-rater', 'approvals.rater');
+      expect(resolveRaterModelMock).toHaveBeenCalledWith(
+        'big-checker',
+        'approvals.alignmentChecker'
+      );
+      expect(runner.getSessionApprovals().alignmentChecker).toBe('big-checker');
+    });
+
+    /**
+     * [[EXT-127]] / [[GS2-62]] — **and it is strict, exactly as the rater is.** A checker profile
+     * that names nothing usable is a config error the user is told about at startup, never a quiet
+     * fall back to the session model — which is the failure this whole resolution path exists to
+     * remove, since the user asked for a different model and would silently have been given the one
+     * they were replacing.
+     *
+     * Measured before this cell existed: wrapping the checker's resolve in a `try`/`catch` that
+     * swallowed the error survived the entire suite.
+     */
+    it('a checker profile that cannot be resolved FAILS INIT — never a silent fallback', async () => {
+      resolveRaterModelMock.mockImplementation(async (_profile: string, key: string) => {
+        if (key === 'approvals.alignmentChecker') {
+          throw new Error(
+            'The identity profile "typo-checker" resolved to a config with no usable model.'
+          );
+        }
+        return fakeModel('safe').model;
+      });
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      await expect(
+        runner.init('code', {
+          ...mockConfig,
+          approvals: { mode: 'auto', rater: 'safety-rater', alignmentChecker: 'typo-checker' },
+        } as any)
+      ).rejects.toThrow('no usable model');
     });
   });
 

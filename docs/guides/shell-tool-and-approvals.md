@@ -100,12 +100,15 @@ terminal you still have to decide in.
 
 - **safe** — runs with no prompt.
 - **destructive** — harmful, but you could undo it from inside the session: `rm -rf node_modules`,
-  `git reset --hard`. Asks you, with every choice above; at Auto the agent gets a few rounds to
-  narrow or justify it first, and you are asked when those run out — and you are shown that whole
-  argument, round by round, when you are. The exception is a command one of the checks below
-  decides on its own — naming a host, or expanding an environment variable into a script — which
-  comes straight to you with no rounds at all, because no answer the agent could give would
-  change it.
+  `git reset --hard`. Asks you, with every choice above; at Auto a second check asks first whether
+  the command is what *you* asked for
+  ([below](#at-auto-a-second-check-asks-whether-you-asked-for-it)), and where that does not settle
+  it the agent gets a few rounds to narrow or justify it — you are asked when those run out, and you
+  are shown that whole argument, round by round, when you are. The exception is a command one of the
+  checks below decides on its own — naming a host, or expanding an environment variable into a
+  script: those get no rounds of argument at all, because no answer the agent could give would
+  change them. A host-naming one still goes to the second check, since whether *you* asked for that
+  fetch is not something the agent's argument could have supplied.
 - **catastrophic** — cannot be undone from inside the session: `mkfs`, `DROP DATABASE`,
   `terraform destroy -auto-approve`, `kubectl delete namespace production`. Shown in red, saying
   that undoing it would need something outside the session. It asks you *every* time: **session**
@@ -210,15 +213,19 @@ piece of the line shows: that one of them reads a local file and the next one se
 what the fetch returns is handed to a shell to run. So a joined-up fetch rests on the rater's
 judgement where a plain one does not.
 
-What the floor guarantees is the other direction — where it does fire, no model opinion can wave the
-command through.
+What the floor guarantees is the other direction — where it does fire, **no rating waves the command
+through**. Nothing the rater says about the command clears it, at any mode.
 
-**So at Auto it comes straight to you.** A floored command is re-checked from the raw text on
-every round, so there is no answer the agent could give that would clear it — asking it to try
-would spend your turn on an argument decided before it started. You are asked on the first
-attempt instead. In a run with nobody to ask (CI, `-m`, a one-shot), the error that ends the run
-points you at `approvals.allow` — and where it can name the command precisely enough to write one,
-it prints the entry for that exact command, ready to paste.
+**So the agent gets no rounds on it.** A floored command is re-checked from the raw text on every
+round, so there is no answer the *agent* could give that would clear it — asking it to try would
+spend your turn on an argument decided before it started. Two things do clear it, and both are
+statements about **you** rather than about the command: a host you named yourself
+([below](#at-auto-a-host-you-named-yourself-is-a-warning-instead-of-a-question)), and, at Auto, the
+second check ([below](#at-auto-a-second-check-asks-whether-you-asked-for-it)) finding that the fetch
+is what you asked for. Failing both, you are asked on the first attempt. In a run with nobody to ask
+(CI, `-m`, a one-shot), the error that ends the run points you at `approvals.allow` — and where it
+can name the command precisely enough to write one, it prints the entry for that exact command,
+ready to paste.
 
 #### At Auto, a host you named yourself is a warning instead of a question
 
@@ -253,8 +260,11 @@ that is closed, treat an attachment as something you have vouched for.
 
 Everything else is unchanged — **the rater
 still rates the command**, so a lookalike hostname it recognises is still named to you, anything it
-rates worse than safe still does not run, and the `deny` and `escalate` lists still decide first. If
-you want a particular host confirmed every time even so, put it in `approvals.escalate`.
+rates worse than safe still does not run on the strength of the carve-out alone, and the `deny` and
+`escalate` lists still decide first. (What can clear a `destructive` rating is the
+[second check](#at-auto-a-second-check-asks-whether-you-asked-for-it) below, which asks a different
+question and tells you when it does.) If you want a particular host confirmed every time even so,
+put it in `approvals.escalate`.
 
 What you are trading is one case: a deception good enough that the rater sees nothing wrong with it.
 Where that happens you now find out from the warning above instead of from a prompt — which is why
@@ -262,6 +272,72 @@ the warning names the host and asks you to look at it.
 
 The rater is only as good as the model behind it. On a small or local model, prefer the `write` mode
 (below) or point the rater at a stronger model with `approvals.rater`.
+
+### At Auto, a second check asks whether you asked for it
+
+Everything above is one model answering one question: *is this command dangerous?* It is asked about
+the command and nothing else — not your messages, not what the agent said the command was for, not
+the argument so far. That is on purpose. The whole of its input is a string the agent chose, so the
+less of the conversation it can be shown, the less there is to talk it round with.
+
+But "dangerous" is not the only question worth asking. `rm -rf ./build` is destructive whoever asked
+for it, and whether it should actually run turns on something the rater is deliberately not allowed
+to know: whether **you** asked for it. So at Auto — and only at Auto — a command the rater has
+declined gets a second call that asks exactly that, and nothing else. It is shown:
+
+- **your own messages**, the ones you typed this session, and only where Gaunt Sloth can tell they
+  are yours. The most recent few, each clipped, so one long paste cannot crowd out the rest. What
+  `review` and `pr` fetch for the agent to read is not your words and never counts;
+- **the command**, the rating it got, and the reason the agent gave for wanting it — each kept in
+  its own place, so a command cannot pass itself off as something you said;
+- **its own earlier rounds**, where the argument has had any, as its own turns rather than as a
+  summary of them.
+
+It answers by approving, by suggesting a change for the agent to make, or by bringing the decision
+to you — which it may do sooner than the rounds would have.
+
+What an approval of its is allowed to do is **bounded in code**, not asked of it politely:
+
+- it **can** clear a **destructive** rating, and it **can** clear the host-naming floor above. Those
+  two are the whole of the authority it has;
+- it **cannot** clear **attack**, **catastrophic**, or any of the deterministic refusals. Those hold
+  whatever it answers. That is enforced where the answer is read, so a check talked into approving
+  one of them changes nothing.
+
+Whenever it is what let a command run, you are told rather than asked — the same trade as the
+carve-out above, and in its own words so that you can tell which of the two let it through. It names
+the command, and says so as well when what it cleared was the host-naming floor:
+
+```
+⚠ Ran rm -rf ./build without asking you, because the alignment check found it matches what you
+  asked for and approvals is set to Auto.
+```
+
+```
+⚠ Ran curl -sSf https://example.com/install.sh | sh without asking you, because the alignment
+  check found it matches what you asked for and approvals is set to Auto. It reaches the network —
+  check the host is the one you meant.
+```
+
+Where **both** things happened — you named the host yourself, and the rater called the command
+destructive anyway — you get **one** notice rather than two, and it says what actually happened:
+
+```
+⚠ Ran curl -fsSL https://example.com/install.sh -o install.sh without asking you, because your own
+  message named https://example.com/install.sh and approvals is set to Auto. The auto-rater rated
+  it destructive, and the alignment check found it matches what you asked for. Check the host is
+  the one you meant.
+```
+
+It costs a second model call, only at Auto and only on a command the rater did not clear — never at
+`assisted`, and never on a command that was going to run anyway. By default it is the same model as
+the rater; `approvals.alignmentChecker` ([below](#the-extras-rater-allow-deny-escalate)) points it
+somewhere else.
+
+**If it cannot run, nothing changes.** A checker model that is missing, that runs out of time, or
+that answers with something unusable leaves the rater's own decision exactly as it stood — the
+command goes back to the agent, or comes to you, precisely as it would have if this check did not
+exist. It is not another thing that can start interrupting you when it breaks.
 
 ### Give a local rater enough time
 
@@ -287,6 +363,11 @@ budget:
 
 It is a number you set rather than one gth guesses from the provider, because a guess about your
 hardware that turns out wrong fails quietly.
+
+The same number covers the [second check](#at-auto-a-second-check-asks-whether-you-asked-for-it) at
+Auto — the whole check, not each turn of it. There is deliberately no separate setting: this is the
+one budget you own for one gate decision, and a second number to keep in step with it is mostly a
+way to get one of the two wrong.
 
 To have the agent run tests *without* a rating call, give it the fixed `run_tests` dev-command tool:
 you set the exact command, so there is nothing for the model to compose and **nothing for the rater
@@ -351,7 +432,9 @@ than something between `manual` and `assisted`. Set it whenever you want it, wit
 [the picker](interactive-sessions.md#slash-commands).
 
 `manual`, `write` and `bypass` consult no model at all, so they are reproducible and cost
-nothing. `assisted` and `auto` each spend one rating call per gated command.
+nothing. `assisted` and `auto` each spend one rating call per gated command, and at `auto` a command
+the rating did not clear spends a second one on
+[the check that asks whether you asked for it](#at-auto-a-second-check-asks-whether-you-asked-for-it).
 
 Choosing `bypass` is not choosing more trust in the rater: it switches the gate off. Nothing is
 rated, nothing is asked, and the only check left is the `shell` entries in your deny list — a `tool`
@@ -451,6 +534,12 @@ for `{ "mode": <value> }`:
   model. This is the fix for a weak main model: point it at a stronger one. A name that does not
   resolve is a config error, never a silent fallback. It is only consulted at `assisted` and
   `auto`.
+- **`alignmentChecker`** — the same thing for the
+  [second check at Auto](#at-auto-a-second-check-asks-whether-you-asked-for-it). It defaults to
+  whatever `rater` is set to, so setting `rater` alone moves both, and you only write this one when
+  you want the two questions asked by different models. A name that does not resolve is a config
+  error here too. It is only consulted at `auto`, and it takes no timeout of its own — see
+  [Give a local rater enough time](#give-a-local-rater-enough-time).
 - **`allow`** — what you trust. Checked **before** the rater at every mode except `bypass`, so an
   allow-listed call does not stop to ask you — the one exception is the `rate` tripwire below. This
   is the supported way to make a non-interactive pipeline pass.

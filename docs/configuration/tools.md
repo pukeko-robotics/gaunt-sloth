@@ -275,9 +275,10 @@ setting — not here.
 ### `approvals`
 
 Approvals are a **top-level** key (settable per command as `commands.<cmd>.approvals`, which
-overrides only the fields it names: `mode`, `rater`, `raterTimeoutMs` and `allow` replace the
-root's, while `deny` and `escalate` add to it rather than replacing it — a command may narrow what
-runs unprompted, never widen what is prohibited). It takes one of five mode names — `manual`, `write`,
+overrides only the fields it names: `mode`, `rater`, `alignmentChecker`, `raterTimeoutMs` and
+`allow` replace the root's, while `deny` and `escalate` add to it rather than replacing it — a
+command may narrow what runs unprompted, never widen what is prohibited). It takes one of five mode
+names — `manual`, `write`,
 `assisted` (the default), `auto`, `bypass` — either on its own or as `mode` inside an object
 carrying the extras. See
 [Migration](../MIGRATION.md#i-approvals-and-the-auto-rater-hard) for the retired keys.
@@ -287,6 +288,12 @@ carrying the extras. See
   mode the session starts on.
 - `rater` — the **name** of an identity profile whose model rates, instead of the session model. A
   name that does not resolve is a config error. Only consulted at `assisted` and `auto`.
+- `alignmentChecker` — the **name** of an identity profile for the
+  [second check at Auto](../guides/shell-tool-and-approvals.md#at-auto-a-second-check-asks-whether-you-asked-for-it),
+  which asks whether a command the rater declined is what you asked for. Defaults to whatever `rater`
+  resolves to, so you write this one only to have the two questions asked by different models. A name
+  that does not resolve is a config error. Only consulted at `auto`, and it has no timeout of its
+  own — `raterTimeoutMs` covers it.
 - `allow` — what you trust. Checked before the rater at every mode except `bypass`.
 - `deny` — what never runs. A `shell` entry is checked before `allow` and before the rater, and it
   still applies under `bypass`. An entry naming a tool is compared only where the mode gates that
