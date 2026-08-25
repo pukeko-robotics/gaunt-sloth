@@ -518,11 +518,12 @@ export async function createInteractiveSession(
     // distinction that survives a terminal with no colour at all. The Ink TUI renders the same
     // rows, so the two surfaces cannot describe one exchange differently.
     runner.setNegotiationDisplay({
-      round: ({ round, position }) => {
+      round: ({ round, position, agreed }) => {
         for (const row of renderNegotiationRows([round], {
           width: frameWidthFor(output.columns),
           mode: 'live',
           from: position,
+          ...(agreed ? { agreed } : {}),
         })) {
           if (row.voice === 'rater') displayDialogLine(row.text, 'warn');
           else if (row.voice === 'agent') displayDialogLine(row.text);

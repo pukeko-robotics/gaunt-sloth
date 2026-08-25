@@ -401,7 +401,7 @@ export interface LiveNegotiationRound {
   /** The round: the command proposed, the agent's justification, the rater's outcome and reason. */
   round: RaterNegotiationRound;
   /**
-   * **Where this round sits in the exchange since a human was last involved, counting from zero.**
+   * **How many rounds of the transcript precede this one, counting from zero.**
    *
    * It is passed rather than derived because the two facts {@link renderNegotiationRows} marks —
    * *this was rated on the command alone* (§5.1's round 1) and *this is round N* — are properties
@@ -409,10 +409,26 @@ export interface LiveNegotiationRound {
    * array's length away as a source for them. A live block that derived them would call every
    * round the first one.
    *
-   * The approving round that ENDS a negotiation sits after every rejection, so its position is the
-   * rejection count rather than one less.
+   * For a rejection this is its own index: the k-th rejection is at `k - 1`, which numbers it
+   * `Round k`. For {@link agreed} it is the whole rejection count, because the approving round
+   * follows all of them — but it is NOT numbered from it; see {@link agreed}.
    */
   position: number;
+  /**
+   * [[TUI-C69]] §5.4 — **the rater agreed, so this round ends the argument rather than continuing
+   * it, and it takes no round number.**
+   *
+   * **A number here would be a number two different commands answer to.** The transcript holds
+   * rejections and nothing else — {@link ShellNegotiationState.recordRejection} is its only writer
+   * — so an approved call never joins it, and the next rejection takes the position this round was
+   * displayed at. Numbered, the live view would show two `Round 2` rows, and the escalation prompt
+   * (which renders that same transcript) would give `Round 2` to a third command again. The two
+   * views exist to be one account of one argument, so the number belongs to whatever the transcript
+   * says it belongs to, and the round that is not in the transcript is labelled instead of counted.
+   *
+   * Left unset for a rejection.
+   */
+  agreed?: boolean;
 }
 
 /**
@@ -597,11 +613,26 @@ export function renderNegotiationRows(
      * hands over a single round.
      */
     from?: number;
+    /**
+     * [[TUI-C69]] §5.4 — **this live round is the rater AGREEING**, which ends the argument
+     * instead of being another attempt in it, so it is labelled rather than numbered.
+     *
+     * See {@link LiveNegotiationRound.agreed} for why it takes no number: the approved call never
+     * joins the transcript, so any number it were given is the one the next rejection then takes —
+     * and the escalation prompt, which renders the transcript, would hand that number to a
+     * different command. `live` only; the escalation block renders the transcript, which contains
+     * no approved rounds to label.
+     */
+    agreed?: boolean;
   }
 ): NegotiationRow[] {
   if (rounds.length === 0) return [];
   const width = options?.width;
   const live = options?.mode === 'live';
+  // The rater agreeing ends the argument; it is not another numbered attempt in it. Only a live
+  // block can carry one — the escalation block renders the transcript, and the transcript holds
+  // rejections alone.
+  const agreed = live && options?.agreed === true;
   // A screen shows the newest rounds; a consumer with no screen (§6.2's exception message) shows
   // them all, for the same reason it is handed no width.
   const shown = width === undefined ? rounds : rounds.slice(-NEGOTIATION_MAX_ROUNDS_SHOWN);
@@ -646,9 +677,15 @@ export function renderNegotiationRows(
     // nothing but reaching a person empties it ([[EXT-108]] stopped an approved call doing so), so
     // it is pinned against a real run rather than by reading.
     const roundOne = dropped + index === 0;
+    // **The round that ENDS the argument is labelled, not numbered.** Numbering it would spend a
+    // number the transcript is about to reuse — the approved call never joins the transcript, so
+    // the next rejection sits at the very position this round was drawn at, and the escalation
+    // prompt then gives that number to a third command. A label cannot collide with a count.
     rows.push({
       voice: 'agent',
-      text: `  Round ${firstNumber + index}${pending}: ${oneLine(round.command)}`,
+      text: agreed
+        ? `  Agreed: ${oneLine(round.command)}`
+        : `  Round ${firstNumber + index}${pending}: ${oneLine(round.command)}`,
     });
     const justification = round.justification?.trim();
     if (justification) {

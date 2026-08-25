@@ -1196,10 +1196,9 @@ export class GthAgentRunner {
     this.negotiationDisplay?.end?.();
   }
 
-  private showNegotiationRound(round: RaterNegotiationRound, position: number): void {
+  private showNegotiationRound(event: LiveNegotiationRound): void {
     const display = this.negotiationDisplay;
     if (!display) return;
-    const event: LiveNegotiationRound = { round, position };
     try {
       display.round(event);
     } catch (e) {
@@ -1235,17 +1234,20 @@ export class GthAgentRunner {
     // nothing was refused, and there is nothing for a person to have watched happen.
     const rejections = this.negotiation.transcript().length;
     if (rejections === 0) return;
-    // The approving round sits AFTER every rejection, so its position is the rejection count
-    // rather than one less — which is what numbers it `Round rejections + 1` on screen.
-    this.showNegotiationRound(
-      {
+    // The approving round sits AFTER every rejection, so the whole transcript precedes it — but it
+    // is `agreed`, so it is LABELLED rather than numbered. A number here would be the very one the
+    // next rejection takes: this call never joins the transcript, and the escalation prompt renders
+    // that transcript, so the two views would give one number to two different commands.
+    this.showNegotiationRound({
+      round: {
         command,
         ...(justification ? { justification } : {}),
         outcome: verdict?.outcome ?? 'safe',
         reason: verdict?.reason ?? '',
       },
-      rejections
-    );
+      position: rejections,
+      agreed: true,
+    });
     await new Promise<void>((resolve) => setTimeout(resolve, NEGOTIATED_APPROVAL_COOLDOWN_MS));
   }
 
@@ -1710,7 +1712,10 @@ export class GthAgentRunner {
           // Read AFTER `recordRejection`, so the count carries this round: the k-th rejection
           // sits at position k-1, which numbers it `Round k` on screen — the number the
           // escalation transcript would give the same round.
-          this.showNegotiationRound(round, this.negotiation.counters().rejectionsSinceHuman - 1);
+          this.showNegotiationRound({
+            round,
+            position: this.negotiation.counters().rejectionsSinceHuman - 1,
+          });
           if (outcome === 'reject') {
             // [[TUI-C69]] §5.4 — name the call the gate is about to refuse BACK TO THE AGENT, so
             // both surfaces tone its result row as a clarification request rather than as a failed

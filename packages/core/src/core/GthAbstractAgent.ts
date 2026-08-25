@@ -201,6 +201,12 @@ function pendingToolCallIds(
  * Name AND arguments, then FIRST unclaimed — which is exact rather than a correlation, because the
  * request was built from that very object. The claim flag is what keeps two identical calls in one
  * message (a model proposing the same command twice) from both taking the first id.
+ *
+ * **The arguments are half the match, and only one arrangement can show it.** Two calls of one name
+ * with the SAME arguments come back correctly under a name-only match too, because the claim flag
+ * alone puts them in order — so the case that discriminates is two calls of one name with DIFFERENT
+ * arguments whose requests arrive in the opposite order to the `tool_calls` they were built from.
+ * There, name-only gives every request an id and attaches each to the wrong command.
  */
 function claimToolCallId(
   candidates: { name: string; args: string; id: string; claimed: boolean }[],

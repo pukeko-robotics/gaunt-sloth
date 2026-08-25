@@ -51,8 +51,13 @@ export function NegotiationPanel({
   if (rounds.length === 0) return null;
   return (
     <Box flexDirection="column">
-      {rounds.map(({ round, position }, index) =>
-        renderNegotiationRows([round], { width, mode: 'live', from: position }).map((row, r) => (
+      {rounds.map(({ round, position, agreed }, index) =>
+        renderNegotiationRows([round], {
+          width,
+          mode: 'live',
+          from: position,
+          ...(agreed ? { agreed } : {}),
+        }).map((row, r) => (
           <Text key={`${index}-${r}`} color={voiceColour(row.voice)}>
             {row.text}
           </Text>

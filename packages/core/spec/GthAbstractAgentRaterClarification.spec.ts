@@ -120,6 +120,44 @@ describe('[[TUI-C69]] §5.4 — the pending call carries its id, and a refused r
     expect(pending.map((p: { id?: string }) => p.id)).toEqual(['call_1', 'call_2']);
   });
 
+  /**
+   * **The match is name AND arguments, and this is the fixture that can tell the difference.**
+   *
+   * The sibling case above cannot: its two calls share a name *and* their arguments, so a name-only
+   * match plus the `claimed` flag still hands back `call_1, call_2` and a relaxed matcher survives
+   * it. Here the two calls differ in their arguments and the requests arrive in the OPPOSITE order
+   * to the `tool_calls` they were built from — the one arrangement where "first unclaimed call with
+   * this name" and "the call this request was built from" are different objects. Name-only returns
+   * `b → call_a`, `a → call_b`: every request gets an id, all the ids are used once, and each one
+   * is attached to the wrong command.
+   *
+   * That is what makes the exactness worth pinning at all. The id is a display attribution — the
+   * gate reads nothing from it — so a relaxed matcher does not break a run; it silently tones one
+   * command's row with another command's rejection, on a screen whose whole purpose is telling a
+   * person which call the rater refused.
+   */
+  it('claims the id of the call a request was built from, not the first of that name', async () => {
+    const agent = await makeAgent(
+      suspendedState(
+        [
+          { name: 'run_shell_command', args: { command: 'git status' }, id: 'call_a' },
+          { name: 'run_shell_command', args: { command: 'git push --force' }, id: 'call_b' },
+        ],
+        [
+          { name: 'run_shell_command', args: { command: 'git push --force' } },
+          { name: 'run_shell_command', args: { command: 'git status' } },
+        ]
+      )
+    );
+    const pending = await agent.getPendingToolInterrupts(runConfig);
+    expect(
+      pending.map((p: { args: Record<string, unknown>; id?: string }) => [p.args.command, p.id])
+    ).toEqual([
+      ['git push --force', 'call_b'],
+      ['git status', 'call_a'],
+    ]);
+  });
+
   /** Argument key ORDER is not identity — a re-serialised object must still match its own call. */
   it('matches a request whose argument keys arrived in a different order', async () => {
     const agent = await makeAgent(

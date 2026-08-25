@@ -72,6 +72,20 @@ interface DriveOptions {
   human?: 'approve' | 'reject';
 }
 
+/**
+ * Every `Round N` a rendered block draws, as `[number, command]`.
+ *
+ * The round number is read back OUT of the rendered text rather than off the event, because the
+ * question these cases ask is what the two views TELL A PERSON — and the defect this pins was
+ * invisible to every assertion phrased over positions, which were correct and agreed with each
+ * other all along.
+ */
+const numbered = (rows: readonly { text: string }[]): [number, string][] =>
+  rows
+    .map((row) => /^\s*Round (\d+)(?: \(this request\))?: (.+)$/.exec(row.text))
+    .filter((match): match is RegExpExecArray => match !== null)
+    .map((match) => [Number(match[1]), match[2]] as [number, string]);
+
 interface DriveHandle {
   /** Resolves when the run has finished; rejects nothing (the error is captured). */
   run: Promise<unknown>;
@@ -215,15 +229,89 @@ describe('[[TUI-C69]] §5.4/§5.5 — the visible negotiation and the cooldown',
     /**
      * The position is the fact the surface cannot derive: it is handed one round at a time, so
      * `Round N` and §5.1's *rated on the command alone* marker have no array length to come from.
-     * The approving round sits AFTER every rejection, which is the off-by-one worth pinning.
+     * The approving round sits AFTER every rejection, which is the off-by-one worth pinning — and
+     * it is marked as the one the rater AGREED to, which is what stops it being numbered from a
+     * position the next rejection also occupies.
      */
-    it('numbers each round by its place in the exchange, the approving one last', async () => {
+    it('places each round in the exchange, and marks the one the rater agreed to', async () => {
       const handle = drive({
         calls: [{ command: 'a' }, { command: 'b' }, { command: 'c' }],
         script: ['destructive', 'destructive', 'safe'],
       });
       await handle.run;
       expect(handle.rounds.map((r) => r.position)).toEqual([0, 1, 2]);
+      expect(handle.rounds.map((r) => r.agreed ?? false)).toEqual([false, false, true]);
+    });
+
+    /**
+     * **The case the two views can disagree about, driven end to end.**
+     *
+     * *reject → the agent complies → the approved call → the agent proposes again → reject* is the
+     * interleaving [[EXT-108]] exists to support: it stopped an approved call from emptying the
+     * transcript precisely so this history survives. The transcript still holds REJECTIONS alone,
+     * so an approved call numbered from its position takes the number the next rejection then takes
+     * — the live panel showing two `Round 2` rows, and the escalation prompt, which renders that
+     * same transcript, giving `Round 2` to a third command while never showing the second at all.
+     *
+     * **The assertion is duplicate-shaped, not label-shaped.** Every other case here is phrased over
+     * positions or over one round's text, and the positions were correct: an off-by-one is caught
+     * by the case above and a DUPLICATE is not. So this reads the numbers back out of the rendered
+     * text and requires that no number names two commands, then requires the prompt's own numbering
+     * to agree with the panel's command for command.
+     */
+    it('gives one round number to one command, in the live view and at the prompt alike', async () => {
+      const handle = drive({
+        calls: [
+          { command: 'git reset --hard origin/main' },
+          { command: 'git stash' },
+          { command: 'git reset --hard HEAD~5' },
+          { command: 'git reset --hard HEAD~2' },
+          { command: 'git reset --hard HEAD~1' },
+        ],
+        script: ['destructive', 'safe', 'destructive', 'destructive', 'destructive'],
+        human: 'reject',
+      });
+      await handle.run;
+
+      // The exchange as a surface lays it out — the same call both surfaces make, per round.
+      const liveRows = handle.rounds.flatMap((event) =>
+        renderNegotiationRows([event.round], {
+          width: 100,
+          mode: 'live',
+          from: event.position,
+          ...(event.agreed ? { agreed: true } : {}),
+        })
+      );
+      const live = numbered(liveRows);
+      expect(live.map(([n]) => n)).toEqual([...new Set(live.map(([n]) => n))]);
+
+      // The approved call is labelled rather than counted: the number it would have taken is the
+      // one the rejection after it takes.
+      expect(liveRows.map((row) => row.text)).toContain('  Agreed: git stash');
+      expect(live.map(([, command]) => command)).not.toContain('git stash');
+
+      // ...and the argument a person is asked to rule on numbers the same commands the same way.
+      // Rendered with no width, which is the path that returns the whole transcript unsliced.
+      expect(handle.prompts).toHaveLength(1);
+      const prompt = handle.prompts[0];
+      expect(
+        numbered(
+          renderNegotiationRows(prompt.negotiationRounds ?? [], {
+            attempts: prompt.negotiationAttempts,
+          })
+        )
+      ).toEqual(live);
+
+      // On a real screen the prompt shows the newest rounds only, still numbered by their true
+      // attempt number — so the command the panel called `Round 2` is the one the prompt does.
+      expect(
+        numbered(
+          renderNegotiationRows(prompt.negotiationRounds ?? [], {
+            width: 100,
+            attempts: prompt.negotiationAttempts,
+          })
+        )
+      ).toEqual(live.filter(([n]) => n >= 2));
     });
 
     /** The rounds a person is later shown are the rounds they watched — one renderer, one account. */
@@ -325,6 +413,40 @@ describe('[[TUI-C69]] §5.4/§5.5 — the visible negotiation and the cooldown',
       expect(later.some((r) => r.voice === 'chrome')).toBe(false);
       // ...and it is NOT the escalation heading, which counts an argument a person is ruling on.
       expect(opening.map((r) => r.text).join('\n')).not.toContain('argued with the auto-rater');
+    });
+
+    /**
+     * §5.4 — **the round that ENDS the argument is labelled, never numbered.** The transcript holds
+     * rejections alone, so any number given here is the number the next rejection takes, and the
+     * escalation prompt — which renders that same transcript — would hand it to a third command.
+     * Everything else about the round is unchanged: it is still the agent's proposal, with the
+     * rater's answer beneath it in the rater's own voice.
+     */
+    it('labels the round the rater agreed to instead of numbering it', () => {
+      const rows = renderNegotiationRows([round({ command: 'git stash' })], {
+        width: 100,
+        mode: 'live',
+        from: 1,
+        agreed: true,
+      });
+      const text = rows.map((r) => r.text).join('\n');
+      expect(text).toContain('Agreed: git stash');
+      expect(text).not.toContain('Round');
+      expect(rows.find((r) => r.text.includes('Agreed:'))?.voice).toBe('agent');
+      expect(text).toContain('agent justified: the user asked');
+      expect(rows.find((r) => r.text.includes('rater answered'))?.voice).toBe('rater');
+    });
+
+    /**
+     * The escalation block renders the transcript, and the transcript holds no approved round to
+     * label — so the flag is a live-mode fact and cannot reach the prompt's numbering.
+     */
+    it('leaves the escalation block numbered even if told a round was agreed', () => {
+      const text = renderNegotiationRows([round()], { width: 100, attempts: 1, agreed: true })
+        .map((r) => r.text)
+        .join('\n');
+      expect(text).toContain('Round 1 (this request): git reset --hard origin/main');
+      expect(text).not.toContain('Agreed:');
     });
 
     /**
@@ -501,7 +623,14 @@ describe('[[TUI-C69]] §5.4/§5.5 — the visible negotiation and the cooldown',
       expect(handle.rounds).toEqual([]);
       // A literal, not the constant: the mutation this catches is the DISPLAY GATE being dropped,
       // and a bound that moved with the constant would still pass on a shortened hold.
-      expect(Date.now() - started).toBeLessThan(800);
+      //
+      // **Half the interval, so the bound is not the interval.** What must not happen here is an
+      // 800 ms sleep, and a bound of exactly 800 against a sleep of exactly 800 leaves this cell no
+      // margin at all: the run's own wall-clock cost then lands on the boundary, and the cell reds
+      // on a contended machine or a slow Windows runner for a reason that has nothing to do with
+      // the hold. That is the shape someone re-runs to green rather than diagnoses. 400 catches the
+      // sleep with 400 ms to spare on a path that does not sleep at all.
+      expect(Date.now() - started).toBeLessThan(400);
       expect(mockAgent.streamResume).toHaveBeenCalledTimes(2);
     });
 
@@ -515,7 +644,9 @@ describe('[[TUI-C69]] §5.4/§5.5 — the visible negotiation and the cooldown',
       const started = Date.now();
       await handle.run;
       expect(handle.rounds).toEqual([]);
-      expect(Date.now() - started).toBeLessThan(800);
+      // Half the interval, for the same reason as the cell above: the bound has to be able to
+      // catch an 800 ms sleep without sitting on its boundary.
+      expect(Date.now() - started).toBeLessThan(400);
     });
   });
 });

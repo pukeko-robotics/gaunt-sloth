@@ -112,6 +112,18 @@ const rejectedRound = (position: number): LiveNegotiationRound => ({
   position,
 });
 
+/** The round the rater agreed to — the one that ends the argument, and the one §5.5 holds. */
+const agreedRound = (position: number): LiveNegotiationRound => ({
+  round: {
+    command: 'git stash',
+    justification: 'saves the work first, as the rating asked',
+    outcome: 'safe',
+    reason: 'nothing is discarded',
+  },
+  position,
+  agreed: true,
+});
+
 describe('interactiveSessionModule — [[TUI-C69]] §5.4 the live negotiation on the readline surface', () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -200,5 +212,46 @@ describe('interactiveSessionModule — [[TUI-C69]] §5.4 the live negotiation on
     // The escalation heading is NOT what a live round draws: nobody is being asked to rule on
     // anything yet.
     expect(lines.join('\n')).not.toContain('argued with the auto-rater');
+  });
+
+  /**
+   * §5.4 — **the round the rater agreed to is labelled, not numbered, on this surface too.**
+   *
+   * The duplicate the label prevents lives in the shared position rather than in either renderer,
+   * so `--no-tui` is no escape from it: an approved call never joins the transcript, so the number
+   * it would take is the number the next rejection takes, and the escalation summary this surface
+   * prints beneath the live rounds renders that transcript. The pair below is the exact
+   * interleaving — a rejection, the agreed call, and the rejection that follows it.
+   */
+  it('labels the round the rater agreed to, so no number names two commands', async () => {
+    await startSession();
+    capturedDisplay!.round(rejectedRound(0));
+    capturedDisplay!.round(agreedRound(1));
+    capturedDisplay!.round(rejectedRound(1));
+
+    const lines = written().map(([line]) => line);
+    const text = lines.join('\n');
+    expect(text).toContain('Agreed: git stash');
+    expect(text).toContain('rater answered: safe — nothing is discarded');
+    // Round 2 belongs to the rejection that followed the approved call, and to nothing else.
+    expect(lines.filter((line) => /^\s*Round 2:/.test(line))).toHaveLength(1);
+    expect(lines.find((line) => /^\s*Round 2:/.test(line))).toContain('git reset --hard');
+  });
+
+  /**
+   * The rater's turn is warn-toned whatever it answered — the tone names the speaker, not the
+   * verdict, so an agreeing round is as attributable as a refusing one.
+   */
+  it('keeps the rater’s tone on the round it agreed to', async () => {
+    await startSession();
+    capturedDisplay!.round(agreedRound(1));
+
+    const lines = written();
+    expect(lines.find(([text]) => text.includes('rater answered'))?.[1]).toBe('warn');
+    // Found FIRST, then asserted on. `find(...)?.[1]` alone reads as a tone assertion and is not
+    // one: a row that is not there yields `undefined`, which is the value the assertion wants.
+    const command = lines.find(([text]) => text.includes('Agreed: git stash'));
+    expect(command).toBeDefined();
+    expect(command?.[1]).toBeUndefined();
   });
 });

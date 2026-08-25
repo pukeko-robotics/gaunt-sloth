@@ -18,7 +18,7 @@ import type { LiveNegotiationRound } from '@gaunt-sloth/core/core/shell/negotiat
  * same core rows, which is what stops them describing one exchange two ways.
  */
 
-const round = (over: Partial<LiveNegotiationRound['round']> = {}, position = 0) =>
+const round = (over: Partial<LiveNegotiationRound['round']> = {}, position = 0, agreed = false) =>
   ({
     round: {
       command: over.command ?? 'git reset --hard origin/main',
@@ -27,6 +27,7 @@ const round = (over: Partial<LiveNegotiationRound['round']> = {}, position = 0) 
       reason: over.reason ?? 'discards every unpushed commit, not only today’s',
     },
     position,
+    ...(agreed ? { agreed } : {}),
   }) as LiveNegotiationRound;
 
 /** The raw (ANSI-bearing) row containing `text`, so a colour claim is read off the real frame. */
@@ -97,22 +98,30 @@ describe('tui <NegotiationPanel>', () => {
   /**
    * The approving round is a round of the exchange too — it is the one §5.5 holds on screen, and a
    * panel that showed only refusals would end the story at the last rejection.
+   *
+   * **It is LABELLED, not numbered**, because the transcript the escalation prompt renders holds
+   * rejections alone: an approved call never joins it, so a number drawn here is the number the
+   * next rejection takes, and the panel and the prompt would then give one number to two different
+   * commands. See `negotiationVisible.spec.ts` for that case driven end to end.
    */
-  it('draws the round in which the rater agreed, as the last of the exchange', () => {
+  it('draws the round in which the rater agreed, labelled rather than numbered', () => {
     const { lastFrame, unmount } = render(
       <NegotiationPanel
         rounds={[
           round({}, 0),
           round(
             { command: 'git reset --soft HEAD~2', outcome: 'safe', reason: 'keeps the tree' },
-            1
+            1,
+            true
           ),
         ]}
       />
     );
     const flat = stripAnsi(lastFrame() ?? '').replace(/\s+/g, ' ');
-    expect(flat).toContain('Round 2: git reset --soft HEAD~2');
+    expect(flat).toContain('Agreed: git reset --soft HEAD~2');
     expect(flat).toContain('rater answered: safe — keeps the tree');
+    // The number this round would have taken belongs to the rejection that may follow it.
+    expect(flat).not.toContain('Round 2');
     unmount();
   });
 });
