@@ -784,9 +784,9 @@ describe('[[TUI-C69]] §5.4/§5.5 — the visible negotiation and the cooldown',
      * **It is not an abort window, and this spec is not evidence of one.** Nothing on this path
      * re-checks the run's abort signal: the cases below drive `processMessages`, whose
      * `resolveToolInterrupts` threads no signal at all. See the note on `showNegotiatedApproval`
-     * before restoring any stronger reading of the interval.
-     */
-    /**
+     * before restoring any stronger reading of the interval. This holds for every case in this
+     * block: none of them passes `events: true`.
+     *
      * **The numbers below are LITERALS on purpose.** Advancing by
      * `NEGOTIATED_APPROVAL_COOLDOWN_MS - 1` would move the assertion with the value it is meant to
      * pin, so a hold cut to 100 ms would still pass — the assertion-that-cannot-fail shape. Written
