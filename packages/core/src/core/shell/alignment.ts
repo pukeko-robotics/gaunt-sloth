@@ -817,32 +817,61 @@ export function isAlignmentFailClosed(decision: AlignmentDecision | undefined): 
  * the carve-out's own notice). That applies with MORE force here than to the rarer floored arm,
  * because this is the common one.
  *
- * **One renderer for both arms of it, deliberately.** A plain `destructive` lifted by the checker
- * and §4.6's open-world floor lifted by the checker are the same claim — *a second model read your
- * messages and concluded this matches what you asked for* — differing only in whether the network
- * was reached, so they differ by one clause rather than by being two hand-written sentences. Two
- * copies of one security notice is how the surfaces come to describe one event two ways, which is
- * the defect [[TUI-C72]] exists for; this is the second time in this area, so it is not a
- * hypothetical.
+ * **One renderer for all three arms, deliberately.** A plain `destructive` lifted by the checker,
+ * §4.6's open-world floor lifted by the checker, and a §4.6-CARVED command lifted by the checker are
+ * the same claim — *a second model read your messages and concluded this matches what you asked
+ * for* — differing only in what else the user has to be told, so they differ by a clause rather than
+ * by being three hand-written sentences. Two copies of one security notice is how the surfaces come
+ * to describe one event two ways, which is the defect [[TUI-C72]] exists for; this is the second
+ * time in this area, so it is not a hypothetical. The neutralisation below runs ONCE, above the
+ * branch, for that same reason: an arm that interpolated the command for itself would be protected
+ * only by whichever cell happened to drive the other arm.
  *
- * **[[EXT-106]]'s carved-host notice is NOT this and must not be folded in.** It says the *user*
- * named the host; this says a *model* judged the request. A shared sentence would let the weaker
- * claim stand in for the stronger.
+ * **The carved arm is a MERGED notice, and on that path it REPLACES [[EXT-106]]'s own.** §4.6's
+ * notice says the user named the host, and adds *"the auto-rater found nothing wrong with it"* —
+ * true on the path it was written for, and false here, because reaching a check at all requires the
+ * classifier to have rated the command `destructive`. So where both apply, the two are announced as
+ * one sentence stating what actually happened: the host the user named, the rating the classifier
+ * gave, and the check that lifted it. The call site fires §4.6's notice only where this arm does
+ * not, so a user is never reading two accounts of one command — and never learning to skim a stack
+ * of warnings about a single event.
+ *
+ * **The host is carried in, not inferred from the floor.** `reachesNetwork` is the caller's reading
+ * of which floor stood, and a carved command has no floor left standing — so an arm that leaned on
+ * it would drop the only line telling the user to look at the host, on the one path where the
+ * user's own message is what authorised the fetch. The hosts are passed because the caller is the
+ * one reader that knows arm precedence resolved to a carve.
  *
  * The command is model-authored, so it is neutralised to one line before it reaches a terminal —
  * the same treatment the negotiation transcript's own rows give it. Deliberately not truncated:
- * this notice's whole job is to say WHICH command ran.
+ * this notice's whole job is to say WHICH command ran. The hosts are not neutralised and do not need
+ * to be: `carvedOpenWorldHosts` returns a host only where it matched the user's own words verbatim,
+ * so no character of one is the model's to choose.
  *
  * @param rungLabel the resolved rung in its §10 rule 4 display spelling, passed in rather than
  *   spelled here so the one label table stays the only writer of it.
+ * @param carvedHosts §4.6's carved hosts, or empty. Non-empty selects the merged arm, and is
+ *   mutually exclusive with `reachesNetwork` by construction — the caller derives hosts only where
+ *   the effective floor is `null`.
  */
 export function alignmentApprovalNotice(options: {
   command: string;
   rungLabel: string;
   reachesNetwork: boolean;
+  carvedHosts?: readonly string[];
 }): string {
+  const command = neutralizeToOneLine(options.command);
+  const carvedHosts = options.carvedHosts ?? [];
+  if (carvedHosts.length > 0) {
+    return (
+      `\n⚠ Ran ${command} without asking you, because your own message named ` +
+      `${carvedHosts.join(', ')} and approvals is set to ${options.rungLabel}. The auto-rater ` +
+      'rated it destructive, and the alignment check found it matches what you asked for. Check ' +
+      'the host is the one you meant.'
+    );
+  }
   return (
-    `\n⚠ Ran ${neutralizeToOneLine(options.command)} without asking you, because the alignment ` +
+    `\n⚠ Ran ${command} without asking you, because the alignment ` +
     `check found it matches what you asked for and approvals is set to ${options.rungLabel}.` +
     (options.reachesNetwork ? ' It reaches the network — check the host is the one you meant.' : '')
   );

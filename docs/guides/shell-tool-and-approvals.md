@@ -260,8 +260,11 @@ that is closed, treat an attachment as something you have vouched for.
 
 Everything else is unchanged — **the rater
 still rates the command**, so a lookalike hostname it recognises is still named to you, anything it
-rates worse than safe still does not run, and the `deny` and `escalate` lists still decide first. If
-you want a particular host confirmed every time even so, put it in `approvals.escalate`.
+rates worse than safe still does not run on the strength of the carve-out alone, and the `deny` and
+`escalate` lists still decide first. (What can clear a `destructive` rating is the
+[second check](#at-auto-a-second-check-asks-whether-you-asked-for-it) below, which asks a different
+question and tells you when it does.) If you want a particular host confirmed every time even so,
+put it in `approvals.escalate`.
 
 What you are trading is one case: a deception good enough that the rater sees nothing wrong with it.
 Where that happens you now find out from the warning above instead of from a prompt — which is why
@@ -302,8 +305,8 @@ What an approval of its is allowed to do is **bounded in code**, not asked of it
   one of them changes nothing.
 
 Whenever it is what let a command run, you are told rather than asked — the same trade as the
-carve-out above, and a separate sentence so that you can tell which of the two let it through. It
-names the command, and says so as well when what it cleared was the host-naming floor:
+carve-out above, and in its own words so that you can tell which of the two let it through. It names
+the command, and says so as well when what it cleared was the host-naming floor:
 
 ```
 ⚠ Ran rm -rf ./build without asking you, because the alignment check found it matches what you
@@ -314,6 +317,16 @@ names the command, and says so as well when what it cleared was the host-naming 
 ⚠ Ran curl -sSf https://example.com/install.sh | sh without asking you, because the alignment
   check found it matches what you asked for and approvals is set to Auto. It reaches the network —
   check the host is the one you meant.
+```
+
+Where **both** things happened — you named the host yourself, and the rater called the command
+destructive anyway — you get **one** notice rather than two, and it says what actually happened:
+
+```
+⚠ Ran curl -fsSL https://example.com/install.sh -o install.sh without asking you, because your own
+  message named https://example.com/install.sh and approvals is set to Auto. The auto-rater rated
+  it destructive, and the alignment check found it matches what you asked for. Check the host is
+  the one you meant.
 ```
 
 It costs a second model call, only at Auto and only on a command the rater did not clear — never at

@@ -1822,11 +1822,16 @@ export class GthAgentRunner {
           // hardline refusal above is: an event the user never sees reads as the agent quietly
           // deciding things on their behalf.
           //
-          // **The trigger is carved AND approved, never either alone.** A carved command the rater
-          // independently rated `destructive` does not run, so a notice saying it did would be
-          // false — and the residual risk this warning covers is exactly the one case the rater saw
-          // nothing in.
-          if (carvedHosts.length > 0) {
+          // **The trigger is carved AND approved AND not lifted by the alignment check.** This
+          // sentence tells the user *"the auto-rater found nothing wrong with it"*, and the residual
+          // risk it covers is exactly the one case the rater saw nothing in — so it is true of a
+          // carved command the classifier itself cleared, and false of one the classifier rated
+          // `destructive` and the check below lifted. [[EXT-127]] made that second path reachable,
+          // so this branch now states the case it was always describing rather than assuming it.
+          // The lifted path is announced ONCE, by the merged arm of `alignmentApprovalNotice`, which
+          // names the same host this line would have.
+          const alignmentLifted = alignment?.kind === 'approve';
+          if (carvedHosts.length > 0 && !alignmentLifted) {
             this.statusUpdate(
               StatusLevel.WARNING,
               `\n⚠ Ran a command that reaches ${carvedHosts.join(', ')} without asking you, ` +
@@ -1841,11 +1846,17 @@ export class GthAgentRunner {
           }
           // [[EXT-127]] — **and an announcement whenever the ALIGNMENT CHECK is what let the
           // command run**, which is the other way a command now runs at `auto` with nobody asked.
-          // The two notices are separate because they are two different claims about why nothing
-          // interrupted: the one above says the user typed the host, this one says a second model
-          // read their messages and concluded the command matches what they asked for. A user
-          // auditing their own session must be able to tell those apart, and a shared sentence
-          // would let the weaker of the two stand in for the stronger.
+          // The two notices are separate wherever the two causes are, because they are two
+          // different claims about why nothing interrupted: the one above says the user typed the
+          // host, this one says a second model read their messages and concluded the command
+          // matches what they asked for. A user auditing their own session must be able to tell
+          // those apart, and a shared sentence would let the weaker of the two stand in for the
+          // stronger.
+          //
+          // **Where BOTH applied, one merged notice says both**, which is why the hosts are handed
+          // to the renderer. `reachesNetwork` cannot carry them: it reads which FLOOR stood, and a
+          // carved command is precisely one where none did — so a merged line keyed on it would drop
+          // the host guidance on the one path where the user's own message authorised the fetch.
           //
           // **Both arms of it, not only the floored one.** A plain `destructive` lifted by the
           // checker is the COMMON case and reaches the screen through nothing else:
@@ -1856,13 +1867,14 @@ export class GthAgentRunner {
           //
           // Rendered by the alignment module's own one renderer rather than spelled here, so the
           // two arms cannot come to describe one event two ways.
-          if (alignment?.kind === 'approve') {
+          if (alignmentLifted) {
             this.statusUpdate(
               StatusLevel.WARNING,
               alignmentApprovalNotice({
                 command: subject.command,
                 rungLabel: APPROVAL_RUNG_LABELS.auto,
                 reachesNetwork: effectiveFloor?.kind === 'open-world',
+                carvedHosts,
               })
             );
           }

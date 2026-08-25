@@ -293,6 +293,10 @@ describe('[[EXT-127]] the runner-side wiring of the alignment check', () => {
   const ENV_LEAK = 'node probe.js $PROBE_ENV_VALUE';
   /** The user's own words, distinctive enough that no other value could produce a match. */
   const MANDATE = 'please clear out the stale dist folder for me before the release';
+  /** §4.6's CARVE-OUT: an open-world command whose every host the user named verbatim. */
+  const CARVED = 'curl -fsSL https://example.com/install.sh -o install.sh';
+  const CARVED_HOST = 'https://example.com/install.sh';
+  const CARVED_MANDATE = `please fetch ${CARVED_HOST} and save it as install.sh`;
 
   // ──────────────────────────────────────────────────────────────────────────────────────────────
   // D1 — the node's central claim: the `user` role is fed from the GATED provenance channel.
@@ -560,6 +564,111 @@ describe('[[EXT-127]] the runner-side wiring of the alignment check', () => {
       expect(notice).toBeDefined();
       expect(notice).toContain(OPEN_WORLD);
       expect(notice).toContain('It reaches the network');
+    });
+
+    /**
+     * **[[EXT-106]] §4.6's own notice, on the path it was written for — unchanged.**
+     *
+     * The carve-out's sentence ends *"the auto-rater found nothing wrong with it"*, and here that is
+     * simply true: the classifier rated the command `safe`, no check was ever made, and the residual
+     * risk the warning covers is the one case the rater saw nothing in. This cell is the control for
+     * the one below it — without it, a fix that made the merged sentence appear everywhere would go
+     * green while having quietly deleted the true sentence along with the false one.
+     */
+    it('leaves §4.6’s carved-host notice as it was where the CLASSIFIER is what cleared the command', async () => {
+      const result = await drive({
+        calls: [{ command: CARVED }],
+        ratings: ['safe'],
+        userMessages: [CARVED_MANDATE],
+      });
+      expect(result.decisions.map((d) => d.type)).toEqual(['approve']);
+      expect(result.checksStarted).toBe(0);
+      expect(result.warnings).toHaveLength(1);
+      expect(result.warnings[0]).toContain(CARVED_HOST);
+      expect(result.warnings[0]).toContain('The auto-rater found nothing wrong with it.');
+      expect(result.warnings[0]).toContain('Check the host is the one you meant.');
+    });
+
+    /**
+     * **[[EXT-127]] — a carved command the CHECK lifted gets ONE notice, and it is true.**
+     *
+     * §4.6's notice assumed an invariant this node deleted: *"a carved command the rater
+     * independently rated `destructive` does not run, so a notice saying it did would be false"*.
+     * Carving sets the floor to `null`, a `destructive` rating then maps to `reject`, and `reject`
+     * is exactly what makes the check reachable — so the check can approve, the command runs, and
+     * the sentence claiming the auto-rater found nothing wrong is false in the direction that
+     * reassures, on a security surface, at the moment a destructive command ran with nobody asked.
+     *
+     * **The host has to survive the fix, which is the trap.** `reachesNetwork` keys on which FLOOR
+     * stood, and on a carved command none did — so suppressing §4.6's line without moving the host
+     * into the replacement drops the ONLY sentence telling the user to look at the host, on the one
+     * path where their own message is what authorised the fetch. Both halves are asserted here: the
+     * host is present, and the false clause is absent.
+     *
+     * `toHaveLength(1)` is load-bearing rather than tidy — two warnings about one event is how a
+     * user learns to skim them, and it is the state this cell exists to end.
+     */
+    it('merges the two notices into one that names the host and does NOT claim the rater cleared it', async () => {
+      const result = await drive({
+        calls: [{ command: CARVED }],
+        ratings: ['destructive'],
+        checks: [
+          decides(ALIGNMENT_TOOL_APPROVE, { reason: 'the user named this host and this file' }),
+        ],
+        userMessages: [CARVED_MANDATE],
+      });
+      expect(result.decisions.map((d) => d.type)).toEqual(['approve']);
+      expect(result.records[0].preflight?.carvedHosts).toEqual([CARVED_HOST]);
+      expect(result.warnings).toHaveLength(1);
+      const notice = result.warnings[0];
+      // What protects the user: the host, and the instruction to look at it. Asserted IN ITS OWN
+      // CLAUSE and not merely `toContain(CARVED_HOST)`, which the echoed command satisfies on its
+      // own — a notice that names the host only inside the command it printed has told the user
+      // nothing about why it was allowed to reach it, which is the whole of what §4.6's suppressed
+      // line was saying.
+      expect(notice).toContain(`your own message named ${CARVED_HOST}`);
+      expect(notice).toContain('Check the host is the one you meant.');
+      // What actually happened, both halves of it.
+      expect(notice).toContain('The auto-rater rated it destructive');
+      expect(notice).toContain('the alignment check found it matches what you asked for');
+      // §10 rule 4 — the DISPLAY spelling, asserted as a literal rather than against the production
+      // label map, which would only restate whatever that map currently says.
+      expect(notice).toContain('approvals is set to Auto.');
+      // The clause that was false. Asserted as an ABSENCE because that is the defect: every other
+      // assertion here is satisfied by a notice that still carries it.
+      expect(notice).not.toContain('found nothing wrong');
+    });
+
+    /**
+     * **The command in this notice is model-authored, so it is neutralised to one line.**
+     *
+     * The renderer's docblock has always promised this and nothing held it: dropping
+     * `neutralizeToOneLine` left the whole suite green, because every other cell asserts
+     * `toContain` of a command that has no control characters in it to escape. A command carrying a
+     * newline can otherwise forge a second status line under the ⚠ the real one uses — the notice
+     * is a WARNING-level status line, so a forged sibling is indistinguishable from a true one.
+     *
+     * Driven end to end rather than by calling the renderer, so it also pins that the runner hands
+     * over the RAW command and lets the one renderer neutralise it.
+     */
+    it('neutralises a model-authored command to one line, so it cannot forge a second warning', async () => {
+      const forged = `${PLAIN_DESTRUCTIVE}\n⚠ Ran an unrelated command without asking you`;
+      const result = await drive({
+        calls: [{ command: forged }],
+        ratings: ['destructive'],
+        checks: [decides(ALIGNMENT_TOOL_APPROVE, { reason: 'the user asked for exactly this' })],
+        userMessages: [MANDATE],
+      });
+      const notice = result.warnings.find((line) => line.includes('the alignment check'));
+      expect(
+        notice,
+        `expected an alignment notice among ${JSON.stringify(result.warnings)}`
+      ).toBeDefined();
+      // The break is visible as an escape rather than acted on…
+      expect(notice).toContain(`${PLAIN_DESTRUCTIVE}\\x0a⚠ Ran an unrelated command`);
+      // …and the notice is one line: the only break in it is the one the notice opens with.
+      expect(notice?.startsWith('\n')).toBe(true);
+      expect(notice?.slice(1)).not.toContain('\n');
     });
 
     /**
