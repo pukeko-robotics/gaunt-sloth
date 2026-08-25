@@ -49,7 +49,10 @@ export function resolveGrepFileSet(config: GthConfig): GrepFileSet {
   return 'gitignore';
 }
 
-/** Predicate over an ABSOLUTE file path: TRUE when the file may be searched (not `.aiignore`'d). */
+/**
+ * Predicate over an ABSOLUTE path (a file OR a directory): TRUE when it may be searched — i.e.
+ * neither the path itself nor any directory it sits under is `.aiignore`'d.
+ */
 type IsAllowed = (absPath: string) => boolean;
 
 /**
@@ -68,11 +71,42 @@ type IsAllowed = (absPath: string) => boolean;
  * Reuses the SAME {@link shouldIgnoreFile} matcher and the SAME rootDir (the work-dir) the fs toolkit
  * uses, so a file is treated identically here as there — no hand-rolled `.aiignore` parsing.
  *
- * @returns predicate that is TRUE when `absPath` is ALLOWED (not aiignored).
+ * SECURITY (GS2-85): a hidden DIRECTORY hides its CONTENTS. Asking the matcher only about the file
+ * itself answers a narrower question than the boundary makes: `shouldIgnoreFile` matches one path
+ * against the patterns, so a pattern naming a directory is false for every file inside it, and an
+ * ordinary walk returned those files' matching lines in full — passively, with nothing unusual
+ * asked of the model. The filesystem toolkit never had that gap because its listing tools test each
+ * directory entry as they walk and stop at an ignored one; gth_grep runs its own traversal (and, on
+ * the rg path, no traversal it controls at all), so it must ask the same question itself. It does
+ * that by walking from the path up to — but not including — the work-dir root and asking the SAME
+ * matcher about each ancestor, so the hidden set here is the one the listing tools already reach
+ * from the same `.aiignore` line, rather than a second, private notion of what is hidden.
+ *
+ * This widens only by ancestry: a path is newly withheld exactly when some ancestor directory
+ * strictly below the work-dir root matches. Which strings the matcher matches is untouched.
+ *
+ * @returns predicate that is TRUE when `absPath` is ALLOWED (not aiignored, and under no aiignored
+ *   directory).
  */
 function makeAiignoreFilter(workDir: string, aiignore: GthConfig['aiignore']): IsAllowed {
-  return (absPath: string): boolean =>
-    !shouldIgnoreFile(absPath, workDir, aiignore?.patterns, aiignore?.enabled);
+  const absWorkDir = path.resolve(workDir);
+  const isIgnored = (p: string): boolean =>
+    shouldIgnoreFile(p, workDir, aiignore?.patterns, aiignore?.enabled);
+  return (absPath: string): boolean => {
+    const abs = path.resolve(absPath);
+    if (isIgnored(abs)) return false;
+    // Ancestors, nearest first. Bounded by the work-dir root (patterns are relative to it, so the
+    // root itself is not a candidate) and by `parent === dir`, which is what stops a path outside
+    // the sandbox — or a win32 drive root, whose dirname is itself — from looping forever.
+    let dir = path.dirname(abs);
+    while (dir !== abs && dir !== absWorkDir && isWithin(dir, absWorkDir)) {
+      if (isIgnored(dir)) return false;
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+    return true;
+  };
 }
 
 /** Default cap on the number of matches returned when the caller does not pass `limit`. */
@@ -402,7 +436,12 @@ function runRipgrep(
  * is out of scope; this is documented, not fixed — exactly like the regex-dialect divergence noted
  * in {@link runJsScanner}.
  */
-async function collectFiles(dir: string, out: string[], skipHidden: boolean): Promise<void> {
+async function collectFiles(
+  dir: string,
+  out: string[],
+  skipHidden: boolean,
+  isAllowed: IsAllowed
+): Promise<void> {
   let entries: Dirent[];
   try {
     entries = (await fs.readdir(dir, { withFileTypes: true })) as Dirent[];
@@ -415,7 +454,12 @@ async function collectFiles(dir: string, out: string[], skipHidden: boolean): Pr
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       if (IGNORED_DIRS.has(entry.name)) continue;
-      await collectFiles(full, out, skipHidden);
+      // GS2-85: an `.aiignore`'d directory is not descended, exactly as the filesystem toolkit's
+      // listing tools drop an ignored entry rather than walking it. The per-file check in
+      // {@link runJsScanner} would already withhold everything below it, so this is not what makes
+      // the boundary hold — it is what keeps the tool from opening the directory at all.
+      if (!isAllowed(full)) continue;
+      await collectFiles(full, out, skipHidden, isAllowed);
     } else if (entry.isFile()) {
       out.push(full);
     }
@@ -451,19 +495,21 @@ async function runJsScanner(
   if (target.file) {
     // An explicitly-named target file is searched even if it is a hidden dot-file — the corpus
     // selection only governs directory discovery, matching rg's behaviour on an explicit arg. The
-    // one exception is `.aiignore`: an aiignored file named by hand is still blocked below (hidden ≠
-    // aiignored), so naming the file cannot be used as a bypass.
+    // one exception is `.aiignore`: a file named by hand is still blocked below when it — or any
+    // directory it sits under — is aiignored (hidden ≠ aiignored), so naming the path cannot be
+    // used as a bypass.
     files.push(path.join(target.searchRoot, target.file));
   } else {
-    await collectFiles(target.searchRoot, files, fileSet === 'gitignore');
+    await collectFiles(target.searchRoot, files, fileSet === 'gitignore', isAllowed);
   }
 
   const matches: GrepMatch[] = [];
   for (const file of files) {
     if (matches.length >= limit) break;
     if (includeRe && !includeRe.test(path.basename(file))) continue;
-    // `.aiignore` privacy boundary (GS2-51): skip BEFORE reading, so an aiignored file's contents
-    // are never even loaded — covers both the walk and an explicitly-named single-file target.
+    // `.aiignore` privacy boundary (GS2-51, GS2-85): skip BEFORE reading, so the contents of a file
+    // that is aiignored — or that sits under an aiignored directory — are never even loaded. Covers
+    // the walk and an explicitly-named single-file target alike.
     if (!isAllowed(file)) continue;
     let content: string;
     try {

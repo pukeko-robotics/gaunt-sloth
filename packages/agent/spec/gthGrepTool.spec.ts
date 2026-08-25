@@ -482,6 +482,188 @@ describe('gthGrepTool', () => {
     });
   });
 
+  // --- .aiignore-hidden DIRECTORY (GS2-85): the passive case. A plain walk must not return a line
+  // from ANY file inside an aiignored directory, on either engine. The GS2-51 block above only ever
+  // aiignored a FILE, so nothing asked what happens to a directory's contents — and the answer was
+  // that they were returned in full.
+  //
+  // The pattern is the BARE directory name, which is the spelling that already hides the directory
+  // everywhere else (GthFileSystemToolkit's listing tools drop an entry whose own path matches, so
+  // `secretdir` removes the directory from list_directory / directory_tree / search_files and stops
+  // the descent). This block asserts gth_grep reaches the SAME hidden set from that same spelling.
+  // Which STRINGS match at all — a trailing-slash form, a bare pattern's recursion, the `**/` arm —
+  // is a separate open question about the matcher and is deliberately not touched here.
+  //
+  // Fixture rules that keep the assertions from passing for the wrong reason:
+  // - the hidden directory has NO leading dot, so under the `gitignore` default it is not already
+  //   skipped as a dot-dir — a `.secretdir` fixture would go green while the boundary did nothing;
+  // - the payload is asserted by its CONTENT string, not by a path fragment, so the case cannot
+  //   pass vacuously on win32 where the rendered separator is a backslash;
+  // - three positive controls (root, a sibling directory, a near-miss directory name) mean no
+  //   assertion is satisfied by a tool that over-filters and returns nothing;
+  // - `secretdir-public` shares the hidden directory's whole name as a PREFIX, so an implementation
+  //   that compares paths by `startsWith` instead of matching path segments goes red here.
+  describe('.aiignore-hidden DIRECTORY (GS2-85)', () => {
+    let tmpDir: string;
+    let originalInitCwd: string | undefined;
+
+    /** rg's own view of the tree: it does not read `.aiignore`, so it reports every match. */
+    const RG_ALL_MATCHES = [
+      'allowed.yaml:1:find_me = ROOT-OK',
+      'publicdir/public-inside.yaml:1:find_me = PUBLIC-OK',
+      'secretdir-public/nearmiss.yaml:1:find_me = NEARMISS-OK',
+      'secretdir/hidden-inside.yaml:1:find_me = INSIDE-SECRET',
+      'secretdir/nested/hidden-deeper.yaml:1:find_me = DEEP-SECRET',
+      'named.secret.yaml:1:find_me = NAMED-SECRET',
+      '',
+    ].join('\n');
+
+    /** Every control must survive; every secret must be gone. Applied to both engines' output. */
+    function expectHiddenDirectoryContentsWithheld(out: string): void {
+      expect(out).toContain('ROOT-OK');
+      expect(out).toContain('PUBLIC-OK');
+      expect(out).toContain('NEARMISS-OK');
+      expect(out).not.toContain('INSIDE-SECRET');
+      expect(out).not.toContain('DEEP-SECRET');
+      expect(out).not.toContain('hidden-inside.yaml');
+      expect(out).not.toContain('hidden-deeper.yaml');
+    }
+
+    beforeAll(async () => {
+      tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'gth-grep-aiignore-dir-'));
+      // A directory and a file, both aiignored by their own relative path.
+      await fsp.writeFile(path.join(tmpDir, '.aiignore'), 'secretdir\nnamed.secret.yaml\n');
+
+      await fsp.mkdir(path.join(tmpDir, 'secretdir', 'nested'), { recursive: true });
+      await fsp.writeFile(
+        path.join(tmpDir, 'secretdir', 'hidden-inside.yaml'),
+        'find_me = INSIDE-SECRET'
+      );
+      await fsp.writeFile(
+        path.join(tmpDir, 'secretdir', 'nested', 'hidden-deeper.yaml'),
+        'find_me = DEEP-SECRET'
+      );
+
+      // Controls.
+      await fsp.writeFile(path.join(tmpDir, 'allowed.yaml'), 'find_me = ROOT-OK');
+      await fsp.mkdir(path.join(tmpDir, 'publicdir'), { recursive: true });
+      await fsp.writeFile(
+        path.join(tmpDir, 'publicdir', 'public-inside.yaml'),
+        'find_me = PUBLIC-OK'
+      );
+      await fsp.mkdir(path.join(tmpDir, 'secretdir-public'), { recursive: true });
+      await fsp.writeFile(
+        path.join(tmpDir, 'secretdir-public', 'nearmiss.yaml'),
+        'find_me = NEARMISS-OK'
+      );
+
+      // The half that already worked — pinned so it cannot regress.
+      await fsp.writeFile(path.join(tmpDir, 'named.secret.yaml'), 'find_me = NAMED-SECRET');
+    });
+    afterAll(async () => {
+      await fsp.rm(tmpDir, { recursive: true, force: true });
+    });
+    beforeEach(() => {
+      originalInitCwd = process.env.INIT_CWD;
+      process.env.INIT_CWD = tmpDir;
+    });
+    afterAll(() => {
+      if (originalInitCwd === undefined) delete process.env.INIT_CWD;
+      else process.env.INIT_CWD = originalInitCwd;
+    });
+
+    it('JS fallback: an ordinary walk returns no line from inside an aiignored directory', async () => {
+      execFileMock.mockImplementation(rgAbsent);
+      const { get } = await import('#src/tools/gthGrepTool.js');
+      const out = (await get(cfg).invoke({ pattern: 'find_me' })) as string;
+      expectHiddenDirectoryContentsWithheld(out);
+    });
+
+    it('rg path: drops matches from inside an aiignored directory, keeps the controls', async () => {
+      execFileMock.mockImplementation(rgStdout(RG_ALL_MATCHES));
+      const { get } = await import('#src/tools/gthGrepTool.js');
+      const out = (await get(cfg).invoke({ pattern: 'find_me' })) as string;
+      expectHiddenDirectoryContentsWithheld(out);
+    });
+
+    it('JS fallback: the directory boundary holds under fileSet "all" too', async () => {
+      execFileMock.mockImplementation(rgAbsent);
+      const allCfg = { builtInTools: { gth_grep: { fileSet: 'all' } } } as unknown as GthConfig;
+      const { get } = await import('#src/tools/gthGrepTool.js');
+      const out = (await get(allCfg).invoke({ pattern: 'find_me' })) as string;
+      expectHiddenDirectoryContentsWithheld(out);
+    });
+
+    it('rg path: the directory boundary holds under fileSet "all" too', async () => {
+      execFileMock.mockImplementation(rgStdout(RG_ALL_MATCHES));
+      const allCfg = { builtInTools: { gth_grep: { fileSet: 'all' } } } as unknown as GthConfig;
+      const { get } = await import('#src/tools/gthGrepTool.js');
+      const out = (await get(allCfg).invoke({ pattern: 'find_me' })) as string;
+      expectHiddenDirectoryContentsWithheld(out);
+    });
+
+    it('JS fallback: searching the aiignored directory by name returns nothing', async () => {
+      execFileMock.mockImplementation(rgAbsent);
+      const { get } = await import('#src/tools/gthGrepTool.js');
+      const out = (await get(cfg).invoke({ pattern: 'find_me', path: 'secretdir' })) as string;
+      expect(out).toBe('No matches found');
+      expect(out).not.toContain('INSIDE-SECRET');
+    });
+
+    it('rg path: searching the aiignored directory by name returns nothing', async () => {
+      execFileMock.mockImplementation(rgStdout('hidden-inside.yaml:1:find_me = INSIDE-SECRET\n'));
+      const { get } = await import('#src/tools/gthGrepTool.js');
+      const out = (await get(cfg).invoke({ pattern: 'find_me', path: 'secretdir' })) as string;
+      expect(out).toBe('No matches found');
+      expect(out).not.toContain('INSIDE-SECRET');
+    });
+
+    it('JS fallback: naming a file inside the aiignored directory returns nothing', async () => {
+      execFileMock.mockImplementation(rgAbsent);
+      const { get } = await import('#src/tools/gthGrepTool.js');
+      const out = (await get(cfg).invoke({
+        pattern: 'find_me',
+        path: 'secretdir/hidden-inside.yaml',
+      })) as string;
+      expect(out).toBe('No matches found');
+      expect(out).not.toContain('INSIDE-SECRET');
+    });
+
+    // Acceptance 3: the half that already works must not regress.
+    it('regression pin: a directly-named aiignored FILE is still refused (JS fallback)', async () => {
+      execFileMock.mockImplementation(rgAbsent);
+      const { get } = await import('#src/tools/gthGrepTool.js');
+      const out = (await get(cfg).invoke({
+        pattern: 'find_me',
+        path: 'named.secret.yaml',
+      })) as string;
+      expect(out).toBe('No matches found');
+      expect(out).not.toContain('NAMED-SECRET');
+    });
+
+    it('regression pin: a directly-named aiignored FILE is still refused (rg path)', async () => {
+      execFileMock.mockImplementation(rgStdout('named.secret.yaml:1:find_me = NAMED-SECRET\n'));
+      const { get } = await import('#src/tools/gthGrepTool.js');
+      const out = (await get(cfg).invoke({
+        pattern: 'find_me',
+        path: 'named.secret.yaml',
+      })) as string;
+      expect(out).toBe('No matches found');
+      expect(out).not.toContain('NAMED-SECRET');
+    });
+
+    // The boundary is still the config's to switch off — this is what proves the directory rule is
+    // the `.aiignore` boundary widening and not a new unconditional exclusion.
+    it('respects an explicit disable: aiignore.enabled=false lets the directory through', async () => {
+      execFileMock.mockImplementation(rgAbsent);
+      const offCfg = { aiignore: { enabled: false } } as unknown as GthConfig;
+      const { get } = await import('#src/tools/gthGrepTool.js');
+      const out = (await get(offCfg).invoke({ pattern: 'find_me' })) as string;
+      expect(out).toContain('INSIDE-SECRET');
+      expect(out).toContain('DEEP-SECRET');
+    });
+  });
+
   // --- sandbox boundary: independent of which execution path would run -------------------------
   describe('sandbox boundary', () => {
     let tmpDir: string;
