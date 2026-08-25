@@ -154,6 +154,43 @@ describe('checkHardline — reconciled against the approvals corpus (EXT-60)', (
   });
 
   /**
+   * EXT-67 — **the same reconciliation, on the win32 arm.**
+   *
+   * The floor now has a platform-gated second pattern list, and a false positive in it would be
+   * invisible to every cell above: they read the host platform, which on this repo's usual runners
+   * and on three of the unit matrix's five cells is not Windows. So the win32 arm gets its own pass
+   * over the corpus, and it must refuse **exactly the same cases** — the win32 list adds Windows
+   * shapes, none of which any corpus case is.
+   *
+   * **What this buys that the hand-written probes cannot.** The negatives in `shellHardline.spec.ts`
+   * are shapes someone thought of; these are 112 commands collected for other reasons entirely, so
+   * an over-broad Windows pattern that happens to bite an ordinary POSIX command shows up here
+   * without anyone having predicted it. It is the same argument direction 2 makes above, and it
+   * inherits the same limit: it can only catch an over-fire **on a corpus case**, which is why it is
+   * an addition to the probe set and not a replacement for it.
+   *
+   * The corpus carries no Windows family yet. That is not fixable from this repo —
+   * `approvals-corpus.json` is GENERATED from project-takahe's `approvals-corpus.yaml` under a
+   * content hash, so a case added here is drift there and gone at the next regeneration. When the
+   * family lands, a case that is catastrophic only on Windows needs a platform of its own in the
+   * fixture and this comparison has to read it; asserting a win32 case on the default platform would
+   * silently score it as "not floored".
+   */
+  it('refuses exactly the same corpus cases on the win32 arm (EXT-67)', () => {
+    const refusedOnPosix = CORPUS.cases
+      .filter((corpusCase) => checkHardline(corpusCase.command, { platform: 'linux' }) !== null)
+      .map((corpusCase) => corpusCase.id)
+      .sort();
+    const refusedOnWindows = CORPUS.cases
+      .filter((corpusCase) => checkHardline(corpusCase.command, { platform: 'win32' }) !== null)
+      .map((corpusCase) => corpusCase.id)
+      .sort();
+
+    expect(refusedOnPosix.length, 'a vacuous comparison would pass this too').toBeGreaterThan(0);
+    expect(refusedOnWindows).toEqual(refusedOnPosix);
+  });
+
+  /**
    * DORMANT BY DESIGN — and it is not coverage today. `REFUSED_BUT_UNFLAGGED` is empty (that is
    * EXT-60's finished state), so this body never executes and this test cannot fail. It is kept
    * because it goes live on the first entry anyone adds, which is exactly when a stale entry

@@ -87,6 +87,13 @@
  * the two halves cannot come to disagree about what a separator is. Every destructive-verb pattern
  * is anchored at {@link CMD_POS}, so a verb in an ordinary argument is not a refusal.
  *
+ * **There are TWO pattern lists and the second is platform-gated.** {@link HARDLINE_PATTERNS} is
+ * catastrophic everywhere and is tried on every host; {@link WINDOWS_HARDLINE_PATTERNS} is tried in
+ * ADDITION when the platform is `win32`, never instead, because a Windows box also runs the POSIX
+ * shapes through Git Bash and WSL. The platform is an argument with a `process.platform` default
+ * ({@link HardlineOptions}) so both arms are reachable from any host's tests — read that docblock
+ * before adding a Windows arm, and the list's own for what it deliberately leaves out.
+ *
  * The floor is deliberately INDEPENDENT of the allow-list classifier above it: it must block a
  * catastrophic command even if every layer above wrongly decided that command was safe.
  */
@@ -525,6 +532,256 @@ export const HARDLINE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
 ];
 
 /* -------------------------------------------------------------------------------------------- *
+ * §8 — the WINDOWS arm. Tried only when the host platform is `win32`.
+ *
+ * **Why a separate list rather than more entries above.** The patterns above are catastrophic on
+ * every host; these are catastrophic only where they name real objects. `format` is a word a Linux
+ * agent writes into a deployment script, `del` and `rd` are ordinary words, and `diskpart` is a
+ * string someone greps for. Refusing them off-platform would be an unappealable refusal of prose,
+ * which is the defect class {@link CMD_POS} exists to record. Gating costs one comparison and
+ * removes the whole class, so the two lists never merge.
+ *
+ * **The POSIX list stays active on win32.** Nothing here replaces it: Git Bash, MSYS and WSL all
+ * run `rm -rf /` on a Windows box, and removing an arm from a platform would be a NARROWING of the
+ * kind the module header forbids without a pinned removal set. The win32 arm is purely additive.
+ *
+ * **WHICH SHELL THE REUSED HELPERS MODEL — read this before adding an arm.** {@link CMD_POS} and
+ * {@link TARGET_TOKEN_END} model **bash**, and they are reused here on a stated claim rather than
+ * by assumption. What carries over is exact: the separators they recognise (`;`, `&`, `|`, a line
+ * break) are also cmd.exe's and PowerShell's, and a token still ends at whitespace or end of input
+ * in all three. What does NOT carry over is the escape character. A backtick is PowerShell's
+ * ESCAPE, not a command substitution, and `^` is cmd.exe's, and {@link normalizeCommand} collapses
+ * neither. So `` r`emove-item -recurse c:\ `` and `de^l /s /q c:\` walk past this arm. **Those are
+ * MISSES, and misses are the direction this floor errs in** — the rater and the confirmation
+ * dialog stand behind them at every rung but `bypass`. The one place the bash reading is instead
+ * over-broad is a literal backtick immediately preceding a floored Windows verb, where bash would
+ * open a command and PowerShell would escape a character; that is a false positive nobody has hit
+ * and it is written down here rather than patched speculatively.
+ *
+ * **THE NORMALIZER COLLAPSES BACKSLASHES, AND EVERY TARGET BELOW IS WRITTEN FOR WHAT SURVIVES.**
+ * {@link normalizeCommand} folds `\x` to `x` (it is what stops `r\m -rf /`), so a Windows path
+ * arrives here with most of its separators gone: `C:\Windows\System32` is `c:windowssystem32`,
+ * `HKLM\SOFTWARE` is `hklmsoftware`, `.\dist` is `.dist`, and `\\?\C:\` is `\?c:\`. A trailing
+ * backslash survives only at end of input, and `C:\` followed by a space is just `c:`. Reading a
+ * pattern below as though it matched the command a user typed will therefore mislead in both
+ * directions — match them against the normalized form, which is what the specs assert on.
+ *
+ * The consequence that shapes the design: after the collapse a Windows path has **no separator
+ * left to bind a tail against**, so the discrimination POSIX gets for free from the `/` in
+ * `/etc/foo` has to come from the drive-letter colon and an enumerated directory name instead.
+ * That is why the drive-root arms are broad and the named-directory arm is a short enumeration.
+ * -------------------------------------------------------------------------------------------- */
+
+/**
+ * A run of Windows flag tokens. Identical in shape to the POSIX flag runs above — bounded per
+ * token by the required trailing whitespace — but a Windows flag may start with `/` as well as
+ * `-`, because cmd.exe and PowerShell disagree about which one they use and both spellings reach
+ * the same verbs.
+ */
+const WIN_FLAG_RUN = '(?:[-/][^\\s]*\\s+)*';
+
+/**
+ * The span of ONE command, for the lookaheads below: anything that is not a separator. It is what
+ * keeps a flag belonging to a LATER command out of an earlier one's reading, so `icacls c:\ /grant
+ * everyone:f; ls /t` cannot borrow the `/t` from the `ls`.
+ */
+const WIN_SAME_COMMAND = `[^${COMMAND_SEPARATOR_CLASS}]*`;
+
+/**
+ * How a Windows system drive is NAMED, before any trailing separator: a drive letter and its
+ * colon, optionally behind the `\\?\` long-path prefix (which normalisation leaves as `\?`), or
+ * the two environment spellings of the same thing — cmd's `%SystemDrive%` and PowerShell's
+ * `$env:SystemDrive`.
+ *
+ * The colon is what makes this bindable at all. Every other character of a collapsed Windows path
+ * is an ordinary letter, so without the colon there would be nothing to distinguish `c:` from the
+ * first letter of a relative path.
+ */
+const WIN_DRIVE_PREFIX = '(?:(?:\\\\\\?)?[a-z]:|%systemdrive%|\\$env:systemdrive)';
+
+/**
+ * What may follow a Windows target before its token ends: a separator (`\` or `/`), a wildcard, or
+ * both. `C:\` reaches here as `c:\` at end of input, as `c:` before a space, and `C:\*` as `c:*`,
+ * so all three have to be one optional group.
+ */
+const WIN_ROOT_TAIL = '(?:[\\\\/]?\\*|[\\\\/])?';
+
+/**
+ * A Windows drive ROOT as a target. The {@link TARGET_TOKEN_END} tail that {@link quotedOrBare}
+ * appends is what does the work: without it `c:` matches the first two characters of every
+ * absolute Windows path, and `rd /s /q c:\build` — ordinary work — would be refused unappealably.
+ * With it, the token has to END at the drive, so `c:build` and `c:/users/me/app` are out of range
+ * for the same reason `/var/www/html` is out of range on the POSIX side.
+ */
+const WIN_DRIVE_ROOT = quotedOrBare(WIN_DRIVE_PREFIX + WIN_ROOT_TAIL);
+
+/**
+ * The Windows system directory as a target — `C:\Windows` and `C:\Windows\System32`, plus the
+ * `%SystemRoot%` / `$env:windir` spellings of the first.
+ *
+ * **The two depths are ENUMERATED, and the hole that leaves is declared rather than argued away.**
+ * Because the backslash collapse leaves `c:windowssystem32` with no separator, a tail cannot bind
+ * part-way through the way it can after `/etc`; each depth is its own alternative. So a deeper
+ * system path (`C:\Windows\System32\drivers`) is NOT matched. That is the same shape of residual
+ * the POSIX arms carry — `/etc/foo` is equally out of range — and it errs toward a miss, which is
+ * this floor's safe direction.
+ *
+ * The tail still has to bind, which is what keeps `C:\Windows.old` (a leftover upgrade directory
+ * people delete on purpose) and `C:\WindowsApps\…` out of range.
+ */
+const WIN_SYSTEM_DIR_TARGET = quotedOrBare(
+  `(?:${WIN_DRIVE_PREFIX}[\\\\/]?windows(?:[\\\\/]?system32)?|%systemroot%|\\$env:windir)` +
+    WIN_ROOT_TAIL
+);
+
+/**
+ * The delete verbs, in one alternation because cmd.exe and PowerShell share most of them.
+ * `remove-item` is the PowerShell cmdlet and `ri`/`rm`/`rd`/`rmdir`/`del`/`erase` are all aliases
+ * of it, while `rd`/`rmdir`/`del`/`erase` are simultaneously cmd.exe's own builtins. One list
+ * covers both shells, and the target is what carries the discrimination.
+ *
+ * **No flag is required, deliberately, and that mirrors the POSIX `rm` arm** — which also requires
+ * none, because a verb pointed at the root of a filesystem is the catastrophe whether or not the
+ * recursion flag is spelled. The `chown`/`chmod` analogues below DO require recursion, for the
+ * same reason their POSIX siblings do: without it they touch one directory entry rather than every
+ * file on the disk.
+ */
+const WIN_DELETE_VERB = '(?:remove-item|rmdir|erase|del|rd|ri|rm)';
+
+/**
+ * The Windows system drive as **Git Bash and Cygwin spell it**. Git for Windows mounts `C:` at
+ * `/c`, Cygwin at `/cygdrive/c`, and both spellings reach the real system drive while `rm -rf /`
+ * on the same box reaches only the MSYS root — the least harmful of the three.
+ *
+ * **It is on the win32 arm rather than folded into {@link SYSTEM_DIR_TARGET}, and that is the
+ * deliberate half.** Folding it in would widen a shared pattern, which is the one edit that could
+ * regress the POSIX behaviour this node must leave untouched — and on Linux `/c/users` is an
+ * ordinary directory nobody may be refused for deleting. `process.platform` is `win32` under Git
+ * Bash and Cygwin alike, so gating loses no coverage. **WSL is NOT covered**: it reports `linux`
+ * and mounts the drive at `/mnt/c`, so that spelling is a declared miss.
+ *
+ * The user-profile and system directories are enumerated one level down for the same reason the
+ * POSIX arm names `/home` — `/c/users` is every account on the machine.
+ */
+const GIT_BASH_DRIVE_TARGET = quotedOrBare(
+  '(?:/cygdrive)?/[a-z](?:/(?:users|windows|programdata))?(?:/\\*?)?'
+);
+
+/**
+ * A MACHINE registry hive as a target: the whole of `HKLM` or `HKCR`, or the two subtrees whose
+ * loss is not survivable — `HKLM\SOFTWARE` unregisters every installed application and
+ * `HKLM\SYSTEM` stops the machine booting.
+ *
+ * The {@link TARGET_TOKEN_END} tail is doing the same job it does for the filesystem targets, and
+ * here it is what separates the catastrophe from the everyday: after the backslash collapse
+ * `HKLM\SOFTWARE\MyApp` is `hklmsoftwaremyapp`, so requiring the token to END at the hive is what
+ * leaves an application deleting its OWN key alone. `HKCU` is deliberately absent — a user hive is
+ * recoverable by logging in again.
+ */
+const WIN_MACHINE_HIVE = quotedOrBare(
+  '(?:(?:hklm|hkey_local_machine)(?:[\\\\/]?(?:software|system))?|hkcr|hkey_classes_root)'
+);
+
+/**
+ * The win32-only patterns, in the same `[regex, description]` shape as {@link HARDLINE_PATTERNS}
+ * and subject to every rule in the module header — including that a miss here is cheap and a false
+ * positive is unappealable.
+ *
+ * **What is deliberately NOT here, so the residual is a decision rather than an oversight:**
+ *
+ *  - **The host-down family** — `shutdown /s`, `shutdown /r`, `Stop-Computer`, `Restart-Computer`.
+ *    They are `destructive`, not `catastrophic`, under the same ruling that removed their POSIX
+ *    siblings; the machine comes back. `shellHardline.spec.ts` pins them as non-additions so this
+ *    arm cannot quietly re-open a settled classification on one platform.
+ *  - **`cipher /w:`** — it overwrites FREE space. Nothing in use is lost and the machine is
+ *    unaffected, so it fails the catastrophic test even though it destroys recoverability.
+ *  - **`bcdedit /set … recoveryenabled No`** — a setting flip, undone by the opposite flip. It is a
+ *    ransomware precursor, not a loss.
+ *  - **`taskkill /f /im *`** — the wildcard image name is documented as accepted only alongside a
+ *    filter, so the bare form may be a usage error. Flooring a command that does nothing buys
+ *    nothing and puts a pattern next to the ordinary `taskkill /f /im node.exe`; the POSIX
+ *    `kill -9 -1` arm covers the shape where it is known to bite.
+ *  - **The interpreter-wrapper forms** — `powershell -Command "…"` and `cmd /c "…"` put the verb
+ *    inside a quoted ARGUMENT, exactly as `sh -c "…"` does above, and are uncovered on the same
+ *    basis. This matters more here than it looks: `run_shell_command` spawns **cmd.exe** on win32,
+ *    so the cmd verbs are the ones actually reachable and the PowerShell cmdlets are reachable only
+ *    where the model writes PowerShell idioms anyway, or a future config points the tool at `pwsh`.
+ */
+const WINDOWS_HARDLINE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
+  // Delete of a drive root, in both shells' spellings.
+  [
+    new RegExp(CMD_POS + WIN_DELETE_VERB + '\\s+' + WIN_FLAG_RUN + WIN_DRIVE_ROOT),
+    'recursive delete of a Windows drive root',
+  ],
+  // The same verbs pointed at the system directory.
+  [
+    new RegExp(CMD_POS + WIN_DELETE_VERB + '\\s+' + WIN_FLAG_RUN + WIN_SYSTEM_DIR_TARGET),
+    'recursive delete of the Windows system directory',
+  ],
+  // The Git Bash / Cygwin spelling of the system drive, on the POSIX verb that reaches it.
+  [
+    new RegExp(CMD_POS + 'rm\\s+(?:-[^\\s]*\\s+)*' + GIT_BASH_DRIVE_TARGET),
+    'recursive delete of the Windows system drive',
+  ],
+  // `format C: /y`. The drive-letter OPERAND is required, which is what keeps `Format-Table`,
+  // `Format-List` and `git format-patch` out of range — each has a `-` where this needs whitespace.
+  [new RegExp(CMD_POS + 'format\\s+' + WIN_FLAG_RUN + WIN_DRIVE_ROOT), 'format a Windows drive'],
+  // The storage cmdlets, bare: every invocation of them destroys a volume or a disk. Anchored, so
+  // `get-help format-volume` is a lookup rather than a refusal. Same accepted cost as `mkfs`.
+  [new RegExp(CMD_POS + 'format-volume\\b'), 'format a Windows volume'],
+  [new RegExp(CMD_POS + 'clear-disk\\b'), 'wipe a Windows disk'],
+  [new RegExp(CMD_POS + 'diskpart\\b'), 'Windows disk partitioning (diskpart)'],
+  // Destroying the shadow copies is what makes an encryption pass unrecoverable, and it is the
+  // single most reliable ransomware precursor there is. `vssadmin list shadows` is read-only and
+  // stays allowed, which is why the arm requires the verb and not merely the tool.
+  [
+    new RegExp(CMD_POS + 'vssadmin\\s+' + WIN_FLAG_RUN + 'delete\\s+shadows\\b'),
+    'delete the Windows shadow copies',
+  ],
+  [
+    new RegExp(
+      CMD_POS + 'wmic\\b' + WIN_SAME_COMMAND + 'shadowcopy\\b' + WIN_SAME_COMMAND + 'delete\\b'
+    ),
+    'delete the Windows shadow copies',
+  ],
+  // `reg delete` of a machine hive. `reg query` and `reg export` are read-only and cannot reach it.
+  [
+    new RegExp(CMD_POS + 'reg\\s+delete\\s+' + WIN_MACHINE_HIVE),
+    'delete a Windows machine registry hive',
+  ],
+  // `takeown /f C:\ /r` — the `chown -R /` analogue, and the worse of the pair for the same reason
+  // `chown` is worse than `chmod`: it takes ownership AWAY, so the box can no longer repair itself.
+  // `/r` is required (a non-recursive takeown re-owns one directory entry). It is asserted by a
+  // lookahead taken FROM THE VERB rather than from the target, because `takeown /r /f C:\` and
+  // `takeown /f C:\ /r` are both real invocations and a lookahead placed after the target can only
+  // see the second — measured, that spelling was allowed.
+  [
+    new RegExp(
+      CMD_POS +
+        'takeown\\b' +
+        `(?=${WIN_SAME_COMMAND}\\s/r\\b)` +
+        WIN_SAME_COMMAND +
+        '\\s/f\\s+' +
+        WIN_DRIVE_ROOT
+    ),
+    'recursive takeown of a Windows drive root',
+  ],
+  // `icacls C:\ /grant Everyone:F /t` — the `chmod -R /` analogue. BOTH lookaheads are required and
+  // the second is not decoration: `/t` alone would refuse `icacls C:\ /save acl.txt /t`, which is a
+  // recursive BACKUP of the ACLs and the command an administrator runs before changing them.
+  [
+    new RegExp(
+      CMD_POS +
+        'icacls\\s+' +
+        WIN_DRIVE_ROOT +
+        `(?=${WIN_SAME_COMMAND}\\s/t\\b)` +
+        `(?=${WIN_SAME_COMMAND}\\s/(?:grant|deny|remove|reset|setowner)\\b)`
+    ),
+    'recursive ACL rewrite of a Windows drive root',
+  ],
+];
+
+/* -------------------------------------------------------------------------------------------- *
  * §8 — the DETERMINISTIC SUBSET OF THE `attack` OUTCOME.
  *
  * **Two words that are not the same word.** `attack` is the OUTCOME — the one the gate halts on.
@@ -793,6 +1050,21 @@ export const HARDLINE_PATTERN_SURFACE: Readonly<Record<string, string | readonly
     // reworded one is not a narrowing, so they stay out rather than train a reader to update the
     // frozen literal without reading why the cell went red.
     HARDLINE_PATTERNS: Object.freeze(HARDLINE_PATTERNS.map(([pattern]) => String(pattern))),
+    // The win32-only arm and the fragments it is built from. Enrolled on exactly the same terms as
+    // the shared arm: a narrowing here is invisible on four of five matrix cells, so it needs the
+    // declaration more than the POSIX half does, not less.
+    WIN_FLAG_RUN,
+    WIN_SAME_COMMAND,
+    WIN_DRIVE_PREFIX,
+    WIN_ROOT_TAIL,
+    WIN_DRIVE_ROOT,
+    WIN_SYSTEM_DIR_TARGET,
+    WIN_DELETE_VERB,
+    GIT_BASH_DRIVE_TARGET,
+    WIN_MACHINE_HIVE,
+    WINDOWS_HARDLINE_PATTERNS: Object.freeze(
+      WINDOWS_HARDLINE_PATTERNS.map(([pattern]) => String(pattern))
+    ),
     // The exfiltration arms.
     PIPELINE_SPLIT_RE: String(PIPELINE_SPLIT_RE),
     NETWORK_SINK_RE: String(NETWORK_SINK_RE),
@@ -854,16 +1126,43 @@ export interface HardlineMatch {
  */
 export const EXFILTRATION_ARM = 'deterministic-exfiltration';
 
+/** Options for {@link checkHardline}. */
+export interface HardlineOptions {
+  /**
+   * The host platform to decide the {@link WINDOWS_HARDLINE_PATTERNS} arm against, in
+   * `process.platform`'s vocabulary. Defaults to `process.platform`, which is what every
+   * production caller wants.
+   *
+   * **It exists so the Windows arm is testable from any host, and that is not a convenience.**
+   * Without it the arm could only ever be exercised on a Windows CI cell: nobody could develop it
+   * on this repo's usual machines, and a regression would be invisible on four of the unit
+   * matrix's five cells — the majority of the signal, including every local run before a merge.
+   * With it, both arms run everywhere, and the Windows cells additionally prove that the real
+   * `process.platform` branch selects the arm the injected value stands in for.
+   */
+  platform?: NodeJS.Platform;
+}
+
 /**
  * Check a raw command against the hardline blocklist. Normalizes first so
  * obfuscated variants are caught. Returns the match (with a description) when the
  * command is catastrophic, or `null` when it is allowed to proceed.
+ *
+ * The shared patterns are tried on every host. The win32 arm is tried in addition on Windows —
+ * never instead of, because Git Bash, MSYS and WSL run the POSIX shapes on a Windows box too.
  */
-export function checkHardline(command: string): HardlineMatch | null {
+export function checkHardline(command: string, options?: HardlineOptions): HardlineMatch | null {
   const normalized = normalizeCommand(command).toLowerCase();
   for (const [pattern, description] of HARDLINE_PATTERNS) {
     if (pattern.test(normalized)) {
       return { description, pattern: pattern.source };
+    }
+  }
+  if ((options?.platform ?? process.platform) === 'win32') {
+    for (const [pattern, description] of WINDOWS_HARDLINE_PATTERNS) {
+      if (pattern.test(normalized)) {
+        return { description, pattern: pattern.source };
+      }
     }
   }
   // §3/§8 — the deterministic subset of the `attack` outcome, so refusing a credential upload does
