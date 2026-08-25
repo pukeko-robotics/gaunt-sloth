@@ -80,6 +80,7 @@ import {
 } from '#src/core/shell/rater.js';
 import {
   type AlignmentDecision,
+  alignmentApprovalNotice,
   type AlignmentSubject,
   isAlignmentFailClosed,
   runAlignmentCheck,
@@ -96,6 +97,7 @@ import {
   ShellNegotiationState,
   type LiveNegotiationRound,
   type NegotiationDisplay,
+  type NegotiationVerdict,
 } from '#src/core/shell/negotiation.js';
 // [[EXT-106]] §4.6 — the user-provenance carve-out, read once per decision and handed to every
 // reader of it (the floor, the negotiation test, the rating prompt, the archive and the warning).
@@ -1837,19 +1839,31 @@ export class GthAgentRunner {
                 'Check the host is the one you meant.'
             );
           }
-          // [[EXT-127]] — **and the same announcement when the ALIGNMENT CHECK is what lifted the
-          // floor**, which is the other way an open-world command now runs with nobody asked. The
-          // two notices are separate because they are two different claims about why nothing
-          // interrupted: one says the user typed the host, this one says a second model read their
-          // messages and concluded the command matches what they asked for. A user auditing their
-          // own session must be able to tell those apart, and a shared sentence would let the
-          // weaker of the two stand in for the stronger.
-          if (alignment?.kind === 'approve' && effectiveFloor?.kind === 'open-world') {
+          // [[EXT-127]] — **and an announcement whenever the ALIGNMENT CHECK is what let the
+          // command run**, which is the other way a command now runs at `auto` with nobody asked.
+          // The two notices are separate because they are two different claims about why nothing
+          // interrupted: the one above says the user typed the host, this one says a second model
+          // read their messages and concluded the command matches what they asked for. A user
+          // auditing their own session must be able to tell those apart, and a shared sentence
+          // would let the weaker of the two stand in for the stronger.
+          //
+          // **Both arms of it, not only the floored one.** A plain `destructive` lifted by the
+          // checker is the COMMON case and reaches the screen through nothing else:
+          // `showNegotiatedApproval` below gates on §5.3's `consecutiveRejections`, which is zero on
+          // round 1 — the round most of these approvals happen on — so that path returns without
+          // drawing. Announcing the rare floored arm and staying silent on the common one would put
+          // the weaker guarantee on screen and leave the stronger one invisible.
+          //
+          // Rendered by the alignment module's own one renderer rather than spelled here, so the
+          // two arms cannot come to describe one event two ways.
+          if (alignment?.kind === 'approve') {
             this.statusUpdate(
               StatusLevel.WARNING,
-              '\n⚠ Ran a command that reaches the network without asking you, because the ' +
-                `alignment check found it matches what you asked for and approvals is set to ` +
-                `${APPROVAL_RUNG_LABELS.auto}. Check the host is the one you meant.`
+              alignmentApprovalNotice({
+                command: subject.command,
+                rungLabel: APPROVAL_RUNG_LABELS.auto,
+                reachesNetwork: effectiveFloor?.kind === 'open-world',
+              })
             );
           }
           // [[TUI-C69]] §5.4/§5.5 — **the round that ENDS a negotiation is a round too**, and it
@@ -1912,34 +1926,67 @@ export class GthAgentRunner {
             record
           );
         }
-        if (action === 'reject') {
-          // §5 — `destructive` at `auto`. The round is recorded first, so the attempt being ruled
-          // on is itself on the transcript the human sees (§5.6).
-          //
-          // [[EXT-127]] — the checker's own decision rides on the round, so the NEXT round's check
-          // can replay it as its own turn. Absent when no check was made, which is what keeps an
-          // `assisted` rejection and a floored one out of the checker's replayed history.
-          const round: RaterNegotiationRound = {
-            command: subject.command,
-            ...(justification ? { justification } : {}),
-            outcome: decision.verdict?.outcome ?? 'destructive',
-            reason: decision.verdict?.reason ?? '',
-            ...(alignment ? { alignment } : {}),
-          };
-          const outcome = this.negotiation.recordRejection(round);
-          // [[TUI-C69]] §5.4 — **the round reaches the screen HERE, as it happens**, not only at
-          // the escalation this argument may never reach. Emitted for the escalating round too:
-          // the exchange is rendered as it happens, and the round that spends a bound is part of
-          // it. The prompt's own transcript is then the summary a person rules on, which is a
-          // different job from watching the argument run.
-          //
-          // Read AFTER `recordRejection`, so the count carries this round: the k-th rejection
-          // sits at position k-1, which numbers it `Round k` on screen — the number the
-          // escalation transcript would give the same round.
+        // §5 — the attempt just ruled on, as the transcript records it.
+        //
+        // **ONE builder for both of the paths that record a round**, because it is one fact: an
+        // attempt was made, the gate refused to let it run, and this is what each party said about
+        // it. Two literal copies would be two writers of the transcript's own shape, and the copy
+        // that got forgotten would be the escalating one — which is exactly the round a person is
+        // being asked to rule on.
+        //
+        // [[EXT-127]] — the checker's own decision rides on the round, so the NEXT round's check
+        // can replay it as its own turn. Absent when no check was made, which is what keeps an
+        // `assisted` rejection and a floored one out of the checker's replayed history.
+        const negotiationRound = (): RaterNegotiationRound => ({
+          command: subject.command,
+          ...(justification ? { justification } : {}),
+          outcome: decision.verdict?.outcome ?? 'destructive',
+          reason: decision.verdict?.reason ?? '',
+          ...(alignment ? { alignment } : {}),
+        });
+        /**
+         * [[TUI-C69]] §5.4 — record the round and put it on the screen, in that order.
+         *
+         * The position is read AFTER `recordRejection`, so the count carries this round: the k-th
+         * rejection sits at position k-1, which numbers it `Round k` on screen — the number the
+         * escalation transcript would give the same round.
+         *
+         * **The round reaches the screen HERE, as it happens**, not only at the escalation this
+         * argument may never reach. Emitted for the escalating round too: the exchange is rendered
+         * as it happens, and the round that spends a bound is part of it. The prompt's own
+         * transcript is then the summary a person rules on, which is a different job from watching
+         * the argument run.
+         */
+        const recordAndShow = (round: RaterNegotiationRound): NegotiationVerdict => {
+          const verdict = this.negotiation.recordRejection(round);
           this.showNegotiationRound({
             round,
             position: this.negotiation.counters().rejectionsSinceHuman - 1,
           });
+          return verdict;
+        };
+        // [[EXT-127]] — **an escalation the CHECKER decided is a round, and is recorded as one.**
+        //
+        // `action` is `escalate` here, so the `reject` block below is skipped entirely and nothing
+        // else on this path would record anything. Two things were lost with it, and both are the
+        // reject path's stated reason for recording first: the attempt being ruled on was absent
+        // from the transcript the human is shown (§5.6), and the checker's own decision — the
+        // thing that ended the argument — was carried nowhere, so neither the next round, the
+        // escalation prompt's payload nor the archive could say what it decided or why.
+        //
+        // **Only a check that actually ran and actually escalated.** A fail-closed check has
+        // already been erased to `undefined` above, deliberately — a check that did not happen is
+        // not a round the next one should replay as its own turn — and a floored `escalate` the
+        // checker never lifted is the classifier's decision, not the checker's.
+        //
+        // **The verdict `recordRejection` returns is deliberately ignored**, which is the one way
+        // this differs from the reject path. That return answers *"may another round be served?"*,
+        // and the checker has just ruled that a person decides; letting a spare bound turn its
+        // escalation back into another agent round would reverse the decision this line exists to
+        // record.
+        if (alignment?.kind === 'escalate') recordAndShow(negotiationRound());
+        if (action === 'reject') {
+          const outcome = recordAndShow(negotiationRound());
           if (outcome === 'reject') {
             // [[TUI-C69]] §5.4 — name the call the gate is about to refuse BACK TO THE AGENT, so
             // both surfaces tone its result row as a clarification request rather than as a failed

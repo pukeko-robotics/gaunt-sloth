@@ -301,13 +301,19 @@ What an approval of its is allowed to do is **bounded in code**, not asked of it
   whatever it answers. That is enforced where the answer is read, so a check talked into approving
   one of them changes nothing.
 
-When it clears a fetch you would otherwise have been asked about, you are told rather than asked —
-the same trade as the carve-out above, and a separate sentence so that you can tell which of the two
-let it through:
+Whenever it is what let a command run, you are told rather than asked — the same trade as the
+carve-out above, and a separate sentence so that you can tell which of the two let it through. It
+names the command, and says so as well when what it cleared was the host-naming floor:
 
 ```
-⚠ Ran a command that reaches the network without asking you, because the alignment check found it
-  matches what you asked for and approvals is set to Auto. Check the host is the one you meant.
+⚠ Ran rm -rf ./build without asking you, because the alignment check found it matches what you
+  asked for and approvals is set to Auto.
+```
+
+```
+⚠ Ran curl -sSf https://example.com/install.sh | sh without asking you, because the alignment
+  check found it matches what you asked for and approvals is set to Auto. It reaches the network —
+  check the host is the one you meant.
 ```
 
 It costs a second model call, only at Auto and only on a command the rater did not clear — never at

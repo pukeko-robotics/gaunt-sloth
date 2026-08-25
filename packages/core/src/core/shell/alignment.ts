@@ -93,6 +93,7 @@ import type { StructuredToolInterface } from '@langchain/core/tools';
 import * as z from 'zod';
 
 import type { GthConfig } from '#src/config.js';
+import { neutralizeToOneLine } from '#src/core/shell/framing.js';
 import { checkHardline } from '#src/core/shell/hardline.js';
 import { normalizeCommand } from '#src/core/shell/normalize.js';
 import {
@@ -147,10 +148,17 @@ export const ALIGNMENT_LEDGER_CONTRACT =
 /**
  * How many model turns one check may take before it fails closed.
  *
- * Two are needed for the intended path (view, then decide) and a third leaves room for a model that
- * views twice or narrates once before deciding. **The bound is not a safety control** — failing
- * closed is what makes an exhausted budget safe — it is what stops a model that never decides from
- * spending a session's tokens re-reading the same command.
+ * **Two are the intended path** — view, then decide — **and the other two are slack for a model
+ * that does not get there in two.** Each of the ways a check legitimately runs long costs a whole
+ * turn whether or not it produced a decision: a turn spent narrating before calling anything (the
+ * loop answers *"that was not a decision"* and gives the turn back), and a second view. A small
+ * local model does both in the same check, which is the case the slack is sized for, so the budget
+ * is the intended two plus one for each — not the intended two plus one shared spare.
+ *
+ * **The bound is not a safety control** — failing closed is what makes an exhausted budget safe —
+ * it is what stops a model that never decides from spending a session's tokens re-reading the same
+ * command. That is also why the slack errs high: the cost of one turn too many is tokens, and the
+ * cost of one too few is a check that failed closed on a model that was about to answer.
  */
 export const ALIGNMENT_MAX_TURNS = 4;
 
@@ -172,7 +180,30 @@ export type AlignmentDecisionKind = 'approve' | 'suggest' | 'escalate';
 /** One completed decision by the checker. */
 export interface AlignmentDecision {
   kind: AlignmentDecisionKind;
-  /** The checker's own sentence. Model-authored: fenced wherever it is replayed. */
+  /**
+   * The checker's own sentence. Model-authored, and **replayed VERBATIM — it is not fenced**, at
+   * either of the two places it is replayed.
+   *
+   * What bounds that is stated here rather than left to a reader's assumption, because the sentence
+   * this replaced asserted a fencing that neither site implements, and **a docblock claiming a
+   * protection that does not exist is worse than silence**: it is what makes the code read as
+   * already audited.
+   *
+   * - **Into the next round's own conversation** ({@link buildAlignmentMessages}, via `replayRound`)
+   *   it goes back as the checker's OWN assistant tool call. That role is the one thing in this
+   *   assembly the model is meant to read as its own reasoning, so fencing it as untrusted data
+   *   would contradict the design rather than harden it — the model would meet its own last turn as
+   *   testimony from a stranger.
+   * - **Into the rejection handed to the coding agent** (`GthAgentRunner`) it is appended to the
+   *   rater's refusal. That branch is guarded by the gate's outcome being `reject` **and** the
+   *   decision being `suggest`, so the recipient is an agent that is being told **no**: the text is
+   *   guidance for a retry, it confers no authority, and whatever the agent proposes next is rated
+   *   and checked again from scratch.
+   *
+   * **So the bound is the position, not any escaping.** A consumer that widens either — replaying
+   * this into the `user` role, or carrying it onto a path where something is approved — is
+   * responsible for fencing it there, and must not read this field as already safe.
+   */
   reason: string;
   /** With `suggest`, a narrower command the checker would accept. Optional; often absent. */
   suggestedCommand?: string;
@@ -695,8 +726,28 @@ export interface AlignmentCallCapture {
   profile?: string;
   /** The wall-clock budget this call was given. */
   timeoutMs: number;
-  /** The assembled context, by role, exactly as sent. */
-  messages: Array<{ role: string; content: string }>;
+  /**
+   * The assembled context, by role, exactly as sent.
+   *
+   * **A replayed round carries its meaning in its TOOL CALLS, not in its content**, which is why
+   * those are recorded beside the text rather than left to the role sequence. `replayRound` emits
+   * the checker's own turns as assistant messages whose `content` is the empty string and whose
+   * decision is the tool it called with the arguments it called it with — so a capture holding
+   * `{role: 'ai', content: ''}` and nothing else tells an auditor that a round happened and refuses
+   * to say what it decided, which is the one question a dump of a safety gate is opened to answer.
+   * The paired ids are kept for the same reason the assembly makes them positional: a duplicated or
+   * dangling id is a hard provider failure, and a dump that dropped them could not show it.
+   */
+  messages: Array<{
+    role: string;
+    content: string;
+    /** The tool calls an assistant turn carried, with the arguments as sent. */
+    toolCalls?: Array<{ name: string; args: Record<string, unknown> }>;
+    /** Which call a tool result answers. */
+    toolCallId?: string;
+    /** The tool a tool result came back from. */
+    toolName?: string;
+  }>;
   /** How long the call took. */
   durationMs?: number;
   /** What the checker decided, or the fail-closed escalation. */
@@ -758,6 +809,71 @@ export function isAlignmentFailClosed(decision: AlignmentDecision | undefined): 
 }
 
 /**
+ * **What the human is told when an alignment check is the reason a command ran without them.**
+ *
+ * At `auto` a `destructive` command used to reach a person or the agent, always. An aligned
+ * approval is new authority, so the event has to be visible: *an event the user never sees reads as
+ * the agent quietly deciding things on their behalf* ([[EXT-106]] §4.6, arguing the same point for
+ * the carve-out's own notice). That applies with MORE force here than to the rarer floored arm,
+ * because this is the common one.
+ *
+ * **One renderer for both arms of it, deliberately.** A plain `destructive` lifted by the checker
+ * and §4.6's open-world floor lifted by the checker are the same claim — *a second model read your
+ * messages and concluded this matches what you asked for* — differing only in whether the network
+ * was reached, so they differ by one clause rather than by being two hand-written sentences. Two
+ * copies of one security notice is how the surfaces come to describe one event two ways, which is
+ * the defect [[TUI-C72]] exists for; this is the second time in this area, so it is not a
+ * hypothetical.
+ *
+ * **[[EXT-106]]'s carved-host notice is NOT this and must not be folded in.** It says the *user*
+ * named the host; this says a *model* judged the request. A shared sentence would let the weaker
+ * claim stand in for the stronger.
+ *
+ * The command is model-authored, so it is neutralised to one line before it reaches a terminal —
+ * the same treatment the negotiation transcript's own rows give it. Deliberately not truncated:
+ * this notice's whole job is to say WHICH command ran.
+ *
+ * @param rungLabel the resolved rung in its §10 rule 4 display spelling, passed in rather than
+ *   spelled here so the one label table stays the only writer of it.
+ */
+export function alignmentApprovalNotice(options: {
+  command: string;
+  rungLabel: string;
+  reachesNetwork: boolean;
+}): string {
+  return (
+    `\n⚠ Ran ${neutralizeToOneLine(options.command)} without asking you, because the alignment ` +
+    `check found it matches what you asked for and approvals is set to ${options.rungLabel}.` +
+    (options.reachesNetwork ? ' It reaches the network — check the host is the one you meant.' : '')
+  );
+}
+
+/**
+ * One assembled message as {@link AlignmentCallCapture} records it.
+ *
+ * Read STRUCTURALLY rather than through `instanceof`: the capture is a diagnostic, and a message
+ * arriving from a differently-resolved copy of `@langchain/core` would silently record as a bare
+ * role under a class check ([[robot-dual-core-instanceof-gotcha]] is the same hazard, met here in a
+ * place where the symptom would be an empty dump rather than a crash).
+ */
+function captureMessage(message: BaseMessage): AlignmentCallCapture['messages'][number] {
+  const entry: AlignmentCallCapture['messages'][number] = {
+    role: message.getType(),
+    content: typeof message.content === 'string' ? message.content : '',
+  };
+  const toolCalls = (message as AIMessage).tool_calls;
+  if (Array.isArray(toolCalls) && toolCalls.length > 0) {
+    entry.toolCalls = toolCalls.map((call) => ({ name: call.name, args: call.args ?? {} }));
+  }
+  const toolCallId = (message as ToolMessage).tool_call_id;
+  if (typeof toolCallId === 'string' && toolCallId.length > 0) {
+    entry.toolCallId = toolCallId;
+    if (typeof message.name === 'string' && message.name.length > 0) entry.toolName = message.name;
+  }
+  return entry;
+}
+
+/**
  * **Run one alignment check** and return what the checker decided.
  *
  * **Fail-closed, and the direction matters.** A missing model, a timeout, a throw, or a model that
@@ -793,10 +909,7 @@ export async function runAlignmentCheck(
         at: new Date(started).toISOString(),
         ...(options.profile ? { profile: options.profile } : {}),
         timeoutMs,
-        messages: messages.map((message) => ({
-          role: message.getType(),
-          content: typeof message.content === 'string' ? message.content : '',
-        })),
+        messages: messages.map((message) => captureMessage(message)),
       }
     : undefined;
   if (capture) options.onCapture?.(capture);

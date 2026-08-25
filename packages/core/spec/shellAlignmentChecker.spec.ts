@@ -504,12 +504,25 @@ describe('[[EXT-127]] runAlignmentCheck', () => {
     expect(decision.reason).toContain(ALIGNMENT_COULD_NOT_CHECK_PREFIX);
   });
 
-  it('fails closed when the checker answers in prose and never decides', async () => {
+  /**
+   * The bound, **asserted as a literal on purpose**.
+   *
+   * Reading `ALIGNMENT_MAX_TURNS` here passes at every value the constant could hold, so it pinned
+   * the loop's shape and said nothing at all about its budget — which is how the constant and the
+   * docblock justifying it came to disagree with nothing going red. The number is a deliberate
+   * choice (two for the intended view-then-decide path, plus one each for a narrating turn and a
+   * second view), so moving it is a decision someone should have to make here as well as there.
+   *
+   * Both halves are asserted, because they fail in opposite directions: the constant is what the
+   * module publishes, and the call count is what the loop actually spends.
+   */
+  it('fails closed when the checker answers in prose and never decides, after exactly 4 turns', async () => {
     const { model, invoke } = scriptedModel([]);
     const decision = await runAlignmentCheck(subjectOf(), CONFIG, { model, userMessages: [] });
     expect(isAlignmentFailClosed(decision)).toBe(true);
     // Bounded: a model that will never decide does not spend the session.
-    expect(invoke).toHaveBeenCalledTimes(ALIGNMENT_MAX_TURNS);
+    expect(invoke).toHaveBeenCalledTimes(4);
+    expect(ALIGNMENT_MAX_TURNS).toBe(4);
   });
 
   it('fails closed when the call throws', async () => {

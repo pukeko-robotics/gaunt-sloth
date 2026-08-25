@@ -389,11 +389,17 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
     });
 
     /**
-     * `neg-02` — **the convergence case, re-read after [[EXT-108]].** The approved call between the
-     * two rejections resets §5.3's counter and leaves the rounds standing, so the retry after it is
-     * rated as a round 2: the attempt it is narrowing, and the reply that told it how, are both in
-     * view. Under the old reset the retry was rated blind, which is what made the rater re-advise a
-     * thing the agent had already done.
+     * `neg-02` — **the convergence case, re-read after [[EXT-108]] and again after [[EXT-127]].**
+     * The approved call between the two rejections resets §5.3's counter and leaves the rounds
+     * standing, so the retry after it is a genuine round 2 of one argument rather than a fresh
+     * negotiation — which is what [[EXT-108]] fixed, after the rater re-advised a thing the agent
+     * had already done because the retry reached it blind.
+     *
+     * **What the round-2-ness now buys is a different reader.** The classifier sees the command
+     * alone at every round, so what this case asserts of it is that BOTH ratings are blind and
+     * byte-identical in shape. The transcript it no longer reads is the alignment checker's, which
+     * replays those rounds as its own earlier turns — pinned in `shellAlignmentRunner.spec.ts` and
+     * in this suite's own state cells, not here.
      *
      * **The corpus case declares the new behaviour and is asserted, not merely read for shape.**
      * Its reset round carries `clears_transcript: false` and the round after it
@@ -407,7 +413,7 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
      * and must stay blind; `ratings[2]` is the retry after a compliance call and must not. If those
      * two ever collapse into one case, in either direction, this goes red.
      */
-    it('neg-02-converge: the retry after an approved call is a ROUND-2 context, and the first rating is still blind', async () => {
+    it('neg-02-converge: the retry after an approved call is a round 2 of the same argument, and is rated as blind as the first', async () => {
       const negCase = caseById('neg-02-converge');
       const [r1, resetRound, r3, r4] = negCase.rounds;
       expect(resetRound.clears_transcript, 'the fixture must declare the new behaviour').toBe(
