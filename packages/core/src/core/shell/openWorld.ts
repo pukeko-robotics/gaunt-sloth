@@ -956,8 +956,14 @@ interface AnalyzedSegment {
  * {@link findComposedOpenWorld} runs {@link analyzeComposed} over both, because normalization
  * destroys analysis the raw form still has (a Windows path separator). The two are not
  * interchangeable for a test about GRAMMAR: `normalized` tokens have already had `\x` collapsed to
- * `x`, so they are the argv, while `raw` tokens still carry every escape — and `ssh \-h`, whose
- * argv[1] the shell hands over as `-h`, looks like a plain operand there.
+ * `x`, while `raw` tokens still carry every escape — and `ssh \-h`, whose argv[1] the shell hands
+ * over as `-h`, looks like a plain operand there.
+ *
+ * **A `normalized` token is CLOSER to the argv than a raw one; it is not the argv.** Collapsing
+ * `\x` is the only shell transformation performed here, while the shell also does ANSI-C quoting
+ * and parameter expansion — so `ssh $'\x2d'deploy@host` and `ssh ${EMPTY}-deploy@host` reach the
+ * program as `-deploy@host` and still read as plain operands on BOTH forms. Every arm reading
+ * grammar off either form inherits that gap; EXT-145 carries it.
  *
  * So an arm that reads a program's grammar off a token must collapse a `raw` token first and must
  * NOT touch a `normalized` one: collapsing twice reads `\\-h` — which reaches the program as `\-h`,
