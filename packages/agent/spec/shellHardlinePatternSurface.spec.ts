@@ -104,6 +104,41 @@ const EXPECTED_SURFACE: Readonly<Record<string, string | readonly string[]>> = {
     '/${CHOWN_HEAD}${SYSTEM_DIR_TARGET}/',
     '/${CMD_POS}kill\\s+(?:-[^\\s]+\\s+)+-1\\b/',
   ],
+  // EXT-67 — the win32-only arm. **This entry is an ADDITION, not a movement**: every value here
+  // was previously absent, no existing member changed, and no command that matched before stops
+  // matching. The removal set is therefore EMPTY, which is the declaration the gate asks for.
+  //
+  // The direction of risk runs the other way for this half, and it is why the arm is enrolled at
+  // all: a narrowing of a PLATFORM-GATED pattern is invisible on the three matrix cells that are
+  // not Windows, so the frozen literal is the only thing that reddens on a machine where the arm
+  // never runs.
+  WIN_FLAG_RUN: '(?:[-/][^\\s]*\\s+)*',
+  WIN_SAME_COMMAND: '[^${COMMAND_SEPARATOR_CLASS}]*',
+  WIN_DRIVE_PREFIX: '(?:(?:\\\\\\?)?[a-z]:|%systemdrive%|\\$env:systemdrive)',
+  WIN_ROOT_TAIL: '(?:[\\\\/]?\\*|[\\\\/])?',
+  WIN_DRIVE_ROOT:
+    '(?:"${WIN_DRIVE_PREFIX}${WIN_ROOT_TAIL}"|\'${WIN_DRIVE_PREFIX}${WIN_ROOT_TAIL}\'|${WIN_DRIVE_PREFIX}${WIN_ROOT_TAIL})${TARGET_TOKEN_END}',
+  WIN_SYSTEM_DIR_TARGET:
+    '(?:"(?:${WIN_DRIVE_PREFIX}[\\\\/]?windows(?:[\\\\/]?system32)?|%systemroot%|\\$env:windir)${WIN_ROOT_TAIL}"|\'(?:${WIN_DRIVE_PREFIX}[\\\\/]?windows(?:[\\\\/]?system32)?|%systemroot%|\\$env:windir)${WIN_ROOT_TAIL}\'|(?:${WIN_DRIVE_PREFIX}[\\\\/]?windows(?:[\\\\/]?system32)?|%systemroot%|\\$env:windir)${WIN_ROOT_TAIL})${TARGET_TOKEN_END}',
+  WIN_DELETE_VERB: '(?:remove-item|rmdir|erase|del|rd|ri|rm)',
+  GIT_BASH_DRIVE_TARGET:
+    '(?:"(?:/cygdrive)?/[a-z](?:/(?:users|windows|programdata))?(?:/\\*?)?"|\'(?:/cygdrive)?/[a-z](?:/(?:users|windows|programdata))?(?:/\\*?)?\'|(?:/cygdrive)?/[a-z](?:/(?:users|windows|programdata))?(?:/\\*?)?)${TARGET_TOKEN_END}',
+  WIN_MACHINE_HIVE:
+    '(?:"(?:(?:hklm|hkey_local_machine)(?:[\\\\/]?(?:software|system))?|hkcr|hkey_classes_root)"|\'(?:(?:hklm|hkey_local_machine)(?:[\\\\/]?(?:software|system))?|hkcr|hkey_classes_root)\'|(?:(?:hklm|hkey_local_machine)(?:[\\\\/]?(?:software|system))?|hkcr|hkey_classes_root))${TARGET_TOKEN_END}',
+  WINDOWS_HARDLINE_PATTERNS: [
+    '/${CMD_POS}${WIN_DELETE_VERB}\\s+${WIN_FLAG_RUN}${WIN_DRIVE_ROOT}/',
+    '/${CMD_POS}${WIN_DELETE_VERB}\\s+${WIN_FLAG_RUN}${WIN_SYSTEM_DIR_TARGET}/',
+    '/${CMD_POS}rm\\s+(?:-[^\\s]*\\s+)*${GIT_BASH_DRIVE_TARGET}/',
+    '/${CMD_POS}format\\s+${WIN_FLAG_RUN}${WIN_DRIVE_ROOT}/',
+    '/${CMD_POS}format-volume\\b/',
+    '/${CMD_POS}clear-disk\\b/',
+    '/${CMD_POS}diskpart\\b/',
+    '/${CMD_POS}vssadmin\\s+${WIN_FLAG_RUN}delete\\s+shadows\\b/',
+    '/${CMD_POS}wmic\\b${WIN_SAME_COMMAND}shadowcopy\\b${WIN_SAME_COMMAND}delete\\b/',
+    '/${CMD_POS}reg\\s+delete\\s+${WIN_MACHINE_HIVE}/',
+    '/${CMD_POS}takeown\\b(?=${WIN_SAME_COMMAND}\\s\\/r\\b)${WIN_SAME_COMMAND}\\s\\/f\\s+${WIN_DRIVE_ROOT}/',
+    '/${CMD_POS}icacls\\s+${WIN_DRIVE_ROOT}(?=${WIN_SAME_COMMAND}\\s\\/t\\b)(?=${WIN_SAME_COMMAND}\\s\\/(?:grant|deny|remove|reset|setowner)\\b)/',
+  ],
   PIPELINE_SPLIT_RE: '/[;&\\n\\r]/',
   NETWORK_SINK_RE:
     '/${CMD_POS}(?:curl|wget|nc|ncat|netcat|telnet|socat|tftp|scp|sftp|aws\\s+s3|gsutil|gcloud\\s+storage)\\b/',

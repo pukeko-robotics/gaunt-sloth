@@ -1600,3 +1600,319 @@ describe('checkHardline — the block-device redirect anchors outside quotes (EX
     ).toBeNull();
   });
 });
+
+/* ================================================================================================ *
+ * EXT-67 — the win32 arm.
+ *
+ * The floor had no platform check at all, so on Windows it refused **0** of the catastrophic
+ * commands a Windows box can run. (The node was filed against a 2/25 measurement whose two hits were
+ * `shutdown /s` and `shutdown /r`, caught only because `shutdown` is spelled the same on both
+ * platforms. EXT-129 arm 1 then removed the shutdown family deliberately, which took the count to
+ * zero — re-measured before this work began.)
+ *
+ * **The platform is INJECTED in every cell below, and that is the point of the option existing.**
+ * Without it these could only run on the two Windows matrix cells: undevelopable locally, and a
+ * regression invisible on the other three. With it the arm is exercised on every cell, and the
+ * Windows cells additionally prove that the real `process.platform` default selects it — which is
+ * what the last block here asserts.
+ * ================================================================================================ */
+
+/** The injected platforms, so no cell reads `process.platform` by accident. */
+const WIN32 = { platform: 'win32' } as const;
+const LINUX = { platform: 'linux' } as const;
+
+describe('checkHardline — the win32 arm refuses what a Windows box can lose (EXT-67)', () => {
+  /**
+   * The catastrophic set, by the spelling a model would actually emit. Each is paired with the arm
+   * description it must match, not merely asserted non-null: the description is the arm's identity,
+   * and without it a case can migrate to a different arm while the cell stays green — the same
+   * reason EXT-129's `mustRefuse` block pins descriptions.
+   */
+  const mustRefuse: ReadonlyArray<readonly [string, string]> = [
+    // Drive root, cmd.exe spellings. `run_shell_command` spawns cmd.exe on win32, so these are the
+    // ones actually reachable.
+    ['del /f /s /q C:\\*', 'recursive delete of a Windows drive root'],
+    ['rd /s /q C:\\', 'recursive delete of a Windows drive root'],
+    ['rd /s /q C:/', 'recursive delete of a Windows drive root'],
+    ['erase /s /q C:\\', 'recursive delete of a Windows drive root'],
+    ['ls; rd /s /q C:\\', 'recursive delete of a Windows drive root'],
+    // The alternate drive spellings the node names, all four of which normalisation mangles.
+    ['rd /s /q \\\\?\\C:\\', 'recursive delete of a Windows drive root'],
+    ['rd /s /q "C:\\"', 'recursive delete of a Windows drive root'],
+    ['Remove-Item -Recurse -Force %SystemDrive%', 'recursive delete of a Windows drive root'],
+    ['Remove-Item -Recurse -Force $env:SystemDrive', 'recursive delete of a Windows drive root'],
+    // Drive root, PowerShell spellings — including the abbreviated alias, which PowerShell's own
+    // abbreviation rules make the normal way to write it.
+    ['Remove-Item -Recurse -Force C:\\', 'recursive delete of a Windows drive root'],
+    ['ri -r -fo C:\\', 'recursive delete of a Windows drive root'],
+    // The system directory, at both enumerated depths.
+    ['rmdir /s /q C:\\Windows', 'recursive delete of the Windows system directory'],
+    ['rmdir /s /q C:\\Windows\\System32', 'recursive delete of the Windows system directory'],
+    [
+      'Remove-Item -Recurse -Force %SystemRoot%',
+      'recursive delete of the Windows system directory',
+    ],
+    // Git Bash / Cygwin: the spellings that reach the REAL system drive, where `rm -rf /` on the
+    // same box reaches only the MSYS root.
+    ['rm -rf /c/Users', 'recursive delete of the Windows system drive'],
+    ['rm -rf /c', 'recursive delete of the Windows system drive'],
+    ['rm -rf /cygdrive/c', 'recursive delete of the Windows system drive'],
+    ['rm -rf /cygdrive/c/Users', 'recursive delete of the Windows system drive'],
+    ['sudo rm -rf /c/windows', 'recursive delete of the Windows system drive'],
+    // Formatting and partitioning.
+    ['format C: /y', 'format a Windows drive'],
+    ['format /fs:ntfs C:', 'format a Windows drive'],
+    ['Format-Volume -DriveLetter C', 'format a Windows volume'],
+    ['Clear-Disk -Number 0 -RemoveData', 'wipe a Windows disk'],
+    ['diskpart /s wipe.txt', 'Windows disk partitioning (diskpart)'],
+    // The shadow copies — the ransomware precursor, and the reason an encryption pass becomes
+    // unrecoverable.
+    ['vssadmin delete shadows /all /quiet', 'delete the Windows shadow copies'],
+    ['wmic shadowcopy delete', 'delete the Windows shadow copies'],
+    // The machine registry hives.
+    ['reg delete HKLM\\SOFTWARE /f', 'delete a Windows machine registry hive'],
+    ['reg delete HKEY_LOCAL_MACHINE\\SYSTEM /f', 'delete a Windows machine registry hive'],
+    ['reg delete HKCR /f', 'delete a Windows machine registry hive'],
+    // The chown / chmod analogues. Both orderings of takeown's flags are real invocations.
+    ['takeown /f C:\\ /r /d y', 'recursive takeown of a Windows drive root'],
+    ['takeown /r /f C:\\ /d y', 'recursive takeown of a Windows drive root'],
+    ['icacls C:\\ /grant Everyone:F /t', 'recursive ACL rewrite of a Windows drive root'],
+  ];
+
+  it.each(mustRefuse)('refuses %s on the %s arm', (command, description) => {
+    const match = checkHardline(command, WIN32);
+    expect(match, `"${command}" is not refused on the win32 arm`).not.toBeNull();
+    expect(match!.description).toBe(description);
+  });
+
+  /**
+   * **The gate is the other half of the feature, so it is asserted, not assumed.** A Linux agent
+   * writing a Windows deployment script must not be refused for the word `format`, and someone
+   * greping for `diskpart` must not be refused for the word. Merging the two lists would have made
+   * every case above an unappealable refusal of ordinary POSIX work — which is why the node's scope
+   * says "active only on win32" and why this cell exists rather than a comment saying so.
+   */
+  it.each(mustRefuse.map(([command]) => command))(
+    'does NOT refuse %s on a non-Windows host',
+    (command) => {
+      const match = checkHardline(command, LINUX);
+      expect(
+        match,
+        `"${command}" was refused as "${match?.description}" on LINUX — the win32 list has leaked ` +
+          `into the shared one, and every Windows word is now an unappealable refusal off-platform`
+      ).toBeNull();
+    }
+  );
+});
+
+/**
+ * EXT-67 — the must-NOT-fire half, which is the gate on this node exactly as it is on POSIX.
+ *
+ * Written before the first refusal pattern, because a false positive on this floor is unappealable
+ * at every rung including `bypass`: an agent that cannot delete `node_modules` on Windows has no way
+ * to proceed and no rung to change to.
+ */
+describe('checkHardline — the win32 arm does not refuse ordinary Windows work (EXT-67)', () => {
+  const ordinaryWindowsWork: ReadonlyArray<readonly [string, string]> = [
+    // The seven the node names.
+    ['dir C:\\Users', 'a read-only listing of the profile directory'],
+    ['rd /s /q node_modules', 'the single most ordinary destructive command in this repo'],
+    ['Remove-Item -Recurse -Force .\\dist', 'the PowerShell spelling of the same'],
+    ['findstr /s /i "mkfs" docs\\*.md', 'a source search whose PATTERN is a floored verb'],
+    ['icacls .\\dist /grant Users:F', 'granting on a relative path, beside the drive-root form'],
+    ['takeown /f .\\dist /r', 'recursive takeown of a relative path'],
+    ['reg query HKLM\\SOFTWARE\\Microsoft\\Windows /s', 'a read-only registry query'],
+    // Near-misses of each new arm, one per arm, chosen because each one differs from a refused
+    // case by exactly the discriminator that arm relies on.
+    ['vssadmin list shadows', 'the READ-ONLY shadow-copy verb'],
+    ['taskkill /f /im node.exe', 'killing one process by image name'],
+    ['del /f /s /q .\\build\\*', 'a recursive quiet delete of a RELATIVE tree'],
+    ['bcdedit /enum', 'a read-only boot-configuration dump'],
+    ['Clear-Host', 'a cmdlet whose name begins like Clear-Disk'],
+    ['echo do not run format C: /y', 'prose naming a floored command'],
+    ['Copy-Item -Recurse -Force .\\src .\\backup', 'a recursive forced COPY'],
+    // Near-misses the node does not name and the new arms create. Each was reachable by a slightly
+    // broader pattern than the one shipped.
+    [
+      'icacls C:\\ /save acl.txt /t',
+      'a recursive ACL BACKUP at the drive root — the command an administrator runs BEFORE changing ' +
+        'them, and what an arm keyed on /t alone would have refused',
+    ],
+    [
+      'reg delete HKLM\\SOFTWARE\\MyApp /f',
+      'an application deleting its OWN key, which the collapsed backslash puts one character away ' +
+        'from the whole hive',
+    ],
+    ['reg delete HKCU\\Software\\MyApp /f', 'the same under the recoverable user hive'],
+    ['rd /s /q C:\\build', 'a recursive delete one directory BELOW the drive root'],
+    ['Remove-Item -Recurse -Force C:\\Users\\me\\project\\dist', 'a deep absolute build directory'],
+    ['rmdir /s /q C:\\Windows.old', 'the leftover upgrade tree people delete on purpose'],
+    ['rm -rf /c/users/me/tmp', 'a Git Bash path BELOW the profile directory'],
+    [
+      'del /q C:\\Users\\me\\AppData\\Local\\Temp\\x.tmp',
+      'deleting one temp file by absolute path',
+    ],
+    ['reg export HKLM\\SOFTWARE backup.reg', 'exporting a hive rather than deleting it'],
+    ['git format-patch -1 HEAD', 'a verb that merely STARTS with a floored word'],
+    ['Get-ChildItem C:\\ | Format-Table -AutoSize', 'the formatting cmdlets, in a pipeline'],
+    ['Get-Help Format-Volume', 'a usage lookup for a floored cmdlet'],
+    ['pnpm run format', 'the most ordinary use of the word there is'],
+    ['takeown /f C:\\ /d y', 'takeown at the drive root WITHOUT /r — one directory entry'],
+    ['findstr /s /i "vssadmin delete shadows" logs\\*.txt', 'searching logs for a floored command'],
+    ['echo diskpart is dangerous', 'prose naming a floored tool'],
+    ['cd C:\\ && npm run build', 'changing to the drive root and building'],
+    ['Copy-Item C:\\src\\a.txt C:\\dst\\a.txt', 'copying between absolute paths'],
+    ['rm -rf ./build', 'the POSIX relative delete, on a Windows host'],
+    ['rm -rf /tmp/scratch', 'a POSIX scratch path, on a Windows host'],
+  ];
+
+  it.each(ordinaryWindowsWork)('does not refuse %s (%s)', (command) => {
+    const match = checkHardline(command, WIN32);
+    expect(
+      match,
+      `"${command}" was REFUSED as "${match?.description}" on win32 — an unappealable refusal of ` +
+        `ordinary work, at every rung including bypass`
+    ).toBeNull();
+  });
+
+  /**
+   * **The whole EXT-129 standing probe set, re-run under win32.** The new arm's false-positive risk
+   * is not confined to Windows-looking commands: `git status` and `npm run build` are what a Windows
+   * developer runs too, and a Windows box runs the POSIX shapes through Git Bash. This is the
+   * broadest negative net the repo has, and running it on the other platform costs one `it.each`.
+   *
+   * Kept as its own literal rather than imported from the block above, because these are that
+   * block's cases and a shared constant would let an edit there silently change what this asserts.
+   */
+  const posixOrdinaryWork = [
+    'rm -rf ./build',
+    'rm -rf /tmp/my-scratch',
+    'chmod -R 777 /var/www',
+    'chown -R app:app /var/www/html',
+    'ls -la /etc',
+    'cat /etc/hosts',
+    'grep chown -r /etc',
+    "grep -r 'rm -rf' /etc",
+    'grep -rn mkfs docs/',
+    'rg -n "dd of=/dev/sd" scripts/',
+    'man reboot',
+    'echo reboot',
+    'kill -9 12345',
+    'kill -1 12345',
+    'lsblk /dev/sda',
+    'fdisk -l /dev/sda',
+    'ls /dev/sda',
+    'ls > out.txt',
+    'echo hi > /dev/null',
+    'echo hi 2> /dev/null',
+    'cat /dev/urandom | head -c 10 > sample.bin',
+    'git status',
+    'npm run build',
+    'docker run --rm alpine',
+  ];
+
+  it.each(posixOrdinaryWork)('does not refuse %s on win32 either', (command) => {
+    const match = checkHardline(command, WIN32);
+    expect(
+      match,
+      `"${command}" is allowed on POSIX and REFUSED on win32 as "${match?.description}" — the new ` +
+        `arm over-fires on a command that has nothing to do with Windows`
+    ).toBeNull();
+  });
+});
+
+/**
+ * EXT-67 — **the PINNED NON-ADDITIONS**, and the reason this block is a spec and not a report line.
+ *
+ * The node's acceptance asks for `shutdown /s /t 0`, `shutdown /r /f /t 0` and `Stop-Computer` to be
+ * refused on the Windows arm. **They must not be**, and the disagreement resolves by date rather
+ * than by judgement: the node was filed 2026-07-31, and on 2026-08-24 EXT-129 arm 1 took the whole
+ * host-down family OUT of §8 on Andrew's ruling — *"I'd classify it as simply destructive rather
+ * than catastrophic"* — because the machine comes back. Building the Windows arm to the node's
+ * letter would re-open a settled classification on one platform only.
+ *
+ * **EXT-129's own `pinnedRemovals` block cannot catch that.** It calls `checkHardline` with no
+ * platform, so on the ubuntu cell it is the POSIX arm and green whatever this arm does; and
+ * `Stop-Computer` and `Restart-Computer` are strings that appear nowhere in it, so no cell of it
+ * could ever go red for them. Without this block the exclusion would live only in a handover
+ * document, and the next person closing the node adds them back.
+ *
+ * The rest are this node's own scope calls, listed here for the same reason: an entry is a decision
+ * on the record, and a red cell means someone re-opened it rather than fixed something.
+ */
+describe('checkHardline — what the win32 arm deliberately does NOT floor (EXT-67)', () => {
+  const nonAdditions: ReadonlyArray<readonly [string, string]> = [
+    [
+      'shutdown /s /t 0',
+      'the host-down family is `destructive`, not `catastrophic` (EXT-129 arm 1) — the machine ' +
+        'comes back, and the POSIX siblings were removed on that ruling',
+    ],
+    ['shutdown /r /f /t 0', 'the same ruling, restart spelling'],
+    ['Stop-Computer -Force', 'the PowerShell spelling of the same ruling'],
+    ['Restart-Computer -Force', 'the PowerShell restart spelling of the same ruling'],
+    [
+      'cipher /w:C:',
+      'it overwrites FREE space — nothing in use is lost and the machine is unaffected, so it ' +
+        'destroys recoverability rather than data',
+    ],
+    [
+      'bcdedit /set {default} recoveryenabled No',
+      'a setting flip, undone by the opposite flip: a ransomware precursor, not a loss',
+    ],
+    [
+      'taskkill /f /im *',
+      'the wildcard image name is documented as accepted only alongside a filter, so the bare form ' +
+        'may be a usage error — flooring a command that does nothing buys nothing and sits next to ' +
+        'the ordinary `taskkill /f /im node.exe`',
+    ],
+  ];
+
+  it.each(nonAdditions)('PINNED NON-ADDITION — not floored on win32: %s (%s)', (command) => {
+    expect(
+      checkHardline(command, WIN32),
+      `"${command}" is a DELIBERATE exclusion. If this is red it was ADDED to the win32 arm — which ` +
+        `needs the §8-eligibility ruling re-opened and recorded, not a green cell.`
+    ).toBeNull();
+  });
+});
+
+/**
+ * EXT-67 — the DEFAULT, which is the half an injected platform can never prove.
+ *
+ * Every cell above passes a platform explicitly, so all of them would still pass if the default were
+ * wrong — hardcoded to `linux`, say, or read from the wrong place. These two cells are what tie the
+ * option back to the host: on a Windows runner the default must select the win32 arm, and on a POSIX
+ * runner it must not. **Both directions are asserted from the same `process.platform` the production
+ * callers get**, so a Windows matrix cell proves the real branch rather than a stand-in.
+ *
+ * **This cell is ONE-SIDED on any single runner, and the matrix is what completes it — measured,
+ * not assumed.** Mutating the default to a hardcoded `'win32'` reddens it here on Linux; mutating it
+ * to a hardcoded `'linux'` stays GREEN on Linux and can only redden on a Windows cell. So a local
+ * run proves half of this and `unit-tests.yml`'s two Windows cells prove the other half. That is the
+ * reason the node's acceptance names those cells, and the reason a green local run must not be
+ * reported as having proven the default.
+ */
+describe('checkHardline — the platform option defaults to the host (EXT-67)', () => {
+  const onWindows = process.platform === 'win32';
+
+  it('resolves a Windows-only command the way the HOST platform says', () => {
+    const command = 'rd /s /q C:\\';
+    expect(
+      checkHardline(command) !== null,
+      `on ${process.platform}, the default-platform reading of "${command}" disagrees with the ` +
+        `injected one — the default is not process.platform`
+    ).toBe(onWindows);
+    // The same command, both ways round, so neither injected value is what the default returns by
+    // coincidence on this runner.
+    expect(checkHardline(command, WIN32)).not.toBeNull();
+    expect(checkHardline(command, LINUX)).toBeNull();
+  });
+
+  it('leaves the shared arm platform-independent', () => {
+    for (const platform of ['win32', 'linux', 'darwin'] as const) {
+      expect(checkHardline('rm -rf /', { platform }), platform).not.toBeNull();
+      expect(checkHardline('rm -rf ./build', { platform }), platform).toBeNull();
+    }
+    expect(checkHardline('rm -rf /')).not.toBeNull();
+  });
+});
