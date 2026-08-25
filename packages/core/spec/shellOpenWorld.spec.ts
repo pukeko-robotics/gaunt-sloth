@@ -1832,7 +1832,13 @@ describe('mapVerdictToAction — §4.6 floors an open-world command even when th
    * there, on the reasoning that ssh has no operand the gate knows it SENDS. Withholding a true
    * mechanism was the safe direction and it was the right call at the time — but the flow is real:
    * an operand after the destination is sent to the remote machine and EXECUTED there, and this
-   * shape is a private key being read into it by the local shell first.
+   * shape reads a private key into it.
+   *
+   * **WHICH machine reads that key is a second question, and the arm answers only the first.**
+   * Quoting decides where a substitution expands, `tokenize` strips quotes without recording which
+   * kind they were, and the single-quoted spelling — where nothing expands locally — is the
+   * idiomatic one. So the sentence names the remote execution and declines the expansion, which the
+   * block below pins on the discriminating pair.
    *
    * The claim the arm needs is about ssh's grammar, and it is made in exactly one place and no
    * wider: ssh has no positional before the destination and every option starts with a dash, so a
@@ -1848,10 +1854,41 @@ describe('mapVerdictToAction — §4.6 floors an open-world command even when th
     expect(finding?.hosts).toEqual(['deploy@evil.example.net']);
     const note = buildComposedOpenWorldNote(command) ?? '';
     expect(note).toContain('the command ssh runs ON deploy@evil.example.net');
-    expect(note).toContain('executes there is output produced on THIS machine');
+    expect(note).toContain('and one of them is a substitution');
     // The mechanism, not a hedge: the note must no longer say it could not work the flow out.
     expect(note).not.toContain('could not work out how the parts feed into each other');
     expect(hostsMissingFromNote(command)).toEqual([]);
+  });
+
+  /**
+   * **The arm names the remote execution and says NOTHING about where the substitution expands** —
+   * because quoting decides that and the quoting is gone by the time the arm runs.
+   *
+   * The two commands below differ by ONE character class: `'…'` and `"…"`. Under double quotes the
+   * local shell expands the substitution before ssh starts; under single quotes it expands nothing,
+   * the literal text travels, and the REMOTE shell expands it — the opposite claim, on the spelling
+   * that is idiomatic precisely because it gets remote expansion. `tokenize` strips both quote kinds
+   * without recording which was used, so the note cannot tell these apart and must not sound as if
+   * it could.
+   *
+   * The last assertion is what makes this a property rather than two wordings: the notes are
+   * IDENTICAL, so there is no branch here for a quoting difference to select. Recording quoting
+   * in the tokenizer and gating the expansion clauses on it is a legitimate future move — and this
+   * assertion is the one that must then change deliberately, with a test in the diff.
+   */
+  it('never says WHERE the ssh substitution expands, because quoting decides it and is not read', () => {
+    const single = "ssh deploy@prod.example.com 'systemctl restart $(cat /etc/svc.name)'";
+    const double = 'ssh deploy@prod.example.com "systemctl restart $(cat /etc/svc.name)"';
+    for (const command of [single, double]) {
+      const note = buildComposedOpenWorldNote(command) ?? '';
+      expect(findComposedOpenWorld(command)?.flow?.kind, command).toBe('remote-command');
+      expect(note, command).toContain('the command ssh runs ON deploy@prod.example.com');
+      expect(note, command).toContain('Which machine expands that substitution is decided by the');
+      // The two clauses that inverted under single quotes, gone in both spellings.
+      expect(note, command).not.toContain('output produced on THIS machine');
+      expect(note, command).not.toContain('expands that inner command BEFORE');
+    }
+    expect(buildComposedOpenWorldNote(single)).toBe(buildComposedOpenWorldNote(double));
   });
 
   /**

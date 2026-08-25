@@ -1036,7 +1036,15 @@ export type ComposedFlow =
     }
   /**
    * An operand after an ssh destination is a command the REMOTE host runs, and it carries a
-   * substitution the local shell expands before ssh is started.
+   * substitution.
+   *
+   * **WHICH machine expands that substitution is not determinable here, and the sentence must not
+   * assert it.** Quoting decides it — the local shell expands `"$(…)"` before ssh is started and
+   * expands nothing inside `'$(…)'`, where the literal text travels and the remote shell expands it
+   * — and {@link tokenize} strips quotes without recording which kind they were, so by the time
+   * `segment.argv` exists the fact is gone. Single-quoting is the IDIOMATIC spelling of an ssh
+   * remote command, chosen precisely to get remote expansion, so a claim about local expansion is
+   * wrong on this arm's commonest real input. See {@link flowSentence}.
    *
    * `destination` is separate from `hosts` because the claim this arm makes is about ONE host — the
    * one the remote command runs on. A second host inside that remote command (`ssh host curl -d
@@ -1519,12 +1527,18 @@ function flowSentence(flow: ComposedFlow): string {
           ? ''
           : ` That remote command also names ${phrase}, and the gate is not saying what reaches ` +
             `${plural ? 'them' : 'it'}.`;
+      // Where the substitution EXPANDS is deliberately not claimed: quoting decides it and the
+      // quoting is gone by here — see the `remote-command` arm of {@link ComposedFlow}. The rater
+      // has the quoting in front of it inside the fence, so naming the axis hands it a question it
+      // can answer; asserting one side of it would be false half the time, and false on the half
+      // that is the idiomatic spelling.
       return (
         `The operands after the destination are the command ${transfer} runs ON ${destination}, ` +
-        `not on this machine, and one of them is a substitution. The SHELL here expands that inner ` +
-        `command BEFORE ${transfer} starts, so what travels to ${destination} and executes there is ` +
-        `output produced on THIS machine, not the literal text shown. What does the inner command ` +
-        `produce?${alsoNames}`
+        `not on this machine, and one of them is a substitution. Which machine expands that ` +
+        `substitution is decided by the quoting around it, which this gate does not record, so it ` +
+        `is not saying whether the inner command runs here before ${transfer} starts or on ` +
+        `${destination} along with the rest — the quoting is visible in the command text itself. ` +
+        `What does the inner command produce, and where?${alsoNames}`
       );
     }
   }
