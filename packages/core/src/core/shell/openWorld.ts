@@ -1077,12 +1077,15 @@ export type ComposedFlow =
    * substitution.
    *
    * **WHICH machine expands that substitution is not determinable here, and the sentence must not
-   * assert it.** Quoting decides it — the local shell expands `"$(…)"` before ssh is started and
-   * expands nothing inside `'$(…)'`, where the literal text travels and the remote shell expands it
-   * — and {@link tokenize} strips quotes without recording which kind they were, so by the time
-   * `segment.argv` exists the fact is gone. Single-quoting is the IDIOMATIC spelling of an ssh
-   * remote command, chosen precisely to get remote expansion, so a claim about local expansion is
-   * wrong on this arm's commonest real input. See {@link flowSentence}.
+   * assert it.** Quoting and escaping decide it — the local shell expands `"$(…)"` before ssh is
+   * started and expands nothing inside `'$(…)'` or `"\$(…)"`, where the literal text travels and the
+   * remote shell expands it — and neither survives to here: {@link tokenize} strips quotes without
+   * recording which kind they were, and {@link normalizeCommand} has already collapsed every
+   * backslash escape, so by the time `segment.argv` exists both facts are gone. Single-quoting is
+   * the IDIOMATIC spelling of an ssh remote command, chosen precisely to get remote expansion, so a
+   * claim about local expansion is wrong on this arm's commonest real input. **And the sentence must
+   * not defer the question to the displayed command either** — that string is the normalized one, so
+   * on an escaped spelling it shows quoting the command never had. See {@link flowSentence}.
    *
    * `destination` is separate from `hosts` because the claim this arm makes is about ONE host — the
    * one the remote command runs on. A second host inside that remote command (`ssh host curl -d
@@ -1565,18 +1568,29 @@ function flowSentence(flow: ComposedFlow): string {
           ? ''
           : ` That remote command also names ${phrase}, and the gate is not saying what reaches ` +
             `${plural ? 'them' : 'it'}.`;
-      // Where the substitution EXPANDS is deliberately not claimed: quoting decides it and the
-      // quoting is gone by here — see the `remote-command` arm of {@link ComposedFlow}. The rater
-      // has the quoting in front of it inside the fence, so naming the axis hands it a question it
-      // can answer; asserting one side of it would be false half the time, and false on the half
-      // that is the idiomatic spelling.
+      // Where the substitution EXPANDS is deliberately not claimed: quoting AND escaping decide it,
+      // and both are gone by here — see the `remote-command` arm of {@link ComposedFlow}. Asserting
+      // one side of it would be false half the time, and false on the half that is the idiomatic
+      // spelling. Naming both is the whole enumeration; naming only quoting is half of it, and a
+      // half-true enumeration in trusted-text position is the defect this arm keeps producing.
+      //
+      // **And the sentence must NOT send the rater to the shown command to settle it either.** The
+      // fence carries `neutralizeClosingTag(foldHomePath(normalizeCommand(command)))` and this arm
+      // reads {@link normalizeCommand} too, which collapses `\<char>`: on
+      // `ssh host \'$(cat ~/.ssh/id_rsa)\'` the escaped quotes are literal apostrophes, the
+      // substitution is unquoted, and the LOCAL shell reads the key — yet what is displayed is
+      // single quotes the command never contained, which read as remote expansion. The escaped
+      // dollar fabricates in the other direction, showing a live `$(…)` for an inert one. Naming the
+      // axis is honest; telling a reader the axis is legible in a string this pipeline transformed
+      // points them at manufactured evidence, and on the escaped spelling it points the reassuring
+      // way. Labelling the fence as normalized is the wider fix and is not this arm's to make.
       return (
         `The operands after the destination are the command ${transfer} runs ON ${destination}, ` +
         `not on this machine, and one of them is a substitution. Which machine expands that ` +
-        `substitution is decided by the quoting around it, which this gate does not record, so it ` +
-        `is not saying whether the inner command runs here before ${transfer} starts or on ` +
-        `${destination} along with the rest — the quoting is visible in the command text itself. ` +
-        `What does the inner command produce, and where?${alsoNames}`
+        `substitution is decided by the quoting and escaping around it, neither of which this gate ` +
+        `records, so it is not saying whether the inner command runs here before ${transfer} ` +
+        `starts or on ${destination} along with the rest. What does the inner command produce, and ` +
+        `where?${alsoNames}`
       );
     }
   }
