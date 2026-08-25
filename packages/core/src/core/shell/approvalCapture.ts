@@ -47,11 +47,11 @@
 import type { ApprovalRung } from '#src/config.js';
 import type { ToolApprovalScope } from '#src/core/types.js';
 import type { AbstentionDefect } from '#src/core/shell/abstention.js';
+import type { AlignmentCallCapture } from '#src/core/shell/alignment.js';
 import type { NegotiationCounters } from '#src/core/shell/negotiation.js';
 import type {
   FailClosedCause,
   PreflightFloorKind,
-  RaterNegotiationContext,
   RaterNegotiationRound,
   ShellSafetyVerdict,
 } from '#src/core/shell/rater.js';
@@ -108,35 +108,6 @@ export type ApprovalCaptureAction = 'approve' | 'reject' | 'escalate' | 'halt' |
 export type ApprovalHumanAnswer = 'approve' | 'reject' | 'no-human';
 
 /**
- * §5.1's negotiation context **as it was handed to the prompt builder**, plus the one distinction a
- * reader of the archive keeps needing and could never make.
- *
- * **`userMessagesPopulated` is the field the node exists for.** Round 1 is context-free *by design*
- * (§5.1: *"round 1 sees the command alone"*), so an empty window is not a bug — and a reader with no
- * access to the source cannot know that. {@link userMessagesNote} states which case this is in
- * words, so the answer to *"were the user's messages in view on round N?"* is one field and one
- * sentence rather than a source-reading exercise across three files.
- */
-export interface RaterNegotiationCapture {
-  /** 1-based index of this rating within the current negotiation. */
-  round: number;
-  /** Whether this rating was a round-1 (context-free) rating. */
-  roundOne: boolean;
-  /** Whether a §5.1 context was supplied at all (it is not, at a rung that does not negotiate). */
-  contextSupplied: boolean;
-  /** The justification admitted into THIS rating. Withheld at round 1 by `contextFor`, by design. */
-  justification?: string;
-  /** `<negotiation_so_far>` as handed over: the completed rounds, oldest first. */
-  priorRounds: RaterNegotiationRound[];
-  /** `<user_messages>` as handed over, oldest first, before the builder's last-5 + truncation. */
-  userMessages: string[];
-  /** Whether that window carried anything. THE distinction this facility turns on. */
-  userMessagesPopulated: boolean;
-  /** Why the window looks the way it does, in words, for a reader who has never seen the spec. */
-  userMessagesNote: string;
-}
-
-/**
  * One rating call: what the rater was SHOWN and what it ANSWERED, captured at the send site.
  *
  * Every field is filled by `rateShellCommand` itself. `prompt` is set before the call and the rest
@@ -155,10 +126,15 @@ export interface RaterCallCapture {
   timeoutMs: number;
   /** §5.2 — whether a rejection would be handed back to the AGENT rather than to a person. */
   negotiable: boolean;
-  /** **The exact strings sent.** Captured, never re-rendered. */
+  /**
+   * **The exact strings sent.** Captured, never re-rendered.
+   *
+   * [[EXT-127]] — and there is no longer a negotiation record beside them, because there is no
+   * longer a negotiation in this call: the classifier is handed one command and nothing else, so
+   * *"were the user's messages in view for this rating?"* has one answer at every round, and it is
+   * no. That question moved with the context it was about, to {@link AlignmentCallCapture}.
+   */
   prompt: { system: string; user: string };
-  /** What the negotiation looked like at the moment of this call. */
-  negotiation: RaterNegotiationCapture;
   /** The model's answer BEFORE it is parsed or mapped, so a malformed one stays visible. */
   rawResponse?: unknown;
   /** The verdict this call resolved to, including a fail-closed one. */
@@ -272,6 +248,15 @@ export interface ApprovalDecisionCapture {
   budget: NegotiationCounters;
   /** The rating, when one was made. Absent for every stage that decided without a model. */
   rating?: RaterCallCapture;
+  /**
+   * [[EXT-127]] — the alignment check, when the classifier declined and a checker was consulted.
+   *
+   * **It is a SECOND record beside {@link rating}, not a field inside it**, because the two are two
+   * model calls with two contexts and often two models. Collapsing them would make the archive
+   * unable to answer the question the split exists to let a reader ask: what did each of them see,
+   * and which of them decided this?
+   */
+  alignment?: AlignmentCallCapture;
   /** The error that ended the decision, when one did. */
   error?: string;
 }
@@ -342,52 +327,3 @@ export function raterModelLabel(model: unknown): string | undefined {
   return id ?? type;
 }
 
-/**
- * Describe the §5.1 context a rating is about to be made with — **as it was handed to the prompt
- * builder**, so the record and the prompt cannot come to describe two different ratings.
- *
- * The note is the legibility half of the acceptance: an empty user-messages window means one thing
- * at round 1 (by design) and something else entirely at round 3, and a reader of the archive has no
- * way to tell them apart from a `[]`.
- */
-export function describeRaterNegotiation(
-  negotiation: RaterNegotiationContext | undefined
-): RaterNegotiationCapture {
-  const priorRounds = [...(negotiation?.priorRounds ?? [])];
-  const userMessages = [...(negotiation?.userMessages ?? [])];
-  const roundOne = priorRounds.length === 0;
-  const populated = userMessages.length > 0;
-  return {
-    round: priorRounds.length + 1,
-    roundOne,
-    contextSupplied: negotiation !== undefined,
-    ...(negotiation?.justification !== undefined
-      ? { justification: negotiation.justification }
-      : {}),
-    priorRounds,
-    userMessages,
-    userMessagesPopulated: populated,
-    userMessagesNote: userMessagesNote(negotiation !== undefined, roundOne, populated),
-  };
-}
-
-/** The sentence {@link describeRaterNegotiation} puts on the window, for a reader with no spec. */
-function userMessagesNote(contextSupplied: boolean, roundOne: boolean, populated: boolean): string {
-  if (!contextSupplied) {
-    return (
-      'No negotiation context was supplied for this rating (the rung does not negotiate, or this ' +
-      'was the allow-list tripwire), so the rater saw the command alone. An empty window here is ' +
-      'not a defect.'
-    );
-  }
-  if (roundOne) {
-    return (
-      'Round 1: spec §5.1 admits no justification, no transcript and no user messages, so the ' +
-      'rater saw the command alone. An empty window here is BY DESIGN, not a defect.'
-    );
-  }
-  return populated
-    ? "Round 2 or later: the user's own recent messages WERE in the rater's view for this rating."
-    : 'Round 2 or later, and the window is still empty — the conversation had no non-blank user ' +
-        'message to admit. This one IS worth looking at.';
-}

@@ -30,8 +30,9 @@
  * - **The reachability bound is monotonic and a reset does not refill it.** See
  *   {@link MAX_REJECTIONS_BEFORE_HUMAN}.
  */
+import type { AlignmentDecision, AlignmentRound } from '#src/core/shell/alignment.js';
 import { MIN_CONTENT_WIDTH, neutralizeToOneLine, wrapToWidth } from '#src/core/shell/framing.js';
-import type { RaterNegotiationContext, RaterNegotiationRound } from '#src/core/shell/rater.js';
+import type { RaterNegotiationRound } from '#src/core/shell/rater.js';
 import { maxDisplayWidth } from '#src/utils/displayWidth.js';
 
 /**
@@ -152,47 +153,33 @@ export class ShellNegotiationState {
   private userProvenanceAdmitted = false;
 
   /**
-   * §5.1 — the context for the rating about to be made: the justification the agent supplied for
-   * *this* command, the user messages, and the rounds so far.
+   * [[EXT-127]] — **the checker's own earlier rounds, for the alignment check about to be made.**
    *
-   * Handed over raw. The prompt builder owns every bound and every transform (last 5, truncation,
-   * home-folding, one-lining, tag neutralisation), so a caller that pre-processes anything here is
-   * doing the work twice and differently.
+   * The rounds it returns are the transcript's, with each round's alignment decision attached where
+   * the checker made one. What §5.1's withholding rules used to govern here is gone with the flat
+   * context they governed: the classifier now sees the command alone at every round, and the
+   * checker's context is assembled across message roles by
+   * {@link import('./alignment.js').buildAlignmentMessages} rather than handed over as a block.
    *
-   * An empty negotiation has no privileged spelling on the builder's side, so this always returns an
-   * object and never `undefined`: an EMPTY transcript is the round-1 case, with no `if` at the call
-   * site — which is what makes *"an empty transcript means a round-1 context"* fall out of the one
-   * array rather than out of a second branch that could disagree with it.
-   *
-   * **Everything except the command is admitted from round 2, never at round 1**, and the transcript
-   * is what decides which round this is. §5.1 is unambiguous — *"Round 1 sees the command alone —
-   * nothing else"* — and after [[EXT-108]] the transcript empties only when a person is reached, so
-   * round 1 is the first rating of a negotiation and nothing else is.
-   *
-   * Keying them on the transcript rather than on a flag is what keeps that one fact in one place,
-   * and it is why the justification is withheld by the same test rather than passed straight
-   * through. §5.1 lists the justification under what *"from round 2 the rater additionally sees"*,
-   * and it is the one channel the design allows to LOWER an outcome — so a justification volunteered
-   * before any rejection has happened would open that channel on the first attempt, pre-emptively,
-   * for the agent or for anything that has injected into the agent's context. Withholding it until
-   * round 2 is what the spec's ordering buys, and a round-1 context is byte-identical to a plain
-   * rating because of it.
-   *
-   * The messages and the volunteered justification are the conversation and the pending call's own
-   * argument, not the exchange, so nothing here destroys them; they are withheld at round 1 and
-   * admitted afterwards. [[EXT-108]] is what decides when "afterwards" starts in §5.6's convergence
-   * case: an approved call between two attempts no longer empties the transcript, so the reply
-   * *"just the last two"* and the agent's own answer to the rejection are both in view for the very
-   * next rating. That round has a rejection to answer — the one the approved call was made in
-   * response to — which is the condition round 2 was ever about.
+   * **The user's words are deliberately NOT here.** They come from
+   * {@link retainedUserMessages} — the gated provenance channel — and never from this method or
+   * from {@link noteUserMessages}' store. Routing them through a "context for the next call"
+   * accessor is exactly how the gate would come to be bypassed by a caller doing the obvious thing.
    */
-  contextFor(justification?: string): RaterNegotiationContext {
-    const roundOne = this.rounds.length === 0;
-    return {
-      justification: roundOne ? undefined : justification,
-      userMessages: roundOne ? [] : [...this.userMessages],
-      priorRounds: [...this.rounds],
-    };
+  alignmentRounds(): readonly AlignmentRound[] {
+    return this.rounds
+      .filter((round): round is RaterNegotiationRound & { alignment: AlignmentDecision } =>
+        round.alignment !== undefined
+      )
+      .map((round) => ({
+        subject: {
+          command: round.command,
+          outcome: round.outcome,
+          reason: round.reason,
+          ...(round.justification ? { justification: round.justification } : {}),
+        },
+        decision: round.alignment,
+      }));
   }
 
   /**

@@ -1178,6 +1178,20 @@ export interface ApprovalsObjectConfig {
    * design removed.
    */
   rater?: string;
+  /**
+   * [[EXT-127]] §9.1 — the identity profile the **alignment checker** runs under, as a bare name
+   * with the same strict resolution {@link rater} takes.
+   *
+   * **It is a second key rather than a widened `rater` because there are now two models with
+   * different cost profiles.** The classifier is cheap and rates every gated command; the checker
+   * is reached only once the classifier has declined, and pointing it at a larger model is the
+   * reason the split exists at all.
+   *
+   * Omitted = the `rater` profile, applied by {@link resolveApprovals} at the read site rather
+   * than defaulted into the on-disk shape. **There is no second timeout**: `raterTimeoutMs` is the
+   * budget for one model call and a check is one call.
+   */
+  alignmentChecker?: string;
   /** §3 — declared allow-list: what the human has trusted. Read-only input. */
   allow?: ApprovalEntry[];
   /** §3 — declared deny-list: what never runs. Read-only input; applies under `bypass` too. */
@@ -1215,6 +1229,19 @@ export interface ResolvedApprovals {
   rung: ApprovalRung;
   /** Identity profile the rater runs under, or `undefined` for the session model. */
   rater?: string;
+  /**
+   * [[EXT-127]] — identity profile the **alignment checker** runs under, or `undefined` for the
+   * session model.
+   *
+   * **This one IS defaulted here, unlike every other field on this object, and the exception is
+   * deliberate.** Its default is not a constant but another resolved field — the `rater` above —
+   * so leaving it undefined would push "which profile does the checker use?" out to every reader,
+   * and a second reader that forgot the fallback would silently rate on the session model while
+   * the user believed they had configured a checker. Nothing about the effective-config snapshot
+   * changes, because the default is applied to this resolved view and never written back into the
+   * `approvals` object the `/config` panel renders.
+   */
+  alignmentChecker?: string;
   /** Declared allow-list entries (§3.1). Empty when none are declared. */
   allow: ApprovalEntry[];
   /** Declared deny-list entries (§3.1). Empty when none are declared. */
@@ -1403,9 +1430,20 @@ export function resolveApprovals(
       : undefined
   );
 
+  // [[EXT-127]] — resolved once, because the alignment checker's own default IS this value. Reading
+  // it twice (`perCommand?.rater ?? root?.rater` written out again below) is how the two would come
+  // to disagree the next time the precedence changes.
+  const rater = perCommand?.rater ?? root?.rater;
+
   return {
     rung: perCommand?.mode ?? root?.mode ?? DEFAULT_APPROVAL_RUNG,
-    rater: perCommand?.rater ?? root?.rater,
+    rater,
+    // [[EXT-127]] — the checker falls back to the RATER's profile, and only then to the session
+    // model. The fallback is to the resolved `rater` rather than to `root?.rater`, so a per-command
+    // block that names a rater and no checker runs both on that command's own rater — the reading
+    // anyone writing such a block expects, and the only one that keeps "the checker defaults to the
+    // rater" true at every layer.
+    alignmentChecker: perCommand?.alignmentChecker ?? root?.alignmentChecker ?? rater,
     // `??`, so an EXPLICIT empty list is honoured: `allow: []` on a command states "nothing is
     // pre-trusted here" and must not read as "said nothing, inherit the root's".
     allow: perCommand?.allow ?? root?.allow ?? [],

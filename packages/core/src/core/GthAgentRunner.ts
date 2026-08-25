@@ -7,6 +7,7 @@ import {
   describeGrantedBuiltInTools,
   type GrantedToolSummary,
   GthConfig,
+  isNegotiatingRung,
   isRatedRung,
   type McpAnnotationTrustChange,
   type McpAnnotationTrustView,
@@ -73,10 +74,16 @@ import {
   preflightFloorFinding,
   RATER_DEFAULT_TIMEOUT_MS,
   rateShellCommand,
-  type RaterNegotiationContext,
+  type RaterAction,
   type RaterNegotiationRound,
   type ShellSafetyVerdict,
 } from '#src/core/shell/rater.js';
+import {
+  type AlignmentDecision,
+  type AlignmentSubject,
+  isAlignmentFailClosed,
+  runAlignmentCheck,
+} from '#src/core/shell/alignment.js';
 import {
   type ApprovalDecisionCapture,
   ApprovalCaptureLog,
@@ -367,6 +374,13 @@ export class GthAgentRunner {
    * `undefined` means no profile is configured and the rater uses the session model.
    */
   private raterModel: BaseChatModel | undefined;
+
+  /**
+   * [[EXT-127]] — the model the ALIGNMENT CHECKER runs on, when `approvals.alignmentChecker` (or, by
+   * its read-site default, `approvals.rater`) names an identity profile. Resolved ONCE at
+   * {@link init}, exactly as {@link raterModel} is; `undefined` means the session model.
+   */
+  private alignmentCheckerModel: BaseChatModel | undefined;
 
   /**
    * EXT-66 — how many rating calls this session gave up on. Counted so the notice can say "3 times
@@ -797,7 +811,17 @@ export class GthAgentRunner {
     // `assisted` mid-session with `/approvals`), and a broken profile should still fail loudly at
     // startup rather than at the moment they switch.
     const raterProfile = this.sessionApprovals.rater;
-    this.raterModel = raterProfile ? await resolveRaterModel(raterProfile) : undefined;
+    this.raterModel = raterProfile ? await resolveRaterModel(raterProfile, 'approvals.rater') : undefined;
+
+    // [[EXT-127]] — and the same for the alignment checker, which is a second model with a second
+    // profile. `resolveApprovals` has already defaulted the key to the rater's profile, so the
+    // common case resolves the SAME name twice rather than branching here: two loads of one profile
+    // at startup is cheaper than a shortcut that would silently stop working the moment the two
+    // names differ, which is the configuration the key exists for.
+    const checkerProfile = this.sessionApprovals.alignmentChecker;
+    this.alignmentCheckerModel = checkerProfile
+      ? await resolveRaterModel(checkerProfile, 'approvals.alignmentChecker')
+      : undefined;
 
     // Initialize debug logging
     initDebugLogging(configIn.debugLog ?? false);
@@ -1666,9 +1690,14 @@ export class GthAgentRunner {
             : [];
         const negotiable = isNegotiableCall(approvals.rung, subject.command, provenance);
         const justification = negotiable ? shellJustification(tool.args) : undefined;
-        const context: RaterNegotiationContext | undefined = negotiable
-          ? this.negotiation.contextFor(justification)
-          : undefined;
+        // [[EXT-127]] — **the checker gets the justification whatever the rung said**, because it is
+        // a different reader with a different framing. §5.1's gate above existed to keep the one
+        // channel that can LOWER a rating out of a round-1 rating; the classifier can no longer see
+        // it at any round, so that gate now protects nothing there. The checker reads it as what it
+        // is — agent-authored text in the tool-result role — where nothing about it is trusted.
+        // Kept as a separate read so the variable the ROUND RECORD and the negotiated-approval
+        // display use is byte-for-byte what it was.
+        const agentJustification = shellJustification(tool.args);
         // [[TUI-C27]] — attributed BEFORE the call, and ONCE. Before, because `attack` throws out
         // of the decision below and a record left unattributed would say a halt came from nowhere.
         // Once, because a second assignment on each `return` would make the first unfalsifiable:
@@ -1679,7 +1708,6 @@ export class GthAgentRunner {
           subject.command,
           {
             allowMatched: false,
-            negotiation: context,
             negotiable,
             // [[EXT-106]] §4.6 — the rating PROMPT has to know too. Two of its blocks assert that
             // §4.6's floor already fired and that the rater's hostname judgement is therefore not
@@ -1722,7 +1750,68 @@ export class GthAgentRunner {
             ...(carvedHosts.length > 0 ? { carvedHosts: [...carvedHosts] } : {}),
           };
         }
-        if (decision.action === 'approve') {
+        // [[EXT-127]] — **THE ALIGNMENT CHECK: a second model, reached only once the classifier has
+        // declined.** The classifier rated the command; this asks the different question the
+        // classifier can no longer see the context for — *is this what the user asked for?*
+        //
+        // **It is a stage AFTER `mapVerdictToAction`, never a branch inside it, and that placement
+        // is the design.** The classifier's mapping stays a pure function of the rung, the raw
+        // command and the outcome, so the eval target, the corpus and every unit assertion keep
+        // measuring the same thing they measured before; what the check does is take that decision
+        // and, on exactly the outcomes the node grants it authority over, replace it.
+        //
+        // **What it is allowed to reach.** Only a `destructive` decision, and only at a negotiating
+        // rung. `attack` has already halted above the return below; `catastrophic` returns its own
+        // escalation from the mapping and is never offered here; and both are refused a second time
+        // by the tool contract itself (`alignmentApprovalRefusal`), because a limit the rest of the
+        // ladder relies on must not be reachable by a call site forgetting.
+        //
+        // **The floored arm is included, and it has to be.** §4.6's open-world floor is one of the
+        // two things an aligned approval MAY lift, and a floored command reaches this line as an
+        // `escalate` rather than a `reject` — so a check keyed on `reject` alone would make the
+        // single largest piece of authority this feature has unreachable. The SCRIPT-ENV-LEAK arm is
+        // deliberately not included: it is a fact about the command's own text (an interpreter
+        // expanding a secret into a script), nothing about who asked for it speaks to it, and the
+        // node grants no authority over it.
+        let action: RaterAction = decision.action;
+        let alignment: AlignmentDecision | undefined;
+        const alignmentReachable =
+          isNegotiatingRung(approvals.rung) &&
+          decision.verdict?.outcome === 'destructive' &&
+          (decision.action === 'reject' ||
+            (decision.action === 'escalate' && effectiveFloor?.kind === 'open-world'));
+        if (alignmentReachable) {
+          alignment = await this.checkAlignment(
+            {
+              command: subject.command,
+              outcome: 'destructive',
+              reason: decision.verdict?.reason ?? '',
+              ...(agentJustification ? { justification: agentJustification } : {}),
+            },
+            provenance,
+            record
+          );
+          // The three tools ARE the three actions, which is why there is no fourth.
+          //
+          // **A check that never happened changes nothing**, which is a stronger contract than "it
+          // fails closed" and is the one that matters here: the classifier's action stands, so a
+          // missing or broken checker model leaves `auto` behaving exactly as it did before this
+          // feature existed rather than quietly turning every negotiation into an interruption. See
+          // {@link ALIGNMENT_FAIL_CLOSED}.
+          if (!isAlignmentFailClosed(alignment)) {
+            action =
+              alignment.kind === 'approve'
+                ? 'approve'
+                : alignment.kind === 'suggest'
+                  ? 'reject'
+                  : 'escalate';
+          } else {
+            // Not recorded on the round either: a check that did not happen is not one the next
+            // round should replay as its own earlier turn.
+            alignment = undefined;
+          }
+        }
+        if (action === 'approve') {
           // [[EXT-106]] §4.6 — **a carved command that RUNS is announced.** The carve-out removes
           // the confirmation dialog; it must never remove the visibility, or an open-world fetch
           // reaches the network with the user told nothing at all. Visible for the same reason the
@@ -1744,6 +1833,21 @@ export class GthAgentRunner {
                 // nobody has to remember to update is what keeps the two from drifting.
                 `${APPROVAL_RUNG_LABELS.auto}. The auto-rater found nothing wrong with it. ` +
                 'Check the host is the one you meant.'
+            );
+          }
+          // [[EXT-127]] — **and the same announcement when the ALIGNMENT CHECK is what lifted the
+          // floor**, which is the other way an open-world command now runs with nobody asked. The
+          // two notices are separate because they are two different claims about why nothing
+          // interrupted: one says the user typed the host, this one says a second model read their
+          // messages and concluded the command matches what they asked for. A user auditing their
+          // own session must be able to tell those apart, and a shared sentence would let the
+          // weaker of the two stand in for the stronger.
+          if (alignment?.kind === 'approve' && effectiveFloor?.kind === 'open-world') {
+            this.statusUpdate(
+              StatusLevel.WARNING,
+              '\n⚠ Ran a command that reaches the network without asking you, because the ' +
+                `alignment check found it matches what you asked for and approvals is set to ` +
+                `${APPROVAL_RUNG_LABELS.auto}. Check the host is the one you meant.`
             );
           }
           // [[TUI-C69]] §5.4/§5.5 — **the round that ENDS a negotiation is a round too**, and it
@@ -1779,7 +1883,7 @@ export class GthAgentRunner {
           // Scope `once`: rater approvals are NEVER persisted to the allow-list.
           return { type: 'approve', scope: 'once' };
         }
-        if (decision.action === 'halt') {
+        if (action === 'halt') {
           // §4.2 — not a rejection the model can respond to. It ends the agent loop.
           //
           // **`neg-04d`: a negotiation already in flight ends here too**, mid-way and without a
@@ -1806,14 +1910,19 @@ export class GthAgentRunner {
             record
           );
         }
-        if (decision.action === 'reject') {
+        if (action === 'reject') {
           // §5 — `destructive` at `auto`. The round is recorded first, so the attempt being ruled
           // on is itself on the transcript the human sees (§5.6).
+          //
+          // [[EXT-127]] — the checker's own decision rides on the round, so the NEXT round's check
+          // can replay it as its own turn. Absent when no check was made, which is what keeps an
+          // `assisted` rejection and a floored one out of the checker's replayed history.
           const round: RaterNegotiationRound = {
             command: subject.command,
             ...(justification ? { justification } : {}),
             outcome: decision.verdict?.outcome ?? 'destructive',
             reason: decision.verdict?.reason ?? '',
+            ...(alignment ? { alignment } : {}),
           };
           const outcome = this.negotiation.recordRejection(round);
           // [[TUI-C69]] §5.4 — **the round reaches the screen HERE, as it happens**, not only at
@@ -1839,13 +1948,27 @@ export class GthAgentRunner {
             // justification (the tool argument exists for this), or call a different command.
             // Rendered through the one builder the human's own "no" uses, differing only in who
             // refused, so the model never meets two shapes of the same event.
+            // [[EXT-127]] — **the checker's requested change is APPENDED to the rater's rejection,
+            // never substituted for it.** The two say different things and the agent needs both:
+            // the rater says what is wrong with the command, the checker says what would make it
+            // match what the user asked for. Substituting would also silently change who the
+            // rejection is attributed to on every surface that renders it, which is a display
+            // decision this node deliberately does not make.
+            const rejection = buildRejectionMessage({
+              source: 'rater',
+              toolName: tool.name,
+              verdict: decision.verdict,
+            });
             return {
               type: 'reject',
-              message: buildRejectionMessage({
-                source: 'rater',
-                toolName: tool.name,
-                verdict: decision.verdict,
-              }),
+              message:
+                alignment?.kind === 'suggest' && alignment.reason.trim().length > 0
+                  ? `${rejection}\n\nThe alignment check also asked for a change: ${alignment.reason.trim()}${
+                      alignment.suggestedCommand
+                        ? `\nIt suggested: ${alignment.suggestedCommand.trim()}`
+                        : ''
+                    }`
+                  : rejection,
             };
           }
           // A bound is spent — the agent and the rater cannot agree, and that is a human's call.
@@ -2032,11 +2155,6 @@ export class GthAgentRunner {
     command: string,
     opts: {
       allowMatched: boolean;
-      /**
-       * [[EXT-29]] §5.1 — the exchange so far. `undefined` on the tripwire path and at `assisted`,
-       * where the rating is a round-1 rating by construction.
-       */
-      negotiation?: RaterNegotiationContext;
       /** [[EXT-29]] §5.2 — whether the rejection will be handed back to the agent. */
       negotiable?: boolean;
       /**
@@ -2053,7 +2171,6 @@ export class GthAgentRunner {
     const approvals = this.sessionApprovals;
     const verdict = await rateShellCommand(command, this.config as GthConfig, {
       home: env?.HOME,
-      negotiation: opts.negotiation,
       negotiable: opts.negotiable,
       carved: opts.carved,
       // [[TUI-C27]] — the sink fires BEFORE the model is invoked, with the prompt that is about to
@@ -2102,6 +2219,45 @@ export class GthAgentRunner {
       );
     }
     return verdict;
+  }
+
+  /**
+   * [[EXT-127]] — **one alignment check**, with the `user` role fed from the settled provenance
+   * channel and nothing else.
+   *
+   * **`provenance` is `ShellNegotiationState.retainedUserMessages()`, read ONCE by the caller and
+   * handed down**, exactly as §4.6's floor reads it. Three things are true of it and only of it: it
+   * is EMPTY until `admitUserProvenance` positively established that this session's human turns are
+   * the user's own words (so `review` and `pr`, which fold a fetched diff into a human message,
+   * contribute nothing); it is not `noteUserMessages`' raw store, which answers a different question
+   * for a different reader; and it is not `humanMessageTexts`, the unfiltered upstream. Reading any
+   * of the other three here would make the one place this design says provenance is structural the
+   * one place it is not.
+   *
+   * The prior rounds come from the transcript's own alignment decisions, so the checker meets its
+   * earlier turns as its own turns rather than as a quoted summary of them.
+   */
+  private async checkAlignment(
+    subject: AlignmentSubject,
+    provenance: readonly string[],
+    record: ApprovalDecisionCapture
+  ): Promise<AlignmentDecision> {
+    const approvals = this.sessionApprovals;
+    return await runAlignmentCheck(subject, this.config as GthConfig, {
+      // The checker's own model when a profile resolved one; `undefined` falls back to the session
+      // model, exactly as the classifier's does.
+      model: this.alignmentCheckerModel,
+      userMessages: provenance,
+      priorRounds: this.negotiation.alignmentRounds(),
+      home: env?.HOME,
+      // ONE budget for ONE gate decision. There is deliberately no second timeout: `raterTimeoutMs`
+      // is what the user owns, and a check is one call.
+      timeoutMs: approvals.raterTimeoutMs,
+      ...(approvals.alignmentChecker ? { profile: approvals.alignmentChecker } : {}),
+      onCapture: (capture) => {
+        record.alignment = capture;
+      },
+    });
   }
 
   /**

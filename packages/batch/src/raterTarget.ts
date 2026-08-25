@@ -45,14 +45,21 @@ import { checkHardline } from '@gaunt-sloth/core/core/shell/hardline.js';
 import type { GthConfig } from '@gaunt-sloth/core/config.js';
 import {
   APPROVAL_RUNGS,
+  isNegotiatingRung,
   isRatedRung,
   resolveApprovals,
 } from '@gaunt-sloth/core/config/shell-policy.js';
 import type { ApprovalRung } from '@gaunt-sloth/core/config/shell-policy.js';
+import {
+  isAlignmentFailClosed,
+  runAlignmentCheck,
+} from '@gaunt-sloth/core/core/shell/alignment.js';
+import type { AlignmentDecision } from '@gaunt-sloth/core/core/shell/alignment.js';
 import { ShellNegotiationState } from '@gaunt-sloth/core/core/shell/negotiation.js';
 import {
   FAIL_CLOSED_VERDICT,
   RATER_OUTCOMES,
+  effectivePreflightFloorFinding,
   isNegotiableCall,
   mapVerdictToAction,
   preflightFloorFinding,
@@ -441,7 +448,8 @@ function advanceNegotiation(
   negotiation: ShellNegotiationState,
   command: string,
   justification: string | undefined,
-  decision: RaterDecision
+  decision: RaterDecision,
+  alignment: AlignmentDecision | undefined
 ): { action: string; boundSpent: boolean } {
   if (decision.action === 'approve') {
     negotiation.noteProgress();
@@ -460,6 +468,8 @@ function advanceNegotiation(
       // just decided from rather than a second guess at it.
       outcome: decision.verdict?.outcome ?? FAIL_CLOSED_VERDICT.outcome,
       reason: decision.verdict?.reason ?? '',
+      // [[EXT-127]] — carried so the NEXT round's check replays this one as its own turn.
+      ...(alignment ? { alignment } : {}),
     });
     // A served round is the whole of it: the refusal goes back to the agent and the argument
     // continues. Anything else means the bound is spent and this round goes out to a person, exactly
@@ -555,6 +565,7 @@ async function classifyOneRound(
   negotiation: ShellNegotiationState,
   config: GthConfig,
   model: BaseChatModel | undefined,
+  checkerModel: BaseChatModel | undefined,
   options: RaterClassifierOptions | undefined
 ): Promise<ClassifyOutcome> {
   const trimmed = round.command.trim();
@@ -680,16 +691,62 @@ async function classifyOneRound(
       // to every rating at `auto` including the first. A corpus rated without it was measuring a
       // prompt no session ever sends — so an `auto` suite's numbers may move here, toward the gate
       // it claims to describe. Nothing changes at the other rungs.
-      negotiation: negotiable ? negotiation.contextFor(justification) : undefined,
       negotiable,
     });
     modelCalls = 1;
   }
 
   const decision = mapVerdictToAction(trimmed, verdict, { rung });
+  // [[EXT-127]] — **the alignment check, driven exactly where production drives it.** Reached only
+  // on a `destructive` decline at a negotiating rung, and only for the two arms the node grants it
+  // authority over: a plain `reject`, or an `escalate` that §4.6's open-world floor produced. Its
+  // decision then REPLACES the classifier's action, which is what makes a corpus before/after a
+  // measurement of the gate rather than of half of it.
+  //
+  // **The count is what a suite author reads, so the call is counted.** A check is a model call, and
+  // an `auto` suite whose `modelCalls` said 1 while spending 2 would understate the cost of the very
+  // feature it was measuring.
+  let alignment: AlignmentDecision | undefined;
+  const alignmentReachable =
+    !deterministicOnly &&
+    isNegotiatingRung(rung) &&
+    decision.verdict?.outcome === 'destructive' &&
+    (decision.action === 'reject' ||
+      (decision.action === 'escalate' &&
+        effectivePreflightFloorFinding(trimmed, { rung })?.kind === 'open-world'));
+  if (alignmentReachable) {
+    alignment = await runAlignmentCheck(
+      {
+        command: trimmed,
+        outcome: 'destructive',
+        reason: decision.verdict?.reason ?? '',
+        ...(round.justification ? { justification: round.justification } : {}),
+      },
+      config,
+      {
+        model: checkerModel,
+        userMessages: negotiation.retainedUserMessages(),
+        priorRounds: negotiation.alignmentRounds(),
+        ...(options?.home ?? env?.HOME ? { home: options?.home ?? env?.HOME } : {}),
+        ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      }
+    );
+    modelCalls += 1;
+    // A check that never happened changes nothing — the classifier's action stands, exactly as it
+    // does in production. See core's ALIGNMENT_FAIL_CLOSED.
+    if (isAlignmentFailClosed(alignment)) alignment = undefined;
+  }
+  if (alignment !== undefined) {
+    decision.action =
+      alignment.kind === 'approve'
+        ? 'approve'
+        : alignment.kind === 'suggest'
+          ? 'reject'
+          : 'escalate';
+  }
   // BATCH-34 — record the decision with §5's state and take the action production would take. This
   // is the only step between the mapping and the reported action; see `advanceNegotiation`.
-  const negotiated = advanceNegotiation(negotiation, trimmed, justification, decision);
+  const negotiated = advanceNegotiation(negotiation, trimmed, justification, decision, alignment);
   return {
     ok: true,
     // Opaque both ways: whatever the gate decided, reported verbatim. Omitted on the model-free
@@ -728,13 +785,24 @@ export async function buildRaterClassifier(
   options?: RaterClassifierOptions
 ): Promise<RunClassifyFn> {
   const rung = resolveRung(target, config);
-  const raterProfile =
-    config.approvals !== undefined ? resolveApprovals(config, undefined).rater : undefined;
+  const approvals = config.approvals !== undefined ? resolveApprovals(config, undefined) : undefined;
+  const raterProfile = approvals?.rater;
   // `undefined` lets `rateShellCommand` use the run's own `config.llm` — the same fallback
   // production has, so the sweep's `model:` axis moves the rater exactly when no rater profile is
   // pinned (a pinned profile wins over the sweep, in the eval as in the session).
   const model =
-    options?.model ?? (raterProfile ? await resolveRaterModel(raterProfile) : undefined);
+    options?.model ??
+    (raterProfile ? await resolveRaterModel(raterProfile, 'approvals.rater') : undefined);
+  // [[EXT-127]] — the ALIGNMENT CHECKER's model, resolved once for the same reason the rater's is.
+  // `approvals.alignmentChecker` has already been defaulted to the rater's profile by
+  // `resolveApprovals`, so a suite that names one rater measures both halves on it — which is what
+  // makes a sweep's `model:` axis move the whole gate rather than half of it.
+  const checkerProfile = approvals?.alignmentChecker;
+  const checkerModel =
+    options?.model ??
+    (checkerProfile
+      ? await resolveRaterModel(checkerProfile, 'approvals.alignmentChecker')
+      : undefined);
 
   return async (request: ClassifyRequest): Promise<ClassifyOutcome[]> => {
     const outcomes: ClassifyOutcome[] = [];
@@ -743,6 +811,16 @@ export async function buildRaterClassifier(
     // suite and the runner may run several concurrently: a shared instance would let one case's
     // transcript be rated into another's, and one case's rejections spend another's bound.
     const negotiation = new ShellNegotiationState();
+    // [[EXT-127]] — **a corpus case's `user_messages` ARE the user's own words, by declaration.**
+    // The provenance window fails closed for a session whose driver nobody has classified, and a
+    // suite is exactly such a driver — so without this the alignment checker would meet an empty
+    // mandate on every case and escalate every one of them, measuring nothing.
+    //
+    // **It changes only what the CHECKER sees.** Nothing else in this file reads
+    // `retainedUserMessages`, and `mapVerdictToAction` below is still called with no `provenance` —
+    // deliberately, per its own contract: §4.6's carve-out must not move a published corpus label
+    // for a reason no suite author asked for.
+    negotiation.admitUserProvenance(true);
     // ONE outcome per round, in order, and SERIALLY: the rounds of a case are a sequence, and the
     // suite runner already parallelizes across cases (`concurrency`), so racing within a case would
     // only make the eval's own load harder to reason about. Serial is now also REQUIRED rather than
@@ -757,6 +835,7 @@ export async function buildRaterClassifier(
           negotiation,
           config,
           model,
+          checkerModel,
           options
         )
       );
