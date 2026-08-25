@@ -50,8 +50,10 @@ import {
   type ApprovalPostureChoice,
   approvalPostureChoices,
   approvalsRungNotice,
+  approvalsRefusalsNotice,
   approvalsStatusNotice,
   approvalsTrustNotice,
+  approvalsUndenyNotice,
   createCommandRegistry,
   dispatchSlashCommand,
   type McpTrustRequest,
@@ -492,19 +494,58 @@ export function App(props: TuiAppProps): React.ReactElement {
       });
       return;
     }
-    const { approvals: current, allowlist, deny, grants, trust } = agent.getApprovals();
+    const { approvals: current, allowlist, refusals, grants, trust } = agent.getApprovals();
     approvalsRef.current = current;
     setApprovals(current);
     // `interactive` suppresses the notice's TEXT copy of the mode list, because the picker below is
     // about to render the same four rows. Every non-TTY surface leaves it unset and gets the text.
-    const { title, lines, tone } = approvalsStatusNotice(current, allowlist, deny, grants, trust, {
-      interactive: true,
-    });
+    const { title, lines, tone } = approvalsStatusNotice(
+      current,
+      allowlist,
+      refusals,
+      grants,
+      trust,
+      { interactive: true }
+    );
     push({ kind: 'notice', title, lines, tone: tone ?? 'info' });
+    // [[EXT-107]] — the refusals as a SECOND notice, after the posture one. Two notices rather than
+    // a longer one: this pane is full to the row once the picker below is up, so rows added to the
+    // posture notice scroll its own heading — the mode the user just asked about — off the top.
+    const refused = approvalsRefusalsNotice(refusals);
+    if (refused) {
+      push({
+        kind: 'notice',
+        title: refused.title,
+        lines: refused.lines,
+        tone: refused.tone ?? 'info',
+      });
+    }
     // Only offer to CHANGE the mode when this session can actually apply one.
     if (agent.setApprovalRung) setApprovalsPicker(approvalPostureChoices(current.rung));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent]);
+
+  // [[EXT-107]] — `/approvals undeny <n>`: lift one refusal. Same division as the rung and the
+  // trust change — the runner owns the lists, applies the removal and reports what LANDED, and the
+  // notice is built from that, never from what was asked for. This is the escape hatch from a
+  // refusal that is now written to a project file, so it degrades loudly rather than silently when
+  // a session has no runner behind it.
+  const liftRefusal = useCallback(
+    (index: number): void => {
+      if (!agent.liftRefusal) {
+        push({
+          kind: 'system',
+          level: 'warning',
+          text: 'Approvals are unavailable in this session.',
+        });
+        return;
+      }
+      const { title, lines, tone } = approvalsUndenyNotice(agent.liftRefusal(index));
+      push({ kind: 'notice', title, lines, tone: tone ?? 'info' });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [agent]
+  );
 
   // EXT-70 §4.7.1 — `/approvals trust|untrust <server> <hint…>`: believe, or stop believing,
   // specific annotation hints from one MCP server for this session. Same division as the rung: the
@@ -570,7 +611,10 @@ export function App(props: TuiAppProps): React.ReactElement {
       // MODEL sees; the on-screen notice below is unchanged.
       head.resolve({
         type: 'reject',
-        ...(sticky ? { scope: 'session' as const } : {}),
+        // [[EXT-107]] — `always`, which is what the menu label promised. The lifetime that actually
+        // lands is core's to decide (a project file that cannot be written degrades to a session
+        // refusal), so this surface asks for the scope and never assumes the outcome.
+        ...(sticky ? { scope: 'always' as const } : {}),
         message: buildRejectionMessage({
           source: 'user',
           toolName: head.pending.name,
@@ -579,16 +623,17 @@ export function App(props: TuiAppProps): React.ReactElement {
       });
       push({
         kind: 'notice',
-        title: sticky ? 'Command refused for this session' : 'Command rejected',
+        title: sticky ? 'Command refused and saved' : 'Command rejected',
         lines: sticky
           ? [
-              // Exactly what it does, and no more. There is no persisted deny store, so a line
-              // implying one would be §6's "offered and then refused" with the evidence hidden —
-              // and the refusal itself is real, which is what makes the honest wording affordable.
-              // The call is deliberately NOT quoted here: a transcript notice is painted raw, and
-              // the command is the untrusted string this whole dialog frames.
-              'This call will be refused for the rest of this session, without asking again.',
-              'Nothing was saved to the project, so a new session will ask about it again.',
+              // Exactly what it does, and no more — which [[EXT-107]] makes a project file, so it
+              // also says how to undo it. A saved refusal the user cannot find is the one failure
+              // mode persisting it introduces, and the control that lifts it has to be named where
+              // the refusal is made. The call is deliberately NOT quoted here: a transcript notice
+              // is painted raw, and the command is the untrusted string this whole dialog frames.
+              'This exact call will be refused from now on, without asking again.',
+              'It is saved to this project, so it stays refused in new sessions.',
+              'Lift it with /approvals undeny, which lists what is refused and takes its number.',
             ]
           : ['The shell command was not run; the agent was told you declined.'],
         tone: 'warn',
@@ -732,6 +777,7 @@ export function App(props: TuiAppProps): React.ReactElement {
           // prompt's y key). CFG-26.
           if ('show' in result.approvals) showApprovals();
           else if ('trust' in result.approvals) applyMcpTrust(result.approvals.trust);
+          else if ('undeny' in result.approvals) liftRefusal(result.approvals.undeny.index);
           else applyApprovalRung(result.approvals.rung);
         }
         if (result.toggleDebug) {
@@ -788,6 +834,7 @@ export function App(props: TuiAppProps): React.ReactElement {
       applyApprovalRung,
       showApprovals,
       applyMcpTrust,
+      liftRefusal,
       applyMouse,
     ]
   );

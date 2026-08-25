@@ -9,6 +9,8 @@ import type {
 import type { TurnViewModel } from '#src/tui/viewModel.js';
 import type {
   AllowlistCounts,
+  ApprovalRefusal,
+  ApprovalRefusalLift,
   ApprovalRung,
   McpAnnotationTrustChange,
   McpAnnotationTrustView,
@@ -72,14 +74,19 @@ export interface TuiAgent {
    */
   setApprovalRung?(rung: ApprovalRung): ResolvedApprovals;
   /**
-   * CFG-27 — read the current posture, the allow-list counts and the deny entries for the
+   * CFG-27 — read the current posture, the allow-list counts and the refusals in force for the
    * `/approvals` display. Separate from {@link setApprovalRung} so showing status never mutates
    * session state.
    */
   getApprovals?(): {
     approvals: ResolvedApprovals;
     allowlist: AllowlistCounts;
-    deny: string[];
+    /**
+     * [[EXT-107]] — every refusal in force, each carrying the list that holds it and the number
+     * {@link liftRefusal} takes. Origin-tagged rather than a list of strings, because the three
+     * sources have different lifetimes and only two of them can be lifted from here.
+     */
+    refusals: ApprovalRefusal[];
     /**
      * EXT-70 §3/§4.7.4 — the grants themselves (what was granted, when, and under which effective
      * annotations), not merely how many. Read-only copies; the runner never hands out its live
@@ -105,6 +112,17 @@ export interface TuiAgent {
     hints: ToolAnnotationHint[],
     believe: boolean
   ): McpAnnotationTrustChange;
+  /**
+   * [[EXT-107]] — lift one refusal by its number in {@link getApprovals}'s list. Wired to
+   * `/approvals undeny <n>`, and the escape hatch that makes persisting a refusal safe to offer.
+   *
+   * Returns what the runner LANDED on, so the notice can only describe the refusal actually lifted
+   * — including the case where the entry is the user's own config line and was therefore not
+   * touched.
+   *
+   * Optional so the fixture agent (no runner) may omit it.
+   */
+  liftRefusal?(index: number): ApprovalRefusalLift;
 }
 
 /**

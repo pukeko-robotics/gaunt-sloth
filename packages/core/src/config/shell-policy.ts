@@ -662,8 +662,8 @@ export const APPROVAL_RUNG_DESCRIPTIONS: Record<ApprovalRung, string> = {
     'argument that led there.',
   bypass:
     'No gate, for a throwaway environment you would not mind losing. Whatever Gaunt Sloth decides ' +
-    'to run, runs — nothing is rated and nothing is asked; only the refusals in your config’s ' +
-    'deny list still apply.',
+    'to run, runs — nothing is rated and nothing is asked; only your refusals still apply, both ' +
+    'the ones in your config’s deny list and the ones you saved to this project.',
 };
 
 /**
@@ -1272,6 +1272,63 @@ export interface AllowlistCounts {
   session: number;
   always: number | undefined;
 }
+
+/**
+ * [[EXT-107]] — **where a refusal in force came from.** Three sources, three lifetimes, three
+ * owners, and the `/approvals` display keeps them apart because the answer to *"how do I get rid of
+ * this?"* is different for each:
+ *
+ * - `config`    — a line the user wrote in `approvals.deny`. Lives as long as the file does and is
+ *   removed by editing it; nothing at run time may quietly drop it.
+ * - `session`   — the escalation menu's *always reject*, held only for this runner instance. Gone
+ *   at exit whether or not anyone lifts it.
+ * - `persisted` — the same choice, written to the project's deny file, so it is still in force in
+ *   the next session and for anyone who checks the file in.
+ *
+ * A merged list that cannot say which is which makes the removal control impossible to build
+ * honestly: it would either offer to lift a config line it cannot lift, or hide the saved refusal
+ * behind one it can.
+ */
+export type ApprovalRefusalOrigin = 'config' | 'session' | 'persisted';
+
+/**
+ * [[EXT-107]] — one refusal in force, for the `/approvals` display and the removal it offers.
+ *
+ * {@link index} is 1-based and is the number `/approvals undeny <n>` takes. Display and removal
+ * read the SAME list in the same order, so a number on screen and a number in the command can never
+ * name different entries — the failure a separately-built removal index would eventually produce,
+ * silently, on a refusal.
+ */
+export interface ApprovalRefusal {
+  /** 1-based position in the rendered list, and the argument the removal command takes. */
+  index: number;
+  /** The entry, through `describeApprovalEntry` — the one-liner every provenance message uses. */
+  description: string;
+  /** Which of the three lists this refusal is held in. */
+  origin: ApprovalRefusalOrigin;
+  /** ISO-8601 instant the refusal was recorded. Absent on a configured entry, which has none. */
+  recordedAt?: string;
+}
+
+/**
+ * [[EXT-107]] — what `/approvals undeny <n>` did, so the notice describes what actually happened
+ * rather than what was asked for.
+ *
+ * `stillConfigured` is the case that would otherwise mislead: a command can be refused by a saved
+ * entry *and* by a line in `approvals.deny`, and lifting the first leaves the second refusing it.
+ * Reporting the removal without saying so would tell the user they had lifted a refusal that is
+ * still in force.
+ */
+export type ApprovalRefusalLift =
+  | {
+      outcome: 'lifted';
+      description: string;
+      origin: 'session' | 'persisted';
+      /** Whether the user's own `approvals.deny` still matches this entry. */
+      stillConfigured: boolean;
+    }
+  | { outcome: 'configured'; description: string }
+  | { outcome: 'unknown'; index: number; count: number };
 
 /**
  * EXT-70 §4.7.1 — what one server's annotations are believed on, for display.

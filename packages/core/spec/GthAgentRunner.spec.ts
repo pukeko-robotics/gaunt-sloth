@@ -27,7 +27,7 @@ import {
   mcpToolRegisteredName,
 } from '#src/core/approvals/mcpSubjects.js';
 import { peekProjectDir, setProjectDir } from '#src/utils/systemUtils.js';
-import { SHELL_ALLOWLIST_FILE } from '#src/constants.js';
+import { SHELL_ALLOWLIST_FILE, SHELL_DENYLIST_FILE } from '#src/constants.js';
 
 // Mock the GthLangChainAgent - using a simplified approach
 const mockAgent = {
@@ -104,6 +104,11 @@ describe('GthAgentRunner', () => {
     priorProjectDir = peekProjectDir();
     setProjectDir(projectDir);
     rmSync(join(projectDir, SHELL_ALLOWLIST_FILE), { force: true });
+    // [[EXT-107]] — and the deny file, for a reason the allow file's line does not carry: a
+    // persisted refusal fails CLOSED, so one left behind by an earlier test refuses that command in
+    // every later test in this file, surfacing as unrelated cases going red in a way that reads
+    // like a code regression rather than a leaked fixture.
+    rmSync(join(projectDir, SHELL_DENYLIST_FILE), { force: true });
 
     // Reset mock implementations
     mockAgent.init.mockClear();
@@ -1292,7 +1297,9 @@ describe('GthAgentRunner', () => {
       // §3 — every list MUST be inspectable, so the declared entries are what the `/approvals`
       // display counts. They are NOT copied into the prefix stores (that is what made an `exact`
       // entry behave as a prefix); they are matched from the posture itself.
-      expect(runner.getDenylist()).toEqual(['npm publish']);
+      expect(runner.getRefusals()).toEqual([
+        { index: 1, description: 'npm publish', origin: 'config' },
+      ]);
       expect(runner.getAllowlistCounts().session).toBe(1);
     });
 
@@ -1313,7 +1320,10 @@ describe('GthAgentRunner', () => {
           ],
         },
       } as unknown as typeof mockConfig);
-      expect(runner.getDenylist()).toEqual(['npm publish* (glob)', 'mcpTool jira/delete_issue']);
+      expect(runner.getRefusals()).toEqual([
+        { index: 1, description: 'npm publish* (glob)', origin: 'config' },
+        { index: 2, description: 'mcpTool jira/delete_issue', origin: 'config' },
+      ]);
       expect(runner.getAllowlistCounts().session).toBe(1);
     });
 
@@ -1330,7 +1340,9 @@ describe('GthAgentRunner', () => {
       expect(runner.getSessionApprovals().deny).toEqual([
         { type: 'shell', matcher: 'exact', pattern: 'npm publish' },
       ]);
-      expect(runner.getDenylist()).toEqual(['npm publish']);
+      expect(runner.getRefusals()).toEqual([
+        { index: 1, description: 'npm publish', origin: 'config' },
+      ]);
     });
 
     it('approves a gated shell command WITHOUT invoking the human callback under bypass', async () => {

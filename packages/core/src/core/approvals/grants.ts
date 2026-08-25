@@ -4,11 +4,17 @@
  * EXT-71 (spec §3, §3.1, §6) — **what the escalation menu remembers**, in the one entry grammar.
  *
  * A grant is an {@link ApprovalEntry} plus the metadata §3 requires a list to be able to show:
- * **when** it was made and **at what scope**. Two stores hold them — an in-memory
+ * **when** it was made and **at what scope**. Two kinds of store hold them — an in-memory
  * {@link ApprovalGrantStore} for the life of one runner instance, and a
- * {@link PersistedApprovalGrants} backed by the project's JSON file for `always` — and neither
- * decides anything. They hold entries; `core/approvals/matcher.ts` compares them. There is exactly
- * one comparison engine and it is not here.
+ * {@link PersistedApprovalGrants} backed by a project JSON file for `always` — and neither decides
+ * anything. They hold entries; `core/approvals/matcher.ts` compares them. There is exactly one
+ * comparison engine and it is not here.
+ *
+ * **Both are list-agnostic, and that is what keeps the two sides symmetric.** The runner holds four
+ * of them: a session and a persisted store for what the menu *approved*, and the same pair for what
+ * it *refused* ([[EXT-107]]). A store never learns which list it is; the file path decides that, and
+ * the runner decides which list it hands to the matcher. A second class for refusals would be the
+ * same code with one string changed, free to drift from its twin on every later edit.
  *
  * ## The menu never widens
  *
@@ -428,12 +434,31 @@ export interface PersistedApprovalGrantsOptions {
    * why the runner always passes one.
    */
   onNotice?: (notice: ShellApprovalGateNotice) => void;
+  /**
+   * Whether a file holding the v1 `prefixes` array is migrated to `exact` entries. **True by
+   * default, and set false by the deny store** ([[EXT-107]]), for two independent reasons:
+   *
+   * - **`prefixes` was never a format on the deny side.** A deny file carrying one was hand-written
+   *   by analogy, and turning a guess into standing refusals — with a notice worded for saved
+   *   *approvals*, which is the only notice there is — would report a migration that did not
+   *   describe what happened.
+   * - **A migration WRITES.** The deny store is read at every rung, `bypass` included, because a
+   *   refusal is resolved before the bypass return; the allow store is not read there precisely so
+   *   that a session with the gate switched off never rewrites the project's grant file. Leaving
+   *   this on would give the deny store the one load path that writes.
+   */
+  legacyPrefixMigration?: boolean;
 }
 
 /**
  * The persisted (`always`) grant store, backed by a JSON file whose path is injected (the runner
- * resolves it via fileUtils → `.gsloth/.gsloth-settings/shell-allowlist.json`) so tests can point it
- * at a temp dir.
+ * resolves it via fileUtils → `.gsloth/.gsloth-settings/shell-allowlist.json` for approvals and
+ * `…/shell-denylist.json` for refusals) so tests can point it at a temp dir.
+ *
+ * **One class, two files.** Which list a store's entries belong to is the caller's question, not
+ * this class's: it holds {@link ApprovalGrant} records and writes them back. The only thing either
+ * side configures is {@link PersistedApprovalGrantsOptions.legacyPrefixMigration}, which the deny
+ * store turns off.
  *
  * ## The v1 migration, and the direction it goes
  *
@@ -454,14 +479,19 @@ export class PersistedApprovalGrants {
 
   constructor(filePath: string, options?: PersistedApprovalGrantsOptions) {
     this.filePath = filePath;
-    const { grants, migrated } = PersistedApprovalGrants.load(filePath, options?.onNotice);
+    const { grants, migrated } = PersistedApprovalGrants.load(
+      filePath,
+      options?.onNotice,
+      options?.legacyPrefixMigration ?? true
+    );
     this.store = new ApprovalGrantStore(grants);
     if (migrated) this.tryPersist();
   }
 
   private static load(
     filePath: string,
-    onNotice: ((notice: ShellApprovalGateNotice) => void) | undefined
+    onNotice: ((notice: ShellApprovalGateNotice) => void) | undefined,
+    legacyPrefixMigration: boolean
   ): { grants: ApprovalGrant[]; migrated: boolean } {
     try {
       if (!existsSync(filePath)) return { grants: [], migrated: false };
@@ -477,7 +507,7 @@ export class PersistedApprovalGrants {
         return { grants, migrated: false };
       }
 
-      if (Array.isArray(record.prefixes)) {
+      if (legacyPrefixMigration && Array.isArray(record.prefixes)) {
         return PersistedApprovalGrants.migrateFromV1(record.prefixes, filePath, onNotice);
       }
 

@@ -1,6 +1,9 @@
 import {
   type AllowlistCounts,
   type ApprovalEntry,
+  type ApprovalRefusal,
+  type ApprovalRefusalLift,
+  type ApprovalRefusalOrigin,
   type ApprovalRung,
   APPROVAL_RUNG_LABELS,
   DEFAULT_APPROVAL_RUNG,
@@ -40,6 +43,7 @@ import {
   ToolApprovalCallback,
   ToolApprovalDecision,
   type ToolApprovalScope,
+  type ToolRejectScope,
 } from '#src/core/types.js';
 import { GthLangChainAgent } from '#src/core/GthLangChainAgent.js';
 import {
@@ -128,7 +132,7 @@ import { resolveRaterModel } from '#src/core/shell/raterModel.js';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { env } from '#src/utils/systemUtils.js';
 import { getGslothConfigWritePath } from '#src/utils/fileUtils.js';
-import { SHELL_ALLOWLIST_FILE } from '#src/constants.js';
+import { SHELL_ALLOWLIST_FILE, SHELL_DENYLIST_FILE } from '#src/constants.js';
 import { enhanceVertexUnauthorizedMessage } from '#src/utils/vertexaiUtils.js';
 import { RunnableConfig } from '@langchain/core/runnables';
 import { getNewRunnableConfig } from '#src/utils/llmUtils.js';
@@ -416,6 +420,17 @@ export class GthAgentRunner {
   private persistedGrantsLoaded = false;
 
   /**
+   * [[EXT-107]] — the persisted (`always`) **refusal** store, from
+   * `.gsloth/.gsloth-settings/shell-denylist.json`. The mirror of {@link persistedGrants}, and the
+   * reason the menu's most emphatic answer is no longer its most forgetful one.
+   *
+   * Null when the file cannot be loaded at all, in which case an `always` refusal degrades to a
+   * session one — a re-prompt next session, never an execution.
+   */
+  private persistedDenials: PersistedApprovalGrants | null = null;
+  private persistedDenialsLoaded = false;
+
+  /**
    * [[EXT-29]] §5 — the state of the agent↔rater negotiation at `auto`: the transcript, §5.3's
    * consecutive-rejection counter and the reachability bound. Instance-scoped for the same reason
    * the grant stores are — a concurrent ACP / AG-UI session must not inherit another's argument.
@@ -582,12 +597,103 @@ export class GthAgentRunner {
   }
 
   /**
-   * CFG-27 — the session's deny entries for display: the declared `approvals.deny` entries
-   * (rendered one line each) followed by whatever the escalation menu's *always reject* added at
-   * run time. Both refuse a call, so both are shown.
+   * CFG-27/[[EXT-107]] — **every refusal in force, and which of the three lists holds it**: the
+   * declared `approvals.deny` entries, the escalation menu's session-scoped refusals, and the ones
+   * saved to the project's deny file.
+   *
+   * The origins are kept apart rather than concatenated into one list of strings, because they have
+   * different lifetimes and different owners and only two of the three can be lifted from here.
+   * A merged list makes {@link liftRefusal} impossible to describe honestly.
+   *
+   * **This is the one list.** {@link liftRefusal} resolves its argument against exactly this
+   * sequence, so the number a user reads and the number they type cannot name different entries.
+   *
+   * Numbering is 1-based, and the order is config → saved → session: the entries a user cannot lift
+   * here come first and stay put, so the numbers of the ones they can are not reshuffled by a
+   * config edit between two renderings.
    */
-  public getDenylist(): string[] {
-    return [...this.sessionApprovals.deny, ...this.denyGrants.entries()].map(describeApprovalEntry);
+  public getRefusals(): ApprovalRefusal[] {
+    return this.refusalRecords().map((held, position) => ({
+      index: position + 1,
+      description: describeApprovalEntry(held.entry),
+      origin: held.origin,
+      ...(held.recordedAt !== undefined ? { recordedAt: held.recordedAt } : {}),
+    }));
+  }
+
+  /**
+   * [[EXT-107]] — the refusals in force with their entries attached, which is what
+   * {@link liftRefusal} needs and {@link getRefusals} renders. ONE builder, so the displayed order
+   * and the removal order are the same order by construction rather than by two functions agreeing.
+   *
+   * A saved refusal is held in both runtime stores ({@link recordDenial} writes both), so the
+   * session list is filtered against the saved one by entry identity — the same de-duplication
+   * {@link getGrants} does. A configured entry is NOT de-duplicated against them: it is a different
+   * thing with a different owner, and hiding it would let a lift report success while the config
+   * line went on refusing the call.
+   */
+  private refusalRecords(): {
+    entry: ApprovalEntry;
+    origin: ApprovalRefusalOrigin;
+    recordedAt?: string;
+  }[] {
+    const saved = this.getPersistedDenials()?.list() ?? [];
+    const savedKeys = new Set(saved.map((grant) => renderApprovalEntryObject(grant.entry)));
+    return [
+      ...this.sessionApprovals.deny.map((entry) => ({ entry, origin: 'config' as const })),
+      ...saved.map((grant) => ({
+        entry: grant.entry,
+        origin: 'persisted' as const,
+        recordedAt: grant.grantedAt,
+      })),
+      ...this.denyGrants
+        .list()
+        .filter((grant) => !savedKeys.has(renderApprovalEntryObject(grant.entry)))
+        .map((grant) => ({
+          entry: grant.entry,
+          origin: 'session' as const,
+          recordedAt: grant.grantedAt,
+        })),
+    ];
+  }
+
+  /**
+   * [[EXT-107]] — **lift one refusal**, by its number in {@link getRefusals}. The escape hatch, and
+   * the reason persisting a refusal is safe to ship: a saved refusal the user cannot find or undo
+   * is a trap, and the person who hits it first is whoever pressed `[d]` by reflex and needed the
+   * command an hour later. Telling them to delete a file they have not been told exists is not an
+   * answer.
+   *
+   * A saved refusal is removed from the file AND from the in-memory store, because it is in both —
+   * dropping only the file would leave the call refused for the rest of the session by a rule the
+   * display no longer shows.
+   *
+   * **A configured entry is reported, never removed.** `approvals.deny` is something the user
+   * wrote; rewriting their config file out from under them is not a thing a session command may do,
+   * and silently no-oping would be worse. They are told where it lives.
+   */
+  public liftRefusal(index: number): ApprovalRefusalLift {
+    const held = this.refusalRecords();
+    const target = held[index - 1];
+    if (!target || !Number.isInteger(index)) {
+      return { outcome: 'unknown', index, count: held.length };
+    }
+    const description = describeApprovalEntry(target.entry);
+    if (target.origin === 'config') return { outcome: 'configured', description };
+    this.denyGrants.remove(target.entry);
+    if (target.origin === 'persisted') this.getPersistedDenials()?.remove(target.entry);
+    const key = renderApprovalEntryObject(target.entry);
+    return {
+      outcome: 'lifted',
+      description,
+      origin: target.origin,
+      // The other half of not de-duplicating config entries above: a call refused by BOTH a saved
+      // entry and a config line is still refused after this, and a notice that did not say so would
+      // report a lift the gate did not perform.
+      stillConfigured: this.sessionApprovals.deny.some(
+        (entry) => renderApprovalEntryObject(entry) === key
+      ),
+    };
   }
 
   /**
@@ -1478,26 +1584,35 @@ export class GthAgentRunner {
 
     // (1) Deny — before everything, including `bypass`.
     if (rule?.action === 'deny') {
-      // [[TUI-C26]] §6 — the message names the refusal the user actually made. A deny entry now has
-      // two possible authors: a line in `approvals.deny`, and the escalation menu's *always reject*
-      // choice earlier in this session. Telling the model (and, through it, the user) to edit a
-      // config file that the second kind was never written to is the same class of wrongness as
-      // confirming a persistence that did not happen. The declared list is checked FIRST so an
-      // entry a user wrote is described as theirs even when the menu recorded the identical one.
-      const declared = this.sessionApprovals.deny.some(
-        (entry) => renderApprovalEntryObject(entry) === renderApprovalEntryObject(rule.entry)
-      );
+      // [[TUI-C26]] §6/[[EXT-107]] — the message names the refusal the user actually made, and each
+      // of the three authors is undone somewhere different: a line in `approvals.deny` is edited
+      // out of a config file, a saved refusal is lifted from the project's deny file, and a session
+      // one simply ends with the session. Telling the model (and, through it, the user) to edit a
+      // file the refusal was never written to is the same class of wrongness as confirming a
+      // persistence that did not happen. The declared list is checked FIRST so an entry a user
+      // wrote is described as theirs even when the menu recorded the identical one.
       const described = describeApprovalEntry(rule.entry);
+      const key = renderApprovalEntryObject(rule.entry);
+      const declared = this.sessionApprovals.deny.some(
+        (entry) => renderApprovalEntryObject(entry) === key
+      );
+      const saved =
+        !declared &&
+        (this.getPersistedDenials()?.list() ?? []).some(
+          (grant) => renderApprovalEntryObject(grant.entry) === key
+        );
       record.ruleMatch = { action: 'deny', entry: described };
-      return this.stage(record, 'deny-list', {
-        type: 'reject',
-        message: declared
-          ? `Refused: your deny list forbids this call (matched "${described}"). ` +
-            'Remove the entry from approvals.deny if you want it to run.'
+      const message = declared
+        ? `Refused: your deny list forbids this call (matched "${described}"). ` +
+          'Remove the entry from approvals.deny if you want it to run.'
+        : saved
+          ? `Refused: the user chose to always refuse this, and it was saved to this project ` +
+            `(matched "${described}"). The refusal stands in new sessions too; ask the user if ` +
+            'you believe it should be lifted, which they can do with the /approvals command.'
           : `Refused: the user chose to always refuse this earlier in this session (matched ` +
             `"${described}"). That refusal lasts until the session ends; ask the user if you ` +
-            'believe it should be lifted.',
-      });
+            'believe it should be lifted.';
+      return this.stage(record, 'deny-list', { type: 'reject', message });
     }
 
     // (2) `bypass` (config or `/approvals bypass`): approve a gated shell command WITHOUT
@@ -2202,10 +2317,11 @@ export class GthAgentRunner {
       this.recordApproval(grant, decision.scope ?? 'once');
     }
     // §6 — and the mirror: *always reject* records the refusal, so the next identical call is
-    // refused by rule at step (1) without reaching a person. Scoped `session` and nothing else,
-    // because that is the only lifetime the store has (see {@link ToolRejectScope}).
-    if (decision.type === 'reject' && decision.scope === 'session' && denyEntry) {
-      this.recordDenial(denyEntry);
+    // refused by rule at step (1) without reaching a person. [[EXT-107]] — at the scope the surface
+    // asked for, which for every escalation menu's `[d]` is `always`; the lifetime that LANDS is
+    // `recordDenial`'s to decide and to report.
+    if (decision.type === 'reject' && decision.scope !== undefined && denyEntry) {
+      this.recordDenial(denyEntry, decision.scope);
     }
     return decision;
   }
@@ -2392,7 +2508,22 @@ export class GthAgentRunner {
     const approvals = this.sessionApprovals;
     const persisted = approvals.rung === 'bypass' ? null : this.getPersistedGrants();
     return {
-      deny: [...approvals.deny, ...this.denyGrants.entries()],
+      // [[EXT-107]] — three sources of refusal, and the persisted one is read at EVERY rung,
+      // `bypass` included. That is not an oversight of the allow side's guard, it is the opposite
+      // of it: deny is resolved at step (1) of `decideToolApprovalInner`, *before* the `bypass`
+      // return, so a saved refusal that switched itself off at `bypass` would be a promise the file
+      // stops keeping the moment someone relaxes the gate — the one direction this design never
+      // fails in. Reading it there is also side-effect-free: the deny store runs no migration, so
+      // its load never writes (see `PersistedApprovalGrantsOptions.legacyPrefixMigration`).
+      //
+      // Concatenation order decides nothing about deny-vs-allow — `resolveApprovalRules` consults
+      // the whole deny list before any allow entry — so a command matching a saved allow AND a
+      // saved deny is refused, whichever file was written first.
+      deny: [
+        ...approvals.deny,
+        ...this.denyGrants.entries(),
+        ...(this.getPersistedDenials()?.entries() ?? []),
+      ],
       escalate: approvals.escalate,
       allow: [...approvals.allow, ...this.sessionGrants.entries(), ...(persisted?.entries() ?? [])],
     };
@@ -2423,6 +2554,44 @@ export class GthAgentRunner {
       this.persistedGrants = null;
     }
     return this.persistedGrants;
+  }
+
+  /**
+   * [[EXT-107]] — lazily load (once per instance) the persisted **refusal** store, the mirror of
+   * {@link getPersistedGrants}. Returns null when it cannot be loaded at all, in which case an
+   * `always` refusal degrades to `session`.
+   *
+   * **No `bypass` guard, and no v1 migration**, and the two are the same decision. The allow side
+   * skips the file at `bypass` so a session with the gate switched off neither reads nor *rewrites*
+   * the project's grants; the only thing that rewrites on load is the v1 `prefixes` migration, and
+   * turning it off here makes this store's load a pure read. That is what lets it be consulted at
+   * every rung — which it must be, because a refusal is resolved before the `bypass` return and a
+   * saved refusal that lapsed when the gate was relaxed would be worthless.
+   *
+   * It is also loaded by the `/approvals` DISPLAY, unlike its allow-side twin. The rule there — a
+   * display must not create the store in order to show it — is a rule about writing, and this load
+   * cannot write. The reason to break the symmetry is that the display is the escape hatch: a saved
+   * refusal a user cannot see is one they cannot lift, and a fresh session has made no gated call
+   * yet.
+   */
+  private getPersistedDenials(): PersistedApprovalGrants | null {
+    if (this.persistedDenialsLoaded) return this.persistedDenials;
+    this.persistedDenialsLoaded = true;
+    try {
+      const filePath = getGslothConfigWritePath(SHELL_DENYLIST_FILE);
+      this.persistedDenials = new PersistedApprovalGrants(filePath, {
+        onNotice: (notice) => this.statusUpdate(notice.level, notice.message),
+        legacyPrefixMigration: false,
+      });
+    } catch (e) {
+      // Path/IO failure → behave as no persisted refusals. This one is NOT safe in the way the
+      // allow side's failure is: it loses refusals rather than approvals, so it re-prompts where it
+      // would have refused by rule. A prompt is still a human deciding, which is why it degrades
+      // rather than ending the run.
+      debugLogError('Loading persisted shell refusals', e);
+      this.persistedDenials = null;
+    }
+    return this.persistedDenials;
   }
 
   /**
@@ -2518,7 +2687,7 @@ export class GthAgentRunner {
    * - **`run_shell_command` arriving as a TOOL subject gets a tool entry** — a shell call whose
    *   `command` argument cannot even be read. On the allow side that entry would auto-approve every
    *   future unreadable shell call, which is why it is excluded there; as a refusal it stops the
-   *   shell tool for the session, and the dialog says so in the words the entry is written in.
+   *   shell tool outright, and the dialog says so in the words the entry is written in.
    *
    * The one genuine exclusion is an **MCP call whose server could not be attributed**
    * ({@link toolGrantEntry} returns `null`): the grammar's `server` cannot be the empty string, so
@@ -2535,19 +2704,37 @@ export class GthAgentRunner {
   }
 
   /**
-   * §6 — record the menu's *always reject* choice, for the life of this runner instance.
+   * §6/[[EXT-107]] — record the menu's *always reject* choice at the given scope. `once` remembers
+   * nothing; `session` holds the refusal for the life of this runner instance; `always` additionally
+   * writes it to the project's deny file, so it is still in force after a restart.
    *
-   * It lands in the same store `approvals.deny` entries are matched from ({@link approvalRuleLists}
-   * concatenates the two), so a refusal the human made at the prompt and one they wrote in their
-   * config are one list to the matcher and one list to `/approvals`.
+   * It lands in the same lists `approvals.deny` entries are matched from ({@link approvalRuleLists}
+   * concatenates the three), so a refusal the human made at the prompt and one they wrote in their
+   * config are one list to the matcher.
    *
-   * **Session-lifetime, and there is nothing else to choose.** There is no persisted deny file;
-   * whether there should be is a question about a file users live with, not about this prompt. What
-   * the surfaces must not do is say otherwise — a confirmation promising a persistence that did not
-   * happen is §6's *offered and then refused* with the evidence hidden.
+   * **The recorded scope says whether the store could be OPENED, not whether the write landed.**
+   * With no store at all the refusal is held as a `session` one and the `/approvals` display reads
+   * that back. A `writeFileSync` that fails on a read-only checkout is a different case: the store
+   * swallows it and {@link PersistedApprovalGrants.add} returns void, so there is nothing here to
+   * observe and the refusal is still shown as saved. The allow side has the identical gap, for the
+   * identical reason — the in-memory copy keeps the refusal in force for this run either way, and
+   * the cost of the overstatement is one re-prompt next session, the direction refusals are allowed
+   * to fail in. Closing it means the store reporting its write result on both sides, not a comment
+   * here.
    */
-  private recordDenial(entry: ApprovalEntry): void {
-    this.denyGrants.add({ entry, grantedAt: new Date().toISOString(), scope: 'session' });
+  private recordDenial(entry: ApprovalEntry, scope: ToolRejectScope): void {
+    if (scope === 'once') return;
+    const persisted = scope === 'always' ? this.getPersistedDenials() : null;
+    const record: ApprovalGrant = {
+      entry,
+      grantedAt: new Date().toISOString(),
+      scope: persisted ? 'always' : 'session',
+    };
+    // Both stores, exactly as `recordApproval` writes both: the in-memory copy is what keeps the
+    // refusal in force for this run even if the file write below is swallowed, and the display
+    // de-duplicates by entry identity.
+    this.denyGrants.add(record);
+    persisted?.add(record);
   }
 
   /**

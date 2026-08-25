@@ -15,6 +15,8 @@
  */
 
 import type {
+  ApprovalRefusal,
+  ApprovalRefusalLift,
   ApprovalRung,
   McpAnnotationTrustChange,
   McpAnnotationTrustView,
@@ -352,7 +354,11 @@ export interface SlashCommandResult {
    * the runner's posture, so it states the request and the surface applies it and reports what
    * landed.
    */
-  approvals?: { show: true } | { rung: ApprovalRung } | { trust: McpTrustRequest };
+  approvals?:
+    | { show: true }
+    | { rung: ApprovalRung }
+    | { trust: McpTrustRequest }
+    | { undeny: { index: number } };
   /**
    * TUI-C18 — a committed turn's thinking to REPRINT into the transcript (the `/reasoning` command).
    * Recall rather than retro-mutation: a fresh block reusing the TUI-C15 `💭`/gutter styling appears
@@ -665,7 +671,7 @@ export function approvalPostureLines(current: ApprovalRung): string[] {
 export function approvalsStatusNotice(
   approvals: ResolvedApprovals,
   allowlist: { session: number; always: number | undefined },
-  deny: readonly string[] = [],
+  refusals: readonly ApprovalRefusal[] = [],
   grants: readonly ApprovalGrant[] = [],
   trust?: McpAnnotationTrustView,
   options: {
@@ -688,7 +694,7 @@ export function approvalsStatusNotice(
     lines: [
       APPROVAL_RUNG_DESCRIPTIONS[approvals.rung],
       `Auto-rater: ${rater}`,
-      `Allowed: ${allowlist.session} this session · ${allowlist.always ?? '—'} remembered · Denied: ${deny.length}`,
+      `Allowed: ${allowlist.session} this session · ${allowlist.always ?? '—'} remembered · Denied: ${refusals.length}`,
       ...describeGrants(grants),
       ...(trust ? [describeMcpTrust(trust)] : []),
       // The docs pointer rides with the mode list, and is absent for the same reason the list is
@@ -741,6 +747,76 @@ function describeGrants(grants: readonly ApprovalGrant[]): string[] {
 }
 
 /**
+ * [[EXT-107]] — how a refusal's origin is said on screen. Three sources, three lifetimes, three
+ * owners, and the words have to carry the difference: the whole point of listing refusals here is
+ * that a user can tell the one that ends with this session from the one that will still be there
+ * tomorrow, and both from the line they wrote themselves.
+ */
+const REFUSAL_ORIGIN_LABELS: Record<ApprovalRefusal['origin'], string> = {
+  config: 'from your approvals.deny',
+  session: 'this session only',
+  persisted: 'saved to this project',
+};
+
+/** How many refusals `/approvals` lists before it summarizes the rest. */
+const REFUSAL_DISPLAY_LIMIT = 10;
+
+/**
+ * [[EXT-107]] — **the refusals in force, as their own notice**: what is refused, which list holds
+ * it, and the number that lifts it. `null` when nothing is refused, so `/approvals` says nothing
+ * about refusals in the ordinary case.
+ *
+ * This is the escape hatch, and it is the reason a refusal may be persisted at all. A session-only
+ * *always reject* cost minutes when it was a mistake; saved to a project file it costs whatever it
+ * takes the user to discover a file they were never told about. So this does not count refusals, it
+ * makes each one findable and undoable — which is why every line carries its origin and its number.
+ *
+ * **A second notice rather than more rows on the posture one, and the reason is the pane.** The
+ * posture notice's head is the answer the user asked for — which mode am I on — and it already
+ * fills the TUI pane the picker leaves: measured, ONE added row scrolls that head off the top. Two
+ * notices each keep their own heading, and the refusal list ends up nearest the prompt, which is
+ * where the thing the user is about to act on belongs.
+ *
+ * **The overflow is walkable rather than a dead end.** The numbering is the runner's, over a
+ * deterministic order (config, then saved, then session), so lifting the last shown entry brings
+ * the next one into the list. A cap that simply hid the rest would put refusals beyond reach of the
+ * control that exists to reach them.
+ */
+export function approvalsRefusalsNotice(
+  refusals: readonly ApprovalRefusal[]
+): SlashCommandNotice | null {
+  if (refusals.length === 0) return null;
+  const shown = refusals
+    .slice(0, REFUSAL_DISPLAY_LIMIT)
+    .map(
+      (refusal) =>
+        `  ${refusal.index}. ${refusal.description} — ${REFUSAL_ORIGIN_LABELS[refusal.origin]}` +
+        (refusal.recordedAt ? `, refused ${refusal.recordedAt}` : '')
+    );
+  const rest = refusals.length - shown.length;
+  return {
+    title: `Refused calls: ${refusals.length}`,
+    lines: [
+      ...shown,
+      ...(rest > 0 ? [`  …and ${rest} more, which appear here as the ones above are lifted.`] : []),
+      UNDENY_USAGE_LINE,
+    ],
+    tone: 'info',
+  };
+}
+
+/**
+ * [[EXT-107]] — the removal half of the usage copy, printed under the refusal list and in the
+ * usage hint.
+ *
+ * It names what it cannot do as well as what it can: a configured entry is the user's own file and
+ * no session command rewrites it, so a user who tries and is refused should have been told first.
+ */
+const UNDENY_USAGE_LINE =
+  'Lift one with /approvals undeny <number> — an entry from your approvals.deny is removed by ' +
+  'editing that config instead.';
+
+/**
  * §4.7.1 — the one line saying which of each server's annotation hints this session believes.
  *
  * A server is listed even when it believes nothing, because "believes nothing" is the default and
@@ -774,16 +850,23 @@ export interface McpTrustRequest {
 }
 
 /** Something wrong with a `/approvals trust` invocation that the command explains rather than guesses at. */
-export type ApprovalsUsageProblem =
+export type ApprovalsTrustUsageProblem =
   | { kind: 'trust-missing-server'; believe: boolean }
   | { kind: 'trust-missing-hints'; believe: boolean; server: string }
   | { kind: 'unknown-hint'; believe: boolean; token: string };
+
+/** Something wrong with a `/approvals` subcommand that the command explains rather than guesses at. */
+export type ApprovalsUsageProblem =
+  | ApprovalsTrustUsageProblem
+  | { kind: 'undeny-missing-number' }
+  | { kind: 'undeny-bad-number'; token: string };
 
 /** What `/approvals` resolved to, or `null` when the first argument names nothing it knows. */
 export type ApprovalsAction =
   | { show: true }
   | { rung: ApprovalRung }
   | { trust: McpTrustRequest }
+  | { undeny: { index: number } }
   | { usage: ApprovalsUsageProblem };
 
 /**
@@ -811,6 +894,19 @@ export function parseApprovalsArg(args: string[]): ApprovalsAction | null {
   const verb = args[0].toLowerCase();
   const rung = APPROVAL_RUNGS.find((r) => r === verb);
   if (rung) return { rung };
+  // [[EXT-107]] — lift a refusal by its number in the list `/approvals` just printed. Parsed
+  // strictly: a non-integer, a zero and a negative are all explained rather than coerced, because
+  // this command REMOVES a protection and a silently-coerced argument would remove a different one
+  // than the user named.
+  if (verb === 'undeny') {
+    const token = args[1];
+    if (token === undefined) return { usage: { kind: 'undeny-missing-number' } };
+    const index = Number(token);
+    if (!Number.isInteger(index) || index < 1) {
+      return { usage: { kind: 'undeny-bad-number', token } };
+    }
+    return { undeny: { index } };
+  }
   if (verb !== 'trust' && verb !== 'untrust') return null;
 
   const believe = verb === 'trust';
@@ -836,7 +932,7 @@ const trustVerb = (believe: boolean): string => (believe ? 'trust' : 'untrust');
  * a hint that is not one of the four. Each says what is missing and shows the vocabulary, because
  * the hint names are camelCase MCP identifiers nobody guesses.
  */
-export function approvalsTrustUsageNotice(problem: ApprovalsUsageProblem): SlashCommandNotice {
+export function approvalsTrustUsageNotice(problem: ApprovalsTrustUsageProblem): SlashCommandNotice {
   const usage = `Usage: /approvals ${trustVerb(problem.believe)} <server> <hint…> — hints are ${TOOL_ANNOTATION_HINTS.join(', ')}.`;
   const perHint =
     'Trust is per hint and per server: you may believe a server’s readOnlyHint while disbelieving ' +
@@ -864,6 +960,91 @@ export function approvalsTrustUsageNotice(problem: ApprovalsUsageProblem): Slash
     title: `Not an annotation hint: ${problem.token}`,
     lines: [`Nothing was changed.`, usage, perHint],
     tone: 'warn',
+  };
+}
+
+/**
+ * Usage copy for any malformed `/approvals` subcommand. It dispatches on the problem's `kind`
+ * rather than on which subcommand was typed, so a new subcommand's problems are explained by adding
+ * a case here and cannot fall through to another subcommand's copy.
+ *
+ * **Nothing was changed** is stated on every branch, and on the [[EXT-107]] ones it is the part that
+ * matters: these arrive from a command that would have REMOVED a refusal, and a user who mistyped
+ * the number has to know the gate is still where they left it.
+ */
+export function approvalsUsageNotice(problem: ApprovalsUsageProblem): SlashCommandNotice {
+  if (problem.kind === 'undeny-missing-number') {
+    return {
+      title: 'Which refusal should be lifted?',
+      lines: [
+        'Run /approvals with no argument to list them; each line is numbered. Nothing was changed.',
+        UNDENY_USAGE_LINE,
+      ],
+      tone: 'warn',
+    };
+  }
+  if (problem.kind === 'undeny-bad-number') {
+    return {
+      title: `Not a refusal number: ${problem.token}`,
+      lines: [
+        'It takes the number shown beside the refusal, counting from 1. Nothing was changed.',
+        UNDENY_USAGE_LINE,
+      ],
+      tone: 'warn',
+    };
+  }
+  return approvalsTrustUsageNotice(problem);
+}
+
+/**
+ * [[EXT-107]] — the notice for a `/approvals undeny`, built from what the runner RETURNS rather
+ * than from what was asked for, so it can only describe the refusal actually lifted.
+ *
+ * Three outcomes, and the two that are not a plain success are the ones worth the branches:
+ *
+ * - **A configured entry is not lifted**, because `approvals.deny` is a file the user wrote and no
+ *   session command rewrites it. Saying where it lives is the whole of the help they need.
+ * - **A lifted entry that `approvals.deny` ALSO matches is still refused.** Reporting the removal
+ *   without that would tell the user they had opened something that is still closed — the same
+ *   "offered and then refused" failure the escalation menu is written to avoid, one layer up.
+ */
+export function approvalsUndenyNotice(lift: ApprovalRefusalLift): SlashCommandNotice {
+  if (lift.outcome === 'unknown') {
+    return {
+      title: `There is no refusal number ${lift.index}`,
+      lines: [
+        lift.count === 0
+          ? 'Nothing is refused right now, so there is nothing to lift.'
+          : `The list has ${lift.count}. Run /approvals to see them numbered. Nothing was changed.`,
+      ],
+      tone: 'warn',
+    };
+  }
+  if (lift.outcome === 'configured') {
+    return {
+      title: 'That refusal is in your config',
+      lines: [
+        `${lift.description} comes from the approvals.deny list in your config file, so it is ` +
+          'removed by editing that file. Nothing was changed.',
+      ],
+      tone: 'warn',
+    };
+  }
+  return {
+    title: 'Refusal lifted',
+    lines: [
+      lift.origin === 'persisted'
+        ? `${lift.description} is no longer refused, and it has been removed from this project’s ` +
+          'saved refusals, so it will not come back in a new session.'
+        : `${lift.description} is no longer refused for the rest of this session.`,
+      ...(lift.stillConfigured
+        ? [
+            'Your approvals.deny list still matches it, so the call is still refused — remove the ' +
+              'entry from your config as well to let it run.',
+          ]
+        : ['The next such call will be decided the way it was before you refused it.']),
+    ],
+    tone: lift.stillConfigured ? 'warn' : 'info',
   };
 }
 
@@ -1135,6 +1316,7 @@ export function createCommandRegistry(): SlashCommand[] {
       description:
         'Show or switch the approvals mode ' +
         `(/approvals ${APPROVAL_RUNGS.join('|')}; no arg shows it and offers a picker), ` +
+        'lift a refusal (/approvals undeny <number>), ' +
         'or believe an MCP server’s annotation hints (/approvals trust|untrust <server> <hint…>)',
       // Available mid-turn so the user can change how the run's REMAINING tool calls are handled
       // (EXT-12's reason, generalized to the rung). The surface owns the runner posture, so it
@@ -1155,15 +1337,16 @@ export function createCommandRegistry(): SlashCommand[] {
                 ...APPROVAL_RUNGS.map(
                   (rung) => `${rung} — ${firstSentence(APPROVAL_RUNG_DESCRIPTIONS[rung])}`
                 ),
+                UNDENY_USAGE_LINE,
                 TRUST_USAGE_LINE,
               ],
               tone: 'warn',
             },
           };
         }
-        // A malformed `trust`/`untrust` is explained rather than applied: nothing is changed, so
-        // the surface has nothing to do and the command answers on its own.
-        if ('usage' in action) return { notice: approvalsTrustUsageNotice(action.usage) };
+        // A malformed `trust`/`untrust`/`undeny` is explained rather than applied: nothing is
+        // changed, so the surface has nothing to do and the command answers on its own.
+        if ('usage' in action) return { notice: approvalsUsageNotice(action.usage) };
         return { approvals: action };
       },
     },

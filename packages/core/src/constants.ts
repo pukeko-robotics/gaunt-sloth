@@ -44,6 +44,17 @@ export const CONFIG_SCHEMA_POINTER = 'https://gauntsloth.app/schema/v2/gsloth-co
 export const SHELL_ALLOWLIST_FILE = 'shell-allowlist.json';
 
 /**
+ * [[EXT-107]]: project-scoped persisted shell deny-list — the escalation menu's *always reject*
+ * choice. Its mirror on the refusal side, in the same directory and the same EXT-71 entry grammar,
+ * so the two files read identically to anyone who opens them.
+ *
+ * A separate file rather than a second array in {@link SHELL_ALLOWLIST_FILE}: the two lists have
+ * opposite failure modes, and a parse error that took the refusals down with the approvals would
+ * fail in the one direction this design never lets anything fail in.
+ */
+export const SHELL_DENYLIST_FILE = 'shell-denylist.json';
+
+/**
  * The `additionalToolNamePrefix` handed to `MultiServerMCPClient` so every MCP tool name is
  * namespaced. Combined with `prefixToolNameWithServerName`, the adapter emits tool names shaped
  * `${MCP_TOOL_NAME_PREFIX}__<serverName>__<toolName>` (the `__` separator is the mcp-adapters

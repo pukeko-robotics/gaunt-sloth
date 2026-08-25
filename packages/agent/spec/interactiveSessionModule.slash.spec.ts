@@ -62,7 +62,8 @@ const runnerInstanceMock = {
   setSessionApprovalRung: vi.fn(),
   getSessionApprovals: vi.fn(),
   getAllowlistCounts: vi.fn(),
-  getDenylist: vi.fn(),
+  getRefusals: vi.fn(),
+  liftRefusal: vi.fn(),
   getGrants: vi.fn(),
   getMcpAnnotationTrust: vi.fn(),
   setMcpAnnotationTrust: vi.fn(),
@@ -143,7 +144,7 @@ describe('interactiveSessionModule shared slash-command registry (GS2-8)', () =>
       deny: [],
     }));
     runnerInstanceMock.getAllowlistCounts.mockReturnValue({ session: 0, always: undefined });
-    runnerInstanceMock.getDenylist.mockReturnValue([]);
+    runnerInstanceMock.getRefusals.mockReturnValue([]);
     runnerInstanceMock.getGrants.mockReturnValue([]);
     runnerInstanceMock.getMcpAnnotationTrust.mockReturnValue({ defaults: [], servers: [] });
   });
@@ -261,6 +262,54 @@ describe('interactiveSessionModule shared slash-command registry (GS2-8)', () =>
     const out = allOutput();
     expect(out).toContain('Approvals: Assisted');
     expect(out).toContain('Auto-rater:');
+  });
+
+  /**
+   * [[EXT-107]] — the readline surface prints the refusal list too, and it is a NON-TTY surface, so
+   * this is the fallback nothing else covers. What has to be there is the ORIGIN per line and the
+   * number: a saved refusal outlives the session, and a user who cannot tell it from a session one
+   * cannot tell whether they need to do anything about it.
+   */
+  it('/approvals lists the refusals in force with their origin and lift number', async () => {
+    runnerInstanceMock.getRefusals.mockReturnValue([
+      { index: 1, description: 'npm publish', origin: 'config' },
+      { index: 2, description: 'git push --force', origin: 'persisted' },
+    ]);
+    await runSession('/approvals', 'exit');
+    const out = allOutput();
+    expect(out).toContain('Refused calls: 2');
+    expect(out).toContain('1. npm publish — from your approvals.deny');
+    expect(out).toContain('2. git push --force — saved to this project');
+    expect(out).toContain('/approvals undeny <number>');
+  });
+
+  /**
+   * [[EXT-107]] — and the removal reaches the RUNNER, with the number the list printed. The notice
+   * is built from what the runner returns, so a surface that reported success on its own would be
+   * announcing a lift the gate never made.
+   */
+  it('/approvals undeny asks the runner to lift that refusal and reports what landed', async () => {
+    runnerInstanceMock.liftRefusal.mockReturnValue({
+      outcome: 'lifted',
+      description: 'git push --force',
+      origin: 'persisted',
+      stillConfigured: false,
+    });
+    await runSession('/approvals undeny 2', 'exit');
+    expect(runnerInstanceMock.liftRefusal).toHaveBeenCalledWith(2);
+    const out = allOutput();
+    expect(out).toContain('Refusal lifted');
+    expect(out).toContain('git push --force');
+  });
+
+  /**
+   * The control: a malformed number never reaches the runner at all. Without this, a parse that
+   * coerced its argument would lift a refusal the user did not name and still look like a success.
+   */
+  it('/approvals undeny with no number changes nothing and never reaches the runner', async () => {
+    await runSession('/approvals undeny', 'exit');
+    expect(runnerInstanceMock.liftRefusal).not.toHaveBeenCalled();
+    expect(allOutput()).toContain('Nothing was changed');
   });
 
   it('the retired /auto-approve and /bypass-approve read as unknown commands (no aliases)', async () => {
