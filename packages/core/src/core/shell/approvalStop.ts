@@ -88,11 +88,16 @@
  * gate's own prose can be painted as it is because nothing can forge it, and everything else goes
  * through the shared renderer.
  */
+import type { ApprovalSubject } from '#src/core/approvals/matcher.js';
+import { UNRESOLVED_MCP_SERVER } from '#src/core/approvals/mcpSubjects.js';
+import type { ApprovalEntryType } from '#src/config/shell-policy.js';
+import { renderApprovalEntryObject } from '#src/config/schema.js';
 import {
   frameUntrustedCommand,
   frameUntrustedText,
   frameWidthFor,
   narrowTerminalNotice,
+  neutralizeToOneLine,
   neutralizeUntrustedText,
 } from '#src/core/shell/framing.js';
 
@@ -131,6 +136,98 @@ export type ApprovalStopPart =
   | { kind: 'command'; label: string; text: string }
   | { kind: 'value'; label: string; text: string }
   | { kind: 'block'; text: string };
+
+/**
+ * [[EXT-115]] — **the parts that name WHAT was gated**, branched on the {@link ApprovalSubject}
+ * kind the gate itself decided the call on.
+ *
+ * Both stops carried the label `Command` unconditionally, so a gated `write_file` in CI read as
+ * `Command: write_file` and a gated MCP call read the same way — the framing [[TUI-C67]] removed
+ * from the two terminal prompts, surviving on the path with nobody to ask, where the message is the
+ * only thing anyone sees. It lives here rather than in either subclass because both stops make the
+ * identical claim about the identical subject, and a branch written twice is a branch that comes to
+ * disagree with itself.
+ *
+ * **The identifier stays in a `value`/`command` part and is NEVER interpolated into a sentence.**
+ * This is the one line the fix must not cross, and it is why the prose form
+ * `core/approvals/promptHeader` renders is deliberately not imported here: an `own` part is painted
+ * as-is *precisely because nothing can forge it*, everything else goes through the shared renderer,
+ * and the label sits on its own row for the reason {@link approvalStopRows} states. On the `mcpTool`
+ * arm the name comes from a third-party server's own tool listing, so a sentence carrying it would
+ * put attacker-supplied bytes into the gate's own voice — the forgery TUI-C26 closed.
+ *
+ * The arms:
+ *
+ * - `shell` — `Command`, on a `command` part. Unchanged, and unchanged deliberately: that part kind
+ *   is what runs the site extraction, which is the framing a shell command's composition and
+ *   substitution boundaries are shown through.
+ * - `mcpTool` with a nameable server — `MCP tool`, plus a second `MCP server` part. Naming the
+ *   server is the point rather than a side effect: which server a call reaches is the load-bearing
+ *   fact the old label hid, and it is the user's own `mcpServers` key (§4.7.5).
+ * - everything else — `Tool`, on a `value` part.
+ *
+ * **A `mcpTool` call whose server would render blank falls to the `Tool` arm**, mirroring
+ * `approvalPromptHeader`'s own fallback so the two cannot describe one call two ways. The guard is
+ * on the **rendered** server, not the raw one: {@link UNRESOLVED_MCP_SERVER} is the empty string,
+ * but a server key of whitespace alone — which `z.string().min(1)` admits — is also empty once
+ * neutralised, and it would otherwise render an `MCP server` row promising an identity that is not
+ * there. `text` already carries the full registered name in that case, which still shows the
+ * `mcp__` namespace.
+ *
+ * **A stop built with no subject keeps the shell shape**, which is the opposite of
+ * `approvalPromptHeader`'s fail-to-vague and is chosen for a reason that does not apply there. That
+ * function picks between three sentences, so it picks the one true of every call; this one also
+ * picks the PART KIND, and falling back to `value` would silently drop the extracted-site notice
+ * from a shell stop — `framing.ts` calls that the most decision-relevant thing in a command. Every
+ * production throw site passes a subject (`GthAgentRunner.decideToolApprovalInner` and
+ * `haltOrRunAnyway` both have the decision's own subject in hand), so this fallback is reached only
+ * by a hand-built error, where showing more is better than labelling more cautiously.
+ */
+function subjectParts(text: string, subject: ApprovalSubject | undefined): ApprovalStopPart[] {
+  if (subject === undefined || subject.kind === 'shell') {
+    return [{ kind: 'command', label: 'Command', text }];
+  }
+  if (subject.kind === 'mcpTool' && neutralizeToOneLine(subject.server) !== UNRESOLVED_MCP_SERVER) {
+    return [
+      { kind: 'value', label: 'MCP tool', text },
+      { kind: 'value', label: 'MCP server', text: subject.server },
+    ];
+  }
+  return [{ kind: 'value', label: 'Tool', text }];
+}
+
+/**
+ * [[EXT-115]] — **the `approvals.allow` entry the general recovery offers as an example**, one per
+ * subject kind, rendered by the one renderer that spells an entry ({@link
+ * renderApprovalEntryObject}) so an example and a stored grant cannot come to disagree about the
+ * grammar.
+ *
+ * The kinds line up one for one with {@link ApprovalEntryType}, which is why this needs no mapping:
+ * a `tool` call's remedy is a `tool` entry, and a `shell` entry can never match one (`matchEntry`
+ * refuses a type mismatch outright), so the shell example this used to print unconditionally was a
+ * line the reader could paste and watch do nothing.
+ *
+ * **Only the kind is interpolated — never a name, a server or a command.** These are the gate's own
+ * `own`-part sentences, the one part class a surface may paint raw, and a subject-derived
+ * identifier reaching one is exactly the forgery route the part tagging exists to close. The kind is
+ * a closed three-literal union, so nothing model-authored can ride in on it.
+ *
+ * **`*` on the `mcpTool` example, deliberately.** In production this general form is reached for an
+ * `mcpTool` subject only when the server could NOT be attributed — a specific entry is derived
+ * instead whenever one can be (`toolGrantEntry`) — and §4.7.5 makes `*` the reserved literal that is
+ * the only thing able to match such a call. Naming a plausible server there would hand the reader a
+ * line that cannot match the call they were just refused.
+ */
+const GENERAL_ALLOW_EXAMPLE: Readonly<Record<ApprovalEntryType, string>> = Object.freeze({
+  shell: renderApprovalEntryObject({ type: 'shell', matcher: 'exact', pattern: 'npm test' }),
+  tool: renderApprovalEntryObject({ type: 'tool', matcher: 'exact', pattern: 'gth_web_fetch' }),
+  mcpTool: renderApprovalEntryObject({
+    type: 'mcpTool',
+    server: '*',
+    matcher: 'exact',
+    pattern: 'search_issues',
+  }),
+});
 
 /**
  * The parts as the one string an `Error.message` has to be, with every untrusted part neutralised.
@@ -202,7 +299,11 @@ export function approvalStopRows(
  * cannot shows {@link message}, which is already neutralised and is already the whole explanation.
  */
 export abstract class ApprovalStopError extends Error {
-  /** The command that ended the run, exactly as the agent proposed it. */
+  /**
+   * What ended the run, exactly as the agent proposed it: the command for a shell subject, and the
+   * registered tool name for a gated tool or MCP call. The field name predates the gate widening
+   * past the shell; {@link subjectParts} is what decides the word the MESSAGE calls it.
+   */
   readonly command: string;
 
   /** The message's pieces, tagged with who wrote each — see {@link ApprovalStopPart}. */
@@ -256,14 +357,14 @@ export class AttackHaltError extends ApprovalStopError {
   /** The rater's explanation of what the command's structure showed. */
   readonly reason: string;
 
-  constructor(command: string, reason: string) {
+  constructor(command: string, reason: string, subject?: ApprovalSubject) {
     super(
       [
         {
           kind: 'own',
           text: 'Run halted: the auto-rater rated this command as an attack, which ends the run.',
         },
-        { kind: 'command', label: 'Command', text: command },
+        ...subjectParts(command, subject),
         { kind: 'value', label: 'Reason', text: reason },
         {
           kind: 'own',
@@ -314,11 +415,14 @@ export class NonInteractiveEscalationError extends ApprovalStopError {
    * remedy. `approvals.allow` is consulted before the rater and therefore before §4.6's preflight,
    * so it is the one thing that lifts a floor the agent cannot argue past.
    *
-   * **Derived by the caller, never here**, because only the caller knows the subject: this class is
-   * also thrown for a tool call, where the first constructor argument is a TOOL NAME and an entry
-   * derived from it would be a pasteable line that silently matches nothing. `undefined` falls back
-   * to the general form, which is the right answer whenever a specific one would be wrong — an entry
-   * that is subtly too broad, or simply inert, is worse than none.
+   * **Derived by the caller, never here.** The caller holds what an entry has to be derived from —
+   * the normalized command for a shell subject (`shellApprovalEntryFor`), the tool's identity and
+   * host for a tool or MCP one (`toolGrantEntry`) — and it is the same derivation the escalation
+   * menu's *always approve* stores, so a message and a menu cannot promise different things about
+   * one call. `undefined` falls back to the general form, which is the right answer whenever a
+   * specific one would be wrong — an entry that is subtly too broad, or simply inert, is worse than
+   * none. That is what a call whose MCP server could not be attributed gets: `toolGrantEntry`
+   * returns `null` for it, because `server` cannot hold the unresolved sentinel.
    *
    * **It is untrusted text.** It embeds the command the model proposed, so it is carried as a
    * labelled `value` part and neutralised with every other untrusted string; putting it in an `own`
@@ -332,11 +436,14 @@ export class NonInteractiveEscalationError extends ApprovalStopError {
     reason?: string,
     escalatedBy?: string,
     negotiation?: string,
-    allowEntry?: string
+    allowEntry?: string,
+    subject?: ApprovalSubject
   ) {
     const parts: ApprovalStopPart[] = [
+      // [[EXT-115]] — the lead sentence takes NO branch: it is already kind-neutral and true of a
+      // shell command, a tool call and an MCP call alike. Only the subject's own label moves.
       { kind: 'own', text: 'Approval required, but this session has no one to ask.' },
-      { kind: 'command', label: 'Command', text: command },
+      ...subjectParts(command, subject),
     ];
     if (outcome) parts.push({ kind: 'value', label: 'Rating', text: outcome });
     if (reason) parts.push({ kind: 'value', label: 'Reason', text: reason });
@@ -366,13 +473,15 @@ export class NonInteractiveEscalationError extends ApprovalStopError {
       parts.push({ kind: 'value', label: 'approvals.allow entry', text: allowEntry });
       parts.push({ kind: 'own', text: BYPASS_LAST_RESORT });
     } else {
+      // [[EXT-115]] — the example is of the SUBJECT'S OWN KIND. `matchEntry` refuses a type
+      // mismatch outright, so the `shell` example this used to print unconditionally was, for a
+      // gated tool or MCP call, a line the reader could paste and watch match nothing.
       parts.push({
         kind: 'own',
         text:
           `Declare the commands this run is allowed to execute in approvals.allow — write each ` +
-          `one as an explicit entry, for example { "type": "shell", "matcher": "exact", ` +
-          `"pattern": "npm test" }. That list is consulted before the auto-rater and never ` +
-          `escalates.`,
+          `one as an explicit entry, for example ${GENERAL_ALLOW_EXAMPLE[subject?.kind ?? 'shell']}` +
+          `. That list is consulted before the auto-rater and never escalates.`,
       });
     }
     super(parts, command);

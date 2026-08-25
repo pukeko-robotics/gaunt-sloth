@@ -8,6 +8,7 @@ import {
 import { renderNegotiationTranscript } from '#src/core/shell/negotiation.js';
 import { frameWidthFor } from '#src/core/shell/framing.js';
 import { maxDisplayWidth } from '#src/utils/displayWidth.js';
+import type { ApprovalSubject } from '#src/core/approvals/matcher.js';
 
 /**
  * [[TUI-C71]] — **the run-ending approvals stops carry the most hostile text in the system, and
@@ -475,5 +476,250 @@ describe('[[TUI-C71]] the stop ROWS are framed at render', () => {
     const narrow = approvalStopRows(escalation().parts, { columns: 12 });
     expect(narrow[0]).toContain('too narrow');
     expect(approvalStopRows(escalation().parts, { columns: 100 })[0]).not.toContain('too narrow');
+  });
+});
+
+/**
+ * [[EXT-115]] — **a stop names what it actually gated.**
+ *
+ * Both run-ending stops labelled their subject `Command` unconditionally, so a gated `write_file`
+ * on a CI run read as `Command: write_file` and a gated MCP call read the same way — the framing
+ * [[TUI-C67]] removed from the two terminal prompts, surviving on the §6.2 path where the message
+ * is the only thing anyone sees.
+ *
+ * **Both errors, because the branch is on the shared base's parts and not in one subclass.** The
+ * halt is the more alarming of the two messages, and a fix that reached only the escalation would
+ * rebuild inside one module the very divergence this closes.
+ *
+ * The three-kind table is asserted on the halt as well as on the escalation even though today's
+ * runner reaches `AttackHaltError` on the shell arm alone (§4.3 keeps the rater on the shell until
+ * [[EXT-30]]) — the same reason the raw-multi-line-block case above is pinned: these constructors
+ * are public, the parts they build are the contract, and an arm no test can fail is one an
+ * optimising reader deletes.
+ */
+describe('[[EXT-115]] the stop LABELS the subject kind the gate decided on', () => {
+  const SHELL: ApprovalSubject = { kind: 'shell', command: 'npm test' };
+  const TOOL: ApprovalSubject = { kind: 'tool', name: 'write_file' };
+  const MCP: ApprovalSubject = { kind: 'mcpTool', server: 'issues', name: 'create_issue' };
+  /** What `GthAgentRunner` passes as the message's first argument: `command ?? tool.name`. */
+  const MCP_REGISTERED_NAME = 'mcp__issues__create_issue';
+
+  /** The two stops, built the way each of their production throw sites builds them. */
+  const halt = (text: string, subject?: ApprovalSubject) =>
+    new AttackHaltError(text, 'it reads a private key', subject);
+  const escalate = (text: string, subject?: ApprovalSubject) =>
+    new NonInteractiveEscalationError(
+      text,
+      'destructive',
+      'it writes',
+      undefined,
+      undefined,
+      undefined,
+      subject
+    );
+  const bothStops = [
+    { name: 'AttackHaltError', build: halt },
+    { name: 'NonInteractiveEscalationError', build: escalate },
+  ] as const;
+
+  /** The label/part pair a part carries, for an assertion that can see BOTH move. */
+  const labelled = (parts: readonly ApprovalStopPart[], label: string) =>
+    parts.filter((part) => part.kind !== 'own' && part.kind !== 'block' && part.label === label);
+
+  describe.each(bothStops)('$name', ({ build }) => {
+    it('labels a shell command Command, on a command part', () => {
+      const error = build('npm test', SHELL);
+      expect(error.message).toContain('\n  Command: npm test\n');
+      expect(labelled(error.parts, 'Command')).toEqual([
+        { kind: 'command', label: 'Command', text: 'npm test' },
+      ]);
+      // ...and no other label claims the subject.
+      expect(error.message).not.toContain('  Tool:');
+      expect(error.message).not.toContain('  MCP tool:');
+    });
+
+    it('labels a built-in or custom tool Tool, on a value part', () => {
+      const error = build('write_file', TOOL);
+      expect(error.message).toContain('\n  Tool: write_file\n');
+      expect(labelled(error.parts, 'Tool')).toEqual([
+        { kind: 'value', label: 'Tool', text: 'write_file' },
+      ]);
+      // The defect itself: a tool call announced as a shell command.
+      expect(error.message).not.toContain('Command:');
+    });
+
+    it('labels an MCP call MCP tool AND names the server it reaches', () => {
+      const error = build(MCP_REGISTERED_NAME, MCP);
+      expect(error.message).toContain(`\n  MCP tool: ${MCP_REGISTERED_NAME}\n`);
+      expect(error.message).toContain('\n  MCP server: issues\n');
+      expect(labelled(error.parts, 'MCP tool')).toEqual([
+        { kind: 'value', label: 'MCP tool', text: MCP_REGISTERED_NAME },
+      ]);
+      expect(labelled(error.parts, 'MCP server')).toEqual([
+        { kind: 'value', label: 'MCP server', text: 'issues' },
+      ]);
+      expect(error.message).not.toContain('Command:');
+    });
+
+    /**
+     * **The unnameable server falls to `Tool`**, mirroring `approvalPromptHeader`'s own fallback so
+     * the prompt and the stop cannot describe one call two ways — and guarding the RENDERED server
+     * rather than the raw one, because a key of whitespace alone (which `z.string().min(1)` admits)
+     * is empty by the time it would be printed and would otherwise lay down an `MCP server` row
+     * promising an identity that is not there.
+     */
+    it.each([
+      ['the unresolved sentinel', ''],
+      ['a server key of whitespace alone', '   '],
+    ])('drops the server row when it would render blank: %s', (_case, server) => {
+      const error = build(MCP_REGISTERED_NAME, { kind: 'mcpTool', server, name: 'create_issue' });
+      expect(error.message).toContain(`\n  Tool: ${MCP_REGISTERED_NAME}\n`);
+      expect(error.message).not.toContain('MCP server');
+      expect(error.message).not.toContain('MCP tool');
+      // The full registered name is what is shown, so the `mcp__` namespace is still visible.
+      expect(labelled(error.parts, 'Tool')).toEqual([
+        { kind: 'value', label: 'Tool', text: MCP_REGISTERED_NAME },
+      ]);
+    });
+
+    /**
+     * **THE constraint: an identifier stays in a rendered part and never reaches a sentence.** An
+     * `own` part is painted as-is precisely because nothing can forge it; a tool name from a
+     * third-party server's own listing inside one is the [[TUI-C26]] forgery reached through the
+     * one string that was never framed.
+     */
+    it('never interpolates the identifier into one of the gate’s own sentences', () => {
+      const name = 'ext115-tool-marker';
+      const server = 'ext115-server-marker';
+      const error = build(name, { kind: 'mcpTool', server, name });
+      // The assertion rules on something: both really are in the message, in labelled parts.
+      expect(error.message).toContain(name);
+      expect(error.message).toContain(server);
+      for (const sentence of ownTexts(error.parts)) {
+        expect(sentence, `an identifier reached the gate’s own voice: ${sentence}`).not.toContain(
+          name
+        );
+        expect(sentence, `a server reached the gate’s own voice: ${sentence}`).not.toContain(
+          server
+        );
+      }
+      // The lead sentence is kind-neutral and takes no branch at all.
+      expect(ownTexts(error.parts)[0]).not.toContain(name);
+    });
+
+    /** A hostile MCP name and server are neutralised like every other untrusted value. */
+    it('neutralises a hostile MCP tool name and server', () => {
+      const error = build(`ping${CR}${FORGED_MENU}`, {
+        kind: 'mcpTool',
+        server: `fixture${LF}${FORGED_VERDICT}`,
+        name: 'ping',
+      });
+      for (const line of error.message.split('\n')) {
+        expect(line, `a raw unprintable survived in: ${JSON.stringify(line)}`).not.toMatch(
+          UNPRINTABLE
+        );
+        expect(line.startsWith(FORGED_MENU)).toBe(false);
+        expect(line.startsWith(FORGED_VERDICT)).toBe(false);
+      }
+      expect(error.message).toContain('\\x0d');
+      // ...and at render both land inside the gutter, like every other untrusted value.
+      const own = ownTexts(error.parts);
+      for (const row of approvalStopRows(error.parts, { columns: 100 })) {
+        if (own.includes(row)) continue;
+        if (!row.includes(FORGED_MENU) && !row.includes(FORGED_VERDICT)) continue;
+        expect(row, `untrusted text is not framed: ${JSON.stringify(row)}`).toMatch(GUTTERED);
+      }
+    });
+
+    /**
+     * **The shell arm keeps the SITE EXTRACTION, which is what its `command` part kind buys.** A
+     * label assertion alone would stay green on a part quietly demoted to `value`; the site notice
+     * is emitted by `frameUntrustedCommand` and by nothing else, so it is the observable that goes
+     * red if the part kind moves.
+     */
+    it('keeps the shell arm’s site extraction, which only a command part produces', () => {
+      const composing = 'echo one && echo two';
+      const rows = approvalStopRows(build(composing, SHELL).parts, { columns: 100 });
+      expect(rows.some((row) => row.includes('the gate could not statically resolve'))).toBe(true);
+      expect(rows.some((row) => /^ +line \d+ · composition/u.test(row))).toBe(true);
+      // CONTROL: the same text under a tool subject is prose, and has no sites to point at.
+      const toolRows = approvalStopRows(build(composing, TOOL).parts, { columns: 100 });
+      expect(toolRows.some((row) => row.includes('the gate could not statically resolve'))).toBe(
+        false
+      );
+    });
+  });
+
+  /**
+   * **The general recovery offers an entry of the SUBJECT'S OWN kind.** `matchEntry` refuses a
+   * type mismatch outright, so the `shell` example this used to print unconditionally was, for a
+   * gated tool or MCP call, a line a reader could paste and watch match nothing.
+   *
+   * Only the kind is interpolated — never a name, a server or a command — because this is an `own`
+   * part, the one class a surface may paint raw.
+   */
+  describe('the general approvals.allow example matches the subject kind', () => {
+    const generalExample = (subject?: ApprovalSubject): string =>
+      new NonInteractiveEscalationError(
+        'anything',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        subject
+      ).message;
+
+    it('offers a shell entry for a shell command, unchanged', () => {
+      const message = generalExample(SHELL);
+      expect(message).toContain('{ "type": "shell", "matcher": "exact", "pattern": "npm test" }');
+    });
+
+    it('offers a tool entry for a tool call', () => {
+      const message = generalExample(TOOL);
+      expect(message).toContain(
+        '{ "type": "tool", "matcher": "exact", "pattern": "gth_web_fetch" }'
+      );
+      expect(message).not.toContain('"type": "shell"');
+      // The example names no part of the SUBJECT — only the kind is interpolated, and only into a
+      // sentence nothing outside this module can influence.
+      expect(message).not.toContain('write_file');
+    });
+
+    /**
+     * `*` is deliberate: in production this general form is reached for an `mcpTool` subject only
+     * when the server could NOT be attributed (a specific entry is derived whenever one can be),
+     * and §4.7.5 makes `*` the reserved literal that is the only thing able to match such a call.
+     */
+    it('offers an mcpTool entry, scoped to every server, for an MCP call', () => {
+      const message = generalExample(MCP);
+      expect(message).toContain(
+        '{ "type": "mcpTool", "server": "*", "matcher": "exact", "pattern": "search_issues" }'
+      );
+      expect(message).not.toContain('"type": "shell"');
+    });
+
+    it('falls back to the shell example for a stop built with no subject', () => {
+      expect(generalExample(undefined)).toContain('"type": "shell"');
+    });
+
+    /** The DERIVED entry still replaces the general example when the caller supplies one. */
+    it('is replaced by the derived entry when the caller has one', () => {
+      const derived = '{ "type": "tool", "matcher": "exact", "pattern": "write_file" }';
+      const message = new NonInteractiveEscalationError(
+        'write_file',
+        'destructive',
+        'it writes',
+        undefined,
+        undefined,
+        derived,
+        TOOL
+      ).message;
+      expect(message).toContain(derived);
+      // Two entries in one refusal is a reader choosing between them: the general example is
+      // REPLACED, not accompanied.
+      expect(message).not.toContain('"pattern": "gth_web_fetch"');
+      expect(message).toContain('For this command, add:');
+    });
   });
 });

@@ -506,7 +506,16 @@ export class GthAgentRunner {
     command: string,
     reason: string,
     /** [[TUI-C27]] — this decision's record; the banner's answer is a HUMAN's answer. */
-    record: ApprovalDecisionCapture
+    record: ApprovalDecisionCapture,
+    /**
+     * [[EXT-115]] — the subject the gate decided this call on, so the halt names what it actually
+     * halted rather than calling everything a `Command`. **Required, not optional**: both call
+     * sites hold the decision's own subject, and the type system is what keeps a future one from
+     * quietly reaching the class's hand-built fallback. Today every caller is on the shell arm —
+     * §4.3 keeps the rater on the shell until [[EXT-30]] — so this changes no message that exists
+     * yet; what it changes is that the halt stays correct when that arm widens.
+     */
+    subject: ApprovalSubject
   ): Promise<ToolApprovalDecision> {
     if (this.attackHaltCallback) {
       const answer = await this.attackHaltCallback({ command, reason });
@@ -521,7 +530,7 @@ export class GthAgentRunner {
       // §6.2 — no surface wired the banner, so nobody was asked and the run ends.
       record.humanAnswer = 'no-human';
     }
-    throw new AttackHaltError(command, reason);
+    throw new AttackHaltError(command, reason, subject);
   }
 
   /**
@@ -1610,7 +1619,7 @@ export class GthAgentRunner {
         // entry does not decide whether the banner appears. The entry has already been overruled by
         // the time this line is reached; letting it also silence the one way out would make the
         // recovery depend on a match the human cannot see from the banner.
-        return await this.haltOrRunAnyway(command, tripwire.verdict?.reason ?? '', record);
+        return await this.haltOrRunAnyway(command, tripwire.verdict?.reason ?? '', record, subject);
       }
       // `catastrophic` — the one outcome the tripwire escalates. Fall through to the human.
       safetyVerdict = tripwire.verdict;
@@ -1935,7 +1944,8 @@ export class GthAgentRunner {
           return await this.haltOrRunAnyway(
             subject.command,
             decision.verdict?.reason ?? '',
-            record
+            record,
+            subject
           );
         }
         // §5 — the attempt just ruled on, as the transcript records it.
@@ -2093,19 +2103,28 @@ export class GthAgentRunner {
       // because that message is the only thing anyone sees on this path.
       //
       // [[EXT-106]] §4 — including the `approvals.allow` entry that would let this run, derived
-      // HERE because only this scope knows the SUBJECT. The message's first argument falls back to
-      // a tool NAME when there is no command, and an entry derived from a tool name would be a
-      // pasteable line matching nothing; the shell arm is the one that can answer, so it is the
-      // only one that does.
+      // HERE because only this scope knows the SUBJECT.
+      //
+      // [[EXT-115]] — **each kind through its own derivation, and both through the SAME ones the
+      // escalation menu stores.** A shell command resolves to its normalized self; a tool or MCP
+      // call resolves to the tool's identity plus the host it named, which is what §4.7.4 says a
+      // grant for one records. Deriving a `shell` entry from a tool name — the shape this used to
+      // be unable to avoid — would be a pasteable line that `matchEntry` refuses outright on the
+      // type alone. `toolGrantEntry` answers `null` for a call whose MCP server could not be
+      // attributed, which the ternary below already turns into the general form: an entry naming
+      // the unresolved sentinel would be written and then dropped by the grammar's own validator.
       const allowEntry =
-        subject.kind === 'shell' ? shellApprovalEntryFor(subject.command) : undefined;
+        subject.kind === 'shell' ? shellApprovalEntryFor(subject.command) : toolGrantEntry(subject);
       throw new NonInteractiveEscalationError(
         command ?? tool.name,
         safetyVerdict?.outcome,
         safetyVerdict?.reason,
         escalatedBy,
         renderNegotiationTranscript(negotiationRounds, negotiationAttempts) ?? undefined,
-        allowEntry ? renderApprovalEntryObject(allowEntry) : undefined
+        allowEntry ? renderApprovalEntryObject(allowEntry) : undefined,
+        // [[EXT-115]] — the discriminator the whole decision above ran on, so the message names
+        // what it gated instead of calling a `write_file` or an MCP call a `Command`.
+        subject
       );
     }
 
