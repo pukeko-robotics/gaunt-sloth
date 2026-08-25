@@ -190,6 +190,11 @@ to defeat, and there is no list of "good" hosts for an attacker to imitate. The 
 top of it: when it has something of its own to say, its explanation replaces the line above, and
 where it recognises an impersonation it names it there ("a typosquat of registry.npmjs.org").
 
+Where that line reads `1 not shown here` in place of a host, the host's own text carries a space or a
+line break. The line is the gate speaking rather than the command, so a host that could add a
+sentence to it is counted instead of printed — the command is on the screen right above, and that is
+where to read it.
+
 It fires on *fetching*, not on *mentioning*: `git commit -m "closes https://github.com/o/r/i/12"`,
 `grep -rn "https://" src/` and `npm install lodash` name no host to fetch from and are unaffected,
 and neither is `git push origin main` — `origin` is a name your project resolves, not a host.

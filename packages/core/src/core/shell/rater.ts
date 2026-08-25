@@ -55,6 +55,7 @@ import { normalizeCommand } from '#src/core/shell/normalize.js';
 import {
   buildComposedOpenWorldNote,
   findOpenWorldHostLiterals,
+  listHostsForFloorNote,
 } from '#src/core/shell/openWorld.js';
 // [[EXT-106]] §4.6 — the ONE implementation of the user-provenance carve-out, shared by the floor
 // and by negotiability below so the two cannot come to disagree about whether a call was carved.
@@ -1069,10 +1070,16 @@ export function buildRaterPrompt(
     // from severity on the one command where nothing else is holding the line. Both notes ask for
     // the same thing — name the impersonation, upgrade only when it is clear — and differ only in
     // what they say is standing behind the answer.
+    //
+    // [[EXT-85]] — **and both spellings name the hosts through the same allow-list the composed note
+    // uses.** This text sits AFTER the fence, i.e. in trusted-instruction position, and its hosts
+    // come from PREFIX tests, so an operand that merely begins as a URL carries the rest of itself
+    // into our own prompt. The guard above still reads the raw set: what cannot be quoted is counted,
+    // never dropped and never a reason to stay silent.
     userLines.push(
       '',
       options?.carved === true
-        ? `PREFLIGHT NOTE: this command names a host (${openWorldHosts.join(', ')}) in a fetch or ` +
+        ? `PREFLIGHT NOTE: this command names a host (${listHostsForFloorNote(openWorldHosts)}) in a fetch or ` +
             'transfer position. The rule that floors such a command deterministically was LIFTED ' +
             'for this one, because the user named this host verbatim in their own message, so NO ' +
             'floor applies and your verdict decides what happens: rate it `safe` and it runs ' +
@@ -1080,7 +1087,7 @@ export function buildRaterPrompt(
             'impersonates a known one, name it in your explanation, and upgrade to `attack` only ' +
             'if that deception is clear. That the user typed the host is not evidence that it is ' +
             'the host they meant.'
-        : `PREFLIGHT NOTE: this command names a host (${openWorldHosts.join(', ')}) in a fetch or ` +
+        : `PREFLIGHT NOTE: this command names a host (${listHostsForFloorNote(openWorldHosts)}) in a fetch or ` +
             'transfer position, so it has ALREADY been floored at `destructive` deterministically and will be ' +
             'shown to the user whatever you return. You do not need a severe outcome to make that ' +
             'happen. Rate it as you otherwise would — the floor only ever RAISES a `safe` verdict, so ' +
@@ -1544,9 +1551,14 @@ export function preflightFloorFinding(command: string): PreflightFloorFinding | 
     // prose about egress — and [[BATCH-25]] Half B calibrates deterministic assertions against this
     // exact text. Several counterparties are listed inside the same parentheses rather than
     // pluralised into a second sentence shape, so the leading clause never varies.
+    //
+    // [[EXT-85]] — **the hosts are filtered as they are RENDERED and never as they are found.** The
+    // condition above reads the raw set, so a command whose only host cannot be safely quoted still
+    // floors; only the sentence declines to repeat it. Moving the filter up to `hosts` would turn an
+    // injection attempt into an auto-approval. See {@link listHostsForFloorNote}.
     return {
       kind: 'open-world',
-      reason: `${NAMES_A_HOST_PREFIX} (${hosts.join(', ')}) in a fetch or transfer position, ${NEVER_AUTO_APPROVED_CLAUSE}`,
+      reason: `${NAMES_A_HOST_PREFIX} (${listHostsForFloorNote(hosts)}) in a fetch or transfer position, ${NEVER_AUTO_APPROVED_CLAUSE}`,
     };
   }
   return null;
