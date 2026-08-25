@@ -776,9 +776,15 @@ describe('[[TUI-C69]] §5.4/§5.5 — the visible negotiation and the cooldown',
      * advances a fake clock to one millisecond SHORT of the minimum and requires the decision to be
      * unresolved there — the assertion that fails the moment the interval is reduced.
      *
-     * The hold sits between the decision and the resume, which is what makes it an abort window
-     * rather than a pause: the runner has not yet called `streamResume`, and the resume carries the
-     * run's abort signal. It is NOT a reading window and must never be relied on as one.
+     * The hold sits between the decision and the resume: when the interval elapses the runner has
+     * not yet called `streamResume`. What that ordering buys is DISPLAY — the approving round
+     * reaches the surface as its own event before the tool emits anything, so the exchange reads as
+     * a sequence instead of collapsing into the tool's first line of output.
+     *
+     * **It is not an abort window, and this spec is not evidence of one.** Nothing on this path
+     * re-checks the run's abort signal: the cases below drive `processMessages`, whose
+     * `resolveToolInterrupts` threads no signal at all. See the note on `showNegotiatedApproval`
+     * before restoring any stronger reading of the interval.
      */
     /**
      * **The numbers below are LITERALS on purpose.** Advancing by
@@ -809,8 +815,8 @@ describe('[[TUI-C69]] §5.4/§5.5 — the visible negotiation and the cooldown',
 
         await vi.advanceTimersByTimeAsync(799);
         expect(finished).toBe(false);
-        // The approved call has NOT been resumed: the tool has not started, so an abort landing
-        // here still stops it.
+        // The approved call has NOT been resumed yet: the tool has not started. That is a claim
+        // about ORDER, not about cancellation — nothing here re-checks the abort signal.
         expect(mockAgent.streamResume).toHaveBeenCalledTimes(1);
 
         await vi.advanceTimersByTimeAsync(1);
