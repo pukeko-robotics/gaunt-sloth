@@ -624,12 +624,14 @@ describe('[[TUI-C69]] §5.4/§5.5 — the visible negotiation and the cooldown',
       // A literal, not the constant: the mutation this catches is the DISPLAY GATE being dropped,
       // and a bound that moved with the constant would still pass on a shortened hold.
       //
-      // **Half the interval, so the bound is not the interval.** What must not happen here is an
-      // 800 ms sleep, and a bound of exactly 800 against a sleep of exactly 800 leaves this cell no
-      // margin at all: the run's own wall-clock cost then lands on the boundary, and the cell reds
-      // on a contended machine or a slow Windows runner for a reason that has nothing to do with
-      // the hold. That is the shape someone re-runs to green rather than diagnoses. 400 catches the
-      // sleep with 400 ms to spare on a path that does not sleep at all.
+      // **Half the interval, and the margin that buys is on the DETECTION side.** This path does
+      // not sleep at all — measured at 2–6 ms — so a bound of 800 was never close to failing here.
+      // It was close to failing the other way: an implementation that DID sleep the interval came
+      // in at 801, so the bound caught it by a single millisecond. Timer coalescing, a `setTimeout`
+      // that fires a tick early, or a coarser clock on the Windows cell puts that at 799 and the
+      // regression passes silently, which is the direction that costs something. A bound strictly
+      // below the interval it exists to catch has ~400 ms of room in both directions instead of
+      // 1 ms in the one that matters.
       expect(Date.now() - started).toBeLessThan(400);
       expect(mockAgent.streamResume).toHaveBeenCalledTimes(2);
     });
@@ -644,8 +646,9 @@ describe('[[TUI-C69]] §5.4/§5.5 — the visible negotiation and the cooldown',
       const started = Date.now();
       await handle.run;
       expect(handle.rounds).toEqual([]);
-      // Half the interval, for the same reason as the cell above: the bound has to be able to
-      // catch an 800 ms sleep without sitting on its boundary.
+      // Half the interval, for the same reason as the cell above: a bound set AT the value a
+      // sleeping implementation produces catches it by a millisecond, and misses it entirely if
+      // the timer lands a tick early.
       expect(Date.now() - started).toBeLessThan(400);
     });
   });
