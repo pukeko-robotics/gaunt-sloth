@@ -59,17 +59,19 @@
  * `annotations` is absent on a `shell` grant and on any grant written before it existed; a grant
  * without one simply has nothing to invalidate it and stands as it did.
  *
- * Reads stay fail-closed-on-auto-approval: a missing, unreadable, malformed or partly-malformed
- * file yields fewer grants (at worst none) rather than throwing, because an empty allow-list only
- * ever means *prompt*.
+ * Reads never throw: a missing, unreadable, malformed or partly-malformed file yields fewer grants
+ * (at worst none) rather than raising at a user mid-run. **Fewer grants is fail-closed on the allow
+ * side only** — an empty allow-list means *prompt*, while an empty DENY list means nothing refuses,
+ * so the same recovery loses safety on one side and buys it on the other.
  *
- * **And a read that lost something says so** ([[EXT-143]]). Recovering by asking the human again is
- * the right direction; doing it in silence is not, because this is a project file people hand-edit
- * and commit, and the failure it fails on is a typo. A user who saved twenty refusals and later
- * broke the file has no other way to learn that none of them are in force — the gate behaves
- * exactly as though they had never been saved. So a whole file that cannot be read is reported at
- * {@link StatusLevel.ERROR} ({@link unreadableFileNotice}) and an individual entry that cannot be
- * read names itself ({@link skippedEntriesNotice}), while the fallback stays exactly what it was.
+ * **Which is why a read that lost something says so** ([[EXT-143]]). Recovering quietly was
+ * defensible while this class held one list; with two it hides a lost refusal, and this is a project
+ * file people hand-edit and commit whose characteristic failure is a typo. A user who saved twenty
+ * refusals and later broke the file has no other way to learn that none of them are in force — the
+ * gate behaves exactly as though they had never been saved. So a whole file that cannot be read, and
+ * an individual entry that cannot be read, are both reported at {@link StatusLevel.ERROR}
+ * ({@link unreadableFileNotice}, {@link skippedEntriesNotice}), while the fallback stays exactly
+ * what it was.
  */
 import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { approvalEntrySchema, renderApprovalEntryObject } from '#src/config/schema.js';
@@ -451,6 +453,29 @@ function savedNoun(holds: 'approvals' | 'refusals' | undefined): string {
 /** The reason clause for a file that parsed but holds no entry list this version can read. */
 const UNRECOGNISED_SHAPE = 'the file holds no list of saved entries this version recognises';
 
+/**
+ * [[EXT-143]] — **did this shape lose something a human saved?**
+ *
+ * {@link unreadableFileNotice} asserts a loss, so it may only fire where there is one. A file whose
+ * entry list is absent or empty — `{}`, a bare `{"version": 2}`, a v1 `{"prefixes": []}`, a JSON
+ * `null` — holds nothing, and telling its owner every session that saved answers they do not have
+ * are not in force is the same over-claim the consequence sentence had to drop, one level down.
+ *
+ * What counts as a loss is a list that is present and non-empty, or **a value sitting where a list
+ * belongs** — a `grants` key holding something other than an array, or a scalar where the store
+ * object should be. Neither is what emptying the file by hand produces (that yields `{}`, or an
+ * empty file, which fails to parse and is reported with the reader's own reason instead), so both
+ * are content this version cannot read.
+ */
+function holdsSavedEntries(parsed: unknown): boolean {
+  if (Array.isArray(parsed)) return parsed.length > 0;
+  if (parsed === null || typeof parsed !== 'object') return parsed !== null;
+  const { grants, prefixes } = parsed as { grants?: unknown; prefixes?: unknown };
+  return [grants, prefixes].some((list) =>
+    Array.isArray(list) ? list.length > 0 : list !== undefined
+  );
+}
+
 /** How much of one unreadable entry a notice quotes back, and how many it quotes at all. */
 const SKIPPED_ENTRY_CHARS = 160;
 const SKIPPED_ENTRIES_NAMED = 5;
@@ -471,21 +496,36 @@ function describeLoadFailure(error: unknown): string {
  * [[EXT-143]] — **the whole file could not be read, so nothing saved in it is in force.**
  *
  * It names the file, the reason (a JSON parser's own message points a hand-editor straight at their
- * trailing comma) and the **consequence**, which is the part a user cannot infer: the gate behaves
- * exactly as it would if the file had never been written, so the calls those entries covered are
- * asked about again. Saying only that a file failed to parse would leave the reader to guess
- * whether their saved answers still hold.
+ * trailing comma) and the **consequence**, which is the part a user cannot infer. Saying only that
+ * a file failed to parse would leave the reader to guess whether their saved answers still hold.
  *
- * **{@link StatusLevel.ERROR}, not a warning**, which is the one loudness decision here worth
- * arguing. Three reasons, and the first is mechanical: `consoleLevel` is user-configurable down to
- * `error`, so a warning is the loudest thing that can be *filtered out entirely* while the session
- * runs on — and the whole defect being fixed is a user not being told. Second, the state is one the
- * user did not choose and cannot otherwise discover, unlike the `bypass` advisory (a WARNING) which
- * describes something they just did. Third, it is time-limited: the next saved entry rewrites this
- * file from an empty store, so a message missed now is a file that is gone rather than broken.
+ * **The consequence stops at what is certain, and a prompt is not certain.** A failed load empties
+ * one rule list; it decides nothing. A call that list covered is then settled by whatever else the
+ * gate holds, so at `bypass` — or under any allow entry matching the same command, with the gate
+ * fully on — a saved refusal that broke does not come back as a question: the command runs, unasked.
+ * A sentence promising a prompt would understate the loss in exactly the configuration the deny
+ * store exists for, so this one names the possible outcomes and claims none of them.
  *
- * It is **not** fatal. The session continues, degraded to asking, because a refusal to start over a
- * bookkeeping file would be a worse answer than a prompt.
+ * ## The level, for this notice and {@link skippedEntriesNotice} alike
+ *
+ * **{@link StatusLevel.ERROR}, not a warning**, and the axis is **filterability**. `consoleLevel` is
+ * user-configurable down to `error`, at which a WARNING is dropped entirely while the session runs
+ * on and an ERROR is still shown — and the whole defect being fixed is a user not being told. How
+ * much was lost is deliberately *not* the axis: bounded scope is a real argument about prominence,
+ * but a loss filtered to nothing is silence whatever its size, and silence is the thing this exists
+ * to end. Two supporting reasons apply to both notices equally: the state is one the user did not
+ * choose and cannot otherwise discover, unlike the `bypass` advisory (a WARNING) which describes
+ * something they just did; and it is time-limited, because the next saved entry rewrites this file
+ * from a store that never held what could not be read.
+ *
+ * Two bounds on that argument, so a later reader does not over-read it. ERROR is not unmissable —
+ * `consoleLevel: 'stream'` (6) filters ERROR (5) too, and the true claim is only that ERROR
+ * dominates WARNING at every setting. And it is an argument about the **console** surface: the Ink
+ * TUI does not consult `consoleLevel` at all, dropping only INFO/DEBUG from the transcript, so there
+ * a WARNING and an ERROR are equally visible and this reasoning buys nothing.
+ *
+ * It is **not** fatal. The session continues on whatever rules remain, because a refusal to start
+ * over a bookkeeping file would be a worse answer than any of them.
  */
 function unreadableFileNotice(
   filePath: string,
@@ -496,8 +536,10 @@ function unreadableFileNotice(
     level: StatusLevel.ERROR,
     message:
       `Your saved shell ${savedNoun(holds)} could not be read from ${filePath} (${reason}). ` +
-      'None of them are in force in this session — the calls they cover will be asked about again ' +
-      'instead. Fix the file to restore them; saving a new one now overwrites it as it stands.',
+      'None of them are in force in this session — nothing in this file applies to any call, so a ' +
+      'call it covered is left to the rest of the gate: it may be refused by another rule, it may ' +
+      'run without asking, or you may be prompted. Fix the file to restore them; saving a new one ' +
+      'now overwrites it as it stands.',
   };
 }
 
@@ -509,8 +551,17 @@ function unreadableFileNotice(
  * them reading forty of them. One notice per file rather than one per entry, the same choice the
  * migration notice makes — a line each would bury the count in its own repetition.
  *
- * A **warning**, where a whole-file failure is an error, because the consequence is bounded and the
- * message says so: the rest of the file is still in force.
+ * **The same {@link StatusLevel.ERROR} the whole-file case gets**, on the same filterability axis,
+ * argued once in {@link unreadableFileNotice}. Bounded scope was the obvious reason to go quieter
+ * here and is the wrong axis: at `consoleLevel: error` a WARNING is filtered to nothing, and this
+ * case emits no file-level notice to fall back on, so the one refusal the human typed would be lost
+ * in exactly the silence the whole notice exists to end. The bound is still worth saying, and the
+ * message says it — the rest of the file is in force — which is a statement to the reader, not a
+ * reason to make it easier to miss.
+ *
+ * The level is the same on both sides for a second reason: raising it only for a broken *deny* entry
+ * would make {@link PersistedApprovalGrantsOptions.holds} decide something, and it is a noun. A
+ * per-side level means reopening that seam deliberately, not arriving there by wording.
  */
 function skippedEntriesNotice(
   filePath: string,
@@ -528,7 +579,7 @@ function skippedEntriesNotice(
   const rest = unnamed > 0 ? `; and ${unnamed} more` : '';
   const one = skipped.length === 1;
   return {
-    level: StatusLevel.WARNING,
+    level: StatusLevel.ERROR,
     message:
       `${skipped.length} ${one ? 'entry' : 'entries'} in your saved shell ${savedNoun(holds)} ` +
       `(${filePath}) could not be read and ${one ? 'was' : 'were'} skipped: ${named}${rest}. ` +
@@ -615,11 +666,14 @@ export class PersistedApprovalGrants {
    * Every outcome that drops something a human saved reaches {@link
    * PersistedApprovalGrantsOptions.onNotice}: an unreadable or unparseable file, a file whose shape
    * this version does not recognise — a v1 `prefixes` file on the deny side, where the migration is
-   * deliberately off, is one — and any individual entry the grammar rejects. Only two outcomes are
-   * silent, and neither loses anything: a file that is not there, and one that reads cleanly.
+   * deliberately off, is one — and any individual entry the grammar rejects. **Silence is reserved
+   * for the outcomes that lost nothing**, of which there are three: a file that is not there, one
+   * that reads cleanly, and one whose entry list is absent or empty ({@link holdsSavedEntries}).
    *
-   * The recovery is unchanged and deliberately unchanged. A failure here still yields fewer grants
-   * rather than throwing, so an `always` degrades to asking the human again.
+   * The recovery is unchanged and deliberately unchanged: a failure here yields fewer grants rather
+   * than throwing. **What that degrades to is not the same on the two sides**, which is why the
+   * notice describes the loss and not an outcome — a lost `always` approval means the human is asked
+   * again, while a lost `always` refusal means nothing refuses, and at `bypass` the call simply runs.
    */
   private static load(
     filePath: string,
@@ -630,21 +684,27 @@ export class PersistedApprovalGrants {
     const empty = { grants: [] as ApprovalGrant[], migrated: false };
 
     let parsed: unknown;
+
+    /** The unrecognised-shape notice — but only where something was actually lost. */
+    const reportLostToShape = (): { grants: ApprovalGrant[]; migrated: boolean } => {
+      if (holdsSavedEntries(parsed))
+        onNotice?.(unreadableFileNotice(filePath, holds, UNRECOGNISED_SHAPE));
+      return empty;
+    };
+
     try {
       if (!existsSync(filePath)) return empty;
       parsed = JSON.parse(readFileSync(filePath, 'utf8'));
     } catch (e) {
-      // Corrupt / unreadable → behave as empty. Fail-closed on auto-approval: an empty store only
-      // ever means "prompt", so there is nothing to gain by throwing at a user mid-run — but they
-      // are told, because the store they are relying on is not the store they have.
+      // Corrupt / unreadable → behave as empty. An empty store approves nothing by itself, so there
+      // is nothing to gain by throwing at a user mid-run — but empty is NOT fail-closed on the deny
+      // side, where it refuses nothing either and a lost refusal at `bypass` is a command that runs.
+      // That asymmetry is the whole reason they are told rather than quietly degraded.
       onNotice?.(unreadableFileNotice(filePath, holds, describeLoadFailure(e)));
       return empty;
     }
 
-    if (!parsed || typeof parsed !== 'object') {
-      onNotice?.(unreadableFileNotice(filePath, holds, UNRECOGNISED_SHAPE));
-      return empty;
-    }
+    if (!parsed || typeof parsed !== 'object') return reportLostToShape();
     const record = parsed as { version?: unknown; grants?: unknown; prefixes?: unknown };
 
     if (Array.isArray(record.grants)) {
@@ -666,8 +726,7 @@ export class PersistedApprovalGrants {
       return PersistedApprovalGrants.migrateFromV1(record.prefixes, filePath, onNotice);
     }
 
-    onNotice?.(unreadableFileNotice(filePath, holds, UNRECOGNISED_SHAPE));
-    return empty;
+    return reportLostToShape();
   }
 
   /** Each v1 prefix → an `exact` entry for the same string, with ONE notice naming the file. */

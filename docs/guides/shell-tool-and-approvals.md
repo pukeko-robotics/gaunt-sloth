@@ -79,10 +79,16 @@ command that spans twenty lines is shown whole rather than cut down to its first
   entry in `approvals.deny` (below), or broaden the saved entry in the file by hand.
 
 **If you break one of those files by hand, the session says so.** A file that cannot be read at all
-is reported as an error naming the file, and nothing saved in it is in force until you fix it — you
-are asked about those calls again instead. A single entry that cannot be read is reported as a
-warning naming its position in the file; the entries around it still hold. Fix the file rather than
-leaving it: the next answer you save rewrites it, and what could not be read is not carried over.
+is reported as an error naming the file, and nothing saved in it is in force until you fix it. A
+single entry that cannot be read is reported the same way, naming its position in the file; the
+entries around it still hold.
+
+**What is lost is not simply asked about again.** An entry that is not in force does not exist as far
+as the gate is concerned, so a call it covered is left to the rest of the gate: it may be refused by
+another rule, it may run without asking — at `bypass`, or where a saved approval matches the same
+command — or you may be prompted. A broken denylist is the case to watch, because there the calls you
+refused are the ones now decided by something else. Fix the file rather than leaving it: the next
+answer you save rewrites it, and what could not be read is not carried over.
 
 ### Where the prompt is written
 

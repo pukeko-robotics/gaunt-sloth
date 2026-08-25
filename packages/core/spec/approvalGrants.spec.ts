@@ -766,8 +766,14 @@ describe('PersistedApprovalGrants', () => {
     /**
      * The acceptance: the file, and **the consequence** — the half a user cannot infer from "parse
      * error". ERROR rather than WARNING is argued in `unreadableFileNotice`; the short of it is
-     * that `consoleLevel` is configurable down to `error`, so a warning is the loudest thing that
-     * can be filtered out entirely while the session runs on.
+     * that `consoleLevel` is configurable down to `error`, where a WARNING is dropped entirely and
+     * an ERROR is still shown.
+     *
+     * **The consequence has to stop at what is certain.** An empty rule list decides nothing, so
+     * the outcomes are named and none is promised — the negative assertion is the load-bearing
+     * half here, because a sentence that predicted a prompt would pass every positive one while
+     * being false at `bypass` and under any matching allow entry. Those two are measured end to
+     * end in `persistedDenials.spec.ts`; this pins the words.
      */
     it('reports an unreadable deny file at ERROR, naming the file and what is no longer in force', () => {
       writeCorrupt(file);
@@ -778,9 +784,12 @@ describe('PersistedApprovalGrants', () => {
       expect(notices[0].message).toContain(file);
       expect(notices[0].message).toContain('refusals');
       expect(notices[0].message).toContain('None of them are in force');
+      // It names the outcome a reader would never guess, and promises none of them.
+      expect(notices[0].message).toContain('may run without asking');
+      expect(notices[0].message).not.toContain('asked about again');
       // It names what the reader lost, and never the other file's word.
       expect(notices[0].message).not.toContain('approvals');
-      // CONTROL: the recovery is exactly what it was — no throw, no grants, so the gate asks.
+      // CONTROL: the recovery is exactly what it was — no throw, no grants.
       expect(store.size()).toBe(0);
     });
 
@@ -814,6 +823,40 @@ describe('PersistedApprovalGrants', () => {
       const { notices, store } = noticesFor(file, { holds: 'refusals' });
       expect(notices).toEqual([]);
       expect(store.size()).toBe(1);
+    });
+
+    /**
+     * **A shape holding nothing lost nothing**, and the notice asserts a loss. The discriminating
+     * question is not *can this version read the shape* but *did a human save something this
+     * version cannot read* — otherwise someone who emptied their deny file by hand is told every
+     * session that refusals they do not have are inactive, which is the same over-claim as
+     * promising a prompt, one level down.
+     */
+    it('says nothing about a shape that holds no saved entries at all', () => {
+      // Empty containers, all of them reaching the unrecognised-shape branch.
+      for (const held of ['{}', '{"version":2}', '{"version":1,"prefixes":[]}', '[]', 'null']) {
+        writeFileSync(file, held, 'utf8');
+        const { notices, store } = noticesFor(file, {
+          holds: 'refusals',
+          legacyPrefixMigration: false,
+        });
+        expect({ held, notices }).toEqual({ held, notices: [] });
+        expect(store.size()).toBe(0);
+      }
+
+      // CONTROL: the same branch with one entry in it still reports, so the silence above is the
+      // guard and not the branch having stopped firing.
+      writeFileSync(file, '{"version":1,"prefixes":["npm test"]}', 'utf8');
+      const kept = noticesFor(file, { holds: 'refusals', legacyPrefixMigration: false });
+      expect(kept.notices).toHaveLength(1);
+      expect(kept.notices[0].level).toBe(StatusLevel.ERROR);
+
+      // A value sitting where the store belongs is content this version cannot read, not an empty
+      // file: emptying by hand gives `{}` or an empty file, and an empty file fails to parse.
+      writeFileSync(file, '"nonsense"', 'utf8');
+      expect(noticesFor(file, { holds: 'refusals' }).notices).toHaveLength(1);
+      writeFileSync(file, '{"version":2,"grants":"nope"}', 'utf8');
+      expect(noticesFor(file, { holds: 'refusals' }).notices).toHaveLength(1);
     });
 
     /**
@@ -865,13 +908,17 @@ describe('PersistedApprovalGrants', () => {
       const { notices, store } = noticesFor(file, { holds: 'refusals' });
 
       expect(notices).toHaveLength(1);
-      // A warning, not an error: the consequence is bounded, and the message says so.
-      expect(notices[0].level).toBe(StatusLevel.WARNING);
+      // The SAME level as the whole-file case, on the same filterability axis: a bounded loss
+      // filtered to nothing is still silence, and this case has no file-level notice behind it.
+      expect(notices[0].level).toBe(StatusLevel.ERROR);
       expect(notices[0].message).toContain(file);
       expect(notices[0].message).toContain('entry 2');
       expect(notices[0].message).toContain('git push --force');
       expect(notices[0].message).toContain('refusals');
       expect(notices[0].message).not.toContain('approvals');
+      // The bound is stated in the MESSAGE, which is where it belongs now the level does not carry
+      // it: the reader is told the loss is one entry, not told it more quietly.
+      expect(notices[0].message).toContain('the rest of the file is');
       // CONTROL: the neighbours are untouched, which is what makes this bounded.
       expect(store.size()).toBe(2);
       expect(approves(store.entries(), 'npm test')).toBe(true);

@@ -2592,9 +2592,10 @@ export class GthAgentRunner {
       });
     } catch (e) {
       // Path/IO failure → behave as no persisted refusals. This one is NOT safe in the way the
-      // allow side's failure is: it loses refusals rather than approvals, so it re-prompts where it
-      // would have refused by rule. A prompt is still a human deciding, which is why it degrades
-      // rather than ending the run.
+      // allow side's failure is: it loses refusals rather than approvals, so nothing here refuses
+      // any more and the call falls to whatever else covers it — a prompt at most rungs, and no
+      // prompt at all at `bypass` or under a matching allow entry, where it simply runs. It still
+      // degrades rather than ending the run, and [[EXT-143]]'s notice is what makes it visible.
       debugLogError('Loading persisted shell refusals', e);
       this.persistedDenials = null;
     }
