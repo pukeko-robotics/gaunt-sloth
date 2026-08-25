@@ -7,7 +7,7 @@ import type { GthConfig } from '#src/config.js';
 import type { PendingToolInterrupt, StatusUpdateCallback } from '#src/core/types.js';
 import { AttackHaltError } from '#src/core/shell/approvalStop.js';
 import { peekProjectDir, setProjectDir } from '#src/utils/systemUtils.js';
-import { SHELL_ALLOWLIST_FILE } from '#src/constants.js';
+import { SHELL_ALLOWLIST_FILE, SHELL_DENYLIST_FILE } from '#src/constants.js';
 
 /**
  * [[TUI-C26]] task 2 (spec §6) — **the escalation menu's *always reject* choice, at the runner.**
@@ -72,6 +72,11 @@ describe('GthAgentRunner — [[TUI-C26]] §6 the always-reject control', () => {
     priorProjectDir = peekProjectDir();
     setProjectDir(projectDir);
     rmSync(join(projectDir, SHELL_ALLOWLIST_FILE), { force: true });
+    // [[EXT-107]] — and the deny file, for a reason the allow file's line does not carry: a
+    // persisted refusal fails CLOSED, so one left behind by an earlier test refuses that command in
+    // every later test in this file, surfacing as unrelated cases going red in a way that reads
+    // like a code regression rather than a leaked fixture.
+    rmSync(join(projectDir, SHELL_DENYLIST_FILE), { force: true });
     delete (mockAgent as unknown as Record<string, unknown>).getPendingToolInterrupts;
     delete (mockAgent as unknown as Record<string, unknown>).streamResume;
     statusUpdateCallback = vi.fn();
@@ -142,7 +147,13 @@ describe('GthAgentRunner — [[TUI-C26]] §6 the always-reject control', () => {
   };
 
   const rejectOnce = () => ({ type: 'reject' as const });
-  const rejectAlways = () => ({ type: 'reject' as const, scope: 'session' as const });
+  /** What every surface's `[d]` sends since [[EXT-107]]: refuse, and save it to the project. */
+  const rejectAlways = () => ({ type: 'reject' as const, scope: 'always' as const });
+  /** A refusal a caller asked to hold for this session only, which core honours as asked. */
+  const rejectSession = () => ({ type: 'reject' as const, scope: 'session' as const });
+  /** The refusals in force, as `/approvals` renders them. */
+  const refusalsOf = (runner: { getRefusals(): { description: string }[] }) =>
+    runner.getRefusals().map((refusal) => refusal.description);
 
   /**
    * §1.2's asymmetry, asserted as a PAIR in one test so neither half can pass alone: the resolvable
@@ -222,7 +233,7 @@ describe('GthAgentRunner — [[TUI-C26]] §6 the always-reject control', () => {
     // entry the first one wrote.
     expect(decide).toHaveBeenCalledTimes(1);
     // ...and it is visible where §3 requires a refusal to be inspectable.
-    expect(runner.getDenylist()).toContain('ls && rm -rf build');
+    expect(refusalsOf(runner)).toContain('ls && rm -rf build');
   });
 
   /**
@@ -236,7 +247,7 @@ describe('GthAgentRunner — [[TUI-C26]] §6 the always-reject control', () => {
       commands: ['ls && rm -rf build', 'ls && rm -rf build'],
       decide: rejectOnce,
     });
-    expect(runner.getDenylist()).toEqual([]);
+    expect(refusalsOf(runner)).toEqual([]);
     // The control: BOTH calls reached the human, so the empty list above is the absence of a
     // recorded refusal rather than the absence of any prompting at all.
     expect(decide).toHaveBeenCalledTimes(2);
@@ -244,17 +255,31 @@ describe('GthAgentRunner — [[TUI-C26]] §6 the always-reject control', () => {
 
   /**
    * The scope is what the surfaces send, so it is what this pins: a decision carrying no scope is
-   * `once`, and only the explicit `session` writes. Without this, dropping the scope from the
-   * surfaces' *always reject* would still look like a working control on screen.
+   * `once` and writes nothing, and both remembering scopes write. Without this, dropping the scope
+   * from the surfaces' *always reject* would still look like a working control on screen.
+   *
+   * [[EXT-107]] — the two remembering scopes are asserted to differ in the LIFETIME they land at,
+   * not merely to both write. `session` must stay honest: a caller that asks for a session refusal
+   * gets one, and a display that reported it as saved would be promising a file that does not hold
+   * it.
    */
-  it('records only on an explicit session scope, never on a bare reject', async () => {
+  it('records at the scope it was asked for, and never on a bare reject', async () => {
     const bare = await runWith({
       commands: ['echo one'],
       decide: () => ({ type: 'reject' as const, message: 'no' }),
     });
-    expect(bare.runner.getDenylist()).toEqual([]);
-    const scoped = await runWith({ commands: ['echo one'], decide: rejectAlways });
-    expect(scoped.runner.getDenylist()).toEqual(['echo one']);
+    expect(bare.runner.getRefusals()).toEqual([]);
+
+    const saved = await runWith({ commands: ['echo one'], decide: rejectAlways });
+    expect(saved.runner.getRefusals()).toEqual([
+      { index: 1, description: 'echo one', origin: 'persisted', recordedAt: expect.any(String) },
+    ]);
+
+    rmSync(join(projectDir, SHELL_DENYLIST_FILE), { force: true });
+    const held = await runWith({ commands: ['echo one'], decide: rejectSession });
+    expect(held.runner.getRefusals()).toEqual([
+      { index: 1, description: 'echo one', origin: 'session', recordedAt: expect.any(String) },
+    ]);
   });
 
   /**
@@ -273,10 +298,14 @@ describe('GthAgentRunner — [[TUI-C26]] §6 the always-reject control', () => {
   });
 
   /**
-   * The message the MODEL is handed when the recorded refusal bites. It used to tell the model to
-   * remove an entry from `approvals.deny` — a file a session refusal was never written to — which
-   * is the same class of wrongness as confirming a persistence that did not happen. It became
-   * reachable the moment this control existed, so it is fixed here rather than left.
+   * The message the MODEL is handed when the recorded refusal bites. It must not tell the model to
+   * remove an entry from `approvals.deny` — a file a menu refusal was never written to — which is
+   * the same class of wrongness as confirming a persistence that did not happen.
+   *
+   * [[EXT-107]] — there are now three authors and each is undone somewhere different, so the
+   * message branches three ways and this asserts the SAVED one: it says the refusal survives the
+   * session and names the control that lifts it, because a model told the refusal expires would
+   * advise the user to restart and find it still there.
    */
   it('names the refusal the user actually made, not a config file they never edited', async () => {
     const { decisions } = await runWith({
@@ -286,9 +315,26 @@ describe('GthAgentRunner — [[TUI-C26]] §6 the always-reject control', () => {
     // Two calls, two decisions: the human's refusal, then the runner's own refusal of the repeat.
     expect(decisions).toHaveLength(2);
     const byRule = decisions[1].message ?? '';
-    expect(byRule).toContain('chose to always refuse this earlier in this session');
-    expect(byRule).toContain('until the session ends');
+    expect(byRule).toContain('saved to this project');
+    expect(byRule).toContain('/approvals');
+    expect(byRule).not.toContain('until the session ends');
     expect(byRule).not.toContain('Remove the entry from approvals.deny');
+  });
+
+  /**
+   * [[EXT-107]] — the third branch, and the one the other two would swallow if the branches were
+   * keyed on anything but where the entry is actually held. A refusal the caller asked to hold for
+   * this session is described as ending with the session; describing it as saved would send the
+   * model (and the user) looking for a file entry that is not there.
+   */
+  it('CONTROL: a session-scoped refusal is still described as ending with the session', async () => {
+    const { decisions } = await runWith({
+      commands: ['echo one', 'echo one'],
+      decide: rejectSession,
+    });
+    const byRule = decisions[1].message ?? '';
+    expect(byRule).toContain('until the session ends');
+    expect(byRule).not.toContain('saved to this project');
   });
 
   /**

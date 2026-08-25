@@ -264,7 +264,7 @@ describe('interactiveSessionModule — [[EXT-105]] the escalation dialog is writ
       '⚠ Your approvals.escalate list matched', // why it was asked at all
       'The agent argued with the auto-rater', // the negotiation
       '[s]/[a] will remember:', // what a sticky answer stores
-      '[d] will refuse, for the rest of this session:',
+      '[d] will refuse this exact call, and save it to this project:',
       'Approve? [o]nce', // the question, last
       'Command rejected.', // and what the answer did
     ];

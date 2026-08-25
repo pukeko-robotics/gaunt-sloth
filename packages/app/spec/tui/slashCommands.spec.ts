@@ -270,7 +270,7 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
         escalate: [],
       } as any,
       { session: 3, always: undefined },
-      ['npm publish']
+      [{ index: 1, description: 'npm publish', origin: 'config' }]
     );
     expect(notice.title).toBe('Approvals: Assisted');
     const body = notice.lines.join(' ');
@@ -682,6 +682,30 @@ describe('tui/slashCommands /approvals trust (EXT-70 §4.7.1)', () => {
       const { parseApprovalsArg } = await load();
       expect(parseApprovalsArg(['nonsense'])).toBeNull();
     });
+
+    /**
+     * [[EXT-107]] — the removal verb takes the number the list printed. Parsed STRICTLY: this
+     * command removes a protection, so a coerced argument would lift a refusal the user did not
+     * name. Every rejected spelling is a case here rather than a comment, because "it parses
+     * loosely" is invisible until someone lifts the wrong one.
+     */
+    it('parses undeny with the number the refusal list printed', async () => {
+      const { parseApprovalsArg } = await load();
+      expect(parseApprovalsArg(['undeny', '2'])).toEqual({ undeny: { index: 2 } });
+      expect(parseApprovalsArg(['UNDENY', '2'])).toEqual({ undeny: { index: 2 } });
+    });
+
+    it.each([
+      [['undeny'], 'undeny-missing-number'],
+      [['undeny', 'two'], 'undeny-bad-number'],
+      [['undeny', '0'], 'undeny-bad-number'],
+      [['undeny', '-1'], 'undeny-bad-number'],
+      [['undeny', '1.5'], 'undeny-bad-number'],
+      [['undeny', ''], 'undeny-bad-number'],
+    ])('refuses to guess at %j', async (args, kind) => {
+      const { parseApprovalsArg } = await load();
+      expect(parseApprovalsArg(args as string[])).toMatchObject({ usage: { kind } });
+    });
   });
 
   describe('the command itself', () => {
@@ -722,6 +746,39 @@ describe('tui/slashCommands /approvals trust (EXT-70 §4.7.1)', () => {
       expect(result.notice?.lines.join(' ')).toContain('readOnlyHint');
     });
 
+    /**
+     * [[EXT-107]] — a well-formed `undeny` reaches the SURFACE, because only the runner knows which
+     * refusal a number names. A command that answered it here would be guessing at a list it cannot
+     * see.
+     */
+    it('hands a well-formed undeny to the surface', async () => {
+      const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } = await load();
+      const result = dispatchSlashCommand(
+        parseSlashCommand('/approvals undeny 3')!,
+        createCommandRegistry(),
+        ctx as never
+      );
+      expect(result.approvals).toEqual({ undeny: { index: 3 } });
+      expect(result.notice).toBeUndefined();
+    });
+
+    /**
+     * ...and a malformed one changes nothing and never reaches the surface. The `approvals`
+     * assertion is the one that matters: a result carrying both would have the surface lift
+     * something off an argument the parse rejected.
+     */
+    it('answers a malformed undeny itself, asking the surface for nothing', async () => {
+      const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } = await load();
+      const result = dispatchSlashCommand(
+        parseSlashCommand('/approvals undeny banana')!,
+        createCommandRegistry(),
+        ctx as never
+      );
+      expect(result.approvals).toBeUndefined();
+      expect(result.notice?.tone).toBe('warn');
+      expect(result.notice?.lines.join(' ')).toContain('Nothing was changed');
+    });
+
     it('is available mid-turn, like the rest of /approvals', async () => {
       const { createCommandRegistry, dispatchSlashCommand, parseSlashCommand } = await load();
       expect(
@@ -732,6 +789,119 @@ describe('tui/slashCommands /approvals trust (EXT-70 §4.7.1)', () => {
           { duringRun: true }
         ).approvals
       ).toBeDefined();
+    });
+  });
+
+  /**
+   * [[EXT-107]] — the refusal list is the escape hatch from a refusal that now outlives the session,
+   * so what it must carry is not a count but, per line, the list that HOLDS the refusal and the
+   * number that lifts it.
+   */
+  describe('approvalsRefusalsNotice', () => {
+    const refusal = (over: Record<string, unknown>) =>
+      ({
+        index: 1,
+        description: 'npm publish',
+        origin: 'persisted',
+        ...over,
+      }) as never;
+
+    it('is absent when nothing is refused, so an ordinary session says nothing about refusals', async () => {
+      const { approvalsRefusalsNotice } = await load();
+      expect(approvalsRefusalsNotice([])).toBeNull();
+    });
+
+    /**
+     * The three origins, in one assertion, because the whole point is that they read DIFFERENTLY.
+     * A rendering that labelled them alike would pass any test that checked only one.
+     */
+    it('says which list holds each refusal, and names the command that lifts one', async () => {
+      const { approvalsRefusalsNotice } = await load();
+      const notice = approvalsRefusalsNotice([
+        refusal({ index: 1, description: 'npm publish', origin: 'config' }),
+        refusal({ index: 2, description: 'git push --force', origin: 'persisted' }),
+        refusal({ index: 3, description: 'rm -rf dist', origin: 'session' }),
+      ])!;
+      expect(notice.title).toBe('Refused calls: 3');
+      const lines = notice.lines;
+      expect(lines[0]).toContain('1. npm publish — from your approvals.deny');
+      expect(lines[1]).toContain('2. git push --force — saved to this project');
+      expect(lines[2]).toContain('3. rm -rf dist — this session only');
+      expect(lines.join(' ')).toContain('/approvals undeny <number>');
+    });
+
+    /**
+     * The overflow has to stay WALKABLE. A cap that simply hid the rest would put refusals beyond
+     * reach of the only control that reaches them, so the line says they come back into the list as
+     * the ones above are lifted — which is true because the numbering is a deterministic order.
+     */
+    it('summarises the overflow as reachable rather than hidden', async () => {
+      const { approvalsRefusalsNotice } = await load();
+      const many = Array.from({ length: 12 }, (_, index) =>
+        refusal({ index: index + 1, description: `cmd-${index + 1}` })
+      );
+      const notice = approvalsRefusalsNotice(many)!;
+      expect(notice.title).toBe('Refused calls: 12');
+      expect(
+        notice.lines.filter((line) => line.startsWith('  ') && /cmd-/u.test(line))
+      ).toHaveLength(10);
+      expect(notice.lines.join(' ')).toContain(
+        '…and 2 more, which appear here as the ones above are lifted.'
+      );
+    });
+  });
+
+  /**
+   * [[EXT-107]] — the notice is built from what the runner RETURNS, so it can only describe the
+   * refusal actually lifted.
+   */
+  describe('approvalsUndenyNotice', () => {
+    it('reports a saved refusal as gone from the project, not merely from this session', async () => {
+      const { approvalsUndenyNotice } = await load();
+      const notice = approvalsUndenyNotice({
+        outcome: 'lifted',
+        description: 'npm publish',
+        origin: 'persisted',
+        stillConfigured: false,
+      });
+      expect(notice.title).toBe('Refusal lifted');
+      expect(notice.lines.join(' ')).toContain('will not come back in a new session');
+      expect(notice.tone).toBe('info');
+    });
+
+    /**
+     * The case a plain "removed" would misreport: still refused, by a line in the user's own config.
+     * Telling them they had opened something that is still closed is the failure the escalation
+     * menu is written to avoid, one layer up — so this one is `warn`, not `info`.
+     */
+    it('says when the config the user wrote still refuses the lifted call', async () => {
+      const { approvalsUndenyNotice } = await load();
+      const notice = approvalsUndenyNotice({
+        outcome: 'lifted',
+        description: 'npm publish',
+        origin: 'persisted',
+        stillConfigured: true,
+      });
+      expect(notice.lines.join(' ')).toContain('still matches it');
+      expect(notice.tone).toBe('warn');
+    });
+
+    it('points a configured entry at the file it lives in, and says nothing changed', async () => {
+      const { approvalsUndenyNotice } = await load();
+      const notice = approvalsUndenyNotice({ outcome: 'configured', description: 'npm publish' });
+      expect(notice.lines.join(' ')).toContain('approvals.deny');
+      expect(notice.lines.join(' ')).toContain('Nothing was changed');
+      expect(notice.tone).toBe('warn');
+    });
+
+    it('explains a number that names no refusal, and the empty case separately', async () => {
+      const { approvalsUndenyNotice } = await load();
+      expect(
+        approvalsUndenyNotice({ outcome: 'unknown', index: 7, count: 2 }).lines.join(' ')
+      ).toContain('The list has 2');
+      expect(
+        approvalsUndenyNotice({ outcome: 'unknown', index: 1, count: 0 }).lines.join(' ')
+      ).toContain('Nothing is refused right now');
     });
   });
 

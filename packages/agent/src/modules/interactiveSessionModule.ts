@@ -55,9 +55,11 @@ import { MemorySaver } from '@langchain/langgraph';
 import { createResolvers } from '#src/resolvers.js';
 import { resolveAgentFactory } from '#src/core/resolveAgentFactory.js';
 import {
+  approvalsRefusalsNotice,
   approvalsRungNotice,
   approvalsStatusNotice,
   approvalsTrustNotice,
+  approvalsUndenyNotice,
   createCommandRegistry,
   dispatchSlashCommand,
   formatConfigSummary,
@@ -320,11 +322,18 @@ export async function createInteractiveSession(
       // (a command that does not statically resolve, every `catastrophic` verdict), because a
       // refusal that cannot be decided still refuses. `recorded as:` rather than a second
       // `stored as:` — one dialog, two labels that read alike, is how a reader loses track of which
-      // block they are looking at. The label states the lifetime because there is no persisted deny
-      // store and the control must not imply one.
+      // block they are looking at.
+      //
+      // [[EXT-107]] — the label states the lifetime, and the lifetime is now *saved to this
+      // project*. It says `this exact command` for the reason §3.1 stores one: the entry below is a
+      // literal, so a variant with different arguments will be asked about again, and a label that
+      // read as a policy would describe a breadth the entry does not have.
       const stickyDeny = pending.denyPreview !== undefined;
       if (stickyDeny) {
-        displayDialogLine('[d] will refuse, for the rest of this session:', 'notice');
+        displayDialogLine(
+          '[d] will refuse this exact call, and save it to this project:',
+          'notice'
+        );
         dialogLines(
           frameUntrustedText(pending.denySummary ?? pending.denyPreview!, {
             width: frameWidth,
@@ -423,13 +432,13 @@ export async function createInteractiveSession(
       // widens what is answerable at any prompt. Read this as the reason not to add a fourth alias,
       // never as licence to delete the three that are here.
       const stickyRejected = stickyDeny && answer === 'd';
-      // The confirmation says what actually happened and stops there. There is no persisted deny
-      // store, so a line implying one would be the same failure §6 names when it calls a control
-      // offered and then refused a bug — with the evidence hidden, which is worse.
+      // The confirmation says what actually happened and stops there — and [[EXT-107]] makes what
+      // happens a project file, so it also says where the refusal now lives and how to undo it. A
+      // saved refusal nobody can find is the one failure mode persisting it introduces.
       displayDialogLine(
         stickyRejected
-          ? 'Refused — this call will not run for the rest of this session, and will not ask ' +
-              'again. Nothing was saved to the project, so a new session will ask about it again.'
+          ? 'Refused — this exact call will not run and will not ask again. It is saved to this ' +
+              'project, so it stays refused in new sessions; lift it with /approvals undeny.'
           : 'Command rejected.',
         'notice'
       );
@@ -439,7 +448,10 @@ export async function createInteractiveSession(
       // to guess, which it does by repeating itself or giving up.
       return {
         type: 'reject',
-        ...(stickyRejected ? { scope: 'session' as const } : {}),
+        // [[EXT-107]] — `always`, which is what the label above promised. The lifetime that
+        // actually lands is core's to decide (a project file that cannot be written degrades to a
+        // session refusal), so this surface asks for the scope and never assumes the outcome.
+        ...(stickyRejected ? { scope: 'always' as const } : {}),
         message: buildRejectionMessage({
           source: 'user',
           toolName: pending.name,
@@ -646,15 +658,25 @@ export async function createInteractiveSession(
             // (the runner posture). Session-scoped, reversible, never persisted. With no argument
             // the command DISPLAYS the posture instead of changing it.
             if ('show' in result.approvals) {
+              const refusals = runner.getRefusals();
               printNotice(
                 approvalsStatusNotice(
                   runner.getSessionApprovals(),
                   runner.getAllowlistCounts(),
-                  runner.getDenylist(),
+                  refusals,
                   runner.getGrants(),
                   runner.getMcpAnnotationTrust()
                 )
               );
+              // [[EXT-107]] — the refusals as their own notice, after the posture and nearest the
+              // prompt: it is the block the user acts on, and it carries the number `undeny` takes.
+              const refused = approvalsRefusalsNotice(refusals);
+              if (refused) printNotice(refused);
+            } else if ('undeny' in result.approvals) {
+              // [[EXT-107]] — lift a refusal by its number. The notice is built from what the
+              // runner RETURNS, so it can only describe the refusal actually lifted — including the
+              // case where a config entry goes on refusing the call after a saved one is removed.
+              printNotice(approvalsUndenyNotice(runner.liftRefusal(result.approvals.undeny.index)));
             } else if ('trust' in result.approvals) {
               // EXT-70 §4.7.1 — believe (or stop believing) specific hints from one server, for
               // this session. The notice is built from what the runner RETURNS, so it can only

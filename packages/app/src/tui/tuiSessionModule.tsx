@@ -665,10 +665,16 @@ export async function createTuiSession(
         return {
           approvals: runner.getSessionApprovals(),
           allowlist: runner.getAllowlistCounts(),
-          deny: runner.getDenylist(),
+          refusals: runner.getRefusals(),
           grants: runner.getGrants(),
           trust: runner.getMcpAnnotationTrust(),
         };
+      },
+      // [[EXT-107]] — `/approvals undeny <n>`: lift one refusal by its number in the list
+      // `getApprovals` just returned. Returns the landed outcome so the notice describes what was
+      // actually lifted rather than what was asked for.
+      liftRefusal(index) {
+        return runner.liftRefusal(index);
       },
       // EXT-70 §4.7.1 — `/approvals trust|untrust <server> <hint…>`. Returns the landed change so
       // the notice describes the trust actually in force, and so it can state §4.7.4's consequence

@@ -37,6 +37,11 @@
       "arity": 0
     },
     {
+      "name": "ApprovalRefusalOrigin",
+      "file": "config/shell-policy.d.ts",
+      "arity": 0
+    },
+    {
       "name": "ApprovalRung",
       "file": "config/shell-policy.d.ts",
       "arity": 0
