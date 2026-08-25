@@ -66,6 +66,13 @@ command that spans twenty lines is shown whole rather than cut down to its first
   refused permanently even though it can never be approved permanently, and so can a
   **catastrophic** one.
 
+  **A refusal outranks an approval.** If the same call matches both a saved approval and a saved
+  refusal, it is **refused** — the two files are the one place your saved answers can contradict each
+  other, and the more restrictive one always wins. The refusal is also consulted at every approval
+  mode, `bypass` included: `bypass` means *stop asking me to approve things*, not *ignore what I have
+  already refused*. So the way to undo a refusal is to remove it, with `/approvals undeny <number>`
+  or by editing the file — never by approving the same command again or by switching mode.
+
   **It refuses that exact command, not a family of them.** `git reset --hard` saved this way does
   not cover `git reset --hard HEAD`, which is asked about again — the entry stores the command you
   were shown, and nothing widens it on your behalf. For a whole family, write a `glob` or `regexp`
