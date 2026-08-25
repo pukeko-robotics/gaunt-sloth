@@ -811,7 +811,9 @@ export class GthAgentRunner {
     // `assisted` mid-session with `/approvals`), and a broken profile should still fail loudly at
     // startup rather than at the moment they switch.
     const raterProfile = this.sessionApprovals.rater;
-    this.raterModel = raterProfile ? await resolveRaterModel(raterProfile, 'approvals.rater') : undefined;
+    this.raterModel = raterProfile
+      ? await resolveRaterModel(raterProfile, 'approvals.rater')
+      : undefined;
 
     // [[EXT-127]] — and the same for the alignment checker, which is a second model with a second
     // profile. `resolveApprovals` has already defaulted the key to the rater's profile, so the

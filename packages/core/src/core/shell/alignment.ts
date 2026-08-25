@@ -345,12 +345,14 @@ export function renderAlignmentUserMessages(
   userMessages: readonly string[],
   home?: string
 ): string[] {
-  return userMessages
-    .filter((message) => !isBlank(message))
-    .slice(-NEGOTIATION_MAX_USER_MESSAGES)
-    // Truncation runs LAST, so the cap bounds the string that is actually rendered — after folding
-    // has shortened it and after neutralising a closing tag may have lengthened it.
-    .map((message) => truncateUserMessage(fencedOneLine(message, 'user_messages', home)));
+  return (
+    userMessages
+      .filter((message) => !isBlank(message))
+      .slice(-NEGOTIATION_MAX_USER_MESSAGES)
+      // Truncation runs LAST, so the cap bounds the string that is actually rendered — after folding
+      // has shortened it and after neutralising a closing tag may have lengthened it.
+      .map((message) => truncateUserMessage(fencedOneLine(message, 'user_messages', home)))
+  );
 }
 
 /**
@@ -667,9 +669,7 @@ export function createAlignmentTools(subject: AlignmentSubject, home?: string): 
         'Ask the user. Use this when you cannot tell whether they asked for this, when they never ' +
         'asked for it, or when the command reaches past what they asked for.',
       schema: z.object({
-        reason: z
-          .string()
-          .describe('One short sentence saying what the user needs to decide.'),
+        reason: z.string().describe('One short sentence saying what the user needs to decide.'),
       }),
     }
   );

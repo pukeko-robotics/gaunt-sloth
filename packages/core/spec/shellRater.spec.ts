@@ -19,7 +19,6 @@ import {
   isBelowDestructiveFloor,
   mapVerdictToAction,
   NAMES_A_HOST_PREFIX,
-  neutralizeClosingTag,
   NEVER_AUTO_APPROVED_CLAUSE,
   openWorldToolFloorReason,
   rateShellCommand,
@@ -27,7 +26,6 @@ import {
   RATER_OUTCOMES,
   REACHES_OPEN_WORLD_PREFIX,
   ShellSafetyVerdictSchema,
-  type RaterNegotiationRound,
   type RaterOutcome,
   type ShellSafetyVerdict,
 } from '#src/core/shell/rater.js';

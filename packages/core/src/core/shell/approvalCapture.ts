@@ -52,7 +52,6 @@ import type { NegotiationCounters } from '#src/core/shell/negotiation.js';
 import type {
   FailClosedCause,
   PreflightFloorKind,
-  RaterNegotiationRound,
   ShellSafetyVerdict,
 } from '#src/core/shell/rater.js';
 
@@ -326,4 +325,3 @@ export function raterModelLabel(model: unknown): string | undefined {
   if (id && type) return `${type}/${id}`;
   return id ?? type;
 }
-

@@ -50,10 +50,7 @@ import { buildParserPreflightNote } from '#src/core/shell/abstention.js';
 // [[TUI-C27]] — the diagnostic record of one rating. The edge is one-way: this module builds and
 // fills a capture, and `approvalCapture` imports nothing from here at run time (types only), so
 // there is no cycle to reason about.
-import {
-  type RaterCallCapture,
-  raterModelLabel,
-} from '#src/core/shell/approvalCapture.js';
+import { type RaterCallCapture, raterModelLabel } from '#src/core/shell/approvalCapture.js';
 import { normalizeCommand } from '#src/core/shell/normalize.js';
 import {
   buildComposedOpenWorldNote,

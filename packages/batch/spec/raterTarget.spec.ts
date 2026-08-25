@@ -1693,9 +1693,7 @@ describe('buildRaterClassifier (BATCH-25 Half B — the `rater` target)', () => 
         if (checkerTurn % 2 === 1) {
           return new AIMessage({
             content: '',
-            tool_calls: [
-              { name: 'viewCommandSuggestedByAgent', args: {}, id: `v-${checkerTurn}` },
-            ],
+            tool_calls: [{ name: 'viewCommandSuggestedByAgent', args: {}, id: `v-${checkerTurn}` }],
           });
         }
         const seen = messages.map((m) => String(m.content ?? '')).join('\n');

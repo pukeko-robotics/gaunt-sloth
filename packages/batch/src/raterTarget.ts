@@ -740,7 +740,7 @@ async function classifyOneRound(
         model: checkerModel,
         userMessages: negotiation.retainedUserMessages(),
         priorRounds: negotiation.alignmentRounds(),
-        ...(options?.home ?? env?.HOME ? { home: options?.home ?? env?.HOME } : {}),
+        ...((options?.home ?? env?.HOME) ? { home: options?.home ?? env?.HOME } : {}),
         ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       }
     );
@@ -808,7 +808,8 @@ export async function buildRaterClassifier(
   options?: RaterClassifierOptions
 ): Promise<RunClassifyFn> {
   const rung = resolveRung(target, config);
-  const approvals = config.approvals !== undefined ? resolveApprovals(config, undefined) : undefined;
+  const approvals =
+    config.approvals !== undefined ? resolveApprovals(config, undefined) : undefined;
   const raterProfile = approvals?.rater;
   // `undefined` lets `rateShellCommand` use the run's own `config.llm` — the same fallback
   // production has, so the sweep's `model:` axis moves the rater exactly when no rater profile is

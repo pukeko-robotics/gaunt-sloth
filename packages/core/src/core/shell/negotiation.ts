@@ -168,8 +168,9 @@ export class ShellNegotiationState {
    */
   alignmentRounds(): readonly AlignmentRound[] {
     return this.rounds
-      .filter((round): round is RaterNegotiationRound & { alignment: AlignmentDecision } =>
-        round.alignment !== undefined
+      .filter(
+        (round): round is RaterNegotiationRound & { alignment: AlignmentDecision } =>
+          round.alignment !== undefined
       )
       .map((round) => ({
         subject: {
@@ -749,6 +750,27 @@ const endingLabel = (revised: boolean | undefined): string =>
  * not differ by so much as a colon in the rounds themselves, because the whole claim §5.4 rests on
  * is that the exchange a person watched and the exchange they are later asked to rule on are one
  * account of one argument. Two copies of this body is precisely how that claim would rot.
+ *
+ * ---
+ *
+ * [[EXT-127]] — **the two speaker-named rows below stay exactly as they are, and this is the
+ * recorded decision rather than an omission.** The node that split the gate in two asks deliberately
+ * whether rows saying `rater` should move now that there are two models, and the answer is no, for a
+ * reason that is about truth rather than effort:
+ *
+ * - every row here renders the CLASSIFIER's own verdict — `round.outcome` and `round.reason` are its
+ *   answer, and it is still the auto-rater. Nothing on these rows was ever the alignment checker's,
+ *   so nothing here is misattributed;
+ * - `(not shown to the rater)` and `(on the command alone)` are MORE literally true after the split
+ *   than before it, because the classifier's input shrank to the command. Rewording either one to
+ *   account for the checker would make a true statement about the classifier into a false one;
+ * - the checker's own voice on screen is an ADDITION to the display, not a correction of it — a new
+ *   row for a new speaker. That is display work in its own right (the [[TUI-C69]]/[[TUI-C98]]
+ *   surface), it moves strings the `tui-e2e` suite asserts on by literal, and it therefore needs the
+ *   Windows cell of `tui-e2e.yml` read before it lands. It is deliberately NOT done here.
+ *
+ * So: the existing labels are SETTLED and must not be reworded. Showing the check's own answer is
+ * DEFERRED, and is a display ticket, not a leftover of this one.
  */
 function negotiationRoundRows(
   round: RaterNegotiationRound,
