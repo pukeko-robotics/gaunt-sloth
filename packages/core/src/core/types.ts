@@ -378,14 +378,21 @@ export type ToolApprovalScope = 'once' | 'session' | 'always';
  * - `session` — additionally record a **deny** entry for this call, in the one entry grammar, for
  *   the life of this runner instance. The matcher consults it before anything else, so the next
  *   identical call is refused without reaching a person at all.
+ * - `always`  — additionally persist that entry to the project store
+ *   ({@link ToolApprovalScope}'s mirror: `.gsloth/.gsloth-settings/shell-denylist.json`) so the
+ *   refusal survives a restart. This is what every escalation menu's *always reject* control sends.
  *
- * **There is deliberately no `always`.** An `approve` can persist because there is a project store
- * to persist it to; there is no persisted deny store, and inventing one is a decision about a file
- * users will have to live with rather than a rendering choice. So the scopes here are the ones the
- * gate can actually honour, and a control that promised more would be §6's own failure mode — an
- * affordance offered and then quietly refused.
+ * **The two scopes stay different types even now that they list the same three values.** They are
+ * different questions with different bounds — a `reject` has no `catastrophic` clamp and no
+ * unresolvable-command exclusion, since refusing more is safe in every direction — and collapsing
+ * them would let a future value added for one side become answerable on the other by accident.
+ *
+ * **A caller may still ask for `session`**, and the runner honours it rather than upgrading it: the
+ * lifetime that lands is reported back through the `/approvals` display, so a refusal held only for
+ * this session is never shown as a saved one. It is also where an `always` refusal lands when the
+ * project file cannot be opened — which costs a re-prompt next session and never an execution.
  */
-export type ToolRejectScope = 'once' | 'session';
+export type ToolRejectScope = 'once' | 'session' | 'always';
 
 /**
  * A consumer-supplied decision on a {@link PendingToolInterrupt}: approve runs the tool,
@@ -395,9 +402,8 @@ export type ToolRejectScope = 'once' | 'session';
  * `{ type: 'approve' }` or `{ type: 'reject' }` still type-checks and behaves as the single-shot
  * decision that persists nothing).
  *
- * The two scopes are **different types on purpose**. Sharing {@link ToolApprovalScope} would let a
- * surface send `{ type: 'reject', scope: 'always' }`, which type-checks, promises a persistence
- * nothing implements, and degrades to a session refusal with no diagnostic.
+ * The two scopes are **different types on purpose** — see {@link ToolRejectScope} for why they stay
+ * apart now that they carry the same three values.
  */
 export type ToolApprovalDecision =
   | { type: 'approve'; scope?: ToolApprovalScope }

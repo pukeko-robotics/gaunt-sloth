@@ -180,6 +180,13 @@ describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity
     return capturedApprovalCallback!(pending);
   };
 
+  /**
+   * [[EXT-107]] §6 — the label the `[d]` control is written in. Held as a constant so the test that
+   * asserts the rendered PROMISE and the test that asserts the SCOPE it produces name the same
+   * string, rather than two copies free to drift apart.
+   */
+  const DENY_LABEL = '[d] will refuse this exact call, and save it to this project:';
+
   const DENYABLE: PendingLike = {
     name: 'run_shell_command',
     args: { command: 'ls && rm -rf build' },
@@ -214,7 +221,7 @@ describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity
     await startSession();
     await ask('n', DENYABLE);
     const info = linesInTone('notice');
-    const label = info.indexOf('[d] will refuse, for the rest of this session:');
+    const label = info.indexOf('[d] will refuse this exact call, and save it to this project:');
     expect(label).toBeGreaterThanOrEqual(0);
     // Anchored positionally: a shell deny summary is the command byte for byte, so a bare
     // `toContain` is satisfied by the command's own frame further up and would pass with this value
@@ -227,13 +234,26 @@ describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity
     );
   });
 
-  it('answering d returns a session-scoped rejection and confirms only what happened', async () => {
+  /**
+   * [[EXT-107]] — **the promise and the scope, asserted against each other in one test.** The label
+   * above the entry says the refusal is saved to the project; the scope this surface sends is what
+   * decides whether it is. Two tests, each asserting one side, would both stay green while the
+   * dialog promised a file the decision never reached.
+   */
+  it('answering d asks for the persistence its own label promised, and says so', async () => {
     await startSession();
-    expect(await ask('d', DENYABLE)).toMatchObject({ type: 'reject', scope: 'session' });
+    const decision = await ask('d', DENYABLE);
+    const info = linesInTone('notice');
+    // The rendered promise…
+    expect(info).toContain(DENY_LABEL);
+    // …and the scope the decision carries, which is the half that makes it true.
+    expect(decision).toMatchObject({ type: 'reject', scope: 'always' });
     const out = allLines().join(LF);
-    expect(out).toContain('will not run for the rest of this session');
-    expect(out).toContain('a new session will ask about it again');
-    // No promise of a persistence there is no store for.
+    expect(out).toContain('saved to this project');
+    expect(out).toContain('/approvals undeny');
+    // The old promise is gone: this refusal does NOT end with the session.
+    expect(out).not.toContain('for the rest of this session');
+    // And it is not confused with the allow side's file.
     expect(out).not.toContain('saved to the project allow-list');
   });
 
@@ -491,7 +511,7 @@ describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity
     const bounds = [
       at('[s]/[a] will remember:'),
       at('    stored as:'),
-      at('[d] will refuse, for the rest of this session:'),
+      at('[d] will refuse this exact call, and save it to this project:'),
       at('    recorded as:'),
       at('Command rejected.'),
     ];

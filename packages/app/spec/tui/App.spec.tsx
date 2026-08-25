@@ -280,9 +280,20 @@ describe('tui <App>', () => {
 
   // CFG-27 — a posture stub standing in for the runner: it lands the requested rung, exactly as
   // GthAgentRunner.setSessionApprovalRung does.
+  //
+  // [[EXT-107]] — refusals default to NONE, and the two posture cells below rely on it. On a 24-row
+  // terminal the posture notice fills the pane the picker leaves, so anything committed alongside it
+  // scrolls its heading and counts off the top — measured, and not something this node introduced:
+  // one saved approval grant clips it the same way. The refusal notice therefore gets its own cell,
+  // where it is the block in view, rather than being folded into a case that cannot show both.
   const approvalsAgent = (
     initial = 'assisted',
-    extra?: Partial<TuiAgent>
+    extra?: Partial<TuiAgent>,
+    refusals: {
+      index: number;
+      description: string;
+      origin: 'config' | 'session' | 'persisted';
+    }[] = []
   ): { agent: TuiAgent; rung: () => string } => {
     let rung = initial;
     const posture = () => ({ rung, rater: undefined, allow: [], deny: [], escalate: [] }) as any;
@@ -300,7 +311,7 @@ describe('tui <App>', () => {
           return {
             approvals: posture(),
             allowlist: { session: 2, always: undefined },
-            deny: ['npm publish'],
+            refusals,
           };
         },
         ...extra,
@@ -433,9 +444,40 @@ describe('tui <App>', () => {
       const out = frames.join('\n');
       expect(out).toContain('Approvals: Write');
       expect(out).toContain('2 this session');
-      expect(out).toContain('Denied: 1');
+      expect(out).toContain('Denied: 0');
     });
     expect(rung()).toBe('write'); // display only — nothing switched
+    unmount();
+  });
+
+  /**
+   * [[EXT-107]] — **the escape hatch, rendered.** A refusal saved to a project file is only safe to
+   * offer if the person who made it by reflex can find it again, so `/approvals` commits a second
+   * notice listing every refusal in force. Each line has to say WHICH list holds it — a config line
+   * the user must edit, a saved one, or one that ends with this session — and carry the number that
+   * lifts it. A count alone is not an escape hatch.
+   */
+  it('/approvals lists the refusals in force, with their origin and the number that lifts one', async () => {
+    const { agent } = approvalsAgent('write', undefined, [
+      { index: 1, description: 'npm publish', origin: 'config' },
+      { index: 2, description: 'git push --force', origin: 'persisted' },
+    ]);
+    const { stdin, frames, lastFrame, unmount } = render(<App {...baseProps} agent={agent} />);
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    stdin.write('/approvals');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/approvals'));
+    stdin.write('\r');
+
+    await vi.waitFor(() => {
+      const out = frames.join('\n');
+      expect(out).toContain('Refused calls: 2');
+      // The origins are the half that makes the list actionable: one of these is removed by editing
+      // a config file and the other by the command below, and a merged list could say neither.
+      expect(out).toContain('  1. npm publish — from your approvals.deny');
+      expect(out).toContain('  2. git push --force — saved to this project');
+      expect(out).toContain('/approvals undeny <number>');
+    });
     unmount();
   });
 
@@ -2265,7 +2307,7 @@ describe('tui <App> — the slash menu over an unfinished message (TUI-C51)', ()
       getApprovals: () => ({
         approvals: { rung: 'write', rater: undefined, allow: [], deny: [], escalate: [] },
         allowlist: { session: 0, always: undefined },
-        deny: [],
+        refusals: [],
       }),
       setApprovalRung: (next: string) => ({ rung: next, rater: undefined, allow: [], deny: [] }),
     }) as unknown as TuiAgent;

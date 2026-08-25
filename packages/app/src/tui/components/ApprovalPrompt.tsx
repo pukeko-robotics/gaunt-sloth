@@ -55,7 +55,7 @@ const voiceColour = (voice: NegotiationVoice): string | undefined =>
  * owns only the punctuation and the tone around it.
  *
  * Pure/presentational: it only renders the pending command + the choices. The key handling
- * (`o` → approve once, `s`/`a` → approve with that scope, `d` → refuse for the session, anything
+ * (`o` → approve once, `s`/`a` → approve with that scope, `d` → refuse and save it, anything
  * else → refuse once) lives in `<App>`'s `useInput`, mirroring the way the debug panel's scroll
  * keys are owned by the root component.
  *
@@ -66,16 +66,16 @@ const voiceColour = (voice: NegotiationVoice): string | undefined =>
  * anything; it is filed as EXT-104). A menu control that does nothing is worse than an absent one.
  *
  * **The safe action is the FALLTHROUGH, and adding a key must not erode that.** `o` grants once;
- * `s`/`a` grant and `d` refuses for the session, each *only where that control is on offer*; and
+ * `s`/`a` grant and `d` refuses for good, each *only where that control is on offer*; and
  * everything else — Enter, Esc, a stray keystroke, any letter with Ctrl held — refuses once and
  * records nothing. Withdrawing a control from this menu withdraws its key with it, or the
  * withdrawal is cosmetic and the command runs anyway. Doing nothing in particular stays safe.
  *
  * **Each sticky control is SHOWN only where the gate would actually store something**, and the two
- * are not the same condition: a command the gate cannot statically resolve can be refused for the
- * session though it can never be approved for it, and a `catastrophic` verdict withdraws the
- * grants while leaving the refusal (§4.2 is about what may be allowed, never about what may be
- * refused). Absent, never disabled — §6 calls a control offered and then refused a bug.
+ * are not the same condition: a command the gate cannot statically resolve can be refused for good
+ * though it can never be approved for one call, and a `catastrophic` verdict withdraws the grants
+ * while leaving the refusal (§4.2 is about what may be allowed, never about what may be refused).
+ * Absent, never disabled — §6 calls a control offered and then refused a bug.
  *
  * [[TUI-C26]] — **every model-authored string on this dialog is painted through
  * `core/shell/framing`**, never raw: the command, the rater's reason, and what a sticky choice
@@ -158,7 +158,7 @@ export function ApprovalPrompt({ pending }: { pending: PendingToolInterrupt }): 
   // [[TUI-C26]] §6 — the deny mirror, and it is a DIFFERENT condition. The runner computes it from
   // the entry an *always reject* would record, which exists in cases where no grant does: the
   // matcher's rule is undecidable → no match on the allow side, a match on the deny side, so a
-  // command the gate could not resolve can be refused for the session though it can never be
+  // command the gate could not resolve can be refused for good though it can never be
   // approved for one. Reading this off `grantPreview` would withdraw the control from exactly the
   // prompts it is most useful on.
   const denyPreview = pending.denyPreview;
@@ -257,10 +257,13 @@ export function ApprovalPrompt({ pending }: { pending: PendingToolInterrupt }): 
               reason — they carry the command as typed.
 
               `recorded as:` rather than a second `stored as:`: two identical labels on one dialog
-              are ambiguous to a reader and, positionally, to anything that looks one up. The label
-              also says the lifetime out loud, because there is no persisted deny store and a
-              control that implied one would be promising something the gate does not do. */}
-          <Text dimColor>{'[d] will refuse, for the rest of this session:'}</Text>
+              are ambiguous to a reader and, positionally, to anything that looks one up.
+
+              [[EXT-107]] — the label says the lifetime out loud, and the lifetime is now *saved to
+              this project*. It says `this exact call` for the reason §3.1 stores one: the entry
+              below is a literal, so a variant with different arguments is asked about again, and a
+              label reading as a policy would promise a breadth the entry does not have. */}
+          <Text dimColor>{'[d] will refuse this exact call, and save it to this project:'}</Text>
           <FramedLines
             framed={frameUntrustedText(denySummary ?? denyPreview, {
               width,

@@ -54,7 +54,7 @@ export const ACP_PERMISSION_OPTIONS: readonly PermissionOption[] = [
   { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
   { optionId: 'allow-always', name: 'Allow and remember', kind: 'allow_always' },
   { optionId: 'reject-once', name: 'Reject once', kind: 'reject_once' },
-  { optionId: 'reject-always', name: 'Reject for this session', kind: 'reject_always' },
+  { optionId: 'reject-always', name: 'Reject and remember', kind: 'reject_always' },
 ];
 
 /** The shell command a pending call would run, when it is one and it is a plain string. */
@@ -162,10 +162,12 @@ export function permissionRequestFor(options: {
  * and a future ACP outcome must fail toward refusing rather than toward executing.
  *
  * `allow-always` maps to the `always` scope, which persists to the project allow-list — the same
- * thing the terminal menu's *always approve* does. `reject-always` maps to the `session` scope
- * because that is the strongest refusal the gate actually persists; ACP's `reject_always` is a UI
- * hint, and promising a persistence nothing implements would be worse than serving it with the
- * refusal that does exist. The option's own label says "for this session" so the user is told.
+ * thing the terminal menu's *always approve* does. [[EXT-107]] — `reject-always` is now its mirror
+ * and maps to `always` too, persisting to the project deny-list. One menu item cannot mean two
+ * lifetimes across three surfaces: the same answer given in the TUI, at the readline prompt and in
+ * an editor over ACP has to be the same refusal, or a user who learns the control on one surface
+ * has learned something untrue about the others. Both labels say "remember" so the user is told
+ * which pair of choices is written down.
  */
 export function decisionForOutcome(outcome: RequestPermissionOutcome): ToolApprovalDecision {
   if (outcome.outcome !== 'selected') {
@@ -178,7 +180,7 @@ export function decisionForOutcome(outcome: RequestPermissionOutcome): ToolAppro
     case 'allow-always':
       return { type: 'approve', scope: 'always' };
     case 'reject-always':
-      return { type: 'reject', scope: 'session', message: 'The user rejected this tool call.' };
+      return { type: 'reject', scope: 'always', message: 'The user rejected this tool call.' };
     case 'reject-once':
       return { type: 'reject', message: 'The user rejected this tool call.' };
     default:

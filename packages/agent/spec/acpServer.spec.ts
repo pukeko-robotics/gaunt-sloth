@@ -985,7 +985,12 @@ describe('the ACP v2 agent — session/request_permission', () => {
     expect(decisions[0]).toMatchObject({ type: 'reject' });
   });
 
-  it('maps allow-always to the persisting scope and reject-always to the session scope', async () => {
+  /**
+   * [[EXT-107]] — both `always` answers now persist, and asserting them as a PAIR is what keeps
+   * them symmetric: one menu item cannot mean two lifetimes across three surfaces, so an ACP client
+   * offering "Reject and remember" has to reach the same store the terminal menu's `[d]` does.
+   */
+  it('maps both remember answers to the persisting scope, allow and reject alike', async () => {
     const approved = await withClient(
       {
         script: gatedShellScript('npm test'),
@@ -1020,7 +1025,7 @@ describe('the ACP v2 agent — session/request_permission', () => {
         return h.agent.decisions;
       }
     );
-    expect(refused[0]).toMatchObject({ type: 'reject', scope: 'session' });
+    expect(refused[0]).toMatchObject({ type: 'reject', scope: 'always' });
   });
 
   /**

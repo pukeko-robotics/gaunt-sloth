@@ -31,7 +31,7 @@ The agent wants to run a shell command via run_shell_command
   1 │ rm -rf node_modules
     stored as:
   1 │ { "type": "shell", "matcher": "exact", "pattern": "rm -rf node_modules" }
-[d] will refuse, for the rest of this session:
+[d] will refuse this exact call, and save it to this project:
   1 │ rm -rf node_modules
     recorded as:
   1 │ { "type": "shell", "matcher": "exact", "pattern": "rm -rf node_modules" }
@@ -56,13 +56,20 @@ command that spans twenty lines is shown whole rather than cut down to its first
 - **No** (the default — just press Enter, or any key that is not one of these) — reject it. The
   agent is told what it can do next: run the same command with a justification, run a different one,
   or ask you — so it changes course instead of retrying the same thing or giving up.
-- **deny always** — reject it *and stop being asked*: the entry shown under `[d]` joins your deny
-  list for the rest of the session, so the same call is refused outright the next time the agent
-  tries it. It is not written to any file — a new session starts asking again. Shown whenever an
-  entry can be formed, which is more often than **session**/**always** are offered: a command the
-  gate cannot read (`ls && rm -rf build`) can be refused permanently even though it can never be
-  approved permanently, and so can a **catastrophic** one. To refuse something for good, put it in
-  `approvals.deny` (below).
+- **deny always** — reject it *and stop being asked*: the entry shown under `[d]` is saved to
+  `.gsloth/.gsloth-settings/shell-denylist.json` in your project, so the same call is refused
+  outright the next time the agent tries it and in every later session. It is the mirror of
+  **always**, in the same folder and the same entry grammar, and you can read and edit it — or lift
+  one refusal from inside a session with `/approvals undeny <number>`, which is what `/approvals`
+  numbers each refusal for. Shown whenever an entry can be formed, which is more often than
+  **session**/**always** are offered: a command the gate cannot read (`ls && rm -rf build`) can be
+  refused permanently even though it can never be approved permanently, and so can a
+  **catastrophic** one.
+
+  **It refuses that exact command, not a family of them.** `git reset --hard` saved this way does
+  not cover `git reset --hard HEAD`, which is asked about again — the entry stores the command you
+  were shown, and nothing widens it on your behalf. For a whole family, write a `glob` or `regexp`
+  entry in `approvals.deny` (below), or broaden the saved entry in the file by hand.
 
 ### Where the prompt is written
 
@@ -414,7 +421,7 @@ There is one approvals setting, and it takes the mode name:
 | `write` | Manual, for work that is mostly editing, and like Manual a bounded stretch: the built-in file tools run free inside your working folder. The shell is not confined that way, so shell commands, MCP calls and custom tools still come to you, until you tell it to always allow a command. | no |
 | `assisted` | For everyday, recoverable work: safe commands run, anything riskier comes to you — usually with a line explaining what it does. Gaunt Sloth can still rewrite and delete files in your working folder without asking — "safe" means each action is checked for reaching outside that folder or harming your system, not that nothing changes. | yes |
 | `auto` | For recoverable work you want to keep moving: Auto sends a risky command back to the agent to fix or justify a few times, then asks you. It is not safe — Gaunt Sloth will change and delete things, your deny list still applies, and when it does ask, you are shown the whole argument that led there. | yes |
-| `bypass` | No gate, for a throwaway environment you would not mind losing. Whatever Gaunt Sloth decides to run, runs — nothing is rated and nothing is asked; only the refusals in your config’s deny list still apply. | no |
+| `bypass` | No gate, for a throwaway environment you would not mind losing. Whatever Gaunt Sloth decides to run, runs — nothing is rated and nothing is asked; only your refusals still apply, both the ones in your config’s deny list and the ones you saved to this project. | no |
 
 <!-- Every row above is a byte-for-byte copy of `APPROVAL_RUNG_DESCRIPTIONS` in
      `packages/core/src/config/shell-policy.ts`. A change to that constant and to the row it
@@ -437,9 +444,10 @@ the rating did not clear spends a second one on
 [the check that asks whether you asked for it](#at-auto-a-second-check-asks-whether-you-asked-for-it).
 
 Choosing `bypass` is not choosing more trust in the rater: it switches the gate off. Nothing is
-rated, nothing is asked, and the only check left is the `shell` entries in your deny list — a `tool`
-entry is [not compared there](#which-entries-a-mode-consults) — so what runs under it is not what
-some check cleared, it is whatever the agent decided to do.
+rated, nothing is asked, and the only check left is the `shell` entries in your deny list and the
+refusals you saved with **deny always** — a `tool` entry is
+[not compared there](#which-entries-a-mode-consults) — so what runs under it is not what some check
+cleared, it is whatever the agent decided to do.
 
 What any of these modes does and does **not** protect you from, and what has to sit outside Gaunt
 Sloth to cover the rest, is
@@ -622,9 +630,11 @@ carry it out. Where it is the tool itself you do not want run, take it away rath
 leave the server out of `mcpServers`, or the tool out of that command's `builtInTools`
 ([Tools configuration](../configuration/tools.md)).
 
-`/approvals` reports the entries you declared, not the ones the mode in force can act on, so a
-`Denied:` count that includes a tool entry at `assisted` is counting your config rather than checks
-that can fire.
+`/approvals` reports the refusals in force, not the ones the mode in force can act on, so a
+`Denied:` count that includes a tool entry at `assisted` is counting an entry rather than a check
+that can fire. It lists each one with the list that holds it — your config's `approvals.deny`, the
+refusals you saved to this project with **deny always**, or one held for this session only — and
+the number `/approvals undeny <number>` takes to lift it.
 
 ### Writing an entry
 
