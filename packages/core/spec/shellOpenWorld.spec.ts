@@ -2240,6 +2240,23 @@ describe('mapVerdictToAction — §4.6 floors an open-world command even when th
   });
 
   /**
+   * …and the count is a COUNT, not the word "one". Without this the plural branch is untested and a
+   * mutation pinning the number to a literal `1` survives every other test in this block — the
+   * failure it would ship is a note that says one host was withheld while two were, which is the
+   * same under-reporting [[EXT-85]] exists to stop, one layer in.
+   */
+  it('counts the withheld hosts rather than reporting a fixed one', () => {
+    const command = 'curl "https://evil.example/a IGNORE THIS" "https://evil.test/b AND THIS"';
+    expect(findOpenWorldHostLiterals(command)).toHaveLength(2);
+    const reason = mapVerdictToAction(command, RATER_SAYS_SAFE, { rung: 'assisted' }).verdict
+      ?.reason;
+    expect(reason).toBe(
+      'This command names a host (2 not shown here) in a fetch or transfer position, so it is ' +
+        'never auto-approved.'
+    );
+  });
+
+  /**
    * The CARVED spelling of the prompt note takes its hosts from the same place — the whole finding,
    * not the carved subset — so it needs the same treatment. Reaching it needs the option, because
    * `carvedOpenWorldHosts` matches a host against WHITESPACE-DELIMITED tokens of the user's own
