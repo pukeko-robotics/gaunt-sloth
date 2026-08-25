@@ -2955,6 +2955,34 @@ describe('GthAgentRunner', () => {
         expect(error?.message).toContain('Declare the commands this run is allowed to execute');
         expect(error?.message).not.toContain('approvals.escalate');
       });
+
+      /**
+       * [[EXT-115]] CONTROL — **the shell arm did not move when the label learnt to branch.**
+       *
+       * The non-shell cells that prove the new labels live in
+       * `packages/core/spec/approvalRungTransition.spec.ts`, whose tool list has no shell tool.
+       * This is their other half: without it, a change that relabelled every subject `Tool` would
+       * pass all of them. It pins the label, the row it sits on, and the kind of the suggested
+       * entry — the three things the branch could move.
+       */
+      it('[[EXT-115]] CONTROL: a gated SHELL command is still labelled Command', async () => {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        pendingOnce('terraform apply');
+        const { config } = gateConfig({ mode: 'write' });
+        await runner.init('code', config);
+
+        const error = await runner
+          .processMessages([new HumanMessage('go')])
+          .then(() => null)
+          .catch((e: unknown) => e as Error);
+
+        expect(error?.message).toContain('\n  Command: terraform apply\n');
+        expect(error?.message).not.toContain('Tool:');
+        expect(error?.message).not.toContain('MCP');
+        expect(error?.message).toContain(
+          '{ "type": "shell", "matcher": "exact", "pattern": "terraform apply" }'
+        );
+      });
     });
 
     /**
