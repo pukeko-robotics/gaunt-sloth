@@ -14,6 +14,7 @@ import {
 import { buildSystemMessages, readPromptFile } from '@gaunt-sloth/core/utils/llmUtils.js';
 import { debugLog } from '@gaunt-sloth/core/utils/debugUtils.js';
 import { HumanMessage } from '@langchain/core/messages';
+import { MemorySaver } from '@langchain/langgraph';
 import { type BaseToolkit, StructuredToolInterface, tool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { dirname, resolve } from 'node:path';
@@ -221,9 +222,26 @@ export async function runPrDiscovery(config: GthConfig): Promise<PrDiscoveryResu
     // `command` stays undefined so the discovery agent runs on the chat prompt and does NOT pick up
     // `commands.pr`'s posture; `owningCommand` is label-only, so a notice about this run says "the
     // pr command" rather than something the user cannot connect to what they typed (GS2-81).
-    await runner.init(undefined, getPrDiscoveryAgentConfig(config, discoveryConfig), undefined, {
-      owningCommand: 'pr',
-    });
+    //
+    // **The checkpoint saver is not optional here, even though `init` accepts none.** An unset
+    // command answers approvals (`commandAnswersApprovals`), and every tool this agent binds —
+    // `set_diff`, `set_requirements`, `gh_pr`, `gh_diff`, `gh_issue` — has no built-in access class,
+    // so all five are in the rung-independent interrupt set whatever the rung. The first tool call
+    // therefore suspends the graph on a LangGraph interrupt, and an interrupt with nowhere to
+    // checkpoint throws `MISSING_CHECKPOINTER` instead of suspending — which killed the whole
+    // discovery run on its first tool call, before it could set either a diff or requirements.
+    //
+    // Per run, not per process: this saver's only job is to hold the graph one discovery run
+    // suspends on, and that run dies with the runner it is created beside. `MemorySaver` is what
+    // every other surface that drives a gating-capable agent hands the runner.
+    await runner.init(
+      undefined,
+      getPrDiscoveryAgentConfig(config, discoveryConfig),
+      new MemorySaver(),
+      {
+        owningCommand: 'pr',
+      }
+    );
     await runner.processMessages([
       ...buildSystemMessages(config, readPrDiscoveryPrompt(config)),
       new HumanMessage(buildPrDiscoveryUserMessage(state)),
