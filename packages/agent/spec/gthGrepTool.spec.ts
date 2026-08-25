@@ -652,6 +652,29 @@ describe('gthGrepTool', () => {
       expect(out).not.toContain('NAMED-SECRET');
     });
 
+    // The ancestor walk stops BELOW the work-dir root, so no pattern can withhold the whole tree by
+    // matching the root's own relative path — which is the empty string, since patterns are matched
+    // against a path relative to the work dir.
+    //
+    // An empty pattern is the one input that discriminates, measured: `path.matchesGlob('', '')` is
+    // TRUE while `path.matchesGlob('<any real path>', '')` is FALSE, so an empty pattern matches the
+    // root and nothing else. (`'**'` matches the root too, but it also matches every real file, so
+    // it cannot tell the two implementations apart.) Widen the walk to include the root and this
+    // config hides the entire tree; keep the bound and it hides nothing at all.
+    it('an empty pattern cannot blank the tree by matching the work-dir root', async () => {
+      execFileMock.mockImplementation(rgAbsent);
+      const emptyPatternCfg = { aiignore: { patterns: [''] } } as unknown as GthConfig;
+      const { get } = await import('#src/tools/gthGrepTool.js');
+      const out = (await get(emptyPatternCfg).invoke({ pattern: 'find_me' })) as string;
+      // Nothing is withheld: the empty pattern matches no real path, and the root is not a
+      // candidate. `secretdir` is returned here precisely because these patterns replace the
+      // on-disk `.aiignore` that hides it.
+      expect(out).toContain('ROOT-OK');
+      expect(out).toContain('PUBLIC-OK');
+      expect(out).toContain('NEARMISS-OK');
+      expect(out).toContain('INSIDE-SECRET');
+    });
+
     // The boundary is still the config's to switch off — this is what proves the directory rule is
     // the `.aiignore` boundary widening and not a new unconditional exclusion.
     it('respects an explicit disable: aiignore.enabled=false lets the directory through', async () => {
