@@ -961,6 +961,13 @@ interface AnalyzedSegment {
  *
  * A token that fails this is not mangled into shape; it is simply not named ({@link quotable}), and
  * the sentence falls back to a generic word.
+ *
+ * **It bounds LENGTH as well, and that second condition is not the injection boundary.** A hundred
+ * allow-listed characters carry no whitespace and no line break, so a longer one could not append a
+ * sentence to our prose; the cap is there because this text is rendered on a one-line approval row
+ * and inside a prompt, where an unbounded operand pushes the rest out of view. Both conditions
+ * withhold, and no sentence built on this predicate may name one of them as THE reason — see
+ * {@link withheldHostsSentence}.
  */
 const QUOTABLE_IN_NOTE_RE = /^[A-Za-z0-9~/.[][A-Za-z0-9._~@:/+?=,%#[\]-]{0,99}$/;
 
@@ -995,6 +1002,37 @@ export function listHostsForFloorNote(hosts: readonly string[]): string {
   const withheld = hosts.length - named.length;
   if (withheld === 0) return named.join(', ');
   return [...named, `${withheld} not shown here`].join(', ');
+}
+
+/**
+ * The sentence the floor's PREFLIGHT NOTE adds when {@link listHostsForFloorNote} could not name
+ * every host — empty in the ordinary case, where it named them all.
+ *
+ * **The note asks the rater for the HOSTNAME, so it must not decline to state one and stop there.**
+ * `(1 not shown here)` is true and, on its own, unanswerable: the rater is asked whether the host
+ * impersonates a known one in the same breath as being told it will not be shown. The command
+ * itself is inside the fence, complete and unmodified, so the answer is one line up — this says so.
+ *
+ * **It fires on the COUNT and never on the cause**, for the reason {@link withheldHostsSentence}
+ * gives: {@link quotable} withholds on characters and on length, the second is a function of the
+ * operand, and a note that varied between them would let the author of a hostile line choose which
+ * sentence a reader sees.
+ *
+ * What this does NOT fix: a host can still be pushed past the length cap by a longer path, and the
+ * count is still all the SUMMARY row gets. Raising or reshaping that cap changes what the approval
+ * row can be made to look like and is a decision for a human, not a repair to smuggle in beside a
+ * wording fix.
+ */
+export function withheldHostsPointer(hosts: readonly string[]): string {
+  const withheld = hosts.filter((host) => quotable(host) === null).length;
+  if (withheld === 0) return '';
+  return withheld === 1
+    ? ' One host this command names is NOT quoted above: this note reproduces a host only when it ' +
+        'can do so safely and in full, and this one it could not. Read that one out of the command ' +
+        'text inside the fence before you answer.'
+    : ` ${withheld} hosts this command names are NOT quoted above: this note reproduces a host only ` +
+        'when it can do so safely and in full, and those it could not. Read those out of the ' +
+        'command text inside the fence before you answer.';
 }
 
 /**
@@ -1578,17 +1616,26 @@ function residualSentence(hosts: readonly string[]): string {
  * copy the attacker's sentence into our instruction text, which is strictly worse than naming a
  * count. So the count is what is stated: a rater told that a host was withheld can go and read it
  * inside the fence, and a rater told nothing cannot.
+ *
+ * **It states no CAUSE, because {@link quotable} has two and they are not distinguishable to a
+ * reader.** That predicate bars a character class AND a length, so a wholly ordinary
+ * `raw.githubusercontent.com` URL over 100 characters — every character allow-listed — is withheld
+ * too. A sentence naming the character class was simply false there, in the trusted-text position
+ * this whole path exists to protect. Distinguishing the two causes was the other candidate and is
+ * rejected deliberately: the length is a function of the operand, so an author who wanted a host
+ * unnamed could pick the cause and would pick the mechanical-sounding one, which is the branch a
+ * hostile line prefers. One sentence, true of both, leaves nothing to choose.
  */
 function withheldHostsSentence(hosts: readonly string[]): string {
   const withheld = hosts.filter((host) => quotable(host) === null).length;
   if (withheld === 0) return '';
   return withheld === 1
-    ? ' One host this line names is NOT quoted above: its text contains characters this note will ' +
-        'not reproduce outside the fenced command, so the gate withheld it rather than reshaping ' +
-        'it. Read that one out of the command text itself.'
-    : ` ${withheld} hosts this line names are NOT quoted above: their text contains characters ` +
-        'this note will not reproduce outside the fenced command, so the gate withheld them rather ' +
-        'than reshaping them. Read those out of the command text itself.';
+    ? ' One host this line names is NOT quoted above: this note reproduces a host only when it can ' +
+        'do so safely and in full, and this one it could not, so the gate withheld it rather than ' +
+        'reshaping it. Read that one out of the command text itself.'
+    : ` ${withheld} hosts this line names are NOT quoted above: this note reproduces a host only ` +
+        'when it can do so safely and in full, and those it could not, so the gate withheld them ' +
+        'rather than reshaping them. Read those out of the command text itself.';
 }
 
 /**
