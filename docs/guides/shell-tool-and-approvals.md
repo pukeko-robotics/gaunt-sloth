@@ -78,6 +78,12 @@ command that spans twenty lines is shown whole rather than cut down to its first
   were shown, and nothing widens it on your behalf. For a whole family, write a `glob` or `regexp`
   entry in `approvals.deny` (below), or broaden the saved entry in the file by hand.
 
+**If you break one of those files by hand, the session says so.** A file that cannot be read at all
+is reported as an error naming the file, and nothing saved in it is in force until you fix it — you
+are asked about those calls again instead. A single entry that cannot be read is reported as a
+warning naming its position in the file; the entries around it still hold. Fix the file rather than
+leaving it: the next answer you save rewrites it, and what could not be read is not carried over.
+
 ### Where the prompt is written
 
 This depends on which surface you are in, and it matters only when you are capturing a session to a

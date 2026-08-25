@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HumanMessage } from '@langchain/core/messages';
 import type { GthConfig } from '#src/config.js';
+import { StatusLevel } from '#src/core/types.js';
 import type { PendingToolInterrupt, StatusUpdateCallback } from '#src/core/types.js';
 import { peekProjectDir, setProjectDir } from '#src/utils/systemUtils.js';
 import { SHELL_ALLOWLIST_FILE, SHELL_DENYLIST_FILE } from '#src/constants.js';
@@ -264,6 +265,53 @@ describe('GthAgentRunner — [[EXT-107]] the persisted deny store', () => {
     expect(decide).not.toHaveBeenCalled();
     // And the file is byte-for-byte what was there.
     expect(readFileSync(denyFile, 'utf8')).toBe(handWritten);
+  });
+
+  /**
+   * [[EXT-143]] — **a broken file tells the user, in the words of the file that broke.**
+   *
+   * The store is list-agnostic and stays so; the noun it prints is the one thing the caller has to
+   * supply, and these are the two cases that prove each side supplies its own. Asserted through the
+   * runner rather than the store, because the store passing its own tests proves nothing about a
+   * runner that wired the same word into both files — which is the mistake available here, and the
+   * one that would put "approvals" in front of a user whose refusals are the thing not in force.
+   *
+   * The fallback is asserted alongside the message every time: the human is still asked. Reporting
+   * the failure is the change; failing to a re-prompt is [[EXT-107]]'s design and is not.
+   */
+  it('reports a deny file it cannot read — once, naming that file and the REFUSALS lost', async () => {
+    writeFileSync(denyFile, '{ "version": 2, "grants": [ {"entry": ] }', 'utf8');
+
+    const { decide } = await runWith({
+      commands: ['npm publish', 'npm publish'],
+      decide: approveOnce,
+    });
+
+    const notices = statusUpdateCallback.mock.calls.filter(([, message]) =>
+      String(message).includes(denyFile)
+    );
+    // ONE notice for the session, not one per gated call: the store is loaded once per runner.
+    expect(notices).toHaveLength(1);
+    expect(notices[0][0]).toBe(StatusLevel.ERROR);
+    expect(String(notices[0][1])).toContain('refusals');
+    expect(String(notices[0][1])).not.toContain('approvals');
+    // The fallback, unchanged: nothing was refused by rule, so the human was asked instead.
+    expect(decide).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports an allow file it cannot read, naming that file and the APPROVALS lost', async () => {
+    writeFileSync(allowFile, 'not json at all', 'utf8');
+
+    const { decide } = await runWith({ commands: ['npm test'], decide: approveOnce });
+
+    const notices = statusUpdateCallback.mock.calls.filter(([, message]) =>
+      String(message).includes(allowFile)
+    );
+    expect(notices).toHaveLength(1);
+    expect(notices[0][0]).toBe(StatusLevel.ERROR);
+    expect(String(notices[0][1])).toContain('approvals');
+    expect(String(notices[0][1])).not.toContain('refusals');
+    expect(decide).toHaveBeenCalledTimes(1);
   });
 
   /**

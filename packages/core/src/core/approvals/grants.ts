@@ -62,6 +62,14 @@
  * Reads stay fail-closed-on-auto-approval: a missing, unreadable, malformed or partly-malformed
  * file yields fewer grants (at worst none) rather than throwing, because an empty allow-list only
  * ever means *prompt*.
+ *
+ * **And a read that lost something says so** ([[EXT-143]]). Recovering by asking the human again is
+ * the right direction; doing it in silence is not, because this is a project file people hand-edit
+ * and commit, and the failure it fails on is a typo. A user who saved twenty refusals and later
+ * broke the file has no other way to learn that none of them are in force — the gate behaves
+ * exactly as though they had never been saved. So a whole file that cannot be read is reported at
+ * {@link StatusLevel.ERROR} ({@link unreadableFileNotice}) and an individual entry that cannot be
+ * read names itself ({@link skippedEntriesNotice}), while the fallback stays exactly what it was.
  */
 import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { approvalEntrySchema, renderApprovalEntryObject } from '#src/config/schema.js';
@@ -426,6 +434,108 @@ export class ApprovalGrantStore {
   }
 }
 
+/**
+ * [[EXT-143]] — the words a load-failure notice uses for what the file holds
+ * ({@link PersistedApprovalGrantsOptions.holds}), and what it says when the caller did not say.
+ *
+ * **The fallback is deliberately vague, and a confident default would be the bug.** These notices
+ * exist to correct a false belief about a specific file; a default of `'approvals'` would put that
+ * exact word into the message a *deny* store prints, so the one sentence written to stop a user
+ * trusting something that is not in force would misname what they lost. A caller that says nothing
+ * gets a sentence that is true of either file instead.
+ */
+function savedNoun(holds: 'approvals' | 'refusals' | undefined): string {
+  return holds ?? 'decisions';
+}
+
+/** The reason clause for a file that parsed but holds no entry list this version can read. */
+const UNRECOGNISED_SHAPE = 'the file holds no list of saved entries this version recognises';
+
+/** How much of one unreadable entry a notice quotes back, and how many it quotes at all. */
+const SKIPPED_ENTRY_CHARS = 160;
+const SKIPPED_ENTRIES_NAMED = 5;
+
+/** Clip a quoted fragment so one enormous entry cannot become the whole message. */
+function clip(text: string, limit: number): string {
+  return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
+}
+
+/** The reason clause for a file that could not be opened or parsed, in the reader's own words. */
+function describeLoadFailure(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const collapsed = raw.replace(/\s+/g, ' ').trim();
+  return collapsed.length > 0 ? clip(collapsed, 200) : 'the file could not be opened';
+}
+
+/**
+ * [[EXT-143]] — **the whole file could not be read, so nothing saved in it is in force.**
+ *
+ * It names the file, the reason (a JSON parser's own message points a hand-editor straight at their
+ * trailing comma) and the **consequence**, which is the part a user cannot infer: the gate behaves
+ * exactly as it would if the file had never been written, so the calls those entries covered are
+ * asked about again. Saying only that a file failed to parse would leave the reader to guess
+ * whether their saved answers still hold.
+ *
+ * **{@link StatusLevel.ERROR}, not a warning**, which is the one loudness decision here worth
+ * arguing. Three reasons, and the first is mechanical: `consoleLevel` is user-configurable down to
+ * `error`, so a warning is the loudest thing that can be *filtered out entirely* while the session
+ * runs on — and the whole defect being fixed is a user not being told. Second, the state is one the
+ * user did not choose and cannot otherwise discover, unlike the `bypass` advisory (a WARNING) which
+ * describes something they just did. Third, it is time-limited: the next saved entry rewrites this
+ * file from an empty store, so a message missed now is a file that is gone rather than broken.
+ *
+ * It is **not** fatal. The session continues, degraded to asking, because a refusal to start over a
+ * bookkeeping file would be a worse answer than a prompt.
+ */
+function unreadableFileNotice(
+  filePath: string,
+  holds: 'approvals' | 'refusals' | undefined,
+  reason: string
+): ShellApprovalGateNotice {
+  return {
+    level: StatusLevel.ERROR,
+    message:
+      `Your saved shell ${savedNoun(holds)} could not be read from ${filePath} (${reason}). ` +
+      'None of them are in force in this session — the calls they cover will be asked about again ' +
+      'instead. Fix the file to restore them; saving a new one now overwrites it as it stands.',
+  };
+}
+
+/**
+ * [[EXT-143]] — **the entries that could not be read, each named where it sits in the file.**
+ *
+ * A position and the text itself, because the point of the message is that the user can go and find
+ * the thing: this is a file they may have committed, and "one of your entries is malformed" sends
+ * them reading forty of them. One notice per file rather than one per entry, the same choice the
+ * migration notice makes — a line each would bury the count in its own repetition.
+ *
+ * A **warning**, where a whole-file failure is an error, because the consequence is bounded and the
+ * message says so: the rest of the file is still in force.
+ */
+function skippedEntriesNotice(
+  filePath: string,
+  holds: 'approvals' | 'refusals' | undefined,
+  skipped: readonly { position: number; value: unknown }[]
+): ShellApprovalGateNotice {
+  const named = skipped
+    .slice(0, SKIPPED_ENTRIES_NAMED)
+    .map(({ position, value }) => {
+      const rendered = JSON.stringify(value) ?? String(value);
+      return `entry ${position} — ${clip(rendered, SKIPPED_ENTRY_CHARS)}`;
+    })
+    .join('; ');
+  const unnamed = skipped.length - SKIPPED_ENTRIES_NAMED;
+  const rest = unnamed > 0 ? `; and ${unnamed} more` : '';
+  const one = skipped.length === 1;
+  return {
+    level: StatusLevel.WARNING,
+    message:
+      `${skipped.length} ${one ? 'entry' : 'entries'} in your saved shell ${savedNoun(holds)} ` +
+      `(${filePath}) could not be read and ${one ? 'was' : 'were'} skipped: ${named}${rest}. ` +
+      `${one ? 'It is' : 'They are'} not in force; the rest of the file is.`,
+  };
+}
+
 /** Optional seams for {@link PersistedApprovalGrants}. */
 export interface PersistedApprovalGrantsOptions {
   /**
@@ -448,6 +558,21 @@ export interface PersistedApprovalGrantsOptions {
    *   this on would give the deny store the one load path that writes.
    */
   legacyPrefixMigration?: boolean;
+  /**
+   * [[EXT-143]] — **what this file holds, in the noun a user reads** in a load-failure notice
+   * ({@link unreadableFileNotice}, {@link skippedEntriesNotice}). The allow store passes
+   * `'approvals'` and the deny store `'refusals'`.
+   *
+   * It is a word, not a behaviour, and that is what keeps the class list-agnostic: nothing here
+   * reads it, compares against it or decides by it. A store still never learns which list it is —
+   * the file path decides that and the runner decides which list it hands to the matcher — but a
+   * message that could not name what was lost would be a message the reader cannot act on, since
+   * the two files fail in opposite directions.
+   *
+   * Omitting it is safe: {@link savedNoun} then says something true of either file rather than
+   * guessing. What is NOT safe is defaulting it to one side, so it does not.
+   */
+  holds?: 'approvals' | 'refusals';
 }
 
 /**
@@ -479,44 +604,70 @@ export class PersistedApprovalGrants {
 
   constructor(filePath: string, options?: PersistedApprovalGrantsOptions) {
     this.filePath = filePath;
-    const { grants, migrated } = PersistedApprovalGrants.load(
-      filePath,
-      options?.onNotice,
-      options?.legacyPrefixMigration ?? true
-    );
+    const { grants, migrated } = PersistedApprovalGrants.load(filePath, options);
     this.store = new ApprovalGrantStore(grants);
     if (migrated) this.tryPersist();
   }
 
+  /**
+   * Read the file, and **report anything it lost on the way** ([[EXT-143]]).
+   *
+   * Every outcome that drops something a human saved reaches {@link
+   * PersistedApprovalGrantsOptions.onNotice}: an unreadable or unparseable file, a file whose shape
+   * this version does not recognise — a v1 `prefixes` file on the deny side, where the migration is
+   * deliberately off, is one — and any individual entry the grammar rejects. Only two outcomes are
+   * silent, and neither loses anything: a file that is not there, and one that reads cleanly.
+   *
+   * The recovery is unchanged and deliberately unchanged. A failure here still yields fewer grants
+   * rather than throwing, so an `always` degrades to asking the human again.
+   */
   private static load(
     filePath: string,
-    onNotice: ((notice: ShellApprovalGateNotice) => void) | undefined,
-    legacyPrefixMigration: boolean
+    options: PersistedApprovalGrantsOptions | undefined
   ): { grants: ApprovalGrant[]; migrated: boolean } {
+    const onNotice = options?.onNotice;
+    const holds = options?.holds;
+    const empty = { grants: [] as ApprovalGrant[], migrated: false };
+
+    let parsed: unknown;
     try {
-      if (!existsSync(filePath)) return { grants: [], migrated: false };
-      const parsed: unknown = JSON.parse(readFileSync(filePath, 'utf8'));
-      if (!parsed || typeof parsed !== 'object') return { grants: [], migrated: false };
-      const record = parsed as { version?: unknown; grants?: unknown; prefixes?: unknown };
-
-      if (Array.isArray(record.grants)) {
-        const fallbackTime = fileWriteTime(filePath);
-        const grants = record.grants
-          .map((value) => readGrant(value, fallbackTime))
-          .filter((grant): grant is ApprovalGrant => grant !== null);
-        return { grants, migrated: false };
-      }
-
-      if (legacyPrefixMigration && Array.isArray(record.prefixes)) {
-        return PersistedApprovalGrants.migrateFromV1(record.prefixes, filePath, onNotice);
-      }
-
-      return { grants: [], migrated: false };
-    } catch {
+      if (!existsSync(filePath)) return empty;
+      parsed = JSON.parse(readFileSync(filePath, 'utf8'));
+    } catch (e) {
       // Corrupt / unreadable → behave as empty. Fail-closed on auto-approval: an empty store only
-      // ever means "prompt", so there is nothing to gain by throwing at a user mid-run.
-      return { grants: [], migrated: false };
+      // ever means "prompt", so there is nothing to gain by throwing at a user mid-run — but they
+      // are told, because the store they are relying on is not the store they have.
+      onNotice?.(unreadableFileNotice(filePath, holds, describeLoadFailure(e)));
+      return empty;
     }
+
+    if (!parsed || typeof parsed !== 'object') {
+      onNotice?.(unreadableFileNotice(filePath, holds, UNRECOGNISED_SHAPE));
+      return empty;
+    }
+    const record = parsed as { version?: unknown; grants?: unknown; prefixes?: unknown };
+
+    if (Array.isArray(record.grants)) {
+      const fallbackTime = fileWriteTime(filePath);
+      const grants: ApprovalGrant[] = [];
+      const skipped: { position: number; value: unknown }[] = [];
+      record.grants.forEach((value, index) => {
+        const grant = readGrant(value, fallbackTime);
+        // The position is the entry's place in the file's own list, 1-based, so the number in the
+        // message is a number the reader can count to in their editor.
+        if (grant === null) skipped.push({ position: index + 1, value });
+        else grants.push(grant);
+      });
+      if (skipped.length > 0) onNotice?.(skippedEntriesNotice(filePath, holds, skipped));
+      return { grants, migrated: false };
+    }
+
+    if ((options?.legacyPrefixMigration ?? true) && Array.isArray(record.prefixes)) {
+      return PersistedApprovalGrants.migrateFromV1(record.prefixes, filePath, onNotice);
+    }
+
+    onNotice?.(unreadableFileNotice(filePath, holds, UNRECOGNISED_SHAPE));
+    return empty;
   }
 
   /** Each v1 prefix → an `exact` entry for the same string, with ONE notice naming the file. */

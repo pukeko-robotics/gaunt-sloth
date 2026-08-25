@@ -2547,6 +2547,9 @@ export class GthAgentRunner {
       const filePath = getGslothConfigWritePath(SHELL_ALLOWLIST_FILE);
       this.persistedGrants = new PersistedApprovalGrants(filePath, {
         onNotice: (notice) => this.statusUpdate(notice.level, notice.message),
+        // [[EXT-143]] — the word a load-failure notice uses for what this file holds. The store is
+        // list-agnostic and stays so; only the message needs to know, and only the caller can say.
+        holds: 'approvals',
       });
     } catch (e) {
       // Path/IO failure → behave as no persisted store (still safe: just prompts more).
@@ -2582,6 +2585,10 @@ export class GthAgentRunner {
       this.persistedDenials = new PersistedApprovalGrants(filePath, {
         onNotice: (notice) => this.statusUpdate(notice.level, notice.message),
         legacyPrefixMigration: false,
+        // [[EXT-143]] — the mirror of the allow store's word, and the reason the store takes one at
+        // all: a broken deny file loses refusals, and a message that said "approvals" would name
+        // the wrong loss in the one place the user has to act on it.
+        holds: 'refusals',
       });
     } catch (e) {
       // Path/IO failure → behave as no persisted refusals. This one is NOT safe in the way the

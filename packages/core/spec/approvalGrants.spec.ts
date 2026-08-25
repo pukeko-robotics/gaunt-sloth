@@ -11,6 +11,7 @@ import {
   toolGrantEntry,
   trustWithdrawalWeakens,
   type ApprovalGrant,
+  type PersistedApprovalGrantsOptions,
 } from '#src/core/approvals/grants.js';
 import {
   type ApprovalSubject,
@@ -22,7 +23,8 @@ import {
 } from '#src/core/approvals/matcher.js';
 import { UNRESOLVED_MCP_SERVER } from '#src/core/approvals/mcpSubjects.js';
 import { approvalEntrySchema } from '#src/config/schema.js';
-import type { ApprovalEntry } from '#src/config/shell-policy.js';
+import type { ApprovalEntry, ShellApprovalGateNotice } from '#src/config/shell-policy.js';
+import { StatusLevel } from '#src/core/types.js';
 
 /**
  * EXT-71 §3/§3.1/§6 — the store the escalation menu writes, and the v1 migration.
@@ -728,6 +730,195 @@ describe('PersistedApprovalGrants', () => {
     expect(() => store.add(grantOf('npm test'))).not.toThrow();
     // The grant is still in force for this session.
     expect(approves(store.entries(), 'npm test')).toBe(true);
+  });
+
+  /**
+   * [[EXT-143]] — **a load that lost something says so.**
+   *
+   * The recovery was always right: a file that cannot be read yields no grants, so an `always`
+   * degrades to asking the human again. The silence was not. This is a project file people
+   * hand-edit and commit, and a user who broke it with a trailing comma has no other way to learn
+   * that the twenty refusals they saved are not in force — the gate behaves exactly as though they
+   * had never been saved.
+   *
+   * Every case here asserts the WRONG noun is absent as well as the right one present, because the
+   * word is the whole of what the two sides do not share and a store that hard-coded one would
+   * still pass an assertion that only looked for the other.
+   */
+  describe('a load that lost something says so ([[EXT-143]])', () => {
+    const noticesFor = (
+      path: string,
+      options?: Omit<PersistedApprovalGrantsOptions, 'onNotice'>
+    ): { notices: ShellApprovalGateNotice[]; store: PersistedApprovalGrants } => {
+      const onNotice = vi.fn();
+      const store = new PersistedApprovalGrants(path, { ...options, onNotice });
+      return { notices: onNotice.mock.calls.map(([notice]) => notice), store };
+    };
+
+    /** A file broken the way a hand-edit breaks one: a trailing comma. */
+    const writeCorrupt = (path: string) =>
+      writeFileSync(
+        path,
+        '{ "version": 2, "grants": [ {"entry": {"type": "shell", "matcher": "exact", "pattern": "rm -rf /"}}, ] }',
+        'utf8'
+      );
+
+    /**
+     * The acceptance: the file, and **the consequence** — the half a user cannot infer from "parse
+     * error". ERROR rather than WARNING is argued in `unreadableFileNotice`; the short of it is
+     * that `consoleLevel` is configurable down to `error`, so a warning is the loudest thing that
+     * can be filtered out entirely while the session runs on.
+     */
+    it('reports an unreadable deny file at ERROR, naming the file and what is no longer in force', () => {
+      writeCorrupt(file);
+      const { notices, store } = noticesFor(file, { holds: 'refusals' });
+
+      expect(notices).toHaveLength(1);
+      expect(notices[0].level).toBe(StatusLevel.ERROR);
+      expect(notices[0].message).toContain(file);
+      expect(notices[0].message).toContain('refusals');
+      expect(notices[0].message).toContain('None of them are in force');
+      // It names what the reader lost, and never the other file's word.
+      expect(notices[0].message).not.toContain('approvals');
+      // CONTROL: the recovery is exactly what it was — no throw, no grants, so the gate asks.
+      expect(store.size()).toBe(0);
+    });
+
+    it('names APPROVALS on the allow store, and never the deny side’s word', () => {
+      writeCorrupt(file);
+      const { notices } = noticesFor(file, { holds: 'approvals' });
+
+      expect(notices).toHaveLength(1);
+      expect(notices[0].message).toContain('approvals');
+      expect(notices[0].message).not.toContain('refusals');
+    });
+
+    /**
+     * A caller that names neither gets a sentence true of either file. A default of `'approvals'`
+     * would be a confident wrong noun in the one message written to correct a false belief.
+     */
+    it('falls back to a word true of either file when the caller names neither side', () => {
+      writeCorrupt(file);
+      const { notices } = noticesFor(file);
+
+      expect(notices[0].message).toContain('decisions');
+      expect(notices[0].message).not.toContain('approvals');
+      expect(notices[0].message).not.toContain('refusals');
+    });
+
+    /** Nothing was lost, so there is nothing to say — the control that keeps this from firing always. */
+    it('says nothing about a file that is missing, or one that reads cleanly', () => {
+      expect(noticesFor(join(dir, 'nope.json')).notices).toEqual([]);
+
+      writeFileSync(file, JSON.stringify({ version: 2, grants: [grantOf('npm test')] }), 'utf8');
+      const { notices, store } = noticesFor(file, { holds: 'refusals' });
+      expect(notices).toEqual([]);
+      expect(store.size()).toBe(1);
+    });
+
+    /**
+     * A shape this version cannot read loses just as much as a parse error does, and the deny side
+     * has a real instance of it: a `prefixes` file hand-written by analogy with the allow side,
+     * which [[EXT-107]] deliberately does not migrate. Left silent, that is a trap of our own
+     * construction — the file looks fine and holds nothing.
+     */
+    it('reports a file whose shape it cannot read — a deny file holding v1 prefixes', () => {
+      writeFileSync(file, JSON.stringify({ version: 1, prefixes: ['npm test'] }), 'utf8');
+      const { notices, store } = noticesFor(file, {
+        holds: 'refusals',
+        legacyPrefixMigration: false,
+      });
+
+      expect(notices).toHaveLength(1);
+      expect(notices[0].level).toBe(StatusLevel.ERROR);
+      expect(notices[0].message).toContain(file);
+      expect(notices[0].message).toContain('refusals');
+      expect(store.size()).toBe(0);
+
+      // CONTROL: the same file on the migrating side is not a shape failure at all — it migrates,
+      // and says the migration's own thing instead.
+      const migrating = noticesFor(file, { holds: 'approvals' });
+      expect(migrating.notices).toHaveLength(1);
+      expect(migrating.notices[0].message).toContain('PREFIX');
+      expect(migrating.store.size()).toBe(1);
+    });
+
+    /**
+     * **The entry names itself**, by position and by its own text, because the point is that the
+     * user can go and find it: this is a file they may have committed, and "one of your entries is
+     * malformed" sends them reading all forty.
+     */
+    it('names a skipped entry by its position in the file and quotes it back', () => {
+      writeFileSync(
+        file,
+        JSON.stringify({
+          version: 2,
+          grants: [
+            grantOf('npm test'),
+            // Rejected by the grammar's own schema (an unknown key), and recognisable in a message.
+            { entry: { type: 'shell', matcher: 'exact', pattern: 'git push --force', oops: 1 } },
+            grantOf('git status'),
+          ],
+        }),
+        'utf8'
+      );
+      const { notices, store } = noticesFor(file, { holds: 'refusals' });
+
+      expect(notices).toHaveLength(1);
+      // A warning, not an error: the consequence is bounded, and the message says so.
+      expect(notices[0].level).toBe(StatusLevel.WARNING);
+      expect(notices[0].message).toContain(file);
+      expect(notices[0].message).toContain('entry 2');
+      expect(notices[0].message).toContain('git push --force');
+      expect(notices[0].message).toContain('refusals');
+      expect(notices[0].message).not.toContain('approvals');
+      // CONTROL: the neighbours are untouched, which is what makes this bounded.
+      expect(store.size()).toBe(2);
+      expect(approves(store.entries(), 'npm test')).toBe(true);
+    });
+
+    /** One notice for the file, not one per entry — the same choice the migration notice makes. */
+    it('reports every skipped entry in ONE notice, naming each', () => {
+      writeFileSync(
+        file,
+        JSON.stringify({
+          version: 2,
+          grants: [
+            { entry: { type: 'shell', matcher: 'exact', pattern: 'first broken', oops: 1 } },
+            grantOf('npm test'),
+            { entry: { type: 'shell', matcher: 'exact', pattern: 'third broken', oops: 1 } },
+          ],
+        }),
+        'utf8'
+      );
+      const { notices, store } = noticesFor(file, { holds: 'approvals' });
+
+      expect(notices).toHaveLength(1);
+      expect(notices[0].message).toContain('entry 1');
+      expect(notices[0].message).toContain('first broken');
+      expect(notices[0].message).toContain('entry 3');
+      expect(notices[0].message).toContain('third broken');
+      expect(store.size()).toBe(1);
+    });
+
+    /** A file broken wholesale must not become the whole session's output. */
+    it('quotes at most five, and says how many it did not quote', () => {
+      writeFileSync(
+        file,
+        JSON.stringify({
+          version: 2,
+          grants: Array.from({ length: 7 }, (_unused, index) => ({
+            entry: { type: 'shell', matcher: 'exact', pattern: `broken ${index}`, oops: 1 },
+          })),
+        }),
+        'utf8'
+      );
+      const { notices } = noticesFor(file, { holds: 'approvals' });
+
+      expect(notices[0].message).toContain('entry 5');
+      expect(notices[0].message).not.toContain('entry 6');
+      expect(notices[0].message).toContain('2 more');
+    });
   });
 
   /**
