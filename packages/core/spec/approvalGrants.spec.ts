@@ -857,6 +857,14 @@ describe('PersistedApprovalGrants', () => {
       expect(noticesFor(file, { holds: 'refusals' }).notices).toHaveLength(1);
       writeFileSync(file, '{"version":2,"grants":"nope"}', 'utf8');
       expect(noticesFor(file, { holds: 'refusals' }).notices).toHaveLength(1);
+
+      // A list a hand-editor typed under a name no version ever wrote is still a list we are not
+      // reading, so it reports — a file that looks full and holds nothing is the trap this closes.
+      writeFileSync(file, '{"version":2,"entries":[{"pattern":"npm publish"}]}', 'utf8');
+      expect(noticesFor(file, { holds: 'refusals' }).notices).toHaveLength(1);
+      // ...and the same invented key, empty, still lost nothing.
+      writeFileSync(file, '{"version":2,"entries":[]}', 'utf8');
+      expect(noticesFor(file, { holds: 'refusals' }).notices).toEqual([]);
     });
 
     /**

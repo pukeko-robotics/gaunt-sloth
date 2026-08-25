@@ -461,19 +461,25 @@ const UNRECOGNISED_SHAPE = 'the file holds no list of saved entries this version
  * `null` — holds nothing, and telling its owner every session that saved answers they do not have
  * are not in force is the same over-claim the consequence sentence had to drop, one level down.
  *
- * What counts as a loss is a list that is present and non-empty, or **a value sitting where a list
- * belongs** — a `grants` key holding something other than an array, or a scalar where the store
- * object should be. Neither is what emptying the file by hand produces (that yields `{}`, or an
- * empty file, which fails to parse and is reported with the reader's own reason instead), so both
- * are content this version cannot read.
+ * What counts as a loss is **a non-empty list under any key at all**, or **a value sitting where a
+ * list belongs** — a `grants` key holding something other than an array, or a scalar where the store
+ * object should be. Neither is what emptying the file by hand produces (that yields `{}`, or an empty
+ * file, which fails to parse and is reported with the reader's own reason instead), so both are
+ * content this version cannot read.
+ *
+ * **Any key, deliberately, and not just `grants`/`prefixes`.** Those two are the only keys a shipped
+ * version ever wrote, so keying the test on them would be defensible — but the reader this notice
+ * exists for is the one who hand-edits the file, and a list they typed under a name we do not know is
+ * still a list we are not reading. Silence there would be the very trap the notice was added to
+ * close: a file that looks full and holds nothing the gate can see.
  */
 function holdsSavedEntries(parsed: unknown): boolean {
   if (Array.isArray(parsed)) return parsed.length > 0;
   if (parsed === null || typeof parsed !== 'object') return parsed !== null;
+  const values = Object.values(parsed as Record<string, unknown>);
+  if (values.some((value) => Array.isArray(value) && value.length > 0)) return true;
   const { grants, prefixes } = parsed as { grants?: unknown; prefixes?: unknown };
-  return [grants, prefixes].some((list) =>
-    Array.isArray(list) ? list.length > 0 : list !== undefined
-  );
+  return [grants, prefixes].some((list) => list !== undefined && !Array.isArray(list));
 }
 
 /** How much of one unreadable entry a notice quotes back, and how many it quotes at all. */
