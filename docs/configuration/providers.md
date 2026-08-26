@@ -494,10 +494,13 @@ You can use the `GOOGLE_API_KEY` environment variable instead of specifying `api
 }
 ```
 
-VertexAI typically uses gcloud authentication; no `apiKey` is needed in the config. 
-It will give you 401 error if you have `GOOGLE_API_KEY` with AI Studio API key,
-you may need to remove `GOOGLE_API_KEY` from environment variables and authenticate with ADC `gcloud auth application-default login`
-or to use API key issued by Vertex AI.
+VertexAI uses gcloud authentication; no `apiKey` is needed in the config, so authenticate with
+`gcloud auth application-default login`.
+
+**A `GOOGLE_API_KEY` in your environment does not change this.** The provider is chosen by your
+config, so a `vertexai` block keeps using Application Default Credentials even when an AI Studio
+key is exported for a `google-genai` profile. To use a Vertex AI express-mode key instead, put it
+in the `llm` block as `apiKey` — that is a deliberate choice and it is honoured.
 
 **Gemini thinking (both `google-genai` and `vertexai`)**
 
@@ -720,6 +723,11 @@ export async function configure() {
 VertexAI usually needs `gcloud auth application-default login`
 (or both `gcloud auth login` and `gcloud auth application-default login`) and does not need any separate API keys.
 
+**This example builds the client itself, so it does not get the `type: vertexai` behaviour above.**
+A `GOOGLE_API_KEY` exported in your environment takes over the request here, ahead of ADC — and an
+AI Studio key is not valid for Vertex AI endpoints, so it fails with a 401. Either unset it, or set
+`apiKey` explicitly to a Vertex AI express-mode key.
+
 ```javascript
 export async function configure() {
   const google = await import('@langchain/google/node');
@@ -727,7 +735,6 @@ export async function configure() {
     llm: new google.ChatGoogle({
       model: 'gemini-2.5-pro', // Consider checking for latest recommended model versions
       vertexai: true,
-      // API Key from AI Studio should also work
       //// Other parameters might be relevant depending on Vertex AI API updates.
       //// The project is not in the interface, but it is in documentation and it seems to work.
       // project: 'your-cool-google-cloud-project',

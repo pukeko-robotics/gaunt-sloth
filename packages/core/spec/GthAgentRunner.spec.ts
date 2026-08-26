@@ -352,7 +352,13 @@ describe('GthAgentRunner', () => {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         expect(message).toMatch(/gcloud auth application-default login/);
+        // CFG-58 — the AI Studio caveat is SCOPED to the hand-built client, not stated flatly.
+        // The positive pins wording only the scoped message has, and the negative pins wording
+        // only the unscoped one had, so a revert to "make sure GOOGLE_API_KEY is unset" reds
+        // here instead of quietly sending users after a cause the preset already rules out.
+        expect(message).toMatch(/ignores any `?GOOGLE_API_KEY/);
         expect(message).toMatch(/Google AI Studio key/);
+        expect(message).not.toMatch(/make sure `?GOOGLE_API_KEY`? is unset/);
       }
     });
 
