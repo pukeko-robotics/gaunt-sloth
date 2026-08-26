@@ -92,6 +92,12 @@ const globalIgnores = [
   // Globbed across every bed rather than named one at a time, so a bed added later is covered.
   'evals/*/workdir/out/**',
   'evals/*/workdir/.gsloth/gth_*/**',
+  // A bed that provisions a Python environment leaves thousands of installed files behind, and a
+  // hundred of them are .ts/.js that this config would otherwise parse. Nothing in a virtualenv is
+  // ours to lint, and on a machine where a bed has been run the traversal is what makes the lint
+  // gate appear to hang rather than fail.
+  '**/.venv/**',
+  '**/__pycache__/**',
 ];
 
 export default defineConfig([

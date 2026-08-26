@@ -13,3 +13,5 @@ vitest-it.config.js
 vitest-it.config.d.ts
 evals/*/workdir/out/
 evals/*/workdir/.gsloth/gth_*/
+.venv/
+__pycache__/
