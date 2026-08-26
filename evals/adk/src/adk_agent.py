@@ -7,7 +7,7 @@ what the eval's `must_contain` assertions grade on — the eval cannot see A2A t
 (`must_call` is a parse-time error for this target), so a marker the tool alone emits is the
 proof the tool actually ran.
 
-Run (via run-adk-eval.sh):
+Run (via evals/adk/run.sh):
     ADK_A2A_PORT=<port> uvicorn adk_agent:app --host 127.0.0.1 --port <port>
 
 The port is read from ADK_A2A_PORT so the agent card's rpc `url` (built by `to_a2a`) matches the

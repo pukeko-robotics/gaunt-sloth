@@ -1,4 +1,4 @@
-# eval-it — live multi-identity MCP authorization suite for `gth eval` (BATCH-13)
+# `evals/mcp-authz` — live multi-identity MCP authorization suite for `gth eval` (BATCH-13)
 
 A **standalone, on-demand** integration suite that exercises `gth eval`'s identity matrix against a
 **real HTTP MCP server** with **per-identity bearer-token authorization**. It is the first *live*
@@ -55,13 +55,13 @@ to call a visible tool. A tool is therefore either:
 ## Run it
 
 ```bash
-# from the repo root or eval-it/ — builds the CLI, starts the MCP server, runs the suite, tears down
-eval-it/run-authz-eval.sh                       # the passing matrix (authz.suite.yaml)  -> exit 0
-eval-it/run-authz-eval.sh authz-broken.suite.yaml   # the discrimination proof            -> exit 1
-eval-it/run-authz-eval.sh multiturn-smoke.suite.yaml # live multi-turn Anthropic smoke     -> exit 0
+# from anywhere — builds the CLI, starts the MCP server, runs the suite, tears down
+evals/mcp-authz/run.sh                       # the passing matrix (authz.suite.yaml)  -> exit 0
+evals/mcp-authz/run.sh authz-broken.suite.yaml   # the discrimination proof            -> exit 1
+evals/mcp-authz/run.sh multiturn-smoke.suite.yaml # live multi-turn Anthropic smoke     -> exit 0
 
 # faster iteration (skip the build if you just built):
-SKIP_BUILD=1 eval-it/run-authz-eval.sh
+SKIP_BUILD=1 evals/mcp-authz/run.sh
 ```
 
 The script:
@@ -107,9 +107,9 @@ Exits 0; the output `turns[]` breakdown confirms it routed through the multi-tur
 ## Layout
 
 ```
-eval-it/
+evals/mcp-authz/
 ├── src/authz-mcp-server.ts        # the real HTTP (Streamable) MCP server (@modelcontextprotocol/sdk)
-├── run-authz-eval.sh              # server lifecycle + hermetic run + exit-code propagation
+├── run.sh                         # server lifecycle + hermetic run + exit-code propagation
 ├── workdir/
 │   ├── authz.suite.yaml           # the passing identity matrix (5 cases × 3 identities = 15 cells)
 │   ├── authz-broken.suite.yaml    # the discrimination-proof (exit 1)

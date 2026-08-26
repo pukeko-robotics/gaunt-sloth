@@ -1,9 +1,9 @@
-# adk-eval-it — live ADK-agent eval bed for `gth eval` (BATCH-16)
+# `evals/adk` — live ADK-agent eval bed for `gth eval` (BATCH-16)
 
 A **standalone, on-demand** bed that stands up a **real Python `google-adk` agent** over the A2A
 protocol and grades it end-to-end through `gth eval`'s **`adk-agent` target** (BATCH-14). It is the
 *live* validation of that target against a genuine running ADK agent — not a fake. Sibling of the
-`eval-it/` BATCH-13 bed; same shape, different SUT.
+`evals/mcp-authz/` BATCH-13 bed; same shape, different SUT.
 
 It is **not published**, **not in the root `pnpm build`**, and **not wired into `pnpm run it`** — run
 it by hand.
@@ -59,11 +59,11 @@ The `url` in both suites must match the port the agent is served on (`ADK_A2A_PO
 
 ```bash
 # builds the CLI, provisions the venv (first run), starts the agent, runs the suite, tears down
-adk-eval-it/run-adk-eval.sh                        # the passing suite (adk.suite.yaml)   -> exit 0
-adk-eval-it/run-adk-eval.sh adk-broken.suite.yaml  # the discrimination proof             -> exit 1
+evals/adk/run.sh                        # the passing suite (adk.suite.yaml)   -> exit 0
+evals/adk/run.sh adk-broken.suite.yaml  # the discrimination proof             -> exit 1
 
 # faster iteration (skip the build and/or the venv provisioning if already done):
-SKIP_BUILD=1 SKIP_VENV=1 adk-eval-it/run-adk-eval.sh
+SKIP_BUILD=1 SKIP_VENV=1 evals/adk/run.sh
 ```
 
 The script:
@@ -87,10 +87,10 @@ written to any committed file.
 ## Layout
 
 ```
-adk-eval-it/
+evals/adk/
 ├── src/adk_agent.py          # the minimal google-adk LlmAgent + `lookup_shipment` tool, served via to_a2a()
 ├── requirements.txt          # google-adk 2.5.0 + the LOAD-BEARING a2a-sdk==0.3.26 pin (+ uvicorn)
-├── run-adk-eval.sh           # agent lifecycle (setsid+trap) + hermetic gth eval run + exit-code propagation
+├── run.sh                    # agent lifecycle (setsid+trap) + hermetic gth eval run + exit-code propagation
 ├── workdir/
 │   ├── adk.suite.yaml        # the passing suite (marker must_contain + judge + multi-turn contextId)
 │   ├── adk-broken.suite.yaml # the discrimination proof (asserts a false marker -> exit 1)

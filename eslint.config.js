@@ -88,9 +88,10 @@ const globalIgnores = [
   '.git/**',
   'vitest-it.config.js',
   'vitest-it.config.d.ts',
-  // BATCH-13: eval-it is a standalone on-demand harness; its generated run output is not linted.
-  'eval-it/workdir/out/**',
-  'eval-it/workdir/.gsloth/gth_*/**',
+  // The eval beds are standalone on-demand harnesses; their generated run output is not linted.
+  // Globbed across every bed rather than named one at a time, so a bed added later is covered.
+  'evals/*/workdir/out/**',
+  'evals/*/workdir/.gsloth/gth_*/**',
 ];
 
 export default defineConfig([
@@ -144,12 +145,14 @@ export default defineConfig([
   pkgSourceConfig('eval-reporter-junit'),
   // BATCH-20: the standalone live TeamCity eval reporter package.
   pkgSourceConfig('eval-reporter-teamcity'),
-  // BATCH-13: eval-it standalone harness TypeScript. It lives outside packages/, so it matches none
+  // The eval beds' standalone harness TypeScript. It lives outside packages/, so it matches none
   // of the pkgSourceConfig globs; give it a type-agnostic block (tsParser, no `project`) mirroring
   // the test block so `pnpm run lint` genuinely lints it rather than skipping it. Both extensions,
-  // for the same reason the harness globs below carry both.
+  // for the same reason the harness globs below carry both. The glob covers the whole `evals/`
+  // tree, not one named bed, so a bed added later cannot land here matching no config block at all
+  // — which would mean zero rules apply and nothing checks it.
   {
-    files: ['eval-it/**/*.{ts,tsx}'],
+    files: ['evals/**/*.{ts,tsx}'],
     languageOptions: {
       parser: tsParser,
       parserOptions: {

@@ -1,4 +1,4 @@
-# BATCH-16 adk-eval-it: gitignore the venv, model/agent runtime logs, and generated eval artifacts.
+# BATCH-16 adk bed: gitignore the venv, model/agent runtime logs, and generated eval artifacts.
 .venv/
 __pycache__/
 src/__pycache__/

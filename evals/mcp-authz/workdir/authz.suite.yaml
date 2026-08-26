@@ -10,7 +10,7 @@
 #   * VISIBLE-BUT-DENIED    -> assert the answer (`must_not_contain` the success marker) + a judge;
 #                              NEVER `must_not_call` (the agent WILL call it and the call appears).
 #
-# Scope map (see eval-it/README.md):
+# Scope map (see evals/mcp-authz/README.md):
 #   admin  full access
 #   alice  procurement-read  (catalog; NO inventory; NO cross-scope; delete denied)
 #   bob    inventory-read    (inventory; NO catalog; NO cross-scope; delete denied)

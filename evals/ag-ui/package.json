@@ -1,10 +1,10 @@
 {
-  "name": "agui-eval-it",
+  "name": "eval-bed-ag-ui",
   "version": "0.0.0",
   "private": true,
-  "description": "BATCH-17 — standalone LIVE eval bed: gaunt-sloth's own AG-UI server (`gth api ag-ui`), graded by `gth eval`'s ag-ui target. Not published, not part of `pnpm run it`; run on demand via run-agui-eval.sh.",
+  "description": "BATCH-17 — standalone LIVE eval bed: gaunt-sloth's own AG-UI server (`gth api ag-ui`), graded by `gth eval`'s ag-ui target. Not published, not part of `pnpm run it`; run on demand via run.sh.",
   "scripts": {
-    "eval": "./run-agui-eval.sh agui.suite.yaml",
-    "eval:broken": "./run-agui-eval.sh agui-broken.suite.yaml"
+    "eval": "./run.sh agui.suite.yaml",
+    "eval:broken": "./run.sh agui-broken.suite.yaml"
   }
 }

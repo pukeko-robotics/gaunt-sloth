@@ -1,9 +1,9 @@
-# agui-eval-it — live AG-UI eval bed for `gth eval` (BATCH-17)
+# `evals/ag-ui` — live AG-UI eval bed for `gth eval` (BATCH-17)
 
 A **standalone, on-demand** bed that stands up gaunt-sloth's **own AG-UI server** (`gth api ag-ui`)
 and grades it end-to-end through `gth eval`'s **`ag-ui` target** (BATCH-15). It is the *live*
 validation of that target against a genuine running AG-UI server — not a fake. Sibling of the
-`eval-it/` (BATCH-13) and `adk-eval-it/` (BATCH-16) beds; same shape, different SUT.
+`evals/mcp-authz/` (BATCH-13) and `evals/adk/` (BATCH-16) beds; same shape, different SUT.
 
 It is **not published**, **not in the root `pnpm build`**, and **not wired into `pnpm run it`** — run
 it by hand.
@@ -45,11 +45,11 @@ config (`gemini-flash-lite-latest`), unrelated to the served SUT model.
 
 ```bash
 # builds the CLI, starts the server, runs the suite, tears the server down
-agui-eval-it/run-agui-eval.sh                          # the passing suite (agui.suite.yaml)   -> exit 0
-agui-eval-it/run-agui-eval.sh agui-broken.suite.yaml   # the discrimination proof              -> exit 1
+evals/ag-ui/run.sh                          # the passing suite (agui.suite.yaml)   -> exit 0
+evals/ag-ui/run.sh agui-broken.suite.yaml   # the discrimination proof              -> exit 1
 
 # faster iteration (skip the build if already done):
-SKIP_BUILD=1 agui-eval-it/run-agui-eval.sh
+SKIP_BUILD=1 evals/ag-ui/run.sh
 ```
 
 The script:
@@ -76,9 +76,9 @@ The `url` in both suites (`http://127.0.0.1:41757`) must match `AGUI_PORT`. `age
 ## Layout
 
 ```
-agui-eval-it/
+evals/ag-ui/
 ├── agent/.gsloth.config.json     # the SERVED SUT: Haiku + the one custom tool `get_ops_status`
-├── run-agui-eval.sh              # server lifecycle (setsid+trap) + hermetic, timeout-wrapped gth eval
+├── run.sh                        # server lifecycle (setsid+trap) + hermetic, timeout-wrapped gth eval
 ├── workdir/
 │   ├── agui.suite.yaml           # the passing suite (must_call + marker must_contain + judge + multi-turn)
 │   ├── agui-broken.suite.yaml    # the discrimination proof (asserts a false marker -> exit 1)

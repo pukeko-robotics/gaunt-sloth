@@ -1,4 +1,4 @@
-# OPS-41 — the judge-free pre-release smoke gate (a small named subset of configs-smoke-test.suite.yaml).
+# OPS-41 — the judge-free pre-release smoke gate (a small named subset of configs-smoke-test.suite.yaml beside it).
 #
 # Same single case as the full suite: read a planted marker file through the agent's tools and report
 # the string back. That proves the two things a release actually needs proven — the agent performed a
@@ -30,5 +30,5 @@ target:
 identities: [google-3.5-flash-lite, inception-mercury-2]
 cases:
   - id: read-marker
-    prompt: 'Read the file configs-smoke-test-marker.txt using your tools and report the exact secret marker string it contains.'
+    prompt: 'Read the file evals/configs/configs-smoke-test-marker.txt using your tools and report the exact secret marker string it contains.'
     must_contain: ['CFG22-TOOLCALL-K7QX9']

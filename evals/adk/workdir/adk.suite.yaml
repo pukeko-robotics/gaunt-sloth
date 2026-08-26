@@ -1,13 +1,13 @@
 # BATCH-16 — LIVE passing suite for the `adk-agent` target.
 #
-# The SUT is a real Python google-adk agent (adk-eval-it/src/adk_agent.py) served over A2A; gth's
+# The SUT is a real Python google-adk agent (evals/adk/src/adk_agent.py) served over A2A; gth's
 # adk-agent target drives it via `@a2a-js/sdk`. The agent's ONE tool, `lookup_shipment`, returns
 # VERBATIM, paraphrase-proof marker codes (SHIP-DELIVERED-7Q / SHIP-INTRANSIT-3B) the model cannot
 # invent — so a `must_contain` of that marker is the proof the tool actually ran. (A2A exposes no
 # tool trace, so `must_call`/`must_not_call` are a PARSE-TIME ERROR for this target — assert on the
 # ANSWER text + a judge instead.)
 #
-# `url` MUST match the port run-adk-eval.sh serves the agent on (ADK_A2A_PORT, default 41539).
+# `url` MUST match the port evals/adk/run.sh serves the agent on (ADK_A2A_PORT, default 41539).
 target:
   type: adk-agent
   url: http://127.0.0.1:41539

@@ -7,5 +7,5 @@ target:
 identities: [vertexai-3.6-flash, vertexai-3.5-flash-lite, vertexai-3.1-pro-preview]
 cases:
   - id: read-marker
-    prompt: 'Read the file configs-smoke-test-marker.txt using your tools and report the exact secret marker string it contains.'
+    prompt: 'Read the file evals/configs/configs-smoke-test-marker.txt using your tools and report the exact secret marker string it contains.'
     must_contain: ['CFG22-TOOLCALL-K7QX9']

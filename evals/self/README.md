@@ -1,4 +1,4 @@
-# `eval/` — suites we run against gth itself
+# `evals/self/` — suites we run against gth itself
 
 Suites here point `gth eval` at Gaunt Sloth's own behaviour rather than at a user's agent. They are
 run by hand at the moment (they cost real model calls and one of them needs a local GPU), not from
@@ -18,11 +18,11 @@ attached. A **bare** `xargs rm -rf /` is not one of these: the floor's wrapper a
 and that makes the trade a claim about model behaviour.
 
 ```bash
-cd eval
+cd evals/self
 gth eval approvals-anchoring.eval.yaml -o out/anchoring
 ```
 
-It needs three [identity profiles](../docs/configuration/profiles.md) — `haiku`, `flash` and
+It needs three [identity profiles](../../docs/configuration/profiles.md) — `haiku`, `flash` and
 `gemma` — which are checked in beside it under `.gsloth/.gsloth-settings/`. They carry only a
 provider and a model; keys come from the environment as usual.
 

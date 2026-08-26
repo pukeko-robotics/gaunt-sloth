@@ -2,12 +2,12 @@
 #
 # BATCH-13 — run the live multi-identity MCP authorization eval suite.
 #
-#   ./run-authz-eval.sh [suite.yaml]        # default: authz.suite.yaml
+#   ./run.sh [suite.yaml]                 # default: authz.suite.yaml
 #
 # What it does:
 #   1. Builds this worktree's CLI (so eval runs the freshly-built app, NOT the global `gth`).
 #      Skip with SKIP_BUILD=1 (e.g. when you just built and want to run both suites).
-#   2. Starts the real HTTP MCP server (eval-it/src/authz-mcp-server.ts) in the background and
+#   2. Starts the real HTTP MCP server (evals/mcp-authz/src/authz-mcp-server.ts) in the background and
 #      polls /health until it is ready. A `trap` on EXIT kills it — no zombie on the port.
 #   3. Runs `gth eval <suite>` from the profiles workdir with a HERMETIC HOME so no machine-global
 #      ~/.gsloth config can merge under the per-identity profiles (the run is reproducible on any box).

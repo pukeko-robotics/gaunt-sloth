@@ -1,13 +1,13 @@
 # BATCH-17 — LIVE passing suite for the `ag-ui` target.
 #
-# The SUT is gaunt-sloth's OWN AG-UI server (`gth api ag-ui`, started by run-agui-eval.sh), serving a
+# The SUT is gaunt-sloth's OWN AG-UI server (`gth api ag-ui`, started by evals/ag-ui/run.sh), serving a
 # Haiku agent whose ONE tool, `get_ops_status`, echoes a VERBATIM, paraphrase-proof marker
 # (OPS-STATUS-7Q9Z) the model cannot invent. gth's ag-ui target drives the server over HTTP/SSE and —
 # unlike the adk-agent target — CAPTURES the streamed `TOOL_CALL_START`, so `must_call` grades the
 # real tool trace live. The proof the tool ACTUALLY ran is doubled: `must_call: [get_ops_status]`
 # (the streamed call) plus `must_contain: [OPS-STATUS-7Q9Z]` (the tool's marker in the answer).
 #
-# `url` MUST match the port run-agui-eval.sh serves on (AGUI_PORT, default 41757); `agent_id` is the
+# `url` MUST match the port evals/ag-ui/run.sh serves on (AGUI_PORT, default 41757); `agent_id` is the
 # `{agentId}` path segment of POST {url}/agents/{agentId}/run (the server accepts any id).
 target:
   type: ag-ui

@@ -3,8 +3,8 @@
 # BATCH-16 — run the LIVE ADK-agent eval bed: stand up a real Python google-adk agent over A2A and
 # grade it through `gth eval`'s `adk-agent` target (which drives it via `@a2a-js/sdk`).
 #
-#   ./run-adk-eval.sh [suite.yaml]        # default: adk.suite.yaml (the passing suite)
-#   ./run-adk-eval.sh adk-broken.suite.yaml   # the discrimination proof (exits 1)
+#   ./run.sh [suite.yaml]                 # default: adk.suite.yaml (the passing suite)
+#   ./run.sh adk-broken.suite.yaml            # the discrimination proof (exits 1)
 #
 # What it does:
 #   1. Builds this worktree's CLI (so eval runs the freshly-built app + its adk-agent target, NOT the

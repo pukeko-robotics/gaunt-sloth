@@ -4,14 +4,14 @@
 # and grade it through `gth eval`'s `ag-ui` target (which drives the server's HTTP/SSE run endpoint,
 # capturing the streamed answer AND tool calls).
 #
-#   ./run-agui-eval.sh [suite.yaml]              # default: agui.suite.yaml (the passing suite)
-#   ./run-agui-eval.sh agui-broken.suite.yaml    # the discrimination proof (exits 1)
+#   ./run.sh [suite.yaml]                       # default: agui.suite.yaml (the passing suite)
+#   ./run.sh agui-broken.suite.yaml             # the discrimination proof (exits 1)
 #
 # What it does:
 #   1. Builds this worktree's CLI (so eval runs the freshly-built app + its ag-ui target, NOT the
 #      global `gth`). Skip with SKIP_BUILD=1 (e.g. to run both suites back-to-back).
 #   2. Starts `gth api ag-ui` on a fixed port, pointed at the bed's SUT config
-#      (agui-eval-it/agent/.gsloth.config.json — a cheap model + one custom tool `get_ops_status`),
+#      (evals/ag-ui/agent/.gsloth.config.json — a cheap model + one custom tool `get_ops_status`),
 #      in its own process GROUP (setsid). A `trap` on EXIT kills the whole group so no server is left
 #      holding the port. The global `-c/--config` flag MUST precede the `api ag-ui` subcommand.
 #   3. Polls GET /health until the server answers (the server exposes `{status:'ok'}` there).
