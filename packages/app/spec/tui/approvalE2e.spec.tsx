@@ -660,7 +660,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     );
     runner.setToolApprovalCallback((pending) => bridge.request(pending));
 
-    const { lastFrame, unmount } = render(
+    const rendered = render(
       <App
         {...baseProps}
         agent={tuiAgent}
@@ -668,11 +668,23 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
         initialMessage="read passwd"
       />
     );
+    const { lastFrame, unmount } = rendered;
+    // [[EXT-137]] — a terminal tall enough to hold the whole request, because the request no longer
+    // lives in a dock that takes whatever rows it needs. Its explanation half is committed to the
+    // CONVERSATION, which is clipped from the TOP when the terminal is short: at 24 rows — which is
+    // what `ink-testing-library`'s stdout reports, since it carries no `rows` at all — the rating
+    // scrolls above the fold and is reached by scrolling, exactly as the node ruled ("a long note
+    // scrolls off from the top"). That is the ordering's cost rather than a defect, so this case
+    // asks its own question — does the verdict reach the human at all — on a screen where the
+    // answer is not about arithmetic. `useTerminalSize` re-reads the size on `resize`, which is why
+    // defining the property after the mount is enough.
+    Object.defineProperty(rendered.stdout, 'rows', { value: 60, configurable: true });
+    rendered.stdout.emit('resize');
 
     await vi.waitFor(() => {
       const f = lastFrame() ?? '';
       expect(f).toContain('cat /etc/passwd'); // escalated command shown
-      // The rater's verdict reason is surfaced in the prompt (the AI-rater line).
+      // The rater's verdict reason is surfaced in the request block (the AI-rater line).
       expect(f).toContain('system-wide sensitive file');
       expect(f).toContain('Auto-rater (destructive)');
     });
