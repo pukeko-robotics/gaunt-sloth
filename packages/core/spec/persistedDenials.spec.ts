@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, Mock, vi } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HumanMessage } from '@langchain/core/messages';
@@ -432,6 +432,8 @@ describe('GthAgentRunner — [[EXT-107]] the persisted deny store', () => {
       description: 'npm publish',
       origin: 'persisted',
       stillConfigured: false,
+      // [[EXT-149]] — the file rewrite landed, so the lift is permanent and says so.
+      stillSaved: false,
     });
     expect(first.runner.getRefusals()).toEqual([]);
     // The file no longer holds it, so a new session does not inherit it…
@@ -491,6 +493,7 @@ describe('GthAgentRunner — [[EXT-107]] the persisted deny store', () => {
       description: 'npm publish',
       origin: 'persisted',
       stillConfigured: true,
+      stillSaved: false,
     });
   });
 
@@ -621,9 +624,245 @@ describe('GthAgentRunner — [[EXT-107]] the persisted deny store', () => {
         description: 'npm publish',
         origin: 'session',
         stillConfigured: false,
+        // A session refusal was never in a file, so nothing is left in one.
+        stillSaved: false,
       });
       expect(runner.getRefusals()).toEqual([]);
       expect(readFileSync(denyFile, 'utf8')).toBe(CORRUPT);
     });
+  });
+
+  /**
+   * [[EXT-149]] — **an answer that could not be WRITTEN is recorded as the session one it is.**
+   *
+   * [[EXT-144]] closed the case where the file could not be READ. This is the other half, and it is
+   * the ordinary one: on a checkout nothing can write, the file is simply absent, so the load did
+   * not fail, `canPersist()` is true, and every `writeFileSync` throws. The answer was stamped
+   * `always`, the display called it *saved to this project*, and nothing told the user.
+   *
+   * ## The fixture, and why it is built this way
+   *
+   * A project directory **that does not exist** is that checkout exactly, and portably: with no
+   * `.gsloth` dir the store's path resolves straight into it with no `mkdir` on the way, `existsSync`
+   * is false so the load succeeds, and the write fails with ENOENT on Linux, macOS and Windows
+   * alike. **`chmod` would not do**: it is a no-op on win32, so a spec built on it would pass
+   * vacuously on both Windows cells of the matrix and prove nothing there.
+   *
+   * Every case asserts the surface a user actually reads — `/approvals`, through `getRefusals()` and
+   * `getAllowlistCounts()` — rather than the private scope field, because the field is not what
+   * anybody was misled by.
+   */
+  describe('[[EXT-149]] an answer the file could not receive is recorded as a session one', () => {
+    /** Never created, and never created on the way to the store's path. See above. */
+    const unwritableDir = join(projectDir, 'no-such-checkout');
+
+    /** The notices a FAILED write produced, told from a refused write's by its own claim. */
+    const failedWrites = () =>
+      statusUpdateCallback.mock.calls.filter(([, message]) =>
+        String(message).includes('could not be written')
+      );
+
+    it('records an always-reject the file could not receive as a SESSION refusal, and says so', async () => {
+      setProjectDir(unwritableDir);
+      const { decide, runner } = await runWith({
+        commands: ['npm publish', 'npm publish'],
+        decide: rejectAlways,
+      });
+
+      // The answer still binds for this session — the repeat never reached a person.
+      expect(decide).toHaveBeenCalledTimes(1);
+      // …and `/approvals` says where it actually lives, rather than calling it saved.
+      expect(runner.getRefusals()).toEqual([
+        { index: 1, description: 'npm publish', origin: 'session', recordedAt: expect.any(String) },
+      ]);
+      // Nothing reached disk, which is the whole reason the label above had to change.
+      expect(existsSync(join(unwritableDir, SHELL_DENYLIST_FILE))).toBe(false);
+      // The user is told, at ERROR, once for the one answer that was not written down.
+      const told = failedWrites();
+      expect(told).toHaveLength(1);
+      expect(told[0][0]).toBe(StatusLevel.ERROR);
+      expect(String(told[0][1])).toContain('NOT saved');
+      expect(String(told[0][1])).toContain('this session only');
+      // NOT the refused-write message: nothing in the file was lost and there is nothing to fix in
+      // it, so that message's promises are all false here.
+      expect(String(told[0][1])).not.toContain('could not be read');
+      expect(String(told[0][1])).not.toContain('are still there');
+    });
+
+    it('records an always-approve the same way, and does not count it as saved', async () => {
+      setProjectDir(unwritableDir);
+      const { decide, runner } = await runWith({
+        commands: ['npm test', 'npm test'],
+        decide: () => ({ type: 'approve' as const, scope: 'always' as const }),
+      });
+
+      // In force for the session, so the repeat was auto-approved without a second prompt.
+      expect(decide).toHaveBeenCalledTimes(1);
+      // The `/approvals` counts: one grant this session, none saved to the project.
+      expect(runner.getAllowlistCounts()).toEqual({ session: 1, always: 0 });
+      expect(runner.getGrants()).toEqual([
+        {
+          entry: { type: 'shell', matcher: 'exact', pattern: 'npm test' },
+          grantedAt: expect.any(String),
+          scope: 'session',
+        },
+      ]);
+      expect(existsSync(join(unwritableDir, SHELL_ALLOWLIST_FILE))).toBe(false);
+      expect(failedWrites()).toHaveLength(1);
+    });
+
+    /**
+     * **CONTROL — the same two answers against a writable project dir ARE saved.** Without it every
+     * assertion above would hold just as well for a build that had stopped saving answers at all,
+     * which would end the misreport by removing the feature.
+     */
+    it('CONTROL — with a writable project dir the same answers are recorded as saved', async () => {
+      const { runner } = await runWith({
+        commands: ['npm publish', 'npm test'],
+        decide: (pending) =>
+          pending.args.command === 'npm publish'
+            ? rejectAlways()
+            : { type: 'approve' as const, scope: 'always' as const },
+      });
+
+      expect(runner.getRefusals()).toEqual([
+        {
+          index: 1,
+          description: 'npm publish',
+          origin: 'persisted',
+          recordedAt: expect.any(String),
+        },
+      ]);
+      expect(runner.getAllowlistCounts()).toEqual({ session: 1, always: 1 });
+      expect(runner.getGrants()[0].scope).toBe('always');
+      expect(failedWrites()).toEqual([]);
+    });
+
+    /**
+     * **The words the MODEL is given for an auto-refused repeat**, which is the other surface the
+     * misreport reached and the one nobody was looking at.
+     *
+     * The assertions above are about what `/approvals` shows a human. This message is built
+     * separately, from what the persisted store HOLDS — so a build that keeps a grant its file never
+     * received tells the agent the refusal *was saved to this project*, citing a file that does not
+     * exist, and invites it to ask the user to lift something from there.
+     *
+     * **Both halves are asserted because one alone cannot fail for the right reason.** The two runs
+     * differ in exactly one thing — whether the write could land — so checking only the unwritable
+     * half would pass just as happily against a build that had dropped the saved wording entirely,
+     * and checking only the writable half would pass against one that never had the session wording.
+     */
+    it('tells the model the refusal is a session one, and says saved only when it was', async () => {
+      setProjectDir(unwritableDir);
+      const unwritable = await runWith({
+        commands: ['npm publish', 'npm publish'],
+        decide: rejectAlways,
+      });
+      const unwritableText = unwritable.decisions.map((d) => d.message ?? '').join('\n');
+      expect(unwritableText).toContain('earlier in this session');
+      expect(unwritableText).not.toContain('saved to this project');
+
+      setProjectDir(projectDir);
+      const writable = await runWith({
+        commands: ['npm publish', 'npm publish'],
+        decide: rejectAlways,
+      });
+      const writableText = writable.decisions.map((d) => d.message ?? '').join('\n');
+      expect(writableText).toContain('saved to this project');
+      expect(writableText).not.toContain('earlier in this session');
+    });
+
+    /**
+     * **A lift whose file rewrite did not land is reported as the session-only lift it is.**
+     *
+     * The refusal is read from a file that was there, so it is genuinely a saved one; the directory
+     * it lives in disappears before the lift, so the rewrite fails and the entry is still in the
+     * file. `/approvals undeny` used to promise unconditionally that it would not come back.
+     */
+    it('reports a lift whose rewrite did not reach the file', async () => {
+      // Its own project dir, so removing it cannot disturb the cases around this one.
+      const liftDir = join(projectDir, 'lift-fixture');
+      mkdirSync(liftDir, { recursive: true });
+      writeFileSync(join(liftDir, SHELL_DENYLIST_FILE), shellGrantFile(['npm publish']), 'utf8');
+      setProjectDir(liftDir);
+
+      const { runner } = await runWith({ commands: [], decide: approveOnce });
+
+      const [refusal] = runner.getRefusals();
+      expect(refusal).toMatchObject({ index: 1, origin: 'persisted' });
+
+      // The file's directory is gone, so the rewrite the lift needs cannot happen.
+      rmSync(liftDir, { recursive: true, force: true });
+
+      expect(runner.liftRefusal(1)).toEqual({
+        outcome: 'lifted',
+        description: 'npm publish',
+        origin: 'persisted',
+        stillConfigured: false,
+        stillSaved: true,
+      });
+      // It IS lifted for this session — the display no longer lists it.
+      expect(runner.getRefusals()).toEqual([]);
+      // …and the user is told the file kept it.
+      const told = statusUpdateCallback.mock.calls.filter(([, message]) =>
+        String(message).includes('could NOT be updated')
+      );
+      expect(told).toHaveLength(1);
+      expect(told[0][0]).toBe(StatusLevel.ERROR);
+      expect(String(told[0][1])).toContain('still saved in it');
+    });
+  });
+
+  /**
+   * [[EXT-139]] — **the documented numbering order, which nothing pinned.**
+   *
+   * `refusalRecords()` states the order as config → saved → session and explains what it buys: the
+   * entries a user cannot lift here come first and stay put. [[EXT-107]]'s peer review reordered it
+   * (its mutation **M6**) and the whole suite stayed green — the only one of twelve that survived —
+   * because display and lift share the one builder, so a user still lifts what they saw and nothing
+   * else notices.
+   *
+   * What is left unheld is the order itself, which is what a user reads and types. This case is the
+   * only one in the suite where all three origins are in force at once, which is what makes it
+   * discriminating: M6 (saved before config) and its mirror (session before saved) both red on the
+   * first assertion.
+   *
+   * **This is not the `bypass` half of the node.** That one asked for an assertion that the saved
+   * deny store is read at `bypass` while the saved allow store is not — and both were already
+   * pinned, in `persistedDenials.spec.ts` ('still refuses at bypass, where every other check is
+   * off') and in `GthAgentRunner.spec.ts` ('does not touch the persisted grant file at bypass').
+   * Neither is a §8 hardline-floor test.
+   */
+  it('[[EXT-139]] numbers refusals config → saved → session, and lifts the number it showed', async () => {
+    // One of each: a config line the user wrote, an entry saved in the project file, and a refusal
+    // made at the prompt for this session only.
+    writeFileSync(denyFile, shellGrantFile(['npm publish']), 'utf8');
+    const { runner } = await runWith({
+      commands: ['rm -rf build'],
+      approvals: {
+        mode: 'write',
+        deny: [{ type: 'shell', matcher: 'exact', pattern: 'git push --force' }],
+      },
+      decide: () => ({ type: 'reject' as const, scope: 'session' as const }),
+    });
+
+    expect(runner.getRefusals()).toEqual([
+      { index: 1, description: 'git push --force', origin: 'config' },
+      { index: 2, description: 'npm publish', origin: 'persisted', recordedAt: expect.any(String) },
+      { index: 3, description: 'rm -rf build', origin: 'session', recordedAt: expect.any(String) },
+    ]);
+
+    // The number a user reads is the number they type: lifting 2 lifts the SAVED one, not the
+    // config line above it or the session one below.
+    expect(runner.liftRefusal(2)).toMatchObject({
+      outcome: 'lifted',
+      description: 'npm publish',
+      origin: 'persisted',
+    });
+    // …and the entries a user cannot lift keep the numbers they had.
+    expect(runner.getRefusals()).toEqual([
+      { index: 1, description: 'git push --force', origin: 'config' },
+      { index: 2, description: 'rm -rf build', origin: 'session', recordedAt: expect.any(String) },
+    ]);
   });
 });

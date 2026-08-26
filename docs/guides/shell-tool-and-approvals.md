@@ -101,13 +101,28 @@ per session and the result is kept, so a session that failed to read one goes on
 however you edit it in the meantime. Fix the file, then start a new session and answer again to
 record it for good.
 
-**An empty file counts as one that could not be read**, so it is not written to either — but there is
-nothing in it to recover, and the notice says so rather than promising your entries back. Delete it,
-or put an empty pair of braces in it, and saving works again in your next session.
+**A file with nothing in it to recover counts as one that could not be read**, so it is not written
+to either — but the notice says there is nothing to get back rather than promising your entries. That
+covers a file emptied to nothing, one an editor left holding only a blank line, and one cut short to a
+stray brace. Delete it, or put an empty pair of braces in it, and saving works again in your next
+session.
 
 A file with one unreadable *entry* is a different case: that file was read, so the entries around the
 bad one are in force and the next answer you save is written normally, which does not carry the
 unreadable entry over. Fix that entry before saving if you want to keep it.
+
+**A file that can be read but cannot be WRITTEN is a different case again** — a checkout mounted
+read-only, a settings directory that is not there, a full disk. Nothing in the file is at risk and
+nothing needs fixing in it; the answer simply has nowhere to go. It applies for the rest of that
+session and no further, `/approvals` lists it as a session answer rather than a saved one, and you are
+told for each answer that was not written down. The same goes the other way: if `/approvals undeny`
+cannot rewrite the file, the refusal is lifted for that session and is still in the file, so it
+refuses again in the next one — and the notice says so instead of promising it is gone.
+
+**Anything else you keep in one of these files is kept.** They are files people edit, and a top-level
+key that is not `version` or `grants` — a note to yourself, a block your own tooling reads — is
+written back untouched every time gaunt-sloth rewrites the file. It is carried, not interpreted:
+nothing outside `grants` ever decides anything about a call.
 
 ### Where the prompt is written
 

@@ -1007,6 +1007,11 @@ export function approvalsUsageNotice(problem: ApprovalsUsageProblem): SlashComma
  * - **A lifted entry that `approvals.deny` ALSO matches is still refused.** Reporting the removal
  *   without that would tell the user they had opened something that is still closed — the same
  *   "offered and then refused" failure the escalation menu is written to avoid, one layer up.
+ * - **A lift whose file rewrite did not land comes back tomorrow** ([[EXT-149]]). The refusal is
+ *   gone for this session and still in the project file, so the promise this notice used to make
+ *   unconditionally — *it will not come back in a new session* — is the one thing that is false
+ *   there. The store's own error names the file and the reason the write failed; what this adds is
+ *   what that means for the refusal the user just asked to lift.
  */
 export function approvalsUndenyNotice(lift: ApprovalRefusalLift): SlashCommandNotice {
   if (lift.outcome === 'unknown') {
@@ -1030,13 +1035,19 @@ export function approvalsUndenyNotice(lift: ApprovalRefusalLift): SlashCommandNo
       tone: 'warn',
     };
   }
+  const removal = lift.stillSaved
+    ? `${lift.description} is no longer refused for the rest of this session — but this project’s ` +
+      'saved refusals could not be updated, so it is still in that file and it will refuse again ' +
+      'in a new session. The error reported beside this names the file and why it could not be ' +
+      'written; fix that, or remove the entry from the file by hand.'
+    : lift.origin === 'persisted'
+      ? `${lift.description} is no longer refused, and it has been removed from this project’s ` +
+        'saved refusals, so it will not come back in a new session.'
+      : `${lift.description} is no longer refused for the rest of this session.`;
   return {
-    title: 'Refusal lifted',
+    title: lift.stillSaved ? 'Refusal lifted for this session only' : 'Refusal lifted',
     lines: [
-      lift.origin === 'persisted'
-        ? `${lift.description} is no longer refused, and it has been removed from this project’s ` +
-          'saved refusals, so it will not come back in a new session.'
-        : `${lift.description} is no longer refused for the rest of this session.`,
+      removal,
       ...(lift.stillConfigured
         ? [
             'Your approvals.deny list still matches it, so the call is still refused — remove the ' +
@@ -1044,7 +1055,7 @@ export function approvalsUndenyNotice(lift: ApprovalRefusalLift): SlashCommandNo
           ]
         : ['The next such call will be decided the way it was before you refused it.']),
     ],
-    tone: lift.stillConfigured ? 'warn' : 'info',
+    tone: lift.stillConfigured || lift.stillSaved ? 'warn' : 'info',
   };
 }
 

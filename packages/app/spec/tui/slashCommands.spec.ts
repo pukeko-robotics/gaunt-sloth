@@ -863,6 +863,7 @@ describe('tui/slashCommands /approvals trust (EXT-70 §4.7.1)', () => {
         description: 'npm publish',
         origin: 'persisted',
         stillConfigured: false,
+        stillSaved: false,
       });
       expect(notice.title).toBe('Refusal lifted');
       expect(notice.lines.join(' ')).toContain('will not come back in a new session');
@@ -881,9 +882,49 @@ describe('tui/slashCommands /approvals trust (EXT-70 §4.7.1)', () => {
         description: 'npm publish',
         origin: 'persisted',
         stillConfigured: true,
+        stillSaved: false,
       });
       expect(notice.lines.join(' ')).toContain('still matches it');
       expect(notice.tone).toBe('warn');
+    });
+
+    /**
+     * [[EXT-149]] — **the lift the file did not receive.** The removal is real for this session and
+     * the rewrite that would have made it permanent failed, so the entry is still in the project's
+     * saved refusals and comes back in the next session. The promise this notice used to make
+     * unconditionally is the one thing that is false there, so it is the negative assertion that
+     * carries this case: a wording that kept it would satisfy every positive one.
+     */
+    it('does not promise a saved refusal is gone when the file could not be updated', async () => {
+      const { approvalsUndenyNotice } = await load();
+      const notice = approvalsUndenyNotice({
+        outcome: 'lifted',
+        description: 'npm publish',
+        origin: 'persisted',
+        stillConfigured: false,
+        stillSaved: true,
+      });
+      expect(notice.title).toBe('Refusal lifted for this session only');
+      expect(notice.lines.join(' ')).not.toContain('will not come back in a new session');
+      expect(notice.lines.join(' ')).toContain('could not be updated');
+      expect(notice.lines.join(' ')).toContain('refuse again in a new session');
+      expect(notice.tone).toBe('warn');
+    });
+
+    /** A session refusal was never in a file, so it is reported as the session lift it is. */
+    it('reports a session refusal as lifted for this session', async () => {
+      const { approvalsUndenyNotice } = await load();
+      const notice = approvalsUndenyNotice({
+        outcome: 'lifted',
+        description: 'npm publish',
+        origin: 'session',
+        stillConfigured: false,
+        stillSaved: false,
+      });
+      expect(notice.title).toBe('Refusal lifted');
+      expect(notice.lines.join(' ')).toContain('for the rest of this session');
+      expect(notice.lines.join(' ')).not.toContain('could not be updated');
+      expect(notice.tone).toBe('info');
     });
 
     it('points a configured entry at the file it lives in, and says nothing changed', async () => {
