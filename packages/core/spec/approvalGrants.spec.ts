@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, Mock, vi } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1060,6 +1060,352 @@ describe('PersistedApprovalGrants', () => {
       );
       const store = new PersistedApprovalGrants(file);
       expect(store.entries()).toEqual([{ type: 'shell', matcher: 'exact', pattern: 'npm test' }]);
+    });
+  });
+
+  /**
+   * [[EXT-144]] — **a save never overwrites a file this version could not read.**
+   *
+   * A persist rewrites the WHOLE file from the store, and a failed load leaves the store empty, so
+   * one saved answer used to replace everything in the file with itself. One trailing comma plus one
+   * prompt, and twenty saved entries were gone — no backup, no copy, nothing to go back to.
+   *
+   * **Every case here asserts the file's BYTES**, not that a notice fired and not that the store is
+   * empty. Those are consequences that survive plenty of implementations which still truncate the
+   * file, and the acceptance is about the user's content being on disk afterwards. The control below
+   * is the other half: it saves against a file that reads cleanly and asserts the bytes DID change,
+   * so none of this can pass by way of a store that has quietly stopped writing at all.
+   */
+  describe('a save never overwrites a file it could not read ([[EXT-144]])', () => {
+    /**
+     * Broken the way a hand-edit breaks one — a single trailing comma — and holding a refusal the
+     * user would very much like to keep. Compared by exact equality, so any rewrite at all reds.
+     */
+    const CORRUPT = [
+      '{',
+      '  "version": 2,',
+      '  "grants": [',
+      '    { "entry": { "type": "shell", "matcher": "exact", "pattern": "git push --force" },',
+      '      "grantedAt": "2026-08-01T00:00:00.000Z", "scope": "always" },',
+      '  ]',
+      '}',
+      '',
+    ].join('\n');
+
+    let denyFile: string;
+    let allowFile: string;
+    let onNotice: Mock<(notice: ShellApprovalGateNotice) => void>;
+
+    beforeEach(() => {
+      denyFile = join(dir, 'shell-denylist.json');
+      allowFile = join(dir, 'shell-allowlist.json');
+      onNotice = vi.fn();
+    });
+
+    /**
+     * The notices a refused SAVE produced, picked out of the load's own by the one claim only this
+     * notice makes. Counting past the load's notices instead would silently stop discriminating on
+     * any file whose load reports nothing.
+     */
+    const writeNotices = (): ShellApprovalGateNotice[] =>
+      onNotice.mock.calls
+        .map(([notice]) => notice)
+        .filter((notice) => notice.message.includes('NOT saved'));
+
+    /**
+     * **The node's own scenario, on the half it named as the worse one.** A user whose refusals have
+     * silently stopped applying reaches for *always reject* — the one control that would restore
+     * them — and that keystroke is what used to make the loss permanent.
+     */
+    it('leaves a corrupt DENY file byte-for-byte intact when always-reject is answered', () => {
+      writeFileSync(denyFile, CORRUPT, 'utf8');
+      const store = new PersistedApprovalGrants(denyFile, { onNotice, holds: 'refusals' });
+
+      const saved = store.add(grantOf('rm -rf /'));
+
+      // THE acceptance: the file is exactly the bytes the user left there, so their refusal is
+      // recoverable by fixing the comma and nothing had to be copied in advance.
+      expect(readFileSync(denyFile, 'utf8')).toBe(CORRUPT);
+      // The store reports that it did not write, and declines to hold what the file does not.
+      expect(saved).toBe(false);
+      expect(store.size()).toBe(0);
+    });
+
+    /** The other file, which shares this class and therefore this behaviour. */
+    it('leaves a corrupt ALLOW file byte-for-byte intact when always-approve is answered', () => {
+      writeFileSync(allowFile, CORRUPT, 'utf8');
+      const store = new PersistedApprovalGrants(allowFile, { onNotice, holds: 'approvals' });
+
+      expect(store.add(grantOf('npm test'))).toBe(false);
+      expect(readFileSync(allowFile, 'utf8')).toBe(CORRUPT);
+      expect(store.size()).toBe(0);
+    });
+
+    /**
+     * **CONTROL — the same save, on a file that reads cleanly, lands.**
+     *
+     * Without this every assertion above would also pass against a store that had stopped writing
+     * altogether, which would "fix" the data loss by breaking the feature.
+     */
+    it('CONTROL — a save against a readable file still rewrites it, keeping what was there', () => {
+      const healthy = join(dir, 'healthy.json');
+      const before = JSON.stringify({ version: 2, grants: [grantOf('npm test')] });
+      writeFileSync(healthy, before, 'utf8');
+      const store = new PersistedApprovalGrants(healthy, { onNotice, holds: 'refusals' });
+
+      expect(store.add(grantOf('rm -rf /'))).toBe(true);
+
+      expect(readFileSync(healthy, 'utf8')).not.toBe(before);
+      const written = JSON.parse(readFileSync(healthy, 'utf8')) as {
+        grants: { entry: { pattern: string } }[];
+      };
+      // The new entry landed AND the old one survived the rewrite.
+      expect(written.grants.map((grant) => grant.entry.pattern)).toEqual(['npm test', 'rm -rf /']);
+      expect(onNotice).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The second way a load loses content it cannot parse: a file that is valid JSON but holds its
+     * entries under a shape this version does not recognise. Same guard, because `unreadable` is
+     * the same question `unreadableFileNotice` already answers — one predicate, so the notice and
+     * the write guard cannot come to disagree about whether anything was lost.
+     */
+    it('also refuses over a file that PARSED but holds entries in a shape it cannot read', () => {
+      const odd = join(dir, 'odd.json');
+      const before = JSON.stringify({ myOwnRules: [{ pattern: 'git push --force' }] }, null, 2);
+      writeFileSync(odd, before, 'utf8');
+      const store = new PersistedApprovalGrants(odd, { onNotice, holds: 'refusals' });
+
+      expect(store.add(grantOf('rm -rf /'))).toBe(false);
+      expect(readFileSync(odd, 'utf8')).toBe(before);
+    });
+
+    /**
+     * **The boundary, asserted so it is a decision rather than an oversight.** A file whose `grants`
+     * array parsed but held one malformed member IS a file this version read: the entries around it
+     * are in force, which the skipped-entries notice states to the user as a promise. Blocking every
+     * future save over one cosmetic typo would disable a working feature to protect an entry that
+     * notice has already pointed the reader at — by position and quoted text for the first five, and
+     * by a count of the rest beyond that.
+     *
+     * The cost is real and is the reason this is asserted rather than assumed: the unreadable entry
+     * is not carried into the rewrite. The guide says so where a user will meet it.
+     */
+    it('still writes a file whose ENTRY was unreadable, since that file was read', () => {
+      const partial = join(dir, 'partial.json');
+      writeFileSync(
+        partial,
+        JSON.stringify({
+          version: 2,
+          grants: [grantOf('npm test'), { entry: { type: 'shell' }, scope: 'always' }],
+        }),
+        'utf8'
+      );
+      const store = new PersistedApprovalGrants(partial, { onNotice, holds: 'refusals' });
+      expect(store.size()).toBe(1);
+
+      expect(store.add(grantOf('rm -rf /'))).toBe(true);
+
+      const written = JSON.parse(readFileSync(partial, 'utf8')) as {
+        grants: { entry: { pattern?: string } }[];
+      };
+      expect(written.grants.map((grant) => grant.entry.pattern)).toEqual(['npm test', 'rm -rf /']);
+      // No save-time notice: this store can write, so nothing was refused.
+      expect(writeNotices()).toEqual([]);
+    });
+
+    /**
+     * **The user is told, and told what to do** — the half of the acceptance a byte comparison
+     * cannot cover. The surface that took the answer has already promised `always` by the time this
+     * runs, so silence here would leave that false claim standing as the last word.
+     *
+     * ERROR for the reason the load notice is: `consoleLevel` is configurable down to `error`, where
+     * a WARNING is dropped entirely and an ERROR is still shown.
+     */
+    it('tells the user the answer was not saved, that the file is untouched, and how to recover', () => {
+      writeFileSync(denyFile, CORRUPT, 'utf8');
+      const store = new PersistedApprovalGrants(denyFile, { onNotice, holds: 'refusals' });
+      store.add(grantOf('rm -rf /'));
+
+      const refused = writeNotices();
+      expect(refused).toHaveLength(1);
+      expect(refused[0].level).toBe(StatusLevel.ERROR);
+      expect(refused[0].message).toContain(denyFile);
+      // It was NOT saved — the claim that corrects the surface that already said otherwise.
+      expect(refused[0].message).toContain('NOT saved');
+      // The recovery: their content is still on disk, and fixing the file brings it back.
+      expect(refused[0].message).toContain('left exactly as it is');
+      expect(refused[0].message).toContain('still');
+      // **In a NEW session**, which is the whole of the advice being actionable: the runner caches
+      // one store per session, so a user who repairs the file and answers again now is refused by
+      // the same cached state and reads this identical message in a loop.
+      expect(refused[0].message).toContain('answer again in a new session');
+      // ...and what they DO have: this session.
+      expect(refused[0].message).toContain('this session only');
+      // It names what they nearly lost, in the word for THIS file and never the other one's.
+      expect(refused[0].message).toContain('refusals');
+      expect(refused[0].message).not.toContain('approvals');
+    });
+
+    it('names APPROVALS when it is the allow file, and never the deny side’s word', () => {
+      writeFileSync(allowFile, CORRUPT, 'utf8');
+      const store = new PersistedApprovalGrants(allowFile, { onNotice, holds: 'approvals' });
+      store.add(grantOf('npm test'));
+
+      const refused = writeNotices();
+      expect(refused).toHaveLength(1);
+      expect(refused[0].message).toContain('approvals');
+      expect(refused[0].message).not.toContain('refusals');
+    });
+
+    /**
+     * One per refused answer. Each is a separate thing the user believes they have written down, so
+     * collapsing the later ones would leave those beliefs uncorrected.
+     */
+    it('reports every refused answer, not just the first', () => {
+      writeFileSync(denyFile, CORRUPT, 'utf8');
+      const store = new PersistedApprovalGrants(denyFile, { onNotice, holds: 'refusals' });
+      store.add(grantOf('rm -rf /'));
+      store.add(grantOf('npm publish'));
+
+      expect(writeNotices()).toHaveLength(2);
+      expect(readFileSync(denyFile, 'utf8')).toBe(CORRUPT);
+    });
+
+    /**
+     * **A write that FAILED is not a write that was REFUSED**, and the two must not converge.
+     *
+     * A read-only checkout leaves the file this store's own to write, nothing was overwritten, and
+     * the next call may well succeed — so the grant is kept and stays in force. A refused write is
+     * the opposite: the file holds somebody else's content, and a grant kept here would be rendered
+     * by the approvals display as something saved to a file that never had it.
+     */
+    it('keeps its in-memory grant when a write FAILED, unlike one that was refused', () => {
+      const unwritable = join(dir, 'no-such-dir', 'grants.json');
+      const store = new PersistedApprovalGrants(unwritable, { onNotice, holds: 'approvals' });
+
+      expect(store.add(grantOf('npm test'))).toBe(false);
+      expect(store.size()).toBe(1);
+      expect(approves(store.entries(), 'npm test')).toBe(true);
+      // Nothing was refused, so nothing is reported here — the load found no file to lose.
+      expect(writeNotices()).toEqual([]);
+    });
+
+    /**
+     * **The [[EXT-107]] fail-closed load is untouched.** The defect was the destruction, never the
+     * recovery: a store that fails to load still yields no grants, so an `always` degrades to being
+     * asked again rather than to over-permitting. Pinned here so a later change cannot "improve" the
+     * recovery under cover of this fix.
+     */
+    it('leaves the fail-closed load exactly as it was — no grants, nothing in force', () => {
+      writeFileSync(denyFile, CORRUPT, 'utf8');
+      const store = new PersistedApprovalGrants(denyFile, { onNotice, holds: 'refusals' });
+
+      expect(store.size()).toBe(0);
+      expect(store.entries()).toEqual([]);
+      expect(store.canPersist()).toBe(false);
+      // The load still reports the loss exactly once, as it did before.
+      expect(onNotice).toHaveBeenCalledTimes(1);
+      expect(onNotice.mock.calls[0][0].message).toContain('None of them are in force');
+    });
+
+    /**
+     * **A file emptied to zero bytes.** `JSON.parse('')` throws, so [[EXT-143]] classes this as a
+     * failed load and reports it — and this guard follows that classification rather than making a
+     * second one, since a write guard that disagreed with the reader about which files are broken
+     * would be free to drift from it. An emptied file is also what a truncated write leaves behind.
+     *
+     * **So the file is not written, and the message must not promise anything back.** There is
+     * nothing in it to still be there and nothing that comes back when it parses, and this node's
+     * whole subject is telling the user the truth about their file — a recovery sentence written for
+     * the full-file case would be this node's own defect, restated.
+     *
+     * This costs a small, deliberate behaviour change: before, a save silently re-created an emptied
+     * file, because there was nothing in it to lose. Now it refuses until the file is restored or
+     * removed, and says which.
+     */
+    it('refuses over a zero-byte file, and promises nothing back that is not there', () => {
+      const emptied = join(dir, 'emptied.json');
+      writeFileSync(emptied, '', 'utf8');
+      const store = new PersistedApprovalGrants(emptied, { onNotice, holds: 'refusals' });
+
+      expect(store.canPersist()).toBe(false);
+      expect(store.add(grantOf('rm -rf /'))).toBe(false);
+      expect(readFileSync(emptied, 'utf8')).toBe('');
+
+      const refused = writeNotices();
+      expect(refused).toHaveLength(1);
+      expect(refused[0].message).toContain('nothing in it to recover');
+      // The load-bearing half: NOT the full-file file's promises, which would be false here.
+      expect(refused[0].message).not.toContain('are still there');
+      expect(refused[0].message).not.toContain('they come back');
+      // It gives the one action that makes the file writable again.
+      expect(refused[0].message).toContain('Delete it');
+      // The same timing qualifier as the other branch — repairing the file does not unstick the
+      // store that already read it.
+      expect(refused[0].message).toContain('answer again in a new session');
+    });
+
+    /** Whitespace is the same case: it is what an editor leaves, and it parses no better. */
+    it('treats a whitespace-only file the same way', () => {
+      const blank = join(dir, 'blank.json');
+      writeFileSync(blank, '\n  \n', 'utf8');
+      const store = new PersistedApprovalGrants(blank, { onNotice, holds: 'approvals' });
+
+      expect(store.add(grantOf('npm test'))).toBe(false);
+      expect(readFileSync(blank, 'utf8')).toBe('\n  \n');
+      expect(writeNotices()[0].message).toContain('nothing in it to recover');
+    });
+
+    /**
+     * **CONTROL for the pair above** — a file that holds bytes it could not read gets the OTHER
+     * message, the one that does promise the entries back. Without this the two wordings could
+     * collapse into one and every assertion above would still pass.
+     */
+    it('CONTROL — a corrupt file that HOLDS something promises it back, unlike a blank one', () => {
+      writeFileSync(denyFile, CORRUPT, 'utf8');
+      const store = new PersistedApprovalGrants(denyFile, { onNotice, holds: 'refusals' });
+      store.add(grantOf('rm -rf /'));
+
+      const refused = writeNotices();
+      expect(refused[0].message).toContain('are still there');
+      expect(refused[0].message).toContain('they come back');
+      expect(refused[0].message).not.toContain('nothing in it to recover');
+    });
+
+    /**
+     * **A duplicate answer must not report a file that never received it.**
+     *
+     * On a read-only checkout the load succeeded (there is no file to fail on), so the store may
+     * write and simply cannot. The first answer reports that it did not land. Answering the SAME
+     * thing again writes nothing — and the honest answer is still no, because what is being asked is
+     * whether a restart will find it. Reporting the store's permission instead would say yes.
+     *
+     * This matters past tidiness: the follow-up that closes the unreported-write-failure gap is
+     * meant to derive the recorded scope from this return.
+     */
+    it('reports a duplicate honestly when the file never received the first one', () => {
+      const unwritable = join(dir, 'no-such-dir', 'grants.json');
+      const store = new PersistedApprovalGrants(unwritable, { onNotice, holds: 'approvals' });
+
+      expect(store.add(grantOf('npm test'))).toBe(false);
+      expect(store.add(grantOf('npm test'))).toBe(false);
+
+      // CONTROL: on a writable file the same duplicate answers yes, because the file DOES hold it.
+      const writable = join(dir, 'writable.json');
+      const healthy = new PersistedApprovalGrants(writable, { onNotice, holds: 'approvals' });
+      expect(healthy.add(grantOf('npm test'))).toBe(true);
+      expect(healthy.add(grantOf('npm test'))).toBe(true);
+    });
+
+    /** A file that is simply not there is not a file with content to lose: it is still created. */
+    it('CONTROL — a missing file can still be written, and a clean one can still be added to', () => {
+      const fresh = join(dir, 'fresh.json');
+      const store = new PersistedApprovalGrants(fresh, { onNotice, holds: 'refusals' });
+
+      expect(store.canPersist()).toBe(true);
+      expect(store.add(grantOf('rm -rf /'))).toBe(true);
+      expect(approves(new PersistedApprovalGrants(fresh).entries(), 'rm -rf /')).toBe(true);
     });
   });
 });

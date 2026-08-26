@@ -500,4 +500,130 @@ describe('GthAgentRunner — [[EXT-107]] the persisted deny store', () => {
     expect(runner.liftRefusal(7)).toEqual({ outcome: 'unknown', index: 7, count: 1 });
     expect(runner.getRefusals()).toHaveLength(1);
   });
+
+  /**
+   * [[EXT-144]] — **answering the prompt does not destroy the file that could not be read.**
+   *
+   * The store's own guard is unit-tested; what only this harness can say is that the whole path a
+   * human actually walks ends with their file intact — the real runner, the real file resolution,
+   * the real escalation menu, both files.
+   *
+   * **The deny side is the case that motivated the node.** A user whose refusals have silently
+   * stopped applying is told so ([[EXT-143]]), and the next thing many will do is reach for *always
+   * reject*. That keystroke used to be what made the loss permanent, which made the one control
+   * that would restore their list the thing that destroyed it.
+   *
+   * Every case asserts the file's BYTES, plus the two things a byte comparison cannot see: that the
+   * answer still binds for this session, and that the session is honest about where it lives.
+   */
+  describe('[[EXT-144]] a save never overwrites a store file that could not be read', () => {
+    const approveAlways = () => ({ type: 'approve' as const, scope: 'always' as const });
+
+    /** Broken the way a hand-edit breaks one — a trailing comma — and holding a real entry. */
+    const CORRUPT = [
+      '{',
+      '  "version": 2,',
+      '  "grants": [',
+      '    { "entry": { "type": "shell", "matcher": "exact", "pattern": "git push --force" },',
+      '      "grantedAt": "2026-08-01T00:00:00.000Z", "scope": "always" },',
+      '  ]',
+      '}',
+      '',
+    ].join('\n');
+
+    /** The notices a refused SAVE produced, told from the load's by the claim only it makes. */
+    const refusedWrites = (file: string) =>
+      statusUpdateCallback.mock.calls.filter(
+        ([, message]) => String(message).includes(file) && String(message).includes('NOT saved')
+      );
+
+    it('leaves a corrupt DENY file intact when the human answers always reject', async () => {
+      writeFileSync(denyFile, CORRUPT, 'utf8');
+
+      const { decide, runner } = await runWith({
+        commands: ['npm publish', 'npm publish'],
+        decide: rejectAlways,
+      });
+
+      // THE acceptance: the refusal they had is still on disk, recoverable by fixing the comma.
+      expect(readFileSync(denyFile, 'utf8')).toBe(CORRUPT);
+      // The answer still binds for this session — the repeat never reached a person.
+      expect(decide).toHaveBeenCalledTimes(1);
+      // ...and the session says where it actually lives, rather than calling it saved.
+      expect(runner.getRefusals()).toEqual([
+        { index: 1, description: 'npm publish', origin: 'session', recordedAt: expect.any(String) },
+      ]);
+      // The user is told, at ERROR, once for the one answer that was not written down.
+      const told = refusedWrites(denyFile);
+      expect(told).toHaveLength(1);
+      expect(told[0][0]).toBe(StatusLevel.ERROR);
+      expect(String(told[0][1])).toContain('refusals');
+    });
+
+    it('leaves a corrupt ALLOW file intact when the human answers always approve', async () => {
+      writeFileSync(allowFile, CORRUPT, 'utf8');
+
+      const { decide } = await runWith({
+        commands: ['npm test', 'npm test'],
+        decide: approveAlways,
+      });
+
+      expect(readFileSync(allowFile, 'utf8')).toBe(CORRUPT);
+      // In force for the session, so the repeat was auto-approved without a second prompt.
+      expect(decide).toHaveBeenCalledTimes(1);
+      const told = refusedWrites(allowFile);
+      expect(told).toHaveLength(1);
+      expect(told[0][0]).toBe(StatusLevel.ERROR);
+      expect(String(told[0][1])).toContain('approvals');
+      expect(String(told[0][1])).not.toContain('refusals');
+    });
+
+    /**
+     * **CONTROL — the same two answers against files that read cleanly are written.**
+     *
+     * Without it every assertion above would hold just as well for a build that had stopped saving
+     * answers altogether, which would end the data loss by removing the feature.
+     */
+    it('CONTROL — with readable files, the same answers ARE saved to both', async () => {
+      const { runner } = await runWith({
+        commands: ['npm publish', 'npm test'],
+        decide: (pending) =>
+          pending.args.command === 'npm publish' ? rejectAlways() : approveAlways(),
+      });
+
+      expect(JSON.parse(readFileSync(denyFile, 'utf8')).grants).toHaveLength(1);
+      expect(JSON.parse(readFileSync(allowFile, 'utf8')).grants).toHaveLength(1);
+      expect(runner.getRefusals()).toEqual([
+        {
+          index: 1,
+          description: 'npm publish',
+          origin: 'persisted',
+          recordedAt: expect.any(String),
+        },
+      ]);
+      expect(refusedWrites(denyFile)).toEqual([]);
+      expect(refusedWrites(allowFile)).toEqual([]);
+    });
+
+    /**
+     * **A refusal that was not written down cannot be "lifted" out of a file that never had it.**
+     *
+     * The escape hatch reports what it did, and this is the case where the two stores would come
+     * apart: the refusal is real and in force, and the file is somebody else's content. Lifting it
+     * is a session-scoped removal, said in those words, and the file is still untouched afterwards.
+     */
+    it('lifts such a refusal as a session one, leaving the unreadable file alone', async () => {
+      writeFileSync(denyFile, CORRUPT, 'utf8');
+      const { runner } = await runWith({ commands: ['npm publish'], decide: rejectAlways });
+
+      expect(runner.liftRefusal(1)).toEqual({
+        outcome: 'lifted',
+        description: 'npm publish',
+        origin: 'session',
+        stillConfigured: false,
+      });
+      expect(runner.getRefusals()).toEqual([]);
+      expect(readFileSync(denyFile, 'utf8')).toBe(CORRUPT);
+    });
+  });
 });

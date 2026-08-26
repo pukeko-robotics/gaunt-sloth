@@ -89,8 +89,25 @@ unmentioned until a session that does read it.
 as the gate is concerned, so a call it covered is left to the rest of the gate: it may be refused by
 another rule, it may run without asking — at `bypass`, or where a saved approval matches the same
 command — or you may be prompted. A broken denylist is the case to watch, because there the calls you
-refused are the ones now decided by something else. Fix the file rather than leaving it: the next
-answer you save rewrites it, and what could not be read is not carried over.
+refused are the ones now decided by something else.
+
+**Nothing you save will overwrite a file that could not be read.** While a file is broken it is left
+exactly as you left it, so whatever it holds is still on disk: fix the error the session reported and
+all of it is back in force in your next session. An answer you give in the meantime holds for that
+session only and is not written to the file — you are told each time that it was not saved.
+
+**Repairing the file does not take effect in the session that reported it.** Each file is read once
+per session and the result is kept, so a session that failed to read one goes on refusing to write it
+however you edit it in the meantime. Fix the file, then start a new session and answer again to
+record it for good.
+
+**An empty file counts as one that could not be read**, so it is not written to either — but there is
+nothing in it to recover, and the notice says so rather than promising your entries back. Delete it,
+or put an empty pair of braces in it, and saving works again in your next session.
+
+A file with one unreadable *entry* is a different case: that file was read, so the entries around the
+bad one are in force and the next answer you save is written normally, which does not carry the
+unreadable entry over. Fix that entry before saving if you want to keep it.
 
 ### Where the prompt is written
 
