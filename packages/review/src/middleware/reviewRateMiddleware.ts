@@ -173,12 +173,6 @@ export function createReviewRateMiddleware(
             // Never hold the process open for a budget that is only a backstop.
             deadlineTimer.unref?.();
           });
-          // A losing `Promise.race` entrant still settles. Without this the deadline would reject
-          // into nobody once the call has already returned, and an unhandled rejection is fatal on
-          // modern Node — so the guard against a hang would itself become a way to crash a healthy
-          // run. `clearTimeout` below is the real fix; this is the belt for the race we lose.
-          deadline.catch(() => {});
-
           let answer;
           try {
             answer = await Promise.race([
@@ -189,6 +183,11 @@ export function createReviewRateMiddleware(
               deadline,
             ]);
           } finally {
+            // Not tidiness — correctness. A losing `Promise.race` entrant still settles, so a
+            // deadline left armed after a fast rating would reject into nobody, and an unhandled
+            // rejection is fatal on modern Node: the guard against a hang would become a way to
+            // crash a healthy run. This runs on the continuation, ahead of any macrotask timer, so
+            // the deadline never fires and never rejects.
             clearTimeout(deadlineTimer);
           }
 
