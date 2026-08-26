@@ -674,6 +674,12 @@ export class GthAgentRunner {
    * **A configured entry is reported, never removed.** `approvals.deny` is something the user
    * wrote; rewriting their config file out from under them is not a thing a session command may do,
    * and silently no-oping would be worse. They are told where it lives.
+   *
+   * **`stillSaved` is the deletion that did not reach disk** ([[EXT-149]]). The file rewrite can
+   * fail after the in-memory removal has succeeded — a checkout that is not writable, a settings
+   * directory that has gone — and the entry then comes back in the next session. The store now
+   * answers that question ({@link PersistedApprovalGrants.remove}) instead of reporting every
+   * removal as landed, so the notice can stop promising *it will not come back*.
    */
   public liftRefusal(index: number): ApprovalRefusalLift {
     const held = this.refusalRecords();
@@ -684,12 +690,18 @@ export class GthAgentRunner {
     const description = describeApprovalEntry(target.entry);
     if (target.origin === 'config') return { outcome: 'configured', description };
     this.denyGrants.remove(target.entry);
-    if (target.origin === 'persisted') this.getPersistedDenials()?.remove(target.entry);
+    const removedFromFile =
+      target.origin === 'persisted'
+        ? (this.getPersistedDenials()?.remove(target.entry) ?? false)
+        : false;
     const key = renderApprovalEntryObject(target.entry);
     return {
       outcome: 'lifted',
       description,
       origin: target.origin,
+      // A session refusal was never in a file, so there is nothing left there — the flag is about
+      // the file keeping an entry the user was told had gone, and only a saved one can.
+      stillSaved: target.origin === 'persisted' && !removedFromFile,
       // The other half of not de-duplicating config entries above: a call refused by BOTH a saved
       // entry and a config line is still refused after this, and a notice that did not say so would
       // report a lift the gate did not perform.
@@ -2723,42 +2735,35 @@ export class GthAgentRunner {
    * concatenates the three), so a refusal the human made at the prompt and one they wrote in their
    * config are one list to the matcher.
    *
-   * **The recorded scope says whether this refusal has anywhere to be written**, asked of the store
-   * before the record is built ([[EXT-144]]). With no store at all, or with one whose file could not
-   * be read and so must not be rewritten, the refusal is held as a `session` one and the
-   * `/approvals` display reads that back.
+   * **The recorded scope is derived from whether the entry REACHED THE FILE** ([[EXT-149]]) — what
+   * {@link PersistedApprovalGrants.add} returns — and not from whether the store was allowed to try.
+   * Those differ on a read-only checkout, where the file is simply absent, so the load did not fail,
+   * `canPersist()` is true, and every write throws: asking permission stamped `always` on an answer
+   * that reached no disk, and nothing told the user. **Do not describe that gap's cost as "one
+   * re-prompt next session":** the entry is not on disk, so next session it applies to nothing and
+   * the call is left to the rest of the gate — another rule may refuse it, it may be prompted for,
+   * or it may run without asking under `bypass` or a matching saved allow.
    *
-   * **Asked before, not corrected after**, because {@link ApprovalGrantStore.add} holds the very
+   * **Two records, not one patched afterwards.** {@link ApprovalGrantStore.add} holds the very
    * object it is handed whenever the grant carries no annotation snapshot — which every refusal
-   * does, since {@link denyEntryFor} builds an entry and never a snapshot. So stamping `always` and
-   * then patching the field once the write is known to have been refused would reach into what
-   * {@link denyGrants} already holds and what the display renders from it. (A grant that DOES carry
-   * a snapshot is shallow-copied on the way in, so it would not alias — but relying on that would
-   * make this correct for one kind of grant and wrong for the other.)
+   * does, since {@link denyEntryFor} builds an entry and never a snapshot — so stamping one object
+   * `always` and correcting it after the write would reach inside whatever {@link denyGrants}
+   * already holds and whatever the display renders from it. The persisted store is handed the
+   * `always` record it will hold if the write lands (and takes back if it does not); the session
+   * store is handed its own record, stamped from the answer.
    *
-   * **The question is whether the file could be READ, not whether the write landed**, and the gap
-   * that leaves is knowing rather than closed: a `writeFileSync` that fails on a read-only checkout
-   * still records `always`, and nothing tells the user it happened. Closing it means deriving the
-   * scope from what {@link PersistedApprovalGrants.add} returns, which the aliasing above makes a
-   * restructure rather than an added line. **Do not describe that cost as "one re-prompt next
-   * session":** the entry is not on disk, so next session it applies to nothing and the call is left
-   * to the rest of the gate — another rule may refuse it, it may be prompted for, or it may run
-   * without asking under `bypass` or a matching saved allow.
+   * The persisted store is still told even when it cannot write, because telling it is what reports
+   * the refused or failed write to the user, and it declines to hold what it did not write.
    */
   private recordDenial(entry: ApprovalEntry, scope: ToolRejectScope): void {
     if (scope === 'once') return;
     const persisted = scope === 'always' ? this.getPersistedDenials() : null;
-    const record: ApprovalGrant = {
-      entry,
-      grantedAt: new Date().toISOString(),
-      scope: persisted?.canPersist() ? 'always' : 'session',
-    };
+    const grantedAt = new Date().toISOString();
+    const saved = persisted?.add({ entry, grantedAt, scope: 'always' }) ?? false;
     // Both stores, exactly as `recordApproval` writes both: the in-memory copy is what keeps the
     // refusal in force for this run even when the file cannot be written, and the display
-    // de-duplicates by entry identity. The persisted store is still told — that is what reports the
-    // refused write to the user — and it declines to hold what it did not write.
-    this.denyGrants.add(record);
-    persisted?.add(record);
+    // de-duplicates by entry identity.
+    this.denyGrants.add({ entry, grantedAt, scope: saved ? 'always' : 'session' });
   }
 
   /**
@@ -2769,15 +2774,16 @@ export class GthAgentRunner {
    * What is recorded was decided by {@link stickyGrantFor} and shown to the human before they
    * answered; this only stamps it with when and at what scope.
    *
-   * **The stamped scope says whether this grant has anywhere to be written**, the mirror of
-   * {@link recordDenial}: an `always` whose store is absent, or holds a file it could not read and
-   * so must not rewrite ([[EXT-144]]), is recorded as the `session` grant it actually is. Asked of
-   * the store first, because {@link ApprovalGrantStore.add} holds the object it is handed for a
-   * grant with no annotation snapshot — every shell grant — so a scope patched afterwards would be
-   * patched inside {@link sessionGrants}. A tool grant carrying a snapshot is shallow-copied on the
-   * way in and would not alias; asking first is uniform rather than correct for only one of them.
-   * It carries the same knowing gap as its mirror — a write that FAILS on a read-only checkout still
-   * records `always`.
+   * **The stamped scope says whether this grant REACHED THE FILE**, the mirror of
+   * {@link recordDenial} and derived the same way ([[EXT-149]]): an `always` whose store is absent,
+   * whose file could not be read and so must not be rewritten ([[EXT-144]]), or whose write threw on
+   * a checkout nothing can write, is recorded as the `session` grant it actually is — and the store
+   * reports the last of those rather than swallowing it.
+   *
+   * Two records rather than one patched afterwards, for the reason argued in {@link recordDenial}:
+   * {@link ApprovalGrantStore.add} holds the object it is handed for a grant with no annotation
+   * snapshot — every shell grant — so a scope corrected after the write would be corrected inside
+   * {@link sessionGrants}.
    *
    * The store is still loaded only for `always`, unchanged: a display must not create the file in
    * order to show it, and a `session` grant has no business opening it.
@@ -2788,14 +2794,10 @@ export class GthAgentRunner {
   ): void {
     if (scope === 'once') return;
     const persisted = scope === 'always' ? this.getPersistedGrants() : null;
-    const grantScope: ApprovalGrantScope = persisted?.canPersist() ? 'always' : 'session';
-    const record: ApprovalGrant = {
-      ...grant,
-      grantedAt: new Date().toISOString(),
-      scope: grantScope,
-    };
-    this.sessionGrants.add(record);
-    persisted?.add(record);
+    const grantedAt = new Date().toISOString();
+    const saved = persisted?.add({ ...grant, grantedAt, scope: 'always' }) ?? false;
+    const grantScope: ApprovalGrantScope = saved ? 'always' : 'session';
+    this.sessionGrants.add({ ...grant, grantedAt, scope: grantScope });
   }
 
   /**

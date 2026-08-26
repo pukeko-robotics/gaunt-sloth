@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, Mock, vi } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -728,8 +728,8 @@ describe('PersistedApprovalGrants', () => {
     const unwritable = join(dir, 'no-such-dir', 'grants.json');
     const store = new PersistedApprovalGrants(unwritable);
     expect(() => store.add(grantOf('npm test'))).not.toThrow();
-    // The grant is still in force for this session.
-    expect(approves(store.entries(), 'npm test')).toBe(true);
+    // What the answer degrades TO is the subject of the [[EXT-149]] cases below; the claim here is
+    // only that a bookkeeping write nobody can make does not end the run.
   });
 
   /**
@@ -1273,22 +1273,99 @@ describe('PersistedApprovalGrants', () => {
     });
 
     /**
-     * **A write that FAILED is not a write that was REFUSED**, and the two must not converge.
+     * [[EXT-149]] — **a write that FAILED and a write that was REFUSED leave the same store: one
+     * that does not hold what its file does not hold.**
      *
-     * A read-only checkout leaves the file this store's own to write, nothing was overwritten, and
-     * the next call may well succeed — so the grant is kept and stays in force. A refused write is
-     * the opposite: the file holds somebody else's content, and a grant kept here would be rendered
-     * by the approvals display as something saved to a file that never had it.
+     * [[EXT-144]] took the grant back only on the refused branch, on the ground that a failed write
+     * leaves the file this store's own and the next call may well succeed. The half that argument
+     * misses is what this store's contents ARE: `getRefusals()` labels them *saved to this project*
+     * and `getAllowlistCounts()` counts them as persisted, so a grant kept after a failed write is
+     * rendered as written down — and then offered for removal from a file that never had it. On a
+     * read-only checkout, which is the ordinary case here, that describes every answer the user gives
+     * all session.
+     *
+     * Nothing is lost by taking it back: the answer is in force for the session from the runner's own
+     * session store, which is driven end to end in `persistedDenials.spec.ts`.
      */
-    it('keeps its in-memory grant when a write FAILED, unlike one that was refused', () => {
+    it('does not hold a grant its file never received, when the write FAILED', () => {
       const unwritable = join(dir, 'no-such-dir', 'grants.json');
       const store = new PersistedApprovalGrants(unwritable, { onNotice, holds: 'approvals' });
 
       expect(store.add(grantOf('npm test'))).toBe(false);
-      expect(store.size()).toBe(1);
-      expect(approves(store.entries(), 'npm test')).toBe(true);
-      // Nothing was refused, so nothing is reported here — the load found no file to lose.
-      expect(writeNotices()).toEqual([]);
+      expect(store.size()).toBe(0);
+      expect(approves(store.entries(), 'npm test')).toBe(false);
+      // CONTROL: the same store on a writable path keeps it, so the line above is the failed write
+      // and not a store that stopped holding anything.
+      const writable = join(dir, 'holds-it.json');
+      const healthy = new PersistedApprovalGrants(writable, { onNotice, holds: 'approvals' });
+      expect(healthy.add(grantOf('npm test'))).toBe(true);
+      expect(approves(healthy.entries(), 'npm test')).toBe(true);
+    });
+
+    /**
+     * [[EXT-149]] — **and the user is told, which is the whole of the defect.**
+     *
+     * The throw is swallowed so a bookkeeping write can never end a run, and swallowing it left the
+     * surface that had already promised the user something — a menu label reading `always` — as the
+     * last word on a file that never changed. The message is a different one from the REFUSED
+     * write's: nothing in the file was lost, so there is nothing to promise back and nothing to fix
+     * in the file itself.
+     */
+    it('reports a write that FAILED, naming the file and the reason, without promising anything back', () => {
+      const unwritable = join(dir, 'no-such-dir', 'grants.json');
+      const store = new PersistedApprovalGrants(unwritable, { onNotice, holds: 'approvals' });
+
+      store.add(grantOf('npm test'));
+
+      const told = onNotice.mock.calls.map(([notice]) => notice);
+      expect(told).toHaveLength(1);
+      expect(told[0].level).toBe(StatusLevel.ERROR);
+      expect(told[0].message).toContain(unwritable);
+      expect(told[0].message).toContain('could not be written');
+      expect(told[0].message).toContain('this session only');
+      // The load-bearing negatives: this is NOT the refused-write message, whose promises are all
+      // false here — nothing in the file was lost, and there is no read error to fix.
+      expect(told[0].message).not.toContain('could not be read');
+      expect(told[0].message).not.toContain('are still there');
+      expect(told[0].message).not.toContain('nothing in it to recover');
+      // CONTROL: a write that lands says nothing at all.
+      const writable = join(dir, 'quiet.json');
+      onNotice.mockClear();
+      new PersistedApprovalGrants(writable, { onNotice, holds: 'approvals' }).add(
+        grantOf('npm test')
+      );
+      expect(onNotice).not.toHaveBeenCalled();
+    });
+
+    /**
+     * [[EXT-149]] — **a removal that did not reach disk is reported as one.**
+     *
+     * `remove()` used to answer `true` after a write that threw, which is how `/approvals undeny`
+     * came to tell a user their refusal would not come back when the file still held it. The file
+     * is made unwritable AFTER the load, which is the real shape of this: the store read the entry
+     * normally, and only the rewrite fails.
+     */
+    it('reports a removal whose rewrite did not land, and one that did', () => {
+      const dirGone = join(dir, 'vanishing');
+      mkdirSync(dirGone, { recursive: true });
+      const file = join(dirGone, 'grants.json');
+      writeFileSync(file, JSON.stringify({ version: 2, grants: [] }), 'utf8');
+
+      const store = new PersistedApprovalGrants(file, { onNotice, holds: 'refusals' });
+      expect(store.add(grantOf('rm -rf /'))).toBe(true);
+      // CONTROL, first: while the file can be written, a removal reaches it and says so.
+      expect(store.remove(grantOf('rm -rf /').entry)).toBe(true);
+
+      expect(store.add(grantOf('npm publish'))).toBe(true);
+      rmSync(dirGone, { recursive: true, force: true });
+      expect(store.remove(grantOf('npm publish').entry)).toBe(false);
+
+      const told = onNotice.mock.calls.map(([notice]) => notice);
+      expect(told).toHaveLength(1);
+      expect(told[0].level).toBe(StatusLevel.ERROR);
+      expect(told[0].message).toContain(file);
+      expect(told[0].message).toContain('could NOT be updated');
+      expect(told[0].message).toContain('still saved in it');
     });
 
     /**
@@ -1406,6 +1483,203 @@ describe('PersistedApprovalGrants', () => {
       expect(store.canPersist()).toBe(true);
       expect(store.add(grantOf('rm -rf /'))).toBe(true);
       expect(approves(new PersistedApprovalGrants(fresh).entries(), 'rm -rf /')).toBe(true);
+    });
+
+    /**
+     * [[EXT-149]] — **the line between the two refusal messages is drawn at recoverable TEXT.**
+     *
+     * It used to be drawn at zero bytes, so a file truncated to a lone brace — which is what a write
+     * cut short leaves, and what a hand-edit gone wrong leaves — was told that the refusals saved in
+     * it were still there. There is nothing in it and nothing comes back when it parses.
+     *
+     * **The CRLF pair is the point of the second and third cases, not decoration.** The predicate has
+     * to treat every line ending as whitespace, and the obvious implementation that does not — split
+     * the text on `'\n'` and look at what is left — leaves a stray `\r` behind and calls the empty
+     * file full. That fails on a Windows checkout only, with no crash and no red cell anywhere else.
+     */
+    describe('[[EXT-149]] a file with nothing in it to recover is told so, on either line ending', () => {
+      const refusalFor = (contents: string): ShellApprovalGateNotice => {
+        const stub = join(dir, `stub-${contents.length}-${contents.charCodeAt(1) || 0}.json`);
+        writeFileSync(stub, contents, 'utf8');
+        const store = new PersistedApprovalGrants(stub, { onNotice, holds: 'refusals' });
+        expect(store.add(grantOf('rm -rf /'))).toBe(false);
+        // Whatever it held is still on disk, exactly as it was.
+        expect(readFileSync(stub, 'utf8')).toBe(contents);
+        return writeNotices()[0];
+      };
+
+      it('promises nothing back to a file truncated to a lone brace', () => {
+        const notice = refusalFor('{');
+        expect(notice.message).toContain('nothing in it to recover');
+        expect(notice.message).not.toContain('are still there');
+        expect(notice.message).not.toContain('they come back');
+      });
+
+      it('says the same when a CRLF editor left a line ending after that brace', () => {
+        const notice = refusalFor('{\r\n');
+        expect(notice.message).toContain('nothing in it to recover');
+        expect(notice.message).not.toContain('are still there');
+      });
+
+      it('CONTROL — a CRLF file that DOES hold entries still gets them promised back', () => {
+        const notice = refusalFor(CORRUPT.split('\n').join('\r\n'));
+        expect(notice.message).toContain('are still there');
+        expect(notice.message).not.toContain('nothing in it to recover');
+      });
+    });
+
+    /**
+     * [[EXT-151]] — **a rewrite gives back the top-level keys this version does not use.**
+     *
+     * A store file is a project file people hand-edit and commit, and a whole-file rewrite from an
+     * in-memory model of two keys deleted every other one silently. The protection was already there
+     * for a file with no `grants` key at all — [[EXT-144]] refuses to write it — so a file with
+     * `grants` AND a key of the user's own was the same loss, guarded on one side of a line the user
+     * cannot see.
+     *
+     * Reporting the loss was the alternative and is still a loss. Nothing here interprets an unknown
+     * key; it is carried, not read.
+     */
+    describe('[[EXT-151]] a rewrite gives back the keys it does not use', () => {
+      const rewriteOf = (name: string, contents: string): Record<string, unknown> => {
+        const file = join(dir, name);
+        writeFileSync(file, contents, 'utf8');
+        const store = new PersistedApprovalGrants(file, { onNotice, holds: 'refusals' });
+        expect(store.add(grantOf('rm -rf /'))).toBe(true);
+        return JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+      };
+
+      it('keeps an unknown top-level key through a save that rewrites the file', () => {
+        const written = rewriteOf(
+          'unknown-key.json',
+          JSON.stringify({ version: 2, grants: [], myOwnRules: [{ note: 'keep me' }] })
+        );
+        expect(written.myOwnRules).toEqual([{ note: 'keep me' }]);
+        // …and the two keys this version owns are the ones it just wrote, not the ones it read.
+        expect(written.version).toBe(2);
+        expect(written.grants).toHaveLength(1);
+      });
+
+      it('keeps it through a CRLF file, exactly as through an LF one', () => {
+        const pretty = JSON.stringify(
+          { version: 2, grants: [], myOwnRules: [{ note: 'keep me' }] },
+          null,
+          2
+        );
+        const written = rewriteOf('unknown-key-crlf.json', pretty.split('\n').join('\r\n'));
+        expect(written.myOwnRules).toEqual([{ note: 'keep me' }]);
+        expect(written.grants).toHaveLength(1);
+      });
+
+      it('keeps it on a file that holds no entry list and lost nothing by it', () => {
+        // `{"version": 2, "note": "…"}` has no `grants` array, so it takes the unrecognised-shape
+        // path — and loses nothing, so it stays writable and the note has to survive the write.
+        const written = rewriteOf(
+          'no-list.json',
+          JSON.stringify({ version: 2, note: 'why these are here' })
+        );
+        expect(written.note).toBe('why these are here');
+        expect(written.grants).toHaveLength(1);
+      });
+
+      it('keeps it across a removal as well as an addition', () => {
+        const file = join(dir, 'kept-through-removal.json');
+        writeFileSync(file, JSON.stringify({ version: 2, grants: [], mine: 'x' }), 'utf8');
+        const store = new PersistedApprovalGrants(file, { onNotice, holds: 'refusals' });
+        store.add(grantOf('rm -rf /'));
+        expect(store.remove(grantOf('rm -rf /').entry)).toBe(true);
+        const written = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+        expect(written.mine).toBe('x');
+        expect(written.grants).toEqual([]);
+      });
+
+      /**
+       * The guard [[EXT-144]] put on the other side of this line is UNCHANGED: a file whose entry
+       * list this version cannot read is still not written at all, whatever preserving does. Pinned
+       * because "preserve instead of destroy" is one sentence away from "so it is safe to write over
+       * anything now", and that would undo the node this one builds on.
+       */
+      it('CONTROL — a file whose unknown key IS its entry list is still never rewritten', () => {
+        const file = join(dir, 'list-under-another-name.json');
+        const contents = JSON.stringify({ version: 2, myOwnRules: [{ pattern: 'rm -rf /' }] });
+        writeFileSync(file, contents, 'utf8');
+        const store = new PersistedApprovalGrants(file, { onNotice, holds: 'refusals' });
+
+        expect(store.canPersist()).toBe(false);
+        expect(store.add(grantOf('npm publish'))).toBe(false);
+        expect(readFileSync(file, 'utf8')).toBe(contents);
+        expect(writeNotices()).toHaveLength(1);
+      });
+    });
+
+    /**
+     * [[EXT-151]] — **the v1 migration says what it removed, and stops claiming it removed nothing.**
+     *
+     * The migration drops a `prefixes` member that is not a string or that normalizes to nothing, and
+     * the rewrite is what makes that permanent — while the notice beside it read *"Nothing was
+     * removed"*. That is worse than silence: it is the one sentence a reader would rely on.
+     */
+    describe('[[EXT-151]] the v1 migration reports what it dropped', () => {
+      it('names the members it could not carry, and drops the claim that nothing went', () => {
+        const file = join(dir, 'v1-with-junk.json');
+        writeFileSync(
+          file,
+          JSON.stringify({ version: 1, prefixes: ['npm test', 42, '   ', 'npm run build'] }),
+          'utf8'
+        );
+        new PersistedApprovalGrants(file, { onNotice, holds: 'approvals' });
+
+        const notices = onNotice.mock.calls.map(([notice]) => notice);
+        const migration = notices.find((notice) => notice.message.includes('older format'));
+        expect(migration).toBeDefined();
+        expect(migration!.message).not.toContain('Nothing was removed');
+
+        const loss = notices.find((notice) => notice.message.includes('REMOVED from the file'));
+        expect(loss).toBeDefined();
+        expect(loss!.level).toBe(StatusLevel.ERROR);
+        expect(loss!.message).toContain(file);
+        // Positions in the file's own list, so the reader can count to them in their editor.
+        expect(loss!.message).toContain('entry 2 — 42');
+        expect(loss!.message).toContain('entry 3');
+        expect(loss!.message).toContain('2 entries');
+
+        // And the claim is true: the file really no longer holds them.
+        const written = JSON.parse(readFileSync(file, 'utf8')) as { grants: ApprovalGrant[] };
+        expect(written.grants.map((grant) => grant.entry)).toEqual([
+          { type: 'shell', matcher: 'exact', pattern: 'npm test' },
+          { type: 'shell', matcher: 'exact', pattern: 'npm run build' },
+        ]);
+      });
+
+      /**
+       * **CONTROL — the reassurance is kept where it is true.** Without this the fix could have been
+       * "delete the sentence", which costs the ordinary migration the one thing it was there to say.
+       */
+      it('CONTROL — a migration that dropped nothing still says nothing was removed', () => {
+        const file = join(dir, 'v1-clean.json');
+        writeFileSync(file, JSON.stringify({ version: 1, prefixes: ['npm test'] }), 'utf8');
+        new PersistedApprovalGrants(file, { onNotice, holds: 'approvals' });
+
+        const notices = onNotice.mock.calls.map(([notice]) => notice);
+        expect(notices).toHaveLength(1);
+        expect(notices[0].message).toContain('Nothing was removed');
+      });
+
+      it('carries a v1 file’s other top-level keys through the migration rewrite', () => {
+        const file = join(dir, 'v1-with-note.json');
+        writeFileSync(
+          file,
+          JSON.stringify({ version: 1, prefixes: ['npm test'], note: 'ours' }),
+          'utf8'
+        );
+        new PersistedApprovalGrants(file, { onNotice, holds: 'approvals' });
+
+        const written = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+        expect(written.note).toBe('ours');
+        expect(written.version).toBe(2);
+        // The consumed v1 key is gone, which is what migrating it MEANS.
+        expect(written.prefixes).toBeUndefined();
+      });
     });
   });
 });

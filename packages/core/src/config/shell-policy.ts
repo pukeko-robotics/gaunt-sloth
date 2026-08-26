@@ -1318,6 +1318,11 @@ export interface ApprovalRefusal {
  * entry *and* by a line in `approvals.deny`, and lifting the first leaves the second refusing it.
  * Reporting the removal without saying so would tell the user they had lifted a refusal that is
  * still in force.
+ *
+ * `stillSaved` is the same failure one layer down ([[EXT-149]]): the lift is real for this session
+ * and the file rewrite that was meant to make it permanent did not land, so the entry returns in the
+ * next session. It is the difference between *lifted* and *lifted for good*, and the store is the
+ * only thing that knows which happened.
  */
 export type ApprovalRefusalLift =
   | {
@@ -1326,6 +1331,11 @@ export type ApprovalRefusalLift =
       origin: 'session' | 'persisted';
       /** Whether the user's own `approvals.deny` still matches this entry. */
       stillConfigured: boolean;
+      /**
+       * Whether the project's saved-refusals file still holds this entry — true only when the
+       * removal could not be written, which is what brings it back in the next session.
+       */
+      stillSaved: boolean;
     }
   | { outcome: 'configured'; description: string }
   | { outcome: 'unknown'; index: number; count: number };

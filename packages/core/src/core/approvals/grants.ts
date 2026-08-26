@@ -80,6 +80,28 @@
  * cannot be undone, so {@link PersistedApprovalGrants.tryPersist} refuses it and says so
  * ({@link refusedWriteNotice}). The answer still holds for this session — the runner keeps its own
  * in-memory copy — it is simply not written down.
+ *
+ * ## What this store CLAIMS is what the file holds
+ *
+ * [[EXT-149]] — **the store holds only grants the file is believed to hold**, and every method that
+ * answers a question about the file answers it from that. {@link PersistedApprovalGrants.add}
+ * returns whether the grant reached disk and takes back one that did not;
+ * {@link PersistedApprovalGrants.remove} returns whether the deletion reached disk. A write that
+ * merely FAILED — an unwritable checkout, a directory that is gone — is reported
+ * ({@link failedWriteNotice}) rather than swallowed, because the caller above stamps an answer
+ * `always` or `session` from these returns and a surface renders them as *saved to this project*.
+ *
+ * The one imprecision is deliberate and is in the safe direction: `inSync` is store-level, so after
+ * a failed write an `add` of a grant the file DOES already hold answers `false`. Under-claiming
+ * costs a re-prompt; over-claiming is the defect.
+ *
+ * ## A rewrite gives back the keys it does not use
+ *
+ * [[EXT-151]] — this is a file people hand-edit, and a whole-file rewrite from a store that models
+ * two keys would delete everything else in it. Top-level keys this version does not use are carried
+ * across the read and written back ({@link preservedKeys}), so a rewrite touches `version` and
+ * `grants` and nothing else. Deleting the parts of a user's file we do not recognise is the worst
+ * of the available answers; reporting the deletion is only the second worst.
  */
 import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { approvalEntrySchema, renderApprovalEntryObject } from '#src/config/schema.js';
@@ -149,29 +171,94 @@ interface PersistedGrantsFileV2 {
  * [[EXT-144]] — **what a read found, as far as WRITING over the file is concerned.**
  *
  * - `readable` — the file was read, or is not there at all. A save may rewrite it.
- * - `holdsContent` — it could not be read AND holds bytes. A save would destroy them; this is the
- *   case the guard exists for.
- * - `blank` — it could not be read *because it is empty*. A save would destroy nothing, and it is
- *   still refused: what counts as a failed load is {@link unreadableFileNotice}'s question, already
- *   settled by [[EXT-143]], and a write guard that disagreed with the reader about which files are
- *   broken would be a second definition free to drift from the first. An emptied file is also what a
- *   truncated write leaves behind, which is not a thing to overwrite on sight.
+ * - `holdsContent` — it could not be read AND holds something a human could get back by fixing it.
+ *   A save would destroy that; this is the case the guard exists for.
+ * - `holdsNothing` — it could not be read, and there is nothing in it to recover
+ *   ({@link holdsRecoverableText}). A save would destroy nothing, and it is still refused: what
+ *   counts as a failed load is {@link unreadableFileNotice}'s question, already settled by
+ *   [[EXT-143]], and a write guard that disagreed with the reader about which files are broken would
+ *   be a second definition free to drift from the first. It is also the shape a truncated write
+ *   leaves behind, which is not a thing to overwrite on sight.
  *
- * It is a separate value from "may I write" because the two answers differ: `blank` forbids the
- * write like `holdsContent` does, but the user must not be told their entries are safe when the file
- * they are in is empty.
+ * It is a separate value from "may I write" because the two answers differ: `holdsNothing` forbids
+ * the write like `holdsContent` does, but the user must not be told their entries are safe when the
+ * file they are in holds none.
+ *
+ * **The line between the last two is drawn at recoverable TEXT, not at zero bytes** ([[EXT-149]]).
+ * A file truncated to a lone brace has a byte in it and nothing to get back, and the promise written
+ * for `holdsContent` — *the refusals you saved in it are still there* — is false of it.
  */
-type StoreReadState = 'readable' | 'holdsContent' | 'blank';
+type StoreReadState = 'readable' | 'holdsContent' | 'holdsNothing';
+
+/**
+ * [[EXT-149]] — **does an unreadable file hold anything a human could get back by fixing it?**
+ *
+ * The write guard refuses either way ({@link StoreReadState}); this decides only what the user is
+ * TOLD, and the two messages make opposite promises. The predicate is *is any text left once JSON's
+ * own punctuation and whitespace are removed*: a file emptied by hand, one an editor left holding a
+ * newline, and one truncated to `{` or `{"` all hold nothing, while a trailing comma inside a real
+ * entry list leaves every entry's own text behind.
+ *
+ * **Every line ending counts as whitespace, and that is load-bearing.** `\s` matches `\r` as well as
+ * `\n`, so a file written on a CRLF checkout classifies exactly as the same file written with LF. A
+ * predicate that reached the same place by splitting on `'\n'` would leave a stray `\r` behind and
+ * call an empty file full — with no crash, on Windows only.
+ *
+ * `undefined` means the read itself threw (a permission error, say), where the content is unknown
+ * and the conservative answer is that there is something to protect.
+ */
+function holdsRecoverableText(raw: string | undefined): boolean {
+  if (raw === undefined) return true;
+  return raw.replace(/[\s{}[\],:"]/g, '').length > 0;
+}
 
 /**
  * What one read of the persisted file produced: the grants recovered from it, whether that read
- * migrated a v1 file (and so owes it a rewrite), and — [[EXT-144]] — what it found in the file,
- * which is what forbids every later rewrite.
+ * migrated a v1 file (and so owes it a rewrite), [[EXT-144]] — what it found in the file, which is
+ * what forbids every later rewrite — and [[EXT-151]] — the top-level keys this version does not use,
+ * which a rewrite has to give back.
  */
 interface LoadedGrants {
   grants: ApprovalGrant[];
   migrated: boolean;
   readState: StoreReadState;
+  preserved: Record<string, unknown>;
+  /**
+   * [[EXT-151]] — the v1 members the migration could not carry.
+   *
+   * Carried out of the read rather than reported inside it, because the sentence the reader gets is
+   * that these are **gone from the file**, and that only becomes true when the migration's rewrite
+   * lands. The read cannot know that yet; only the caller that performs the write does. Reporting it
+   * here would rebuild, inside this node's own fix, the exact defect this node exists to remove.
+   */
+  dropped: readonly { position: number; value: unknown }[];
+}
+
+/** The top-level keys this version writes, and so the only ones a rewrite may replace. */
+const OWN_KEYS_V2 = ['version', 'grants'] as const;
+
+/** The v1 keys a migration consumes: `prefixes` becomes grants, `version` is rewritten. */
+const OWN_KEYS_V1 = ['version', 'prefixes'] as const;
+
+/**
+ * [[EXT-151]] — **the top-level keys this version does not use**, kept so a rewrite gives them back
+ * instead of deleting them.
+ *
+ * This is a file people hand-edit and commit, and a whole-file rewrite from an in-memory model of
+ * two keys silently destroys every other one. The protection was already there for a file with no
+ * `grants` key at all ([[EXT-144]] refuses to write it); a file with `grants` AND a key of the
+ * user's own read cleanly and lost the second half on the next save — the same loss, guarded on one
+ * side of a line the user cannot see.
+ *
+ * Preserving rather than merely reporting is the choice, because reporting a deletion is still a
+ * deletion. Nothing here makes an unknown key mean anything: it is carried, not interpreted.
+ */
+function preservedKeys(parsed: object, consumed: readonly string[]): Record<string, unknown> {
+  const kept: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!consumed.includes(key)) kept[key] = value;
+  }
+  return kept;
 }
 
 /** The version this module writes. */
@@ -528,8 +615,8 @@ function clip(text: string, limit: number): string {
   return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
 }
 
-/** The reason clause for a file that could not be opened or parsed, in the reader's own words. */
-function describeLoadFailure(error: unknown): string {
+/** The reason clause for a file that could not be opened, parsed or written, in its own words. */
+function describeIoFailure(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
   const collapsed = raw.replace(/\s+/g, ' ').trim();
   return collapsed.length > 0 ? clip(collapsed, 200) : 'the file could not be opened';
@@ -628,14 +715,15 @@ function refusedWriteNotice(
   holds: 'approvals' | 'refusals' | undefined,
   state: Exclude<StoreReadState, 'readable'>
 ): ShellApprovalGateNotice {
-  // An EMPTY file has nothing in it to preserve, so the recovery sentence written for the case this
-  // guard exists for would be a false promise here: there is nothing still there and nothing that
-  // comes back. It is still not overwritten — see {@link StoreReadState} — so what the reader needs
-  // instead is the one action that makes the file readable again.
+  // A file with nothing recoverable in it has nothing to preserve, so the recovery sentence written
+  // for the case this guard exists for would be a false promise here: there is nothing still there
+  // and nothing that comes back. It is still not overwritten — see {@link StoreReadState} — so what
+  // the reader needs instead is the one action that makes the file readable again.
   const recovery =
-    state === 'blank'
-      ? `It has been left exactly as it is, and it is empty — so there is nothing in it to ` +
-        'recover. Delete it, or put an empty pair of braces in it, and answer again in a new ' +
+    state === 'holdsNothing'
+      ? `It has been left exactly as it is, and there is nothing in it to recover: it holds no ` +
+        `saved shell ${savedNoun(holds)} — only empty space, or the punctuation of a file that was ` +
+        'cut short. Delete it, or put an empty pair of braces in it, and answer again in a new ' +
         'session to save this one.'
       : `Saving would have replaced everything in it with this one entry, so it has been left ` +
         `exactly as it is and the shell ${savedNoun(holds)} you saved in it are still there. Fix ` +
@@ -646,6 +734,71 @@ function refusedWriteNotice(
     message:
       `This answer was NOT saved to ${filePath}, because that file could not be read when this ` +
       `session started. ${recovery} For now the answer applies to this session only.`,
+  };
+}
+
+/**
+ * Why {@link PersistedApprovalGrants.tryPersist} is writing, which is the whole of what the user
+ * needs to be told when it cannot. The three have different consequences and one wording could not
+ * be true of all of them: an unsaved answer is absent next session, an unsaved lift is *present*
+ * next session, and an unperformed migration changes nothing at all.
+ */
+type WritePurpose = 'save' | 'lift' | 'migrate';
+
+/**
+ * [[EXT-149]] — **the file could be read, and could not be written.**
+ *
+ * The sibling of {@link refusedWriteNotice} and a different case from it. There the file holds
+ * somebody else's content and the store declines to touch it; here the store was entitled to write
+ * and the write threw — an unwritable checkout, a settings directory that has since gone, a full
+ * disk. Nothing was lost either way, which is why both can be worded this flatly.
+ *
+ * **It exists because this outcome used to be silent.** The throw is swallowed so a bookkeeping
+ * write can never end a run, and swallowing it left the one surface that had already promised the
+ * user something — a menu label reading `always`, a notice reading *removed from this project's
+ * saved refusals* — as the last word on a file that never changed.
+ *
+ * It names the file, the reason in the operating system's own words (which is what points a reader
+ * at a permission bit or a missing directory), and the consequence, which is the half nobody can
+ * infer and the half that differs per {@link WritePurpose}.
+ *
+ * {@link StatusLevel.ERROR} for the two the user answered for, on the filterability axis argued in
+ * {@link unreadableFileNotice}: `consoleLevel` is configurable down to `error`, where a WARNING is
+ * dropped entirely, and a user who believes an answer was written down when it was not is exactly
+ * who this exists for. A failed MIGRATION is a WARNING instead, and the difference is the axis
+ * itself: nobody was told anything about it, nothing they hold is wrong, and the whole consequence
+ * is that the same INFO notice appears again next session.
+ */
+function failedWriteNotice(
+  filePath: string,
+  holds: 'approvals' | 'refusals' | undefined,
+  purpose: WritePurpose,
+  reason: string
+): ShellApprovalGateNotice {
+  if (purpose === 'lift') {
+    return {
+      level: StatusLevel.ERROR,
+      message:
+        `${filePath} could NOT be updated (${reason}), so this entry is still saved in it. It is ` +
+        'lifted for the rest of this session and it will be back in the next one, until that file ' +
+        'can be written or you remove the entry from it by hand.',
+    };
+  }
+  if (purpose === 'migrate') {
+    return {
+      level: StatusLevel.WARNING,
+      message:
+        `Your saved shell ${savedNoun(holds)} (${filePath}) could not be rewritten in the current ` +
+        `format (${reason}). They are in force for this session and the file is unchanged, so this ` +
+        'is reported again in your next session until that file can be written.',
+    };
+  }
+  return {
+    level: StatusLevel.ERROR,
+    message:
+      `This answer was NOT saved to ${filePath}, because that file could not be written ` +
+      `(${reason}). Nothing in it was lost — it was read normally and is left exactly as it is. ` +
+      'The answer applies to this session only; a new session will not have it.',
   };
 }
 
@@ -690,6 +843,50 @@ function skippedEntriesNotice(
       `${skipped.length} ${one ? 'entry' : 'entries'} in your saved shell ${savedNoun(holds)} ` +
       `(${filePath}) could not be read and ${one ? 'was' : 'were'} skipped: ${named}${rest}. ` +
       `${one ? 'It is' : 'They are'} not in force; the rest of the file is.`,
+  };
+}
+
+/**
+ * [[EXT-151]] — **the v1 members the migration could not carry, and the rewrite therefore DELETED.**
+ *
+ * The migration's twin of {@link skippedEntriesNotice}, and a separate message because the two
+ * outcomes differ in the one way the reader cares about: a skipped v2 entry is still in their file
+ * and can be fixed, and a dropped v1 prefix is gone from it the moment the migration writes. Saying
+ * so is the whole point — this path used to be the one place a loss happened with a sentence beside
+ * it claiming that nothing had been removed.
+ *
+ * Same shape as its twin — a position and the text itself, capped at {@link SKIPPED_ENTRIES_NAMED}
+ * with a count for the rest — because the reader's job is the same: find the thing in a file they
+ * may have committed. Same {@link StatusLevel.ERROR}, on the filterability axis argued in
+ * {@link unreadableFileNotice}.
+ *
+ * **Only the caller that performed the rewrite may send this**, and only when the rewrite landed:
+ * every sentence in it is about a file that has already changed. The constructor is that caller, and
+ * the read hands it the dropped members rather than reporting them from inside itself.
+ */
+function droppedPrefixesNotice(
+  filePath: string,
+  holds: 'approvals' | 'refusals' | undefined,
+  dropped: readonly { position: number; value: unknown }[]
+): ShellApprovalGateNotice {
+  const named = dropped
+    .slice(0, SKIPPED_ENTRIES_NAMED)
+    .map(({ position, value }) => {
+      const rendered = JSON.stringify(value) ?? String(value);
+      return `entry ${position} — ${clip(rendered, SKIPPED_ENTRY_CHARS)}`;
+    })
+    .join('; ');
+  const unnamed = dropped.length - SKIPPED_ENTRIES_NAMED;
+  const rest = unnamed > 0 ? `; and ${unnamed} more` : '';
+  const one = dropped.length === 1;
+  return {
+    level: StatusLevel.ERROR,
+    message:
+      `${dropped.length} ${one ? 'entry' : 'entries'} in your saved shell ${savedNoun(holds)} ` +
+      `(${filePath}) could not be carried into the current format and ${one ? 'has' : 'have'} been ` +
+      `REMOVED from the file: ${named}${rest}. ${one ? 'It is' : 'They are'} not in force and the ` +
+      `file no longer holds ${one ? 'it' : 'them'}; add ${one ? 'it' : 'them'} back as a command ` +
+      'if you still want it.',
   };
 }
 
@@ -774,6 +971,11 @@ export class PersistedApprovalGrants {
    */
   private readonly readState: StoreReadState;
   /**
+   * [[EXT-151]] — the top-level keys the read found and this version does not use, written back on
+   * every rewrite so a save cannot delete the parts of a user's file we do not recognise.
+   */
+  private readonly preserved: Record<string, unknown>;
+  /**
    * Whether the file is believed to hold what this store holds — true after a read that succeeded
    * or a write that landed, false after one that was refused or threw.
    *
@@ -787,11 +989,24 @@ export class PersistedApprovalGrants {
     this.filePath = filePath;
     this.onNotice = options?.onNotice;
     this.holds = options?.holds;
-    const { grants, migrated, readState } = PersistedApprovalGrants.load(filePath, options);
+    const { grants, migrated, readState, preserved, dropped } = PersistedApprovalGrants.load(
+      filePath,
+      options
+    );
     this.readState = readState;
+    this.preserved = preserved;
     this.inSync = readState === 'readable';
     this.store = new ApprovalGrantStore(grants);
-    if (migrated) this.tryPersist();
+    if (migrated) {
+      // [[EXT-151]] — the loss is announced only once the rewrite that causes it has landed.
+      // The notice tells the reader their entries are gone from the file, and if this write failed
+      // the file is untouched: it still holds every prefix, still in the old format, and the next
+      // session migrates it again. Announcing the loss anyway would be a sentence about a file that
+      // contradicts the file — this node's whole subject.
+      if (this.tryPersist('migrate') && dropped.length > 0) {
+        this.onNotice?.(droppedPrefixesNotice(filePath, this.holds, dropped));
+      }
+    }
   }
 
   /**
@@ -819,6 +1034,8 @@ export class PersistedApprovalGrants {
       grants: [] as ApprovalGrant[],
       migrated: false,
       readState: 'readable' as StoreReadState,
+      preserved: {} as Record<string, unknown>,
+      dropped: [] as readonly { position: number; value: unknown }[],
     };
 
     let parsed: unknown;
@@ -839,7 +1056,18 @@ export class PersistedApprovalGrants {
     const reportLostToShape = (): LoadedGrants => {
       const lost = holdsSavedEntries(parsed);
       if (lost) onNotice?.(unreadableFileNotice(filePath, holds, UNRECOGNISED_SHAPE));
-      return { ...empty, readState: lost ? 'holdsContent' : 'readable' };
+      // [[EXT-151]] — a shape that lost nothing is still WRITTEN later, so its keys are carried the
+      // same way a readable file's are: `{"version": 2, "note": "…"}` holds no entry list and no
+      // loss, and a rewrite that dropped the note would be this node's defect on a third path. A
+      // shape that DID lose something is never rewritten, so it has nothing to carry.
+      return {
+        ...empty,
+        readState: lost ? 'holdsContent' : 'readable',
+        preserved:
+          !lost && parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+            ? preservedKeys(parsed, OWN_KEYS_V2)
+            : {},
+      };
     };
 
     try {
@@ -851,14 +1079,15 @@ export class PersistedApprovalGrants {
       // is nothing to gain by throwing at a user mid-run — but empty is NOT fail-closed on the deny
       // side, where it refuses nothing either and a lost refusal at `bypass` is a command that runs.
       // That asymmetry is the whole reason they are told rather than quietly degraded.
-      onNotice?.(unreadableFileNotice(filePath, holds, describeLoadFailure(e)));
+      onNotice?.(unreadableFileNotice(filePath, holds, describeIoFailure(e)));
       // [[EXT-144]] — the store is empty, so a persist from here would replace whatever the file
       // holds with what this session saves next. Which is the whole danger where the file holds
-      // something, and nothing at all where it is blank — a distinction the user is told about, and
-      // the reason this is not one boolean.
+      // something a human could get back, and nothing at all where it holds nothing — a distinction
+      // the user is told about, and the reason this is not one boolean. Nothing is preserved on this
+      // path: the parse failed, so there are no keys to carry, and the file is not rewritten anyway.
       return {
         ...empty,
-        readState: raw !== undefined && raw.trim().length === 0 ? 'blank' : 'holdsContent',
+        readState: holdsRecoverableText(raw) ? 'holdsContent' : 'holdsNothing',
       };
     }
 
@@ -879,30 +1108,65 @@ export class PersistedApprovalGrants {
       if (skipped.length > 0) onNotice?.(skippedEntriesNotice(filePath, holds, skipped));
       // Still `readable`, even with entries skipped: this file WAS read, and the entries around a
       // malformed one are in force. See {@link PersistedApprovalGrants.readState}.
-      return { grants, migrated: false, readState: 'readable' };
+      //
+      // [[EXT-151]] — and this is the path where a rewrite used to delete the rest of the user's
+      // file. It read cleanly, so nothing warned them; the next save wrote back `version` and
+      // `grants` and dropped every other key they had typed.
+      return {
+        grants,
+        migrated: false,
+        readState: 'readable',
+        preserved: preservedKeys(record, OWN_KEYS_V2),
+        dropped: [],
+      };
     }
 
     if ((options?.legacyPrefixMigration ?? true) && Array.isArray(record.prefixes)) {
-      return PersistedApprovalGrants.migrateFromV1(record.prefixes, filePath, onNotice);
+      return PersistedApprovalGrants.migrateFromV1(
+        record.prefixes,
+        record,
+        filePath,
+        holds,
+        onNotice
+      );
     }
 
     return reportLostToShape();
   }
 
-  /** Each v1 prefix → an `exact` entry for the same string, with ONE notice naming the file. */
+  /**
+   * Each v1 prefix → an `exact` entry for the same string, with ONE notice naming the file.
+   *
+   * **A prefix this cannot migrate is REMOVED from the file, and is named** ([[EXT-151]]). A member
+   * that is not a string, or that normalizes to nothing, becomes no entry — and the rewrite below is
+   * what makes that permanent. That is a real loss on a path where nothing else reports one: the
+   * skipped-entries notice belongs to the v2 reader and never fires here. It is reported at
+   * {@link StatusLevel.ERROR} on the same filterability axis every other loss on this seam uses.
+   *
+   * **And the migration notice no longer claims that nothing was removed while removing something.**
+   * That sentence is kept for the case where it is true — which is the ordinary case, and where the
+   * reassurance is worth having — and dropped where a member went.
+   */
   private static migrateFromV1(
     prefixes: readonly unknown[],
+    record: object,
     filePath: string,
+    holds: 'approvals' | 'refusals' | undefined,
     onNotice: ((notice: ShellApprovalGateNotice) => void) | undefined
   ): LoadedGrants {
     const grantedAt = fileWriteTime(filePath);
     const migrated = new ApprovalGrantStore();
-    for (const prefix of prefixes) {
-      if (typeof prefix !== 'string') continue;
-      const entry = shellGrantEntry(prefix);
-      if (entry.pattern.length === 0) continue;
+    const dropped: { position: number; value: unknown }[] = [];
+    prefixes.forEach((prefix, index) => {
+      // The position is the member's place in the file's own `prefixes` list, 1-based, so the number
+      // in the message is a number the reader can count to in their editor.
+      const entry = typeof prefix === 'string' ? shellGrantEntry(prefix) : null;
+      if (entry === null || entry.pattern.length === 0) {
+        dropped.push({ position: index + 1, value: prefix });
+        return;
+      }
       migrated.add({ entry, grantedAt, scope: 'always' });
-    }
+    });
     if (migrated.size() > 0) {
       // ONE notice for the whole file, not one per entry: the user needs to know their saved
       // approvals changed meaning, once, and a line per entry would bury that in its own repetition.
@@ -912,19 +1176,23 @@ export class PersistedApprovalGrants {
           `Your saved shell approvals (${filePath}) were stored in an older format that remembered ` +
           'a command PREFIX, which also approved longer commands starting with it. Each is now ' +
           'remembered as exactly the command it was, so a variant with extra arguments will ask ' +
-          'again. Nothing was removed; some commands may prompt once more.',
+          `again.${dropped.length === 0 ? ' Nothing was removed;' : ''} some commands may prompt ` +
+          'once more.',
       });
     }
-    // A v1 file parsed, so this is not the whole-file loss the write guard exists for, and the
-    // migration rewrite goes ahead.
+    // The dropped members are NOT reported here. They are handed to the constructor, which reports
+    // them only if its rewrite actually lands — see the dropped field on LoadedGrants.
     //
-    // It is NOT a lossless rewrite, and saying so here is the point: the loop above drops a prefix
-    // that is not a string, or that normalizes to nothing, and this write is what makes that
-    // permanent. That sits inside the entry-level boundary {@link PersistedApprovalGrants.readState}
-    // draws — but WITHOUT the half that justifies the boundary elsewhere, because no skipped-entries
-    // notice fires on this path and the migration notice says nothing was removed. A junk member of
-    // `prefixes` is therefore lost silently. Narrow, and not this guard's business, but not nothing.
-    return { grants: migrated.list(), migrated: true, readState: 'readable' };
+    // A v1 file parsed, so this is not the whole-file loss the write guard exists for, and the
+    // migration rewrite goes ahead — carrying back every top-level key that is not the two this
+    // migration consumes, so a user who kept a note beside their prefixes still has it afterwards.
+    return {
+      grants: migrated.list(),
+      migrated: true,
+      readState: 'readable',
+      preserved: preservedKeys(record, OWN_KEYS_V1),
+      dropped,
+    };
   }
 
   /** Every grant. */
@@ -973,18 +1241,21 @@ export class PersistedApprovalGrants {
     // checkout it is true while every write has thrown, so re-answering an entry the store already
     // holds would report it as recorded in a file that never got it.
     if (!this.store.add(grant)) return this.inSync;
-    if (this.tryPersist()) return true;
-    if (!this.canPersist()) {
-      // A REFUSED write must not leave this store claiming a grant its file does not hold. What it
-      // holds is what the approvals display labels as saved, and what {@link liftRefusal} offers to
-      // delete from a file — so a grant kept here would be shown as written down and then "lifted"
-      // out of a file that never had it.
-      //
-      // A write that was ATTEMPTED and FAILED is the opposite case and keeps its copy: there the
-      // file is this store's own to write and the next call may well succeed, and dropping the
-      // grant would cost an answer the human gave for no gain.
-      this.store.remove(grant.entry);
-    }
+    if (this.tryPersist('save')) return true;
+    // [[EXT-149]] — **a write that did not land must not leave this store claiming the grant**,
+    // whether it was refused or merely failed. What this store holds is what the approvals display
+    // labels as *saved to this project* (`getRefusals`) and counts as persisted
+    // (`getAllowlistCounts`), and what {@link remove} offers to delete from a file — so a grant kept
+    // here after a failed write would be rendered as written down, and then "lifted" out of a file
+    // that never had it.
+    //
+    // [[EXT-144]] drew this line at the REFUSED write only, on the ground that a failed one leaves
+    // the file this store's own and the next call may well succeed. What that argument misses is
+    // that nothing is lost by dropping it: the runner holds every answer in its own session store,
+    // so the human's answer stays in force for the session either way. What it costs is real and
+    // small — a checkout that becomes writable mid-session writes only the answers given after that
+    // — and a display that says `session` about a session-only answer is worth more.
+    this.store.remove(grant.entry);
     return false;
   }
 
@@ -994,8 +1265,17 @@ export class PersistedApprovalGrants {
   }
 
   /**
-   * Drop the grant held under this entry's identity and rewrite the file. Returns whether one was
-   * there.
+   * Drop the grant held under this entry's identity and rewrite the file.
+   *
+   * **Returns whether the deletion reached the FILE** ([[EXT-149]]) — the mirror of what {@link add}
+   * answers, and not the same question as whether the entry is still in force here. The in-memory
+   * removal happens either way and is what lifts the entry for this session; `false` says only that
+   * a restart will find it again. It used to return `true` after a write that threw, which is how
+   * the `/approvals` lift came to report a deletion that had not happened.
+   *
+   * `false` is also the answer when there was no such grant. The two are distinguishable with
+   * {@link find} beforehand, and the caller that reports to a user has already established the entry
+   * was there — it is offering to lift something it just listed.
    *
    * The write is what makes §4.7.4's invalidation a one-time event: a removal held only in memory
    * would be undone by the next session reloading the same stale snapshot, so the user would be
@@ -1005,19 +1285,22 @@ export class PersistedApprovalGrants {
    * a check here:** a store that could not read its file is empty — the load recovered nothing, and
    * {@link add} takes back what it could not write — so there is never a grant to remove, and this
    * returns before reaching the write. If that invariant is ever broken, restore it rather than
-   * teaching this method to unwind: a removal that reported success while the file kept the entry
-   * would put the `/approvals` lift back in the business of lying about what it deleted.
+   * teaching this method to unwind.
    */
   remove(entry: ApprovalEntry): boolean {
     if (!this.store.remove(entry)) return false;
-    this.tryPersist();
-    return true;
+    return this.tryPersist('lift');
   }
 
   /**
    * Write the file, and **report whether the write landed**. Never throws: the grants are already
    * in force for this session, and a read-only checkout must not end a run over a bookkeeping
    * write.
+   *
+   * **Never throws is not never says.** [[EXT-149]] — a swallowed throw left the surfaces that had
+   * already promised the user something as the last word on a file that never changed, so a failed
+   * write is reported ({@link failedWriteNotice}) in the words of whichever {@link WritePurpose}
+   * asked for it.
    *
    * ## [[EXT-144]] — it refuses to write over a file it could not read
    *
@@ -1043,7 +1326,7 @@ export class PersistedApprovalGrants {
    * resolves — and it is the same degradation the load side already makes ([[EXT-107]]: a store that
    * cannot be read means `always` becomes `session`), now applied consistently to the write.
    */
-  private tryPersist(): boolean {
+  private tryPersist(purpose: WritePurpose): boolean {
     if (this.readState !== 'readable') {
       this.onNotice?.(refusedWriteNotice(this.filePath, this.holds, this.readState));
       this.inSync = false;
@@ -1054,12 +1337,19 @@ export class PersistedApprovalGrants {
       grants: this.store.list(),
     };
     try {
-      writeFileSync(this.filePath, JSON.stringify(file, null, 2) + '\n', 'utf8');
+      // [[EXT-151]] — the user's own keys FIRST, so `version` and `grants` cannot be displaced by a
+      // preserved key of the same name. `preservedKeys` excludes both, so this is belt and braces —
+      // and it is the ordering that keeps it so, which is why it is stated rather than assumed.
+      const written = { ...this.preserved, ...file };
+      writeFileSync(this.filePath, JSON.stringify(written, null, 2) + '\n', 'utf8');
       this.inSync = true;
       return true;
-    } catch {
-      // Intentionally swallowed — see the doc comment. The file no longer holds what this store
-      // holds, which is what {@link add} reports for an entry it did not have to write.
+    } catch (e) {
+      // The throw is swallowed — a bookkeeping write must not end a run — but it is not SILENT
+      // ([[EXT-149]]). The file no longer holds what this store holds, which is what {@link add}
+      // and {@link remove} report to their callers, and the user is told in the words of whatever
+      // they were promised.
+      this.onNotice?.(failedWriteNotice(this.filePath, this.holds, purpose, describeIoFailure(e)));
       this.inSync = false;
       return false;
     }
