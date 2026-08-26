@@ -89,6 +89,18 @@ unambiguous meaning — and there is no per-prompt "turn the gate down from here
   re-earned rather than inherited from here. One of them already is: ACP's two remembering answers
   are labelled *Allow and remember* and *Reject and remember*, the pair of scopes that reach a
   project file — one menu item may not mean two lifetimes across the three surfaces that offer it.
+- **A confirmation states what LANDED, and waits for it if it has to (DL-4).** The two answers that
+  promise a project file — *always approve* and *always reject* — ask for something the runner may
+  not be able to do: a store whose file cannot be written records the answer for this session
+  instead, and reports the failure at `ERROR`. A notice written from the key that was pressed is
+  therefore a claim about a file nobody has tried to write yet, and where the write fails it sits on
+  screen contradicting the error beside it. So the surface reads back the lifetime the runner
+  recorded and writes the notice from that. The rule generalises the toggle rule above — describe the
+  resulting state, never the request — and its two corollaries are what make it safe: **the answer is
+  taken immediately** (the dialog is dismissed and the next queued approval surfaces on the keystroke,
+  never on the write), and **the notice is committed once, when it is known** — an optimistic line
+  corrected a moment later is its own DL-4 failure, because the user has already read the first
+  version. The one-shot and session answers persist nothing and need no wait.
 - **Invokable during inference (DL-9).** The prompt stays mounted while a turn streams, so
   `/approvals` (and the other read-only / toggle commands marked `availableDuringRun`) can be run
   mid-turn to change how the run's remaining tool calls are handled; idle-only commands (`/clear`,
