@@ -161,25 +161,36 @@ export function createReviewRateMiddleware(
           // runnable layer does, `afterAgent` settles within the budget. It races rather than
           // cancels, so on this path the generation may still be running when we stop waiting —
           // that is why it is the backstop and `timeout` is the primary.
-          const answer = await Promise.race([
-            boundModel.invoke(ratingMessages, {
-              ...getNewRunnableConfig(),
-              timeout: timeoutMs,
-            }),
-            new Promise<never>((_resolve, reject) => {
-              const timer = setTimeout(
-                () =>
-                  reject(
-                    Object.assign(new Error('rating budget exhausted'), {
-                      name: 'TimeoutError',
-                    })
-                  ),
-                timeoutMs
-              );
-              // Never hold the process open for a budget that is only a backstop.
-              timer.unref?.();
-            }),
-          ]);
+          let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+          const deadline = new Promise<never>((_resolve, reject) => {
+            deadlineTimer = setTimeout(
+              () =>
+                reject(
+                  Object.assign(new Error('rating budget exhausted'), { name: 'TimeoutError' })
+                ),
+              timeoutMs
+            );
+            // Never hold the process open for a budget that is only a backstop.
+            deadlineTimer.unref?.();
+          });
+          // A losing `Promise.race` entrant still settles. Without this the deadline would reject
+          // into nobody once the call has already returned, and an unhandled rejection is fatal on
+          // modern Node — so the guard against a hang would itself become a way to crash a healthy
+          // run. `clearTimeout` below is the real fix; this is the belt for the race we lose.
+          deadline.catch(() => {});
+
+          let answer;
+          try {
+            answer = await Promise.race([
+              boundModel.invoke(ratingMessages, {
+                ...getNewRunnableConfig(),
+                timeout: timeoutMs,
+              }),
+              deadline,
+            ]);
+          } finally {
+            clearTimeout(deadlineTimer);
+          }
 
           // Run whichever rating call the model made. Extra calls in one response are ignored
           // rather than replayed — the score is settled by the first, and honouring the rest is

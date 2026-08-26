@@ -155,6 +155,17 @@ describe('GS2-105 — the review rating call is one bounded, visible round trip'
       );
     });
 
+    it('leaves nothing behind to fire after a call that succeeded in time', async () => {
+      // The guard must not become a way to crash a healthy run. A losing `Promise.race` entrant
+      // still settles, so a deadline left armed after a fast, successful rating would reject into
+      // nobody — and an unhandled rejection is fatal on modern Node. Wait past the budget and
+      // require silence; vitest fails the test if a rejection surfaces.
+      await runAfterAgent({ timeoutMs: 20 });
+      await new Promise((resolve) => setTimeout(resolve, 80));
+
+      expect(displayWarningMock).not.toHaveBeenCalled();
+    });
+
     it('says the call was cancelled when the budget aborts it', async () => {
       invokeMock.mockRejectedValue(Object.assign(new Error('aborted'), { name: 'AbortError' }));
 
