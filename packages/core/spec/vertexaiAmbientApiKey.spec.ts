@@ -31,6 +31,25 @@ const consoleUtilsMock = {
 };
 vi.mock('#src/utils/consoleUtils.js', () => consoleUtilsMock);
 
+/**
+ * `systemUtils` does `export const env = process.env`, binding the object that existed at module
+ * load. A write through THAT import therefore never reaches a proxy installed on `process.env`
+ * afterwards — and it is the spelling the repo actually uses (`google-genai.ts`, `GthAgentRunner.ts`
+ * both import `env` this way), so it is the likeliest way an env-mutation would be reintroduced.
+ * Re-exporting `env` as a getter makes the import resolve to whatever `process.env` is AT CALL TIME,
+ * which is what puts that spelling under the proxy below instead of around it. Outside the proxied
+ * window this returns the same object the real module would, so nothing else changes.
+ */
+vi.mock('#src/utils/systemUtils.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('#src/utils/systemUtils.js')>();
+  return {
+    ...actual,
+    get env() {
+      return process.env;
+    },
+  };
+});
+
 /** Fake sentinels. Deliberately different lengths so a case can tell them apart without values. */
 const AMBIENT_KEY = 'ambient-env-key-not-real';
 const EXPLICIT_KEY = 'explicit-config-key-not-real-and-longer';
@@ -214,6 +233,45 @@ describe('vertexai preset with an ambient GOOGLE_API_KEY (CFG-58)', () => {
     expect(Object.keys(process.env).sort()).toEqual(Object.keys(before).sort());
     expect(Object.entries(before).every(([name, value]) => process.env[name] === value)).toBe(true);
     expect('GOOGLE_API_KEY' in process.env).toBe(true);
+  });
+
+  it('does not mutate process.env even TRANSIENTLY — a careful unset-and-restore is caught too', async () => {
+    // The before/after check above cannot see the rejected alternative done competently: unset the
+    // variable, construct, put it back. Nothing is left behind, so nothing is left to compare. This
+    // records the OPERATION instead of its residue, which is what lets the suite say that
+    // env-mutation is the wrong mechanism rather than merely that this one tidied up after itself.
+    // Both spellings are covered: `getEnvironmentVariable` reads `process.env` at call time, and
+    // the `env` import from `systemUtils` is re-exported as a getter above so it resolves to the
+    // proxy too. Without that second half a `delete env.GOOGLE_API_KEY` would pass this untouched.
+    const { processJsonConfig } = await import('#src/providers/vertexai.js');
+
+    const realEnv = process.env;
+    const envWrites: string[] = [];
+    // Operation and property NAME only — never a value, so a failure cannot print a key.
+    process.env = new Proxy(realEnv, {
+      deleteProperty(target, property) {
+        envWrites.push(`delete ${String(property)}`);
+        return Reflect.deleteProperty(target, property);
+      },
+      set(target, property, value) {
+        envWrites.push(`set ${String(property)}`);
+        return Reflect.set(target, property, value);
+      },
+      defineProperty(target, property, attributes) {
+        envWrites.push(`define ${String(property)}`);
+        return Reflect.defineProperty(target, property, attributes);
+      },
+    });
+    try {
+      const model = await processJsonConfig({ type: 'vertexai', model: MODEL } as never);
+      // Proves the construction really ran under the proxy rather than the assertion being
+      // vacuously green on a call that never happened.
+      expect(clientOf(model).hasApiKey()).toBe(false);
+    } finally {
+      process.env = realEnv;
+    }
+
+    expect(envWrites).toEqual([]);
   });
 
   it('leaves the google-genai preset alone — the ambient key still reaches AI Studio', async () => {
