@@ -327,29 +327,41 @@ describe('eval beds: the harness refuses, in fact, a bed that cannot fail', () =
     return spawnSync('bash', [HARNESS, bedDir], { encoding: 'utf8', timeout: 60_000 });
   }
 
+  /**
+   * Conditioned on the platform, never a bare `.skip`, so it cannot quietly widen to POSIX later —
+   * and each name below carries the reason, so a Windows run's own skip lines say why rather than
+   * leaving three unexplained skips for whoever compares the cells.
+   */
   const skipOnWindows = process.platform === 'win32';
+  const because = ' [POSIX only: executes run-bed.sh, which is bash]';
 
-  it.skipIf(skipOnWindows)('exits 3 when a bed declares no discrimination suite at all', () => {
-    const bed = makeBed({});
-    const run = runHarness(bed.dir);
+  it.skipIf(skipOnWindows)(
+    'exits 3 when a bed declares no discrimination suite at all' + because,
+    () => {
+      const bed = makeBed({});
+      const run = runHarness(bed.dir);
 
-    expect(run.status).toBe(3);
-    expect(run.stderr).toContain('BED_BROKEN_SUITE');
-    expect(existsSync(bed.spawnMarker)).toBe(false);
-    expect(existsSync(bed.provisionMarker)).toBe(false);
-    expect(run.stdout).not.toContain('building CLI');
-  });
+      expect(run.status).toBe(3);
+      expect(run.stderr).toContain('BED_BROKEN_SUITE');
+      expect(existsSync(bed.spawnMarker)).toBe(false);
+      expect(existsSync(bed.provisionMarker)).toBe(false);
+      expect(run.stdout).not.toContain('building CLI');
+    }
+  );
 
-  it.skipIf(skipOnWindows)('exits 3 when the declared discrimination suite is not on disk', () => {
-    const bed = makeBed({ broken: 'broken.eval.yaml', brokenOnDisk: false });
-    const run = runHarness(bed.dir);
+  it.skipIf(skipOnWindows)(
+    'exits 3 when the declared discrimination suite is not on disk' + because,
+    () => {
+      const bed = makeBed({ broken: 'broken.eval.yaml', brokenOnDisk: false });
+      const run = runHarness(bed.dir);
 
-    expect(run.status).toBe(3);
-    expect(run.stderr).toContain('BED_BROKEN_SUITE');
-    expect(existsSync(bed.spawnMarker)).toBe(false);
-    expect(existsSync(bed.provisionMarker)).toBe(false);
-    expect(run.stdout).not.toContain('building CLI');
-  });
+      expect(run.status).toBe(3);
+      expect(run.stderr).toContain('BED_BROKEN_SUITE');
+      expect(existsSync(bed.spawnMarker)).toBe(false);
+      expect(existsSync(bed.provisionMarker)).toBe(false);
+      expect(run.stdout).not.toContain('building CLI');
+    }
+  );
 
   /**
    * The anti-vacuity control, and the reason the two cases above mean anything. A harness that
@@ -358,20 +370,23 @@ describe('eval beds: the harness refuses, in fact, a bed that cannot fail', () =
    * variable that is deliberately absent, which keeps the control as cheap as the refusals and
    * still off the build.
    */
-  it.skipIf(skipOnWindows)('lets a bed that declares both suites through that gate', () => {
-    const absent = 'GTH_SPEC_BED_DELIBERATELY_ABSENT';
-    expect(process.env[absent]).toBeUndefined();
+  it.skipIf(skipOnWindows)(
+    'lets a bed that declares both suites through that gate' + because,
+    () => {
+      const absent = 'GTH_SPEC_BED_DELIBERATELY_ABSENT';
+      expect(process.env[absent]).toBeUndefined();
 
-    const bed = makeBed({
-      broken: 'broken.eval.yaml',
-      brokenOnDisk: true,
-      requiredEnv: absent,
-    });
-    const run = runHarness(bed.dir);
+      const bed = makeBed({
+        broken: 'broken.eval.yaml',
+        brokenOnDisk: true,
+        requiredEnv: absent,
+      });
+      const run = runHarness(bed.dir);
 
-    expect(run.stderr).toContain(absent);
-    expect(run.stderr).not.toContain('BED_BROKEN_SUITE');
-    expect(existsSync(bed.spawnMarker)).toBe(false);
-    expect(run.stdout).not.toContain('building CLI');
-  });
+      expect(run.stderr).toContain(absent);
+      expect(run.stderr).not.toContain('BED_BROKEN_SUITE');
+      expect(existsSync(bed.spawnMarker)).toBe(false);
+      expect(run.stdout).not.toContain('building CLI');
+    }
+  );
 });
