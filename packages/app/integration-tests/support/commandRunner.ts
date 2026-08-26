@@ -1,24 +1,23 @@
 import { spawn } from 'child_process';
 import path from 'path';
-import { platform } from 'node:os';
 import type { ChildProcess } from 'node:child_process';
+import { assertCliUnderTestOnce, gthSpawnSpec } from './cliUnderTest.mjs';
 
 /**
- * npm 12 prints `npm notice run <pkg> npx` / `npm notice run '<bin>' <args>` to **stderr** on every
- * `npx` invocation (npm 11 did not). The ITs spawn `npx gaunt-sloth …`, and several of them treat
- * any stderr byte as a failure, so the default `notice` loglevel turns a clean run red. `warn` drops
- * the run notices while keeping npm's own warnings and errors — a genuine npx resolution failure
- * still reaches stderr. Must be applied *after* the `process.env` spread: `it.js` runs under pnpm,
- * which exports its own `npm_config_*` vars.
- */
-const NPM_QUIET_ENV = { npm_config_loglevel: 'warn' } as const;
-
-/**
- * The ITs invoke this package by its FULL NAME (`gaunt-sloth`), never the short `gth` bin alias,
- * and that is load-bearing rather than stylistic: `npx` falls back to the public registry whenever
- * a name does not resolve locally or on PATH, and `gth` is a real, unrelated published package,
- * while `gaunt-sloth` is this very package. So a resolution miss can only ever reach our own code.
- * Do not shorten these back to `gth`.
+ * Every helper here spawns THIS checkout's CLI: `process.execPath` running the `packages/app/cli.js`
+ * that `support/cliUnderTest.mjs` resolves by an anchored path. That file carries the reasoning —
+ * why a launcher resolving a bare name is not usable here, why `INIT_CWD` is set explicitly, and
+ * what the version tripwire does and does not prove. Read it before changing how a spawn is made.
+ *
+ * Two things the move away from a launcher removed rather than replaced:
+ *
+ * - The `npm_config_loglevel=warn` workaround is gone. It existed only because npm 12 printed a run
+ *   notice to stderr on every launcher invocation, and several tests here treat any stderr byte as
+ *   a failure. No npm process is involved any more, so there is no notice to suppress.
+ * - So is the Windows-only `shell: true`. It was needed because the launcher is a `.cmd` there.
+ *   Spawning an absolute executable needs no shell, and going through cmd.exe would now be wrong:
+ *   `process.execPath` on Windows is normally under `C:\Program Files\nodejs`, and cmd.exe splits
+ *   that at the space.
  */
 
 function isVerboseCommandRunnerEnabled(): boolean {
@@ -32,41 +31,36 @@ function writeVerboseOutput(stream: NodeJS.WriteStream, data: Buffer): void {
   }
 }
 
+function resolveTestDir(workDir?: string): string {
+  return path.resolve(workDir ? workDir : './packages/app/integration-tests/workdir');
+}
+
 /**
- * Runs a command in the integration-tests directory using spawn
- * This prevents stdin from being treated as a pipe
- * @param command - The main command to run
- * @param args - The command arguments
+ * Runs the CLI under test in the integration-tests working directory using spawn.
+ * This prevents stdin from being treated as a pipe.
+ * @param args - The CLI arguments (no launcher and no package name — see cliUnderTest.mjs)
  * @param endOutput - Output which will terminate the execution
  * @param workDir - The working directory for the command
  * @returns The command output as a string
  */
-export async function runCommandWithArgs(
-  command: string,
+export async function runGth(
   args: string[],
   endOutput?: string,
   workDir?: string
 ): Promise<string> {
-  const testDir = path.resolve(workDir ? workDir : './packages/app/integration-tests/workdir');
+  assertCliUnderTestOnce();
+  const testDir = resolveTestDir(workDir);
+  const { command, argv, env } = gthSpawnSpec(args, testDir);
   return new Promise((resolve, reject) => {
     let stdout = '';
     let stderr = '';
 
-    const conf = {
+    const childProcess = spawn(command, argv, {
       cwd: testDir,
-      env: {
-        ...process.env,
-        // Belt-and-suspenders: ITs already spawn non-TTY (so the TUI auto-falls back to the
-        // readline path), but force it off explicitly so the interactive ITs can never select
-        // the Ink TUI regardless of how they are launched. Same assertions, readline path.
-        GTH_NO_TUI: '1',
-        ...NPM_QUIET_ENV,
-      },
-      shell: platform().includes('win') && !platform().includes('darwin'),
+      env,
       // Explicitly ignore stdin, otherwise the app switches to pipe mode
       stdio: ['ignore', 'pipe', 'pipe'],
-    };
-    const childProcess = spawn(command, args, conf);
+    });
 
     childProcess.stdout.on('data', (data) => {
       writeVerboseOutput(process.stdout, data);
@@ -94,35 +88,27 @@ export async function runCommandWithArgs(
 }
 
 /**
- * Runs a command expecting it to exit with a specific code
- * @param command - The main command to run
- * @param args - The command arguments
+ * Runs the CLI under test expecting it to exit with a specific code
+ * @param args - The CLI arguments (no launcher and no package name — see cliUnderTest.mjs)
  * @param expectedExitCode - The expected exit code
  * @param workDir - The working directory for the command
  * @returns Object containing output and exit code
  */
-export async function runCommandExpectingExitCode(
-  command: string,
+export async function runGthExpectingExitCode(
   args: string[],
   expectedExitCode: number,
   workDir?: string
 ): Promise<{ output: string; exitCode: number }> {
-  const testDir = path.resolve(workDir ? workDir : './packages/app/integration-tests/workdir');
+  assertCliUnderTestOnce();
+  const testDir = resolveTestDir(workDir);
+  const { command, argv, env } = gthSpawnSpec(args, testDir);
   return new Promise((resolve, reject) => {
     let stdout = '';
     let stderr = '';
 
-    const childProcess = spawn(command, args, {
+    const childProcess = spawn(command, argv, {
       cwd: testDir,
-      env: {
-        ...process.env,
-        // Belt-and-suspenders: ITs already spawn non-TTY (so the TUI auto-falls back to the
-        // readline path), but force it off explicitly so the interactive ITs can never select
-        // the Ink TUI regardless of how they are launched. Same assertions, readline path.
-        GTH_NO_TUI: '1',
-        ...NPM_QUIET_ENV,
-      },
-      shell: platform().includes('win') && !platform().includes('darwin'),
+      env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -150,21 +136,19 @@ export async function runCommandExpectingExitCode(
   });
 }
 
-export function startChildProcess(
-  command: string,
-  args: string[],
-  stdin: 'ignore' | 'pipe',
-  workDir?: string
-) {
-  const testDir = path.resolve(workDir ? workDir : './packages/app/integration-tests/workdir');
-  const childProcess = spawn(command, args, {
+/**
+ * Starts the CLI under test and hands back the live child (servers, interactive sessions).
+ * @param args - The CLI arguments (no launcher and no package name — see cliUnderTest.mjs)
+ * @param stdin - Whether the child's stdin is a pipe or ignored
+ * @param workDir - The working directory for the command
+ */
+export function startGth(args: string[], stdin: 'ignore' | 'pipe', workDir?: string) {
+  assertCliUnderTestOnce();
+  const testDir = resolveTestDir(workDir);
+  const { command, argv, env } = gthSpawnSpec(args, testDir);
+  const childProcess = spawn(command, argv, {
     cwd: testDir,
-    env: {
-      ...process.env,
-      ...NPM_QUIET_ENV,
-    },
-    shell: platform().includes('win') && !platform().includes('darwin'),
-    // Explicitly ignore stdin, otherwise the app switches to pipe mode
+    env,
     stdio: [stdin, 'pipe', 'pipe'],
   });
 
@@ -188,8 +172,8 @@ export function startChildProcess(
  * the test — vitest reports it as an *unhandled error*, so the run exits non-zero while the test
  * itself still reports "passed" — and the text lands buried in a stack trace instead of the
  * assertion output. Accumulating also shows *all* the stderr rather than whichever chunk arrived
- * first, which is what makes the culprit obvious at a glance (an `npm notice`, a node deprecation
- * warning, a real agent error) rather than something to reconstruct from a repro run.
+ * first, which is what makes the culprit obvious at a glance (a node deprecation warning, a real
+ * agent error) rather than something to reconstruct from a repro run.
  */
 export function collectStderr(child: ChildProcess): () => string {
   let acc = '';

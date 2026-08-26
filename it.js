@@ -62,6 +62,22 @@ if (provider === 'ollama') {
   console.log(`==> ollama GPU lock acquired (${_lock.lockPath})`);
 }
 
+// QA-12 — run-level proof that the suite is about to test THIS checkout. The harness resolves
+// packages/app/cli.js by an anchored path and spawns it with this node binary; this starts that
+// CLI once and refuses to go further if it cannot run (an unbuilt workspace) or reports a version
+// other than the one this workspace builds (something is resolving a foreign binary again).
+// Deliberately outside the ollama block, so every provider is gated, and before any config is
+// copied, so a broken tree fails once and loudly rather than fifteen times inside vitest.
+const { assertCliUnderTest, CLI_UNDER_TEST } =
+  await import('./packages/app/integration-tests/support/cliUnderTest.mjs');
+try {
+  const version = assertCliUnderTest();
+  console.log(`==> CLI under test: ${CLI_UNDER_TEST} (${version})`);
+} catch (e) {
+  console.error(e instanceof Error ? e.message : String(e));
+  process.exit(1);
+}
+
 execSync('node packages/app/integration-tests/setup-config.js ' + provider, {
   stdio: [process.stdin, process.stdout, process.stderr],
 });

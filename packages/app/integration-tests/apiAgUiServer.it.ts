@@ -1,7 +1,7 @@
 import { describe, expect, it, afterEach } from 'vitest';
 import path from 'path';
 import type { ChildProcess } from 'node:child_process';
-import { startChildProcess } from './support/commandRunner.ts';
+import { startGth } from './support/commandRunner.ts';
 
 const SERVER_PORT = 3099; // Dedicated port to avoid conflicts
 const HEALTH_URL = `http://localhost:${SERVER_PORT}/health`;
@@ -72,12 +72,7 @@ describe('AG-UI Server Integration Tests', () => {
   });
 
   it('should start, respond to health check, and accept a run request', async () => {
-    serverProc = startChildProcess(
-      'npx',
-      ['gaunt-sloth', 'api', 'ag-ui', '--port', String(SERVER_PORT)],
-      'ignore',
-      WORKDIR
-    );
+    serverProc = startGth(['api', 'ag-ui', '--port', String(SERVER_PORT)], 'ignore', WORKDIR);
 
     await waitForHealth(serverProc!);
 
@@ -104,12 +99,7 @@ describe('AG-UI Server Integration Tests', () => {
   });
 
   it('should include text content in the response', async () => {
-    serverProc = startChildProcess(
-      'npx',
-      ['gaunt-sloth', 'api', 'ag-ui', '--port', String(SERVER_PORT)],
-      'ignore',
-      WORKDIR
-    );
+    serverProc = startGth(['api', 'ag-ui', '--port', String(SERVER_PORT)], 'ignore', WORKDIR);
     await waitForHealth(serverProc!);
 
     const { events } = await postRun({
@@ -123,12 +113,7 @@ describe('AG-UI Server Integration Tests', () => {
   });
 
   it('should emit tool call events when tools are used', async () => {
-    serverProc = startChildProcess(
-      'npx',
-      ['gaunt-sloth', 'api', 'ag-ui', '--port', String(SERVER_PORT)],
-      'ignore',
-      WORKDIR
-    );
+    serverProc = startGth(['api', 'ag-ui', '--port', String(SERVER_PORT)], 'ignore', WORKDIR);
     await waitForHealth(serverProc!);
 
     const { events } = await postRun({
@@ -149,12 +134,7 @@ describe('AG-UI Server Integration Tests', () => {
   });
 
   it('should use system prompt on first request and not on second for same thread', async () => {
-    serverProc = startChildProcess(
-      'npx',
-      ['gaunt-sloth', 'api', 'ag-ui', '--port', String(SERVER_PORT)],
-      'ignore',
-      WORKDIR
-    );
+    serverProc = startGth(['api', 'ag-ui', '--port', String(SERVER_PORT)], 'ignore', WORKDIR);
     await waitForHealth(serverProc!);
 
     const threadId = 'it-thread-identity';

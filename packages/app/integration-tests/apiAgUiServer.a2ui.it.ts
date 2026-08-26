@@ -1,7 +1,7 @@
 import { describe, expect, it, afterEach } from 'vitest';
 import path from 'path';
 import type { ChildProcess } from 'node:child_process';
-import { startChildProcess } from './support/commandRunner.ts';
+import { startGth } from './support/commandRunner.ts';
 
 const SERVER_PORT = 3098; // Dedicated port to avoid conflicts with apiAgUiServer.it.ts
 const HEALTH_URL = `http://localhost:${SERVER_PORT}/health`;
@@ -70,12 +70,7 @@ describe('AG-UI Server Integration Tests (OpenAI)', () => {
   });
 
   it('should emit tool call events for show_a2ui_surface', async () => {
-    serverProc = startChildProcess(
-      'npx',
-      ['gaunt-sloth', 'api', 'ag-ui', '--port', String(SERVER_PORT)],
-      'ignore',
-      WORKDIR
-    );
+    serverProc = startGth(['api', 'ag-ui', '--port', String(SERVER_PORT)], 'ignore', WORKDIR);
     await waitForHealth(serverProc!);
 
     const { events } = await postRun({

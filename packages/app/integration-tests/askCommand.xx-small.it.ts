@@ -1,34 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import { runCommandWithArgs } from './support/commandRunner';
+import { runGth } from './support/commandRunner';
 import { checkOutputForExpectedContent } from './support/outputChecker';
 
 describe('Ask Command Integration Tests', () => {
   // Test for the ask command
   it('should respond correctly to basic programming question', async () => {
-    const output = await runCommandWithArgs('npx', [
-      'gaunt-sloth',
-      'ask',
-      '"Which programming language does JS stand for?"',
-    ]);
+    const output = await runGth(['ask', '"Which programming language does JS stand for?"']);
 
     // Check for expected content in the response
     expect(checkOutputForExpectedContent(output, 'JavaScript')).toBe(true);
   });
 
   it('should use file read tool', async () => {
-    const output = await runCommandWithArgs('npx', [
-      'gaunt-sloth',
-      'ask',
-      '"read file filewithgoodcode.js"',
-    ]);
+    const output = await runGth(['ask', '"read file filewithgoodcode.js"']);
 
     // Check for expected content in the response
     expect(checkOutputForExpectedContent(output, 'prime')).toBe(true);
   });
 
   it('should use multiple tools', async () => {
-    const output = await runCommandWithArgs('npx', [
-      'gaunt-sloth',
+    const output = await runGth([
       'ask',
       '"list current dir and present list of files; read file filewithgoodcode.js"',
     ]);
@@ -39,7 +30,7 @@ describe('Ask Command Integration Tests', () => {
   });
 
   it('--verbose should set LangChain to verbose mode in llmUtils invoke', async () => {
-    const output = await runCommandWithArgs('npx', ['gaunt-sloth', '--verbose', 'ask', '"ping"']);
+    const output = await runGth(['--verbose', 'ask', '"ping"']);
 
     // Check for expected content in the response
     expect(checkOutputForExpectedContent(output, 'Entering LLM run with input: {')).toBe(true);
