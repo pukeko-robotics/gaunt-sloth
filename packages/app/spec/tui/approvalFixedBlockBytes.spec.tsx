@@ -122,10 +122,14 @@ describe('[[EXT-137]] the fixed approval block carries only text we wrote', () =
 
     const windows: string[] = [];
     for (let i = 0; i + 8 <= command.length; i++) windows.push(command.slice(i, i + 8));
-    // The scan CAN match: a window taken from the block itself is found by the same loop, so an
-    // empty result below is evidence of absence rather than of a comparison that never ran.
     expect(windows.some((window) => block.includes(window))).toBe(false);
-    expect(block.includes(block.slice(10, 18))).toBe(true);
+    // The control for the line above: the SAME windows and the SAME predicate, run against the
+    // command they were cut from, do match. What this actually guards is a `windows` that came out
+    // empty — a command shorter than the window, or an off-by-one in the loop bound — which would
+    // make the `false` above true for the one reason that proves nothing. Asserting `block` contains
+    // a slice of `block` would not have guarded it: that is true whatever the loop did.
+    expect(windows.length).toBeGreaterThan(0);
+    expect(windows.some((window) => command.includes(window))).toBe(true);
   });
 
   /**
