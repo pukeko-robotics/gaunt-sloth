@@ -72,6 +72,14 @@
  * an individual entry that cannot be read, are both reported at {@link StatusLevel.ERROR}
  * ({@link unreadableFileNotice}, {@link skippedEntriesNotice}), while the fallback stays exactly
  * what it was.
+ *
+ * **And a store that could not read its file does not write it** ([[EXT-144]]). A write here
+ * rewrites the WHOLE file from what is held in memory, which after a failed load is nothing — so one
+ * saved answer would replace twenty saved ones with itself, turning a trailing comma into permanent
+ * loss. Reading fails soft; writing over what the reader could not parse is the one recovery that
+ * cannot be undone, so {@link PersistedApprovalGrants.tryPersist} refuses it and says so
+ * ({@link refusedWriteNotice}). The answer still holds for this session — the runner keeps its own
+ * in-memory copy — it is simply not written down.
  */
 import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { approvalEntrySchema, renderApprovalEntryObject } from '#src/config/schema.js';
@@ -135,6 +143,35 @@ export interface ApprovalGrant {
 interface PersistedGrantsFileV2 {
   version: 2;
   grants: ApprovalGrant[];
+}
+
+/**
+ * [[EXT-144]] — **what a read found, as far as WRITING over the file is concerned.**
+ *
+ * - `readable` — the file was read, or is not there at all. A save may rewrite it.
+ * - `holdsContent` — it could not be read AND holds bytes. A save would destroy them; this is the
+ *   case the guard exists for.
+ * - `blank` — it could not be read *because it is empty*. A save would destroy nothing, and it is
+ *   still refused: what counts as a failed load is {@link unreadableFileNotice}'s question, already
+ *   settled by [[EXT-143]], and a write guard that disagreed with the reader about which files are
+ *   broken would be a second definition free to drift from the first. An emptied file is also what a
+ *   truncated write leaves behind, which is not a thing to overwrite on sight.
+ *
+ * It is a separate value from "may I write" because the two answers differ: `blank` forbids the
+ * write like `holdsContent` does, but the user must not be told their entries are safe when the file
+ * they are in is empty.
+ */
+type StoreReadState = 'readable' | 'holdsContent' | 'blank';
+
+/**
+ * What one read of the persisted file produced: the grants recovered from it, whether that read
+ * migrated a v1 file (and so owes it a rewrite), and — [[EXT-144]] — what it found in the file,
+ * which is what forbids every later rewrite.
+ */
+interface LoadedGrants {
+  grants: ApprovalGrant[];
+  migrated: boolean;
+  readState: StoreReadState;
 }
 
 /** The version this module writes. */
@@ -544,8 +581,71 @@ function unreadableFileNotice(
       `Your saved shell ${savedNoun(holds)} could not be read from ${filePath} (${reason}). ` +
       'None of them are in force in this session — nothing in this file applies to any call, so a ' +
       'call it covered is left to the rest of the gate: it may be refused by another rule, it may ' +
-      'run without asking, or you may be prompted. Fix the file to restore them; saving a new one ' +
-      'now overwrites it as it stands.',
+      'run without asking, or you may be prompted. Fix the file to restore them. Until you do, the ' +
+      'file is left as it is and answers you save are not written to it.',
+  };
+}
+
+/**
+ * [[EXT-144]] — **the answer was not saved, and the file it would have been saved to is untouched.**
+ *
+ * The write side of {@link unreadableFileNotice}, and the reason it can be worded as flatly as it
+ * is: nothing is lost by the time this is read. A persist rewrites the whole file from the store,
+ * and a store whose load failed holds nothing, so writing would have replaced everything the user
+ * saved with the one entry they just answered — a recoverable syntax error made permanent by the
+ * keystroke most likely to follow the notice that reported it.
+ *
+ * It says three things, and each is one the reader cannot infer:
+ *
+ * - **The answer was not saved**, which contradicts what the surface that took the answer already
+ *   told them — a menu label promising `always` is written before this code runs, so silence here
+ *   would leave a false claim standing as the last word.
+ * - **The file was left as it is**, which is the whole recovery wherever there is something to
+ *   recover: the entries are still on disk and come back when the file parses. Nothing has to have
+ *   been copied in advance, and nothing new was put beside it to reconcile. **An empty file is the
+ *   exception and is worded separately**, because it holds no entries that could still be there and
+ *   none that could come back — a sentence promising both would be this node's own defect, told
+ *   rather than done.
+ * - **What to do** — fix the error the load already quoted, then answer again **in a new session**.
+ *
+ * **"In a new session" is load-bearing and must not be trimmed.** A store reads its file once and
+ * keeps what it found: the runner caches the instance for the life of the runner
+ * (`persistedGrantsLoaded` / `persistedDenialsLoaded`, set once and never reset), so a user who
+ * repairs the file and answers again in the same session is refused by the same cached state and
+ * gets this identical message in a loop. Telling them to answer again *now* would make the one
+ * sentence that exists to correct a false belief about their file into another one.
+ *
+ * {@link StatusLevel.ERROR}, on the same filterability axis argued in {@link unreadableFileNotice}:
+ * `consoleLevel` is user-configurable down to `error`, at which a WARNING is dropped entirely, and a
+ * user who believes an answer was saved when it was not is exactly who this exists for.
+ *
+ * **One per refused answer, deliberately not de-duplicated.** Each answer is a separate thing the
+ * user believes they have written down, and collapsing the second and third would leave two of those
+ * beliefs uncorrected.
+ */
+function refusedWriteNotice(
+  filePath: string,
+  holds: 'approvals' | 'refusals' | undefined,
+  state: Exclude<StoreReadState, 'readable'>
+): ShellApprovalGateNotice {
+  // An EMPTY file has nothing in it to preserve, so the recovery sentence written for the case this
+  // guard exists for would be a false promise here: there is nothing still there and nothing that
+  // comes back. It is still not overwritten — see {@link StoreReadState} — so what the reader needs
+  // instead is the one action that makes the file readable again.
+  const recovery =
+    state === 'blank'
+      ? `It has been left exactly as it is, and it is empty — so there is nothing in it to ` +
+        'recover. Delete it, or put an empty pair of braces in it, and answer again in a new ' +
+        'session to save this one.'
+      : `Saving would have replaced everything in it with this one entry, so it has been left ` +
+        `exactly as it is and the shell ${savedNoun(holds)} you saved in it are still there. Fix ` +
+        'the error reported when it was read and they come back; then answer again in a new ' +
+        'session to add this one.';
+  return {
+    level: StatusLevel.ERROR,
+    message:
+      `This answer was NOT saved to ${filePath}, because that file could not be read when this ` +
+      `session started. ${recovery} For now the answer applies to this session only.`,
   };
 }
 
@@ -658,10 +758,38 @@ export interface PersistedApprovalGrantsOptions {
 export class PersistedApprovalGrants {
   private readonly store: ApprovalGrantStore;
   private readonly filePath: string;
+  private readonly onNotice: ((notice: ShellApprovalGateNotice) => void) | undefined;
+  private readonly holds: 'approvals' | 'refusals' | undefined;
+  /**
+   * [[EXT-144]] — **what the load found in the file**, which decides whether it may ever be
+   * rewritten ({@link StoreReadState}). Anything but `readable` is a file whose load failed, exactly
+   * the outcomes {@link unreadableFileNotice} reports, and none of them may be written over.
+   *
+   * **An entry-level loss is deliberately not one of them.** A file whose `grants` array parsed but
+   * held one malformed member is a file this version *can* read: the rest of it is in force, which
+   * {@link skippedEntriesNotice} states to the user as a promise, and blocking every future save
+   * over one cosmetic typo would disable a working feature to protect an entry the reader has
+   * already been pointed at — by position and quoted text for the first
+   * {@link SKIPPED_ENTRIES_NAMED}, and by a count of the rest beyond that.
+   */
+  private readonly readState: StoreReadState;
+  /**
+   * Whether the file is believed to hold what this store holds — true after a read that succeeded
+   * or a write that landed, false after one that was refused or threw.
+   *
+   * It exists so {@link add} can answer honestly for an entry it did not have to write: "already
+   * held" is only "already in the file" if the file ever received it, and on a read-only checkout it
+   * did not.
+   */
+  private inSync: boolean;
 
   constructor(filePath: string, options?: PersistedApprovalGrantsOptions) {
     this.filePath = filePath;
-    const { grants, migrated } = PersistedApprovalGrants.load(filePath, options);
+    this.onNotice = options?.onNotice;
+    this.holds = options?.holds;
+    const { grants, migrated, readState } = PersistedApprovalGrants.load(filePath, options);
+    this.readState = readState;
+    this.inSync = readState === 'readable';
     this.store = new ApprovalGrantStore(grants);
     if (migrated) this.tryPersist();
   }
@@ -684,30 +812,54 @@ export class PersistedApprovalGrants {
   private static load(
     filePath: string,
     options: PersistedApprovalGrantsOptions | undefined
-  ): { grants: ApprovalGrant[]; migrated: boolean } {
+  ): LoadedGrants {
     const onNotice = options?.onNotice;
     const holds = options?.holds;
-    const empty = { grants: [] as ApprovalGrant[], migrated: false };
+    const empty = {
+      grants: [] as ApprovalGrant[],
+      migrated: false,
+      readState: 'readable' as StoreReadState,
+    };
 
     let parsed: unknown;
+    /**
+     * The file's own bytes, kept so a failed parse can tell an EMPTY file from a full one
+     * ([[EXT-144]]). `undefined` means the read itself threw — a permission error, say — where the
+     * content is unknown and the conservative answer is that there is something to protect.
+     */
+    let raw: string | undefined;
 
-    /** The unrecognised-shape notice — but only where something was actually lost. */
-    const reportLostToShape = (): { grants: ApprovalGrant[]; migrated: boolean } => {
-      if (holdsSavedEntries(parsed))
-        onNotice?.(unreadableFileNotice(filePath, holds, UNRECOGNISED_SHAPE));
-      return empty;
+    /**
+     * The unrecognised-shape notice — but only where something was actually lost.
+     *
+     * [[EXT-144]] — and the write guard asks this same question, so the notice and the guard can
+     * never disagree about whether this file holds something we failed to read. A shape that holds
+     * saved entries is content by definition, so it is never the `blank` case.
+     */
+    const reportLostToShape = (): LoadedGrants => {
+      const lost = holdsSavedEntries(parsed);
+      if (lost) onNotice?.(unreadableFileNotice(filePath, holds, UNRECOGNISED_SHAPE));
+      return { ...empty, readState: lost ? 'holdsContent' : 'readable' };
     };
 
     try {
       if (!existsSync(filePath)) return empty;
-      parsed = JSON.parse(readFileSync(filePath, 'utf8'));
+      raw = readFileSync(filePath, 'utf8');
+      parsed = JSON.parse(raw);
     } catch (e) {
       // Corrupt / unreadable → behave as empty. An empty store approves nothing by itself, so there
       // is nothing to gain by throwing at a user mid-run — but empty is NOT fail-closed on the deny
       // side, where it refuses nothing either and a lost refusal at `bypass` is a command that runs.
       // That asymmetry is the whole reason they are told rather than quietly degraded.
       onNotice?.(unreadableFileNotice(filePath, holds, describeLoadFailure(e)));
-      return empty;
+      // [[EXT-144]] — the store is empty, so a persist from here would replace whatever the file
+      // holds with what this session saves next. Which is the whole danger where the file holds
+      // something, and nothing at all where it is blank — a distinction the user is told about, and
+      // the reason this is not one boolean.
+      return {
+        ...empty,
+        readState: raw !== undefined && raw.trim().length === 0 ? 'blank' : 'holdsContent',
+      };
     }
 
     if (!parsed || typeof parsed !== 'object') return reportLostToShape();
@@ -725,7 +877,9 @@ export class PersistedApprovalGrants {
         else grants.push(grant);
       });
       if (skipped.length > 0) onNotice?.(skippedEntriesNotice(filePath, holds, skipped));
-      return { grants, migrated: false };
+      // Still `readable`, even with entries skipped: this file WAS read, and the entries around a
+      // malformed one are in force. See {@link PersistedApprovalGrants.readState}.
+      return { grants, migrated: false, readState: 'readable' };
     }
 
     if ((options?.legacyPrefixMigration ?? true) && Array.isArray(record.prefixes)) {
@@ -740,7 +894,7 @@ export class PersistedApprovalGrants {
     prefixes: readonly unknown[],
     filePath: string,
     onNotice: ((notice: ShellApprovalGateNotice) => void) | undefined
-  ): { grants: ApprovalGrant[]; migrated: boolean } {
+  ): LoadedGrants {
     const grantedAt = fileWriteTime(filePath);
     const migrated = new ApprovalGrantStore();
     for (const prefix of prefixes) {
@@ -761,7 +915,16 @@ export class PersistedApprovalGrants {
           'again. Nothing was removed; some commands may prompt once more.',
       });
     }
-    return { grants: migrated.list(), migrated: true };
+    // A v1 file parsed, so this is not the whole-file loss the write guard exists for, and the
+    // migration rewrite goes ahead.
+    //
+    // It is NOT a lossless rewrite, and saying so here is the point: the loop above drops a prefix
+    // that is not a string, or that normalizes to nothing, and this write is what makes that
+    // permanent. That sits inside the entry-level boundary {@link PersistedApprovalGrants.readState}
+    // draws — but WITHOUT the half that justifies the boundary elsewhere, because no skipped-entries
+    // notice fires on this path and the migration notice says nothing was removed. A junk member of
+    // `prefixes` is therefore lost silently. Narrow, and not this guard's business, but not nothing.
+    return { grants: migrated.list(), migrated: true, readState: 'readable' };
   }
 
   /** Every grant. */
@@ -779,10 +942,50 @@ export class PersistedApprovalGrants {
     return this.store.size();
   }
 
-  /** Add a grant and persist the whole store. A duplicate entry rewrites nothing. */
-  add(grant: ApprovalGrant): void {
-    if (!this.store.add(grant)) return;
-    this.tryPersist();
+  /**
+   * [[EXT-144]] — **may this store write its file at all?** False when the load failed, in which
+   * case every write is refused.
+   *
+   * Public because the caller has to know *before* it builds the record it is about to hand over:
+   * a grant is stamped with the scope it actually got, the runner's in-memory stores can hold the
+   * very object they are passed, and a scope corrected after the fact would be corrected inside
+   * somebody else's store. Asking first is what lets an answer that cannot be written down be
+   * recorded as the session-only thing it is.
+   *
+   * **It answers about the FILE being readable, never about a write succeeding.** A store whose
+   * path cannot be written — a read-only checkout — still answers true here, because nothing was
+   * lost by reading it and the next write may well land.
+   */
+  canPersist(): boolean {
+    return this.readState === 'readable';
+  }
+
+  /**
+   * Add a grant and persist the whole store. A duplicate entry rewrites nothing.
+   *
+   * **Returns whether the grant is now recorded in the file** ([[EXT-144]]), which is not the same
+   * question as whether it is in force — it is in force either way, held here and in the runner's
+   * session store. `false` says only that a restart will not find it.
+   */
+  add(grant: ApprovalGrant): boolean {
+    // A duplicate wrote nothing, so the honest answer is whether the FILE already received what this
+    // store holds. `canPersist()` would be the wrong question and a false promise: on a read-only
+    // checkout it is true while every write has thrown, so re-answering an entry the store already
+    // holds would report it as recorded in a file that never got it.
+    if (!this.store.add(grant)) return this.inSync;
+    if (this.tryPersist()) return true;
+    if (!this.canPersist()) {
+      // A REFUSED write must not leave this store claiming a grant its file does not hold. What it
+      // holds is what the approvals display labels as saved, and what {@link liftRefusal} offers to
+      // delete from a file — so a grant kept here would be shown as written down and then "lifted"
+      // out of a file that never had it.
+      //
+      // A write that was ATTEMPTED and FAILED is the opposite case and keeps its copy: there the
+      // file is this store's own to write and the next call may well succeed, and dropping the
+      // grant would cost an answer the human gave for no gain.
+      this.store.remove(grant.entry);
+    }
+    return false;
   }
 
   /** The grant held under this entry's identity, or `undefined`. */
@@ -797,6 +1000,13 @@ export class PersistedApprovalGrants {
    * The write is what makes §4.7.4's invalidation a one-time event: a removal held only in memory
    * would be undone by the next session reloading the same stale snapshot, so the user would be
    * told their grant had been withdrawn once per session, forever.
+   *
+   * **The [[EXT-144]] refusal cannot strand a removal half-done, and by construction rather than by
+   * a check here:** a store that could not read its file is empty — the load recovered nothing, and
+   * {@link add} takes back what it could not write — so there is never a grant to remove, and this
+   * returns before reaching the write. If that invariant is ever broken, restore it rather than
+   * teaching this method to unwind: a removal that reported success while the file kept the entry
+   * would put the `/approvals` lift back in the business of lying about what it deleted.
    */
   remove(entry: ApprovalEntry): boolean {
     if (!this.store.remove(entry)) return false;
@@ -805,18 +1015,53 @@ export class PersistedApprovalGrants {
   }
 
   /**
-   * Write the file. Never throws: the grants are already in force for this session, and a
-   * read-only checkout must not end a run over a bookkeeping write.
+   * Write the file, and **report whether the write landed**. Never throws: the grants are already
+   * in force for this session, and a read-only checkout must not end a run over a bookkeeping
+   * write.
+   *
+   * ## [[EXT-144]] — it refuses to write over a file it could not read
+   *
+   * This is a WHOLE-FILE rewrite from what the store holds, and a store whose load failed holds
+   * nothing. So without this guard one saved answer replaces every entry in the file with itself:
+   * a trailing comma — the characteristic failure of a file people hand-edit and commit — becomes
+   * unrecoverable loss at the next prompt, with no backup and nothing on disk to go back to.
+   *
+   * **The deny side is why it refuses rather than saving a copy first.** A user whose refusals have
+   * silently stopped applying reaches for *always reject*, and that keystroke is what would make the
+   * loss permanent. Refusing leaves the file exactly as they left it: fix the comma and all of it
+   * comes back, with nothing to reconcile and nothing needing to have been copied in advance.
+   *
+   * **A sibling `.corrupt` copy was the alternative, and it is worse in this system**, because it
+   * would leave the user holding a merge they cannot perform — the live file with the one entry they
+   * just answered, a copy beside it with the twenty they had, and no tool to combine them. It would
+   * also write a second file into a directory people commit, and it would make the file parse again,
+   * so the load-time error that is the user's only signal would go quiet while nineteen refusals
+   * stayed out of force. And its guarantee is conditional on a write that can itself fail, which is
+   * the same read-only checkout this method already has to survive.
+   *
+   * The cost is a re-prompt and nothing else, which is the direction every ambiguity in this design
+   * resolves — and it is the same degradation the load side already makes ([[EXT-107]]: a store that
+   * cannot be read means `always` becomes `session`), now applied consistently to the write.
    */
-  private tryPersist(): void {
+  private tryPersist(): boolean {
+    if (this.readState !== 'readable') {
+      this.onNotice?.(refusedWriteNotice(this.filePath, this.holds, this.readState));
+      this.inSync = false;
+      return false;
+    }
     const file: PersistedGrantsFileV2 = {
       version: PERSISTED_VERSION,
       grants: this.store.list(),
     };
     try {
       writeFileSync(this.filePath, JSON.stringify(file, null, 2) + '\n', 'utf8');
+      this.inSync = true;
+      return true;
     } catch {
-      // Intentionally swallowed — see the doc comment.
+      // Intentionally swallowed — see the doc comment. The file no longer holds what this store
+      // holds, which is what {@link add} reports for an entry it did not have to write.
+      this.inSync = false;
+      return false;
     }
   }
 }
