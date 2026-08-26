@@ -1009,14 +1009,16 @@ export const FENCE_RENDERING_NOTE =
  * extraction is a decision about the floor, not a wording repair to smuggle in beside one.
  *
  * **Unconditional, in all three readings of the host list** — all named, some named, none named.
- * It says where the hosts were READ FROM rather than making a claim about a particular quoted
- * host, so it stays true when {@link listHostsForFloorNote} named none of them, and it does not
- * become a second thing for {@link withheldHostsPointer} to contradict.
+ * It says where the hosts were READ FROM rather than making a claim about a particular quoted one,
+ * so it stays true in the reading where {@link listHostsForFloorNote} named none of them and only
+ * counted them, and it does not become a second thing for {@link withheldHostsPointer} to
+ * contradict. That is why it says *those hosts* and not *a host quoted above*: the quoted set is
+ * sometimes empty, the read-from set never is.
  */
 export const FLOOR_HOST_RENDERING_CLAUSE =
   ' This note took its hosts from the same normalised rendering as the text in the fence, not from ' +
-  'the argument list the program is started with, so whether a host quoted above carries the ' +
-  'characters the shell will resolve is not something this note can tell you.';
+  'the argument list the program is started with, so whether those hosts carry the characters the ' +
+  'shell will resolve is not something this note can tell you.';
 
 /**
  * Build the messages for the rater call: the system prompt ({@link buildRaterSystemPrompt}) plus a
