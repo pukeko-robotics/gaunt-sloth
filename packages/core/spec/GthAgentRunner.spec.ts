@@ -331,29 +331,56 @@ describe('GthAgentRunner', () => {
       expect(result).toBe('combined response');
     });
 
-    it('should enrich vertex 401 errors with ADC and API key guidance', async () => {
+    // CFG-58 — end to end, on REAL clients, because the hint fires on `_platform === 'gcp'` and
+    // that platform covers sessions using three different, mutually exclusive credentials. Which
+    // one a session holds is pinned per population in vertexaiUtils.spec.ts; these two prove the
+    // runner carries the right one all the way out to the error a user sees.
+    async function vertexRunnerError(llm: unknown): Promise<string> {
       const runner = new GthAgentRunner(statusUpdateCallback);
       mockAgent.invoke.mockRejectedValue(new Error('Request failed with status code 401'));
 
-      await runner.init(undefined, {
-        ...mockConfig,
-        streamOutput: false,
-        llm: {
-          _llmType: vi.fn().mockReturnValue('google'),
-          verbose: false,
-          _platform: 'gcp',
-        } as any,
-      });
+      await runner.init(undefined, { ...mockConfig, streamOutput: false, llm: llm as any });
 
-      const messages = [new HumanMessage('test message')];
       try {
-        await runner.processMessages(messages);
-        expect(true).toBe(false);
+        await runner.processMessages([new HumanMessage('test message')]);
+        throw new Error('processMessages should have rejected');
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        expect(message).toMatch(/gcloud auth application-default login/);
-        expect(message).toMatch(/Google AI Studio key/);
+        return error instanceof Error ? error.message : String(error);
       }
+    }
+
+    it('should enrich a vertex 401 on ADC with reauth guidance, not with key guidance', async () => {
+      // What `type: vertexai` builds when no key is configured — the preset passes an empty
+      // apiKey, so ADC is what authenticates and an ambient GOOGLE_API_KEY is ignored.
+      const { ChatGoogle } = await import('@langchain/google/node');
+      const message = await vertexRunnerError(
+        new ChatGoogle({ model: 'gemini-3.7-flash', vertexai: true, apiKey: '' })
+      );
+
+      expect(message).toMatch(/gcloud auth application-default login/);
+      expect(message).toMatch(/ignores any `?GOOGLE_API_KEY/);
+      expect(message).not.toMatch(/make sure `?GOOGLE_API_KEY`? is unset/);
+      expect(message).not.toMatch(/express mode/);
+    });
+
+    it('should enrich a vertex 401 on an express-mode key by naming the KEY, never ADC', async () => {
+      // The config the provider docs recommend for express mode. No ADC exists for this session,
+      // so reauth advice is a dead end and the key is the only thing they can change.
+      const { ChatGoogle } = await import('@langchain/google/node');
+      const message = await vertexRunnerError(
+        new ChatGoogle({
+          model: 'gemini-3.7-flash',
+          vertexai: true,
+          apiKey: 'config-express-key-not-real',
+        })
+      );
+
+      expect(message).toMatch(/express mode/);
+      expect(message).toMatch(/Google AI Studio key/);
+      expect(message).toMatch(/not with Application Default Credentials/);
+      // The two sentences that would send this user away from their actual problem.
+      expect(message).not.toMatch(/authenticates through Application Default Credentials/);
+      expect(message).not.toMatch(/ignores any `?GOOGLE_API_KEY/);
     });
 
     it('should not enrich non-vertex 401 errors', async () => {
