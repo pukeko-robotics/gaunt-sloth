@@ -30,6 +30,7 @@ import {
   summariseToolCall,
 } from '@gaunt-sloth/core/core/toolDisplay.js';
 import { approvalStopRows } from '@gaunt-sloth/core/core/shell/approvalStop.js';
+import { approvalRequestRows } from '@gaunt-sloth/core/core/approvals/approvalRequest.js';
 import { displayWidth } from '@gaunt-sloth/core/utils/displayWidth.js';
 import { renderMarkdown } from '#src/tui/markdown.js';
 import { displaySegments, type ToolCallViewModel, type TurnViewModel } from '#src/tui/viewModel.js';
@@ -180,10 +181,29 @@ export function estimateItemRows(
         rows += siblingRows(row, columns);
       }
       break;
+    case 'approval':
+      // [[EXT-137]] <ApprovalRequestPanel>: one sibling <Text> per row, and the rows are built by
+      // core's own renderer at the same width the component frames at — the estimator counting a
+      // second model of a framed block is exactly how the two would drift apart.
+      for (const row of approvalRequestRows(item.pending, { columns })) {
+        rows += siblingRows(row.text, columns);
+      }
+      break;
     case 'reasoning':
       // The `/reasoning` reprint: a bracketing rule, then an always-expanded panel.
       rows += 1 + reasoningPanelRows(item.reasoning, true, columns);
       break;
+    default: {
+      // A new `TranscriptItem` kind must be counted here, and this is what says so at COMPILE
+      // time. Without it a missing case falls through to `return rows` and the item is budgeted at
+      // zero — the viewport then mounts too few items and clips the top of the newest one, which
+      // shows as conversation quietly going missing rather than as an error. The renderer's own
+      // switch is already total (it returns an element from every arm, so TypeScript rejects a
+      // missing one); this side had no such guard.
+      const unhandled: never = item;
+      void unhandled;
+      break;
+    }
   }
   return rows;
 }

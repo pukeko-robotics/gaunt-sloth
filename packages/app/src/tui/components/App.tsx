@@ -172,6 +172,9 @@ export function App(props: TuiAppProps): React.ReactElement {
   // The head is the approval on screen AND the one that owns the keyboard. Deriving both from this
   // single expression is what keeps those two facts from drifting apart.
   const pendingApproval = approvalQueue[0] ?? null;
+  // [[EXT-137]] — the queue records whose scrollable half has already been committed to the
+  // transcript, so a re-render cannot commit a second copy. See the effect that fills it.
+  const announcedApprovals = useRef(new Set<PendingApproval>());
   // [[TUI-C68]] §6.1 — attack halts, queued exactly as approvals are, and for the same reason: the
   // head is what is on screen AND what owns the keyboard, from one expression.
   const [attackQueue, setAttackQueue] = useState<PendingAttackBanner[]>([]);
@@ -1269,6 +1272,26 @@ export function App(props: TuiAppProps): React.ReactElement {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // [[EXT-137]] — commit the request's scrollable half into the transcript, once, at the moment it
+  // becomes the one being ASKED.
+  //
+  // On the head rather than on arrival, and the difference shows only when a second call queues
+  // behind the first: printing both blocks up front would leave the dock's "the call is shown
+  // above" pointing at whichever of them the reader happened to look at, which is the one thing
+  // this split must not get wrong. It stays in the transcript afterwards, followed by the decision
+  // notice `resolveApproval` commits, so the pair reads as a record of what was asked and answered.
+  //
+  // The set is what makes it once-only. A re-render with the same head — a keystroke, a status
+  // update, a terminal resize — must not append the block again, and identity of the queue RECORD
+  // is the right key: two identical calls in a row are two records and are two questions.
+  useEffect(() => {
+    if (!pendingApproval) return;
+    if (announcedApprovals.current.has(pendingApproval)) return;
+    announcedApprovals.current.add(pendingApproval);
+    push({ kind: 'approval', pending: pendingApproval.pending });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingApproval]);
 
   // [[TUI-C68]] §6.1 — attack halts bridged from the runner. Each one mounts the <AttackBanner>,
   // which owns the keyboard until it is answered. Absent on the fixture path, where the runner

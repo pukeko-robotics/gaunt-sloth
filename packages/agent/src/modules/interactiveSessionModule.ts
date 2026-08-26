@@ -19,7 +19,6 @@ import { buildRejectionMessage } from '@gaunt-sloth/core/core/shell/rejection.js
 import { renderNegotiationRows } from '@gaunt-sloth/core/core/shell/negotiation.js';
 import {
   attackBannerCopy,
-  describeRaterOutcome,
   grantsRunAnyway,
   RATER_REASON_LABEL,
 } from '@gaunt-sloth/core/core/shell/escalationSeverity.js';
@@ -28,9 +27,13 @@ import {
   frameUntrustedText,
   frameWidthFor,
   narrowTerminalNotice,
-  STICKY_PREVIEW_MAX_ROWS,
 } from '@gaunt-sloth/core/core/shell/framing.js';
-import { approvalPromptHeader } from '@gaunt-sloth/core/core/approvals/promptHeader.js';
+import {
+  APPROVAL_ASK_LINE,
+  APPROVAL_ROW_DIALOG_TONES,
+  approvalCategoryLine,
+  approvalRequestRows,
+} from '@gaunt-sloth/core/core/approvals/approvalRequest.js';
 import { ApprovalStopError, approvalStopRows } from '@gaunt-sloth/core/core/shell/approvalStop.js';
 import { writeDebugDump } from '@gaunt-sloth/core/utils/debugDump.js';
 import { appendToFile, getCommandOutputFilePath } from '@gaunt-sloth/core/utils/fileUtils.js';
@@ -195,161 +198,40 @@ export async function createInteractiveSession(
     // this prompt at all. (The Ink TUI surfaces the same scoped prompt via an approval bridge —
     // see tuiSessionModule's createApprovalBridge + the <ApprovalPrompt> component.)
     runner.setToolApprovalCallback(async (pending) => {
-      const commandText =
-        typeof pending.args.command === 'string'
-          ? (pending.args.command as string)
-          : JSON.stringify(pending.args);
-      // [[TUI-C26]] §6 — the command is model-authored text going to a terminal, where it is not
-      // inert: a carriage return reaches column 0, an escape sequence clears the screen, and a
-      // newline alone lays down a line that looks exactly like this prompt's own chrome. It is
-      // painted through core's framing renderer — neutralised, inside a line-number gutter, with
-      // its command-substitution and composition sites listed above it — the SAME renderer the Ink
-      // prompt uses, so the two surfaces cannot differ about how much of a command a human saw.
-      // Nothing is clamped to one line: the command that motivated this hid its payload fifteen
-      // lines into a commit message, and a clamp discards exactly what the human must rule on.
-      const frameWidth = frameWidthFor(output.columns);
-      const framedCommand = frameUntrustedCommand(commandText, { width: frameWidth });
-      // [[TUI-C67]] — the opening sentence is core's, branched on the `ApprovalSubject` kind the
-      // gate itself decided on, so a file write, an MCP call or a custom tool is announced as what
-      // it is rather than as a shell command. The Ink prompt renders the identical call; this
-      // surface owns only the leading blank line and the trailing colon, which is what keeps the
-      // two from describing one call two ways.
-      displayDialogLine(`\n${approvalPromptHeader(pending)}:`, 'warn');
-      // Below core's floor the frame is wider than the terminal, which wraps it and puts untrusted
-      // text at the left edge. The frame is still shown — hiding what the human must rule on would
-      // be worse — but the guarantee has lapsed, and it says so instead of lapsing silently.
-      const tooNarrow = narrowTerminalNotice(output.columns);
-      if (tooNarrow) displayDialogLine(tooNarrow, 'warn');
-      dialogLines(framedCommand.notices, 'warn');
-      displayDialogLine('');
-      dialogLines(framedCommand.lines);
-      displayDialogLine('');
-      // CFG-27: when the auto-rater escalated this command (rather than approving it), show its
-      // outcome + reason before the human decides. §6 makes that explanation mandatory whenever a
-      // rating exists; at the unrated rungs there is none and the prompt shows the command alone.
-      // The outcome is a schema enum; the reason is model-authored prose and is framed exactly like
-      // the command, because a dialog forgeable through the string that explains it is not a gate.
-      // [[TUI-C26]] §6 — the severity is legible in three independent ways: a glyph, a sentence of
-      // the gate's own naming what the outcome MEANS, and the tone it is painted in. The tone is
-      // this surface's colour: `catastrophic` is painted `danger` (red) where `destructive` is
-      // `warn` (yellow), so the two cannot look alike — and the sentence carries it anyway for a
-      // terminal with no colour at all, which is the one that must not be left out.
-      if (pending.safetyVerdict) {
-        const severity = describeRaterOutcome(pending.safetyVerdict.outcome);
-        displayDialogLine(severity.heading, severity.tone);
-        // The reason is the RATER's, and now that the line above it is the gate's own sentence the
-        // attribution has to be said rather than implied.
-        displayDialogLine(RATER_REASON_LABEL, 'notice');
-        dialogLines(
-          frameUntrustedText(pending.safetyVerdict.reason, { width: frameWidth }).lines,
-          severity.tone
-        );
-      }
-      // EXT-71 §3.2 — when a declared `approvals.escalate` entry is what brought this call here,
-      // the prompt shows THE ENTRY THAT FIRED. Without it the user is asked about a command their
-      // rung would have approved, with nothing on screen tying the question to the line they wrote
-      // — which reads as the gate malfunctioning rather than as their own rule working.
-      // [[TUI-C26]] — framed rather than interpolated. The entry is usually something the user
-      // wrote, but an MCP entry can carry server-supplied names, and this line sits one string away
-      // from the prompt's own chrome. The label stays this surface's own line.
-      if (pending.escalatedBy) {
-        displayDialogLine('⚠ Your approvals.escalate list matched this call:', 'warn');
-        dialogLines(frameUntrustedText(pending.escalatedBy, { width: frameWidth }).lines, 'warn');
-      }
-      // [[EXT-29]] §6 — when a §5 negotiation preceded this escalation, the human is shown ALL of
-      // it. The user is not asked to rule on the final command in isolation: that the agent
-      // proposed the same command three times unchanged, against two rejections that each told it
-      // what to fix, is the most important thing on the screen and is invisible if only the last
-      // attempt is shown. Rendered through core's shared renderer, so the surfaces cannot describe
-      // one exchange two ways.
+      // [[EXT-137]] — **the request block, rendered by core and printed linearly here.**
       //
-      // [[TUI-C26]] §5.4 — rendered as ROWS, so the two voices are told apart: the rater's turns are
-      // painted `warn` (yellow) and the agent's plain, which is what the spec asks for and what one
-      // joined string could not express — the whole exchange used to arrive in a single colour. Each
-      // row also NAMES its speaker (`rater answered:` / `agent justified:`), which is the half that
-      // survives a monochrome terminal. The rows are bound to the terminal width for the same reason
-      // the command is: a long justification left to the terminal's own wrap continues at column 0.
+      // This surface has no dock: it prints and it scrolls, so what a person reads immediately
+      // before pressing a key is whatever happened to be printed last. That makes the ORDER the
+      // whole mitigation, and the order is core's rather than this module's —
+      // `approvalRequestRows` puts the explanation first, the call after it and the HOSTS last, so
+      // the counterparty's identity is adjacent to the menu however long the note above it ran.
+      // The Ink TUI commits the identical rows into its transcript and `transcriptWindow` budgets
+      // them, so the three cannot come to disagree about what a human was shown.
       //
-      // [[TUI-C75]] — the count comes from `negotiationAttempts`, not from the array. Since
-      // [[EXT-108]] the two are the same set at this call site, because only reaching a person
-      // empties the transcript and that also zeroes the count. Passing it stays load-bearing
-      // anyway: the renderer prints only the last few rounds, and the count is what stops the
-      // heading claiming less argument than the agent actually made.
-      for (const row of renderNegotiationRows(pending.negotiationRounds ?? [], {
-        width: frameWidth,
-        ...(pending.negotiationAttempts !== undefined
-          ? { attempts: pending.negotiationAttempts }
-          : {}),
-      })) {
-        if (row.voice === 'rater') displayDialogLine(row.text, 'warn');
-        else if (row.voice === 'agent') displayDialogLine(row.text);
-        else displayDialogLine(row.text, 'notice');
+      // [[TUI-C26]] §6 — every untrusted half in those rows arrives already framed: neutralised,
+      // inside a line-number gutter, with its command-substitution and composition sites listed
+      // above it. Model-authored text going to a terminal is not inert — a carriage return reaches
+      // column 0, an escape sequence clears the screen, and a newline alone lays down a line that
+      // looks exactly like this dialog's own chrome. Nothing is clamped to one line: the command
+      // that motivated the framing hid its payload fifteen lines into a commit message, and a clamp
+      // discards exactly what the human must rule on.
+      displayDialogLine('');
+      for (const row of approvalRequestRows(pending, { columns: output.columns })) {
+        displayDialogLine(row.text, APPROVAL_ROW_DIALOG_TONES[row.tone]);
       }
-      // EXT-71/EXT-70 §6 — the menu MUST show what a sticky choice will store, at the moment of
-      // the choice, and it names it in the words the control is written in: the command itself for
-      // a shell call, the tool (with its server and host bound) for a tool call, since for a tool
-      // "the stored thing is the tool, not the arguments" (§4.7.4). The exact entry follows it, so
-      // the user sees the thing they are agreeing to rather than a generalization of it.
+      // [[EXT-137]] — the two lines the Ink dock pins, printed here in this surface's equivalent
+      // position: immediately above the menu, which is the last thing read before a key is pressed.
+      // Both are ours — a constant, and one of four enumerated category sentences — so no amount of
+      // padding anywhere in the call can change a byte of either. The category is what makes the
+      // line worth reading: it says which CLASS of thing is about to be allowed, which a bare "an
+      // answer is needed" cannot, and a reader who is told nothing has no reason to look up.
+      displayDialogLine('');
+      displayDialogLine(APPROVAL_ASK_LINE, 'warn');
+      displayDialogLine(approvalCategoryLine(pending), 'warn');
+      // §6/EXT-70 — which sticky controls the gate would actually store something for. The menu
+      // below is assembled from these two booleans, never from what they would store.
       const sticky = pending.grantPreview !== undefined;
-      if (sticky) {
-        // [[TUI-C26]] — these two lines carry the command as typed (§3.1 stores it exactly, never a
-        // widened pattern), so they inherit the command's problem in less space: an in-line
-        // `approved by rater` fits on one line untouched. Framed like everything else, with the
-        // label kept as this surface's OWN line so the untrusted half can never be read as chrome.
-        // Bounded to a few rows: for a shell call these carry the command as typed, which is
-        // already printed in full above — so an unbounded copy of a long command here (twice over,
-        // since the entry repeats it) scrolls the MENU off the screen, and a control the human
-        // cannot see is not one they were offered.
-        displayDialogLine('[s]/[a] will remember:', 'notice');
-        dialogLines(
-          frameUntrustedText(pending.grantSummary ?? pending.grantPreview!, {
-            width: frameWidth,
-            maxRows: STICKY_PREVIEW_MAX_ROWS,
-          }).lines,
-          'notice'
-        );
-        displayDialogLine('    stored as:', 'notice');
-        dialogLines(
-          frameUntrustedText(pending.grantPreview!, {
-            width: frameWidth,
-            maxRows: STICKY_PREVIEW_MAX_ROWS,
-          }).lines,
-          'notice'
-        );
-      }
-      // [[TUI-C26]] §6 — the same requirement for the OTHER sticky choice, and its availability is
-      // a different question: the runner offers a deny entry in cases where no grant exists at all
-      // (a command that does not statically resolve, every `catastrophic` verdict), because a
-      // refusal that cannot be decided still refuses. `recorded as:` rather than a second
-      // `stored as:` — one dialog, two labels that read alike, is how a reader loses track of which
-      // block they are looking at.
-      //
-      // [[EXT-107]] — the label states the lifetime, and the lifetime is now *saved to this
-      // project*. It says `this exact command` for the reason §3.1 stores one: the entry below is a
-      // literal, so a variant with different arguments will be asked about again, and a label that
-      // read as a policy would describe a breadth the entry does not have.
       const stickyDeny = pending.denyPreview !== undefined;
-      if (stickyDeny) {
-        displayDialogLine(
-          '[d] will refuse this exact call, and save it to this project:',
-          'notice'
-        );
-        dialogLines(
-          frameUntrustedText(pending.denySummary ?? pending.denyPreview!, {
-            width: frameWidth,
-            maxRows: STICKY_PREVIEW_MAX_ROWS,
-          }).lines,
-          'notice'
-        );
-        displayDialogLine('    recorded as:', 'notice');
-        dialogLines(
-          frameUntrustedText(pending.denyPreview!, {
-            width: frameWidth,
-            maxRows: STICKY_PREVIEW_MAX_ROWS,
-          }).lines,
-          'notice'
-        );
-      }
       setRawMode(false); // ensure typed input is echoed for this confirm
       // EXT-18: wrap the prompt in try/finally so the raw-mode/ref state is not left wedged if
       // rl.question throws. The subsequent streamResume run re-establishes raw mode + ref, but be
