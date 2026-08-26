@@ -22,8 +22,9 @@ nobody runs.
 | `evals/self/` | gth's own behaviour, graded by `gth eval` | real calls; one sweep needs a local GPU | nothing |
 | `evals/{mcp-authz,adk,ag-ui}/` | a live SUT, graded by `gth eval` | real calls | nothing |
 
-Everything in the bottom five rows is run **by hand, on purpose**. They cost real model calls, and a
-gate people wait for is a gate people bypass.
+Nothing that costs a real model call gates a merge. The `it` and `evals/` rows are run **by hand, on
+purpose** — a gate people wait for is a gate people bypass. The release is the exception: before it
+publishes it runs the provider integration tests and the CI-tuned subset of `evals/configs/`.
 
 ## Unit tests — `pnpm test`
 
