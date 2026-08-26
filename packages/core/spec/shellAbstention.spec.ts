@@ -251,10 +251,19 @@ describe('EXT-81 — the parser preflight note', () => {
      * **Neither rule 1 nor rule 2 measures a DISTANCE**, which is what a rephrase used to break: the
      * hedge may sit any number of words ahead of the verb as long as it is in the same sentence.
      *
-     * **What this still is not: an entailment checker.** It catches the shapes three drafts of this
-     * note actually took plus the paraphrase class that named single quotes, and it can still be
-     * walked past by prose that asserts the reassuring half while naming neither quoting nor
-     * expansion. That residual is the reason rule 4 survives, and it is the thing to attack next.
+     * **What this still is not: an entailment checker, and rule 3's TRIGGER is an enumeration.**
+     * The allowlist is total over the clause — one approved sentence about single quotes and no
+     * other — but reaching it depends on recognising that a sentence is about single quotes at all,
+     * and that recognition is a list of spellings. A synonym outside the list is prose rule 3 never
+     * looks at, and rules 1, 2 and 4 are blind to a reassuring claim that names no expansion and
+     * uses no denylisted word. So the residual is not "prose naming neither quoting nor expansion";
+     * it is **prose naming the quoting in a word the list does not have.** That is the thing to
+     * attack next, and it is why rule 4 survives as a backstop rather than being retired.
+     *
+     * The same limit applies one level out: these rules sweep `MECHANISM_NOTES` only. The composed
+     * open-world notes built in `openWorld.ts` are a second writer of this prose class — its
+     * `remote-command` arm carried this exact false claim once — and they reach the neutrality scan
+     * below but not rules 1-4.
      */
     describe('the guard on what a note may claim about expansion', () => {
       /** The rule names, so a rejection is pinned to the rule that must catch it. */
@@ -282,8 +291,16 @@ describe('EXT-81 — the parser preflight note', () => {
        */
       const EXPANSION_CLAIM_RE = /\bshell\b[^.?!;:]{0,24}?expand/gi;
 
-      /** Any way of naming the quoting style the reassuring half turns on. */
-      const SINGLE_QUOTE_MENTION_RE = /\bsingle[-\s]quote/gi;
+      /**
+       * Any way of naming the quoting style the reassuring half turns on.
+       *
+       * **This is where rule 3 is still an ENUMERATION, and the honest description of its limit.**
+       * The allowlist is total over the clause — one approved sentence, nothing else — but what
+       * TRIGGERS it is this list of spellings, so a synonym that is not here is a note the rule
+       * never looks at. `apostrophe` is on it because this module's own comments use that word for
+       * the same character, which makes it the spelling a rewrite is most likely to reach for.
+       */
+      const SINGLE_QUOTE_MENTION_RE = /\b(single[-\s]quote|apostrophe)/gi;
 
       /** The reassuring direction, said outright. */
       const REASSURING_RE =
@@ -440,6 +457,17 @@ describe('EXT-81 — the parser preflight note', () => {
        */
       it('rejects a rule about single quotes written in unremarkable words', () => {
         const draft = `${MECHANISM_NOTES.substitution} Inside single quotes the message reaches git exactly as typed.`;
+        expect(violationsOf(draft)).toEqual([SINGLE_QUOTES_OUTSIDE_CLAUSE]);
+      });
+
+      /**
+       * **The same rule written as `apostrophes`, which is the word this module's own comments
+       * use.** Rules 1, 2 and 4 are all blind to it — it names no expansion and carries no
+       * denylisted vocabulary — so if rule 3's spelling list misses the synonym, nothing catches
+       * it and the paraphrase class [[EXT-148]] closed is open again under a different word.
+       */
+      it('rejects the same rule written as apostrophes rather than single quotes', () => {
+        const draft = `${MECHANISM_NOTES.substitution} Inside apostrophes the message reaches git exactly as typed.`;
         expect(violationsOf(draft)).toEqual([SINGLE_QUOTES_OUTSIDE_CLAUSE]);
       });
 
