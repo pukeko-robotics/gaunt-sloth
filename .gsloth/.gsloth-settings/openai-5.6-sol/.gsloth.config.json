@@ -1,0 +1,7 @@
+{
+  "$schema": "https://gauntsloth.app/schema/v2/gsloth-config.schema.json",
+  "llm": {
+    "type": "openai",
+    "model": "gpt-5.6-sol"
+  }
+}

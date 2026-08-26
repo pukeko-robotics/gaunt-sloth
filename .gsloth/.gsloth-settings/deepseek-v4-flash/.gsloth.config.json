@@ -1,0 +1,7 @@
+{
+  "$schema": "https://gauntsloth.app/schema/v2/gsloth-config.schema.json",
+  "llm": {
+    "type": "deepseek",
+    "model": "deepseek-v4-flash"
+  }
+}
