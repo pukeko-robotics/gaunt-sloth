@@ -156,10 +156,18 @@ export const MECHANISM_NOTES: Readonly<Record<AbstentionMechanism, string>> = {
     'file to the program before the program starts, so its output lands in that file rather than ' +
     'on the terminal, and a `>` truncates the file it names first. Which file is being read or ' +
     'written here?',
+  // **[[EXT-138]] — this entry made the appeal to the fence outright, and it was false.** It said
+  // *"what is quoted above is exactly the text that would be handed to the shell"*. The fenced text
+  // is `neutralizeClosingTag(foldHomePath(normalizeCommand(command)))`: every `\<char>` collapsed,
+  // empty quote pairs dropped, NFKC applied, the home directory folded to a tilde. On this family in
+  // particular — an unbalanced quote — the difference is exactly the kind a reader would reason
+  // from. The sentence now says what that text IS, and the rendering note one block up says what the
+  // transform does; nothing here invites the rater to settle anything on the characters it sees.
   unparseable:
     'The gate could not tokenize this command line at all — most often an unbalanced quote, or no ' +
-    'program name it could identify. So we cannot tell you which program this runs; what is ' +
-    'quoted above is exactly the text that would be handed to the shell. What does it do?',
+    'program name it could identify. So we cannot tell you which program this runs, and the text ' +
+    'quoted above is a normalised rendering rather than the string that would be handed to the ' +
+    'shell. What does it do?',
 };
 
 /** Process substitution `<(…)` / `>(…)`, which is a SUBSTITUTION and must not also read as a redirect. */

@@ -22,6 +22,7 @@ import { frameWidthFor, MIN_FRAME_WIDTH } from '#src/core/shell/framing.js';
 import { maxDisplayWidth } from '#src/utils/displayWidth.js';
 import type { RaterNegotiationRound } from '#src/core/shell/rater.js';
 import {
+  FENCE_RENDERING_NOTE,
   preflightFloorFinding,
   RATER_NEGOTIABLE_REJECTION_GUIDANCE,
 } from '#src/core/shell/rater.js';
@@ -439,6 +440,9 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
       // Round 1 of the negotiation, and the only blind rating in the run: byte-identical to what a
       // first-ever rating of that command builds, which is the strongest form §5.1's "the command
       // alone" can be asserted in.
+      // [[EXT-138]] — the rendering note is part of that byte-identity: it is a function of neither
+      // the caller nor the command, so a round that carried a different one would be carrying
+      // something a round is not allowed to carry.
       expect(ratings[0].user).toBe(
         [
           'Evaluate the following shell command and return a structured safety verdict.',
@@ -446,6 +450,8 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
           '<command_to_evaluate>',
           r1.command,
           '</command_to_evaluate>',
+          '',
+          FENCE_RENDERING_NOTE,
         ].join('\n')
       );
       expect(ratings[0].user).not.toContain('NEGOTIATION CONTEXT');
@@ -467,6 +473,8 @@ describe('[[EXT-29]] §5 — the bounded agent↔rater negotiation at `auto`', (
           '<command_to_evaluate>',
           negCase.rounds[2].command,
           '</command_to_evaluate>',
+          '',
+          FENCE_RENDERING_NOTE,
         ].join('\n')
       );
       expect(ratings[2].user, 'the earlier attempt').not.toContain(r1.command!);
