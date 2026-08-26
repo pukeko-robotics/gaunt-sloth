@@ -1,0 +1,7 @@
+{
+  "$schema": "https://gauntsloth.app/schema/v2/gsloth-config.schema.json",
+  "llm": {
+    "type": "ollama",
+    "model": "qwen3.6:35b"
+  }
+}

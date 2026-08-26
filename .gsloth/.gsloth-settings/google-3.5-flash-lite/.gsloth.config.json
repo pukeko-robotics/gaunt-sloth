@@ -1,0 +1,8 @@
+{
+  "$schema": "https://gauntsloth.app/schema/v2/gsloth-config.schema.json",
+  "llm": {
+    "type": "google-genai",
+    "model": "gemini-3.5-flash-lite",
+    "temperature": 0
+  }
+}
