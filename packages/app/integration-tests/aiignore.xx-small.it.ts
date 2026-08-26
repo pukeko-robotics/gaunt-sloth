@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { runCommandWithArgs } from './support/commandRunner';
+import { runGth } from './support/commandRunner';
 
 /** Fixture dir for the glob case. Its files are tracked; `.aiignore` is the stimulus under test. */
 const GLOB_FIXTURE_DIR = path.join(import.meta.dirname, 'workdir', 'glob-aiignore');
@@ -23,8 +23,7 @@ const GLOB_FIXTURE_DIR = path.join(import.meta.dirname, 'workdir', 'glob-aiignor
  */
 describe('Aiignore Integration Tests', () => {
   it('should hide aiignore entries when listing the current directory', async () => {
-    const output = await runCommandWithArgs('npx', [
-      'gaunt-sloth',
+    const output = await runGth([
       'ask',
       '"Use the list_directory tool on . and list what it returns."',
     ]);
@@ -79,8 +78,7 @@ describe('Aiignore Integration Tests', () => {
       'the control fixture must exist on disk'
     ).toBe(true);
 
-    const output = await runCommandWithArgs('npx', [
-      'gaunt-sloth',
+    const output = await runGth([
       'ask',
       '"Use the list_directory tool on ./glob-aiignore and list what it returns."',
     ]);

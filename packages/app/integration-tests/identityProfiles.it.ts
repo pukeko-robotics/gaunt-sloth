@@ -1,23 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { runCommandExpectingExitCode, runCommandWithArgs } from './support/commandRunner.ts';
+import { runGthExpectingExitCode, runGth } from './support/commandRunner.ts';
 import path from 'node:path';
 
 const PROFILES_WORKDIR = path.resolve('./packages/app/integration-tests/workdir-with-profiles');
 
 describe('Review Command Integration Tests', () => {
   it('should work with default profile', async () => {
-    const output = await runCommandWithArgs(
-      'npx',
-      ['gaunt-sloth', 'ask', '"what is your name?"'],
-      undefined,
-      PROFILES_WORKDIR
-    );
+    const output = await runGth(['ask', '"what is your name?"'], undefined, PROFILES_WORKDIR);
 
     expect(output).toContain('Voreinstellung');
 
-    const favouriteFishOutput = await runCommandWithArgs(
-      'npx',
-      ['gaunt-sloth', 'ask', '"What is your favourite fish?"'],
+    const favouriteFishOutput = await runGth(
+      ['ask', '"What is your favourite fish?"'],
       undefined,
       PROFILES_WORKDIR
     );
@@ -26,9 +20,8 @@ describe('Review Command Integration Tests', () => {
   });
 
   it('should work with sorcerer profile name', async () => {
-    const nameOutput = await runCommandWithArgs(
-      'npx',
-      ['gaunt-sloth', '-i sorcerer', 'ask', '"what is your name?"'],
+    const nameOutput = await runGth(
+      ['-i sorcerer', 'ask', '"what is your name?"'],
       undefined,
       PROFILES_WORKDIR
     );
@@ -36,9 +29,8 @@ describe('Review Command Integration Tests', () => {
   });
 
   it('should approve good spell with sorcerer profile', async () => {
-    const spellReviewOutput = await runCommandWithArgs(
-      'npx',
-      ['gaunt-sloth', '-i sorcerer', 'review', 'good-spell.js'],
+    const spellReviewOutput = await runGth(
+      ['-i sorcerer', 'review', 'good-spell.js'],
       undefined,
       PROFILES_WORKDIR
     );
@@ -46,9 +38,8 @@ describe('Review Command Integration Tests', () => {
   });
 
   it('should reject bad spell with sorcerer profile', async () => {
-    const failedSpellOutput = await runCommandExpectingExitCode(
-      'npx',
-      ['gaunt-sloth', '-i sorcerer', 'review', 'bad-spell.js'],
+    const failedSpellOutput = await runGthExpectingExitCode(
+      ['-i sorcerer', 'review', 'bad-spell.js'],
       1,
       PROFILES_WORKDIR
     );
@@ -62,9 +53,8 @@ describe('Review Command Integration Tests', () => {
   });
 
   it('should work with fisher-alt profile', async () => {
-    const output = await runCommandWithArgs(
-      'npx',
-      ['gaunt-sloth', '-i fisher-alt', 'ask', '"what is your name?"'],
+    const output = await runGth(
+      ['-i fisher-alt', 'ask', '"what is your name?"'],
       undefined,
       PROFILES_WORKDIR
     );
@@ -74,9 +64,8 @@ describe('Review Command Integration Tests', () => {
       'Should fall back to install backstory, when profile has no backstory'
     ).toContain('Gaunt Sloth');
 
-    const favouriteFishOutput = await runCommandWithArgs(
-      'npx',
-      ['gaunt-sloth', '-i fisher-alt', 'ask', '"What is your favourite fish?"'],
+    const favouriteFishOutput = await runGth(
+      ['-i fisher-alt', 'ask', '"What is your favourite fish?"'],
       undefined,
       PROFILES_WORKDIR
     );

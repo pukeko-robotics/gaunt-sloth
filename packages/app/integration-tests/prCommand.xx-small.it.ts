@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { runCommandExpectingExitCode } from './support/commandRunner.ts';
+import { runGthExpectingExitCode } from './support/commandRunner.ts';
 import { extractReviewScore } from './support/reviewScoreExtractor.ts';
 import fs from 'fs';
 import path from 'path';
@@ -10,9 +10,8 @@ describe('PR Command Integration Tests', () => {
   // Test for PR review with approval
   it('should approve PR #130 with issue #133, write to a specified file path, and exit with code 0', async () => {
     // Use real PR data instead of mock files
-    const { output, exitCode } = await runCommandExpectingExitCode(
-      'npx',
-      ['gaunt-sloth', '--write-output-to-file', 'testreview.md', 'pr', '130', '133'],
+    const { output, exitCode } = await runGthExpectingExitCode(
+      ['--write-output-to-file', 'testreview.md', 'pr', '130', '133'],
       0
     );
 

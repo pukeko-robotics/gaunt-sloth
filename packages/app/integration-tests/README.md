@@ -19,7 +19,8 @@ integration-tests/
 ├── workdir-with-profiles/       # Profile tests working directory
 ├── configs/                      # Config templates for different providers
 ├── support/                      # Test helper utilities
-│   ├── commandRunner.ts         # Helper to run CLI commands
+│   ├── cliUnderTest.mjs         # Resolves the CLI these tests spawn (read this before adding one)
+│   ├── commandRunner.ts         # Helpers to run the CLI: runGth and friends
 │   ├── outputChecker.ts         # Helper to verify output content
 │   └── reviewScoreExtractor.ts  # Helper to extract review scores
 ├── setup-config.js              # Setup script (copies config to workdir)
@@ -149,8 +150,24 @@ When adding new integration tests:
 
 1. **Test code** (`.it.ts` files) goes in the `integration-tests/` root
 2. **Test data** files go in `integration-tests/workdir/`
-3. Use `runCommandWithArgs()` or `runCommandExpectingExitCode()` from `support/commandRunner.ts` without specifying a workdir parameter (it defaults to `workdir/`)
+3. Use `runGth()`, `runGthExpectingExitCode()` or `startGth()` from `support/commandRunner.ts`
+   without specifying a workdir parameter (it defaults to `workdir/`). Pass only the CLI's own
+   arguments — the helpers supply the binary.
 4. For profile-specific tests, use `PROFILES_WORKDIR` constant pointing to `workdir-with-profiles/`
+
+### How the CLI under test is resolved
+
+Every spawn runs **this checkout's** `packages/app/cli.js`, resolved by a path anchored on
+`support/cliUnderTest.mjs` and started with `process.execPath`. Never spawn the CLI by name: a
+package runner resolves a bare name against `node_modules/.bin`, then `PATH`, then the public
+registry, so a name can silently reach a globally installed build, or a stranger's package, instead
+of the code the branch changed. `packages/app/spec/itHarnessCliUnderTest.spec.ts` fails if such a
+launcher appears anywhere in this directory.
+
+The run refuses to start unless the resolved entry point runs and reports the version in
+`packages/app/package.json`, and each spawn gets `INIT_CWD` set explicitly to its own working
+directory — that is what up-tree config discovery walks from, so it is a contract of the harness
+rather than something inherited from whatever launched it.
 
 ## Notes
 

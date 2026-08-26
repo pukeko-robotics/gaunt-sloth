@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { runCommandWithArgs } from './support/commandRunner.ts';
+import { runGth } from './support/commandRunner.ts';
 
 const configContent = readFileSync(
   join(import.meta.dirname, 'workdir/.gsloth.config.json'),
@@ -11,8 +11,7 @@ const hasBinaryFormats = configContent.includes('binaryFormats');
 
 describe('Binary Image Integration Tests', () => {
   it.skipIf(!hasBinaryFormats)('should recognize the image content (ball)', async () => {
-    const output = await runCommandWithArgs('npx', [
-      'gaunt-sloth',
+    const output = await runGth([
       'ask',
       '"Use the gth_read_binary tool on image.png. What is on the picture image.png?"',
     ]);
@@ -23,8 +22,7 @@ describe('Binary Image Integration Tests', () => {
   });
 
   it.skipIf(!hasBinaryFormats)('should recognize the image content (bicycle)', async () => {
-    const output = await runCommandWithArgs('npx', [
-      'gaunt-sloth',
+    const output = await runGth([
       'ask',
       '"Use the gth_read_binary tool on image2.png. What is on the picture image2.png?"',
     ]);

@@ -1,14 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { runCommandWithArgs } from './support/commandRunner';
+import { runGth } from './support/commandRunner';
 import { checkOutputForExpectedContent } from './support/outputChecker';
 
 describe('Code Command Integration Tests', () => {
   it('should respond to initial message', async () => {
     // writeOutputToFile now defaults to false; opt in with -w true so this test
     // still exercises the session-logging path.
-    const output = await runCommandWithArgs(
-      'npx',
-      ['gaunt-sloth', '-w', 'true', 'code', '"Hello, can you help me with some code?"'],
+    const output = await runGth(
+      ['-w', 'true', 'code', '"Hello, can you help me with some code?"'],
       ' >'
     );
 
@@ -22,7 +21,7 @@ describe('Code Command Integration Tests', () => {
   });
 
   it('should start interactive session without initial message', async () => {
-    const output = await runCommandWithArgs('npx', ['gaunt-sloth', 'code'], ' >');
+    const output = await runGth(['code'], ' >');
 
     // Check for expected content in the response
     expect(checkOutputForExpectedContent(output, 'ready to code')).toBe(true);

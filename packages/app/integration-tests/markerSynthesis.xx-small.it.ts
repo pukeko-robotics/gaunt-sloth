@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { runCommandWithArgs } from './support/commandRunner';
+import { runGth } from './support/commandRunner';
 import { checkOutputForExpectedContent } from './support/outputChecker';
 
 /**
@@ -24,9 +24,16 @@ import { checkOutputForExpectedContent } from './support/outputChecker';
  * Topology (load-bearing): the provider config is discovered UP-TREE at
  * `workdir/.gsloth.config.json`, while file reads anchor on the CLI's cwd (the case subdir). So the
  * marker MUST live in the subdir, and the subdir MUST be under `workdir/` for the up-tree walk to
- * find workdir's config. `npx gaunt-sloth` resets INIT_CWD to the spawn cwd, so discovery starts at
- * the subdir (this is why the harness spawns through npx, not `node cli.js`, which would leak
- * INIT_CWD).
+ * find workdir's config. Discovery walks up from INIT_CWD, which the harness sets explicitly to
+ * each spawn's working directory — see support/cliUnderTest.mjs.
+ *
+ * Do NOT read these cases as the guard on that assignment. Measured: drop it, and the value pnpm
+ * exports leaks in, discovery starts at the repository root, and this case still PASSES — the
+ * toolkit's allowed root widens to the whole repository, so the agent finds the planted marker by
+ * searching for it, and meanwhile the run has quietly switched to whatever provider the
+ * repository's own developer config names. It goes red only when INIT_CWD is pointed somewhere
+ * that has a config and no marker beneath it. The assignment is pinned by unit test instead, in
+ * packages/app/spec/itHarnessCliUnderTest.spec.ts.
  *
  * temperature:0 (ollama config) makes each verb deterministic; retry:2 (vitest-it.config.ts) only
  * absorbs residual nondeterminism — neither is re-implemented here.
@@ -64,7 +71,7 @@ afterAll(() => {
 describe('xx-small marker/synthesis smoke (QA-8, ported from the QA-7 ollama smoke)', () => {
   it('ask: reads a planted file and synthesizes its unique marker', async () => {
     const { dir, marker } = plantCase('ask', MARKER_FILE);
-    const output = await runCommandWithArgs('npx', ['gaunt-sloth', 'ask', PROMPT], undefined, dir);
+    const output = await runGth(['ask', PROMPT], undefined, dir);
     expect(checkOutputForExpectedContent(output, 'Requested tools:'), 'a tool must have run').toBe(
       true
     );
@@ -76,12 +83,7 @@ describe('xx-small marker/synthesis smoke (QA-8, ported from the QA-7 ollama smo
 
   it('exec -m: reads a planted file and synthesizes its unique marker', async () => {
     const { dir, marker } = plantCase('exec', MARKER_FILE);
-    const output = await runCommandWithArgs(
-      'npx',
-      ['gaunt-sloth', 'exec', '-m', PROMPT],
-      undefined,
-      dir
-    );
+    const output = await runGth(['exec', '-m', PROMPT], undefined, dir);
     expect(checkOutputForExpectedContent(output, 'Requested tools:'), 'a tool must have run').toBe(
       true
     );
@@ -93,12 +95,7 @@ describe('xx-small marker/synthesis smoke (QA-8, ported from the QA-7 ollama smo
 
   it('code --no-tui: reads a planted file and synthesizes its unique marker', async () => {
     const { dir, marker } = plantCase('code', MARKER_FILE);
-    const output = await runCommandWithArgs(
-      'npx',
-      ['gaunt-sloth', 'code', '--no-tui', PROMPT],
-      undefined,
-      dir
-    );
+    const output = await runGth(['code', '--no-tui', PROMPT], undefined, dir);
     expect(checkOutputForExpectedContent(output, 'Requested tools:'), 'a tool must have run').toBe(
       true
     );
@@ -132,7 +129,7 @@ describe('xx-small marker/synthesis smoke (QA-8, ported from the QA-7 ollama smo
       'utf8'
     );
     createdDirs.push(dir);
-    const output = await runCommandWithArgs('npx', ['gaunt-sloth', 'ask', PROMPT], undefined, dir);
+    const output = await runGth(['ask', PROMPT], undefined, dir);
     // The tool DID run (reproduces GS2-59's "successful tool call") — so an absent marker below is
     // specifically a broken/empty synthesis, not a crash or a no-tool-call.
     expect(checkOutputForExpectedContent(output, 'Requested tools:'), 'a tool must have run').toBe(

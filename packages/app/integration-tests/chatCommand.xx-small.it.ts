@@ -1,21 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import {
-  collectStderr,
-  runCommandWithArgs,
-  startChildProcess,
-  waitForCursor,
-} from './support/commandRunner';
+import { collectStderr, runGth, startGth, waitForCursor } from './support/commandRunner';
 import { checkOutputForExpectedContent } from './support/outputChecker';
 
 describe('Chat Command Integration Tests', () => {
   it('should respond to initial message', async () => {
     // writeOutputToFile now defaults to false; opt in with -w true so this test
     // still exercises the session-logging path.
-    const output = await runCommandWithArgs(
-      'npx',
-      ['gaunt-sloth', '-w', 'true', 'chat', '"Hello, can you help me?"'],
-      ' >'
-    );
+    const output = await runGth(['-w', 'true', 'chat', '"Hello, can you help me?"'], ' >');
 
     // Assert on the string itself (not a boolean wrapper) so a flake prints the
     // model's actual reply. The agent acknowledges and offers help, but the exact
@@ -35,7 +26,7 @@ describe('Chat Command Integration Tests', () => {
   });
 
   it('should start interactive session without initial message', async () => {
-    const output = await runCommandWithArgs('npx', ['gaunt-sloth', 'chat'], ' >');
+    const output = await runGth(['chat'], ' >');
 
     // Check for expected content in the response
     expect(
@@ -47,7 +38,7 @@ describe('Chat Command Integration Tests', () => {
   });
 
   it('should answer to users questions, should have memory', async () => {
-    const child = startChildProcess('npx', ['gaunt-sloth', '--nopipe', 'chat'], 'pipe');
+    const child = startGth(['--nopipe', 'chat'], 'pipe');
     const stderr = collectStderr(child);
 
     try {
@@ -67,11 +58,7 @@ describe('Chat Command Integration Tests', () => {
   });
 
   it('--verbose should set LangChain to verbose mode in interactiveSessionModule', async () => {
-    const child = startChildProcess(
-      'npx',
-      ['gaunt-sloth', '--verbose', '--nopipe', 'chat'],
-      'pipe'
-    );
+    const child = startGth(['--verbose', '--nopipe', 'chat'], 'pipe');
     const stderr = collectStderr(child);
 
     try {

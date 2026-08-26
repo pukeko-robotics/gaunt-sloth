@@ -1,13 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { runCommandExpectingExitCode } from './support/commandRunner.ts';
+import { runGthExpectingExitCode } from './support/commandRunner.ts';
 import { extractReviewScore } from './support/reviewScoreExtractor.ts';
 
 describe('Review Command Integration Tests', () => {
   // Test for reviewing good code
   it('should provide positive review for good code and exit with code 0', async () => {
-    const { output, exitCode } = await runCommandExpectingExitCode(
-      'npx',
-      ['gaunt-sloth', '-wn', 'review', 'filewithgoodcode.js'],
+    const { output, exitCode } = await runGthExpectingExitCode(
+      ['-wn', 'review', 'filewithgoodcode.js'],
       0
     );
 
