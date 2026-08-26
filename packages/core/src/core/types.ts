@@ -424,6 +424,56 @@ export type ToolApprovalCallback = (
 ) => Promise<ToolApprovalDecision> | ToolApprovalDecision;
 
 /**
+ * [[EXT-150]] — **the lifetime an answer at the approval prompt actually GOT.**
+ *
+ * A third type beside {@link ToolApprovalScope} and {@link ToolRejectScope}, carrying the same three
+ * values, for exactly the reason those two are already kept apart: it answers a different question.
+ * The other two are what a surface ASKS FOR; this is what the runner LANDED. `always` here means
+ * the entry reached the project file — never merely that a control promising a file was pressed.
+ */
+export type ApprovalLifetime = 'once' | 'session' | 'always';
+
+/**
+ * [[EXT-150]] — **what a human's answer at the approval prompt actually did**, reported to the
+ * surface that asked once the runner has recorded it.
+ *
+ * It exists because a surface cannot work this out for itself and must not guess. The scope it sent
+ * is a request: [[EXT-149]] makes `always` degrade to `session` whenever the write did not reach
+ * disk — a checkout nothing can write, a settings directory that is gone, a file [[EXT-144]] refuses
+ * to rewrite — and that is decided inside the runner AFTER the {@link ToolApprovalCallback} has
+ * already returned. Without this, a surface confirming *saved to this project* is describing the key
+ * that was pressed, and core's own ERROR naming the unwritten file then contradicts it on screen.
+ *
+ * **Correlated by the `pending` object itself**, which is the very interrupt the callback was
+ * handed, rather than by arrival order. The runner drains one interrupt at a time, but the surfaces
+ * that consume this queue approvals, so a pairing that assumed *the outcome belongs to the oldest
+ * unanswered request* would be a claim about the runner's loop held in the surface — and the cost of
+ * its being wrong is one call's persistence confirmed on another call's dialog.
+ */
+export interface ApprovalOutcome {
+  /** The interrupt this answers — the same object {@link ToolApprovalCallback} received. */
+  pending: PendingToolInterrupt;
+  /** What the human answered. */
+  decision: 'approve' | 'reject';
+  /** The lifetime the answer landed with — `always` only when it reached the project file. */
+  lifetime: ApprovalLifetime;
+}
+
+/**
+ * [[EXT-150]] — callback the {@link GthAgentRunner} invokes once per human-answered approval, after
+ * it has recorded the answer, so a surface can render what HAPPENED rather than what was asked for.
+ *
+ * Separate from {@link ToolApprovalCallback} because it is a separate question asked at a separate
+ * moment, the same reason {@link AttackHaltCallback} is its own seam: the approval callback is
+ * consulted *before* anything is recorded and cannot see the outcome of its own answer.
+ *
+ * Wiring it is optional and its absence is safe in the only direction that matters — a surface that
+ * never wires it learns nothing, which is where every surface already was. It may not be used to
+ * decide anything: by the time it fires the decision is made and the record is written.
+ */
+export type ApprovalOutcomeCallback = (outcome: ApprovalOutcome) => void;
+
+/**
  * [[TUI-C68]] §6.1 — what the **attack banner** is about: the command whose own structure the
  * rater called hostile, and the rater's explanation of what it saw. Both are untrusted text and a
  * surface must paint them through `core/shell/framing`.

@@ -1,8 +1,9 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import React from 'react';
+import stripAnsi from 'strip-ansi';
 import { render } from 'ink-testing-library';
 import { HumanMessage } from '@langchain/core/messages';
 import { GthAgentRunner } from '@gaunt-sloth/core/core/GthAgentRunner.js';
@@ -13,6 +14,7 @@ import {
 } from '@gaunt-sloth/core/core/approvals/approvalRequest.js';
 import type {
   AgentStreamEvent,
+  ApprovalOutcome,
   GthAgentInterface,
   GthConfig,
   Message,
@@ -51,23 +53,45 @@ const baseProps = {
  * The production approval bridge from `tuiSessionModule.createApprovalBridge`, replicated here so
  * the test owns the exact wiring it asserts (the module-private fn is not exported). Promise-based:
  * the runner's callback awaits until the App resolves a decision.
+ *
+ * [[EXT-150]] — including the return leg: `report` is wired to `runner.setApprovalOutcomeCallback`
+ * and settles what `resolve` hands back, paired by the pending interrupt's identity. Replicated
+ * rather than stubbed with a fixed answer, because the whole point of the cases below is that the
+ * answer comes from a real runner writing (or failing to write) a real file.
  */
 function createApprovalBridge() {
   const listeners = new Set<(record: PendingApproval) => void>();
+  const awaitingOutcome = new Map<
+    PendingToolInterrupt,
+    (outcome: ApprovalOutcome | null) => void
+  >();
   return {
     request: (pending: PendingToolInterrupt): Promise<ToolApprovalDecision> =>
       new Promise<ToolApprovalDecision>((resolve) => {
         let settled = false;
+        let settleOutcome: (outcome: ApprovalOutcome | null) => void = () => {};
+        const outcome = new Promise<ApprovalOutcome | null>((settleIt) => {
+          settleOutcome = settleIt;
+        });
+        awaitingOutcome.set(pending, (reported) => {
+          awaitingOutcome.delete(pending);
+          settleOutcome(reported);
+        });
         const record: PendingApproval = {
           pending,
           resolve: (decision) => {
-            if (settled) return;
-            settled = true;
-            resolve(decision);
+            if (!settled) {
+              settled = true;
+              resolve(decision);
+            }
+            return outcome;
           },
         };
         for (const l of listeners) l(record);
       }),
+    report: (outcome: ApprovalOutcome): void => {
+      awaitingOutcome.get(outcome.pending)?.(outcome);
+    },
     subscribe: (cb: (record: PendingApproval) => void) => {
       listeners.add(cb);
       return () => {
@@ -133,6 +157,10 @@ function wireRunner(agent: GthAgentInterface, config: Partial<GthConfig>, comman
     undefined,
     () => agent // factory returns our fake agent
   );
+  // [[EXT-150]] — the outcome leg, wired once here rather than beside each test's own
+  // `setToolApprovalCallback`: it is not what any case below varies, and a case that forgot it would
+  // silently lose the two sticky confirmations instead of failing.
+  runner.setApprovalOutcomeCallback(bridge.report);
   const tuiAgent: TuiAgent = {
     async *runTurn(userInput, signal) {
       yield* runner.processMessagesWithEvents([new HumanMessage(userInput) as Message], signal);
@@ -773,5 +801,135 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     expect(frame).not.toContain('Auto-rater (destructive)');
 
     unmount();
+  });
+
+  /**
+   * [[EXT-150]] — **the confirmation, against a real store that could not receive the answer.**
+   *
+   * The unit cases in `ApprovalPrompt.spec.tsx` hand the App a lifetime and assert the copy; this one
+   * makes nobody say it. A real {@link GthAgentRunner} answers a real `[d]`, tries to write a real
+   * deny file, and the sentence on screen is whatever came back — which is the only version of this
+   * assertion a stubbed outcome cannot pass by construction.
+   *
+   * **The fixture is a project directory that does not exist**, the technique [[EXT-149]] measured
+   * and for its reason: with no `.gsloth` dir the store's path resolves straight into it with no
+   * `mkdir` on the way, `existsSync` is false so the LOAD succeeds and `canPersist()` is true, and
+   * the write then fails with ENOENT on Linux, macOS and Windows alike. **`chmod` would not do** — it
+   * is a no-op on win32, so a case built on it would pass vacuously on both Windows cells and prove
+   * nothing there.
+   *
+   * **Both halves, because one alone cannot fail for the right reason.** The two runs differ in
+   * exactly one thing — whether the deny file could be written — so the unwritable half alone would
+   * pass just as well against a build that had dropped the saved wording entirely, and the writable
+   * half alone against one that never had the session wording.
+   */
+  describe('[[EXT-150]] the refusal notice is written from what the runner recorded', () => {
+    /** Never created, and nothing on the way to the store's path creates it. */
+    const unwritableDir = join(projectDir, 'no-such-checkout');
+
+    const denyingAgent = (): GthAgentInterface => {
+      let suspended = false;
+      return {
+        async init() {},
+        async invoke() {
+          return '';
+        },
+        async stream() {
+          throw new Error('not used');
+        },
+        async *streamWithEvents(): AsyncGenerator<AgentStreamEvent> {
+          suspended = true;
+          yield { type: 'text', delta: 'Running it…' };
+        },
+        async getPendingToolInterrupts(): Promise<PendingToolInterrupt[]> {
+          if (!suspended) return [];
+          suspended = false;
+          return [{ name: 'run_shell_command', args: { command: 'npm publish' } }];
+        },
+        async *streamWithEventsResume(): AsyncGenerator<AgentStreamEvent> {
+          yield { type: 'text', delta: 'Left it alone.' };
+        },
+        async cleanup() {},
+      };
+    };
+
+    /** Drive one gated command to the prompt and press `[d]`; hand back the live frame reader. */
+    const refuseAlways = async () => {
+      const { runner, bridge, tuiAgent } = wireRunner(denyingAgent(), {}, 'code');
+      await runner.init(
+        'code' as never,
+        {
+          ...FULL_CONFIG,
+          approvals: { mode: 'ask', allowlist: false },
+          commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
+        } as GthConfig
+      );
+      runner.setToolApprovalCallback((pending) => bridge.request(pending));
+      const rendered = render(
+        <App
+          {...baseProps}
+          agent={tuiAgent}
+          subscribeApproval={bridge.subscribe}
+          initialMessage="publish it"
+        />
+      );
+      await vi.waitFor(() => expect(rendered.lastFrame() ?? '').toContain('npm publish'));
+      rendered.stdin.write('d');
+      return { ...rendered, runner };
+    };
+
+    /** The rows of the committed notice whose title is `title`, down to the rule that closes it. */
+    const noticeBlock = (frame: string, title: string): string => {
+      const rows = stripAnsi(frame).split('\n');
+      const start = rows.findIndex((row) => row.includes(title));
+      if (start < 0) return '';
+      const below = rows.slice(start + 1);
+      const closes = below.findIndex((row) => /─{3,}/u.test(row));
+      return [rows[start], ...(closes < 0 ? below : below.slice(0, closes))].join(' ');
+    };
+
+    it('a deny file that cannot be written gets the session notice, and no project claim', async () => {
+      setProjectDir(unwritableDir);
+      const { lastFrame, runner, unmount } = await refuseAlways();
+
+      // The notice is COMMITTED — asserted before anything is looked for inside it, because a
+      // "does not claim persistence" test passes just as happily when nothing rendered at all.
+      await vi.waitFor(() =>
+        expect(noticeBlock(lastFrame() ?? '', 'Command refused for this session')).not.toBe('')
+      );
+      const block = noticeBlock(lastFrame() ?? '', 'Command refused for this session');
+      expect(block).toContain('a new session will ask about it again');
+      expect(block).not.toContain('saved to this project');
+      expect(block).not.toContain('stays refused in new sessions');
+
+      // …and the surface agrees with the runner it read it from: the refusal is in force, held by
+      // the session and not by any file. Nothing reached disk.
+      expect(runner.getRefusals()).toEqual([
+        { index: 1, description: 'npm publish', origin: 'session', recordedAt: expect.any(String) },
+      ]);
+      expect(existsSync(unwritableDir)).toBe(false);
+      unmount();
+    });
+
+    it('CONTROL — with a writable project dir the same keystroke says saved to this project', async () => {
+      setProjectDir(projectDir);
+      const { lastFrame, runner, unmount } = await refuseAlways();
+
+      await vi.waitFor(() =>
+        expect(noticeBlock(lastFrame() ?? '', 'Command refused and saved')).not.toBe('')
+      );
+      const block = noticeBlock(lastFrame() ?? '', 'Command refused and saved');
+      expect(block).toContain('It is saved to this project');
+      expect(block).not.toContain('a new session will ask about it again');
+      expect(runner.getRefusals()).toEqual([
+        {
+          index: 1,
+          description: 'npm publish',
+          origin: 'persisted',
+          recordedAt: expect.any(String),
+        },
+      ]);
+      unmount();
+    });
   });
 });
