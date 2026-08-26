@@ -5,6 +5,6 @@
   "description": "BATCH-16 — standalone LIVE eval bed: a real Python google-adk agent over A2A, graded by `gth eval`'s adk-agent target. Not published, not part of `pnpm run it`; run on demand via run.sh.",
   "scripts": {
     "eval": "./run.sh adk.suite.yaml",
-    "eval:broken": "./run.sh adk-broken.suite.yaml"
+    "eval:broken": "./run.sh --broken"
   }
 }

@@ -57,14 +57,15 @@ to call a visible tool. A tool is therefore either:
 ```bash
 # from anywhere — builds the CLI, starts the MCP server, runs the suite, tears down
 evals/mcp-authz/run.sh                       # the passing matrix (authz.suite.yaml)  -> exit 0
-evals/mcp-authz/run.sh authz-broken.suite.yaml   # the discrimination proof            -> exit 1
+evals/mcp-authz/run.sh --broken              # the discrimination proof               -> exit 1
 evals/mcp-authz/run.sh multiturn-smoke.suite.yaml # live multi-turn Anthropic smoke     -> exit 0
 
 # faster iteration (skip the build if you just built):
 SKIP_BUILD=1 evals/mcp-authz/run.sh
 ```
 
-The script:
+`run.sh` hands over to [the shared bed harness](../harness/run-bed.sh); what is specific to this bed
+is in `bed.conf` beside it. The run:
 1. builds this worktree's CLI (`pnpm build`) so eval runs the **freshly-built** app, not the global
    `gth` (skip with `SKIP_BUILD=1`);
 2. starts the real MCP server, polls `/health` until ready, and `trap`s EXIT to kill it (no zombie on
@@ -72,6 +73,9 @@ The script:
 3. runs `gth eval <suite>` from `workdir/` with a **hermetic `HOME`** so no machine-global `~/.gsloth`
    config can merge under the per-identity profiles (reproducible on any box);
 4. prints and propagates the eval's real exit code (`AUTHZ EVAL EXIT CODE: <n>`).
+
+`--broken` runs whatever `bed.conf` names as this bed's discrimination suite. The harness will not
+start a bed that fails to declare one.
 
 Env: `AUTHZ_MCP_PORT` (default `39405`; **must** match the URL pinned in the profile configs),
 `CONCURRENCY` (default `3`), `SKIP_BUILD=1`.
@@ -109,7 +113,8 @@ Exits 0; the output `turns[]` breakdown confirms it routed through the multi-tur
 ```
 evals/mcp-authz/
 ├── src/authz-mcp-server.ts        # the real HTTP (Streamable) MCP server (@modelcontextprotocol/sdk)
-├── run.sh                         # server lifecycle + hermetic run + exit-code propagation
+├── bed.conf                       # port, suites, readiness probe, how to start the server
+├── run.sh                         # two lines: hands the bed to evals/harness/run-bed.sh
 ├── workdir/
 │   ├── authz.suite.yaml           # the passing identity matrix (5 cases × 3 identities = 15 cells)
 │   ├── authz-broken.suite.yaml    # the discrimination-proof (exit 1)

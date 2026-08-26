@@ -46,13 +46,14 @@ config (`gemini-flash-lite-latest`), unrelated to the served SUT model.
 ```bash
 # builds the CLI, starts the server, runs the suite, tears the server down
 evals/ag-ui/run.sh                          # the passing suite (agui.suite.yaml)   -> exit 0
-evals/ag-ui/run.sh agui-broken.suite.yaml   # the discrimination proof              -> exit 1
+evals/ag-ui/run.sh --broken                 # the discrimination proof              -> exit 1
 
 # faster iteration (skip the build if already done):
 SKIP_BUILD=1 evals/ag-ui/run.sh
 ```
 
-The script:
+`run.sh` hands over to [the shared bed harness](../harness/run-bed.sh); what is specific to this
+bed is in `bed.conf` beside it. The run:
 1. builds this worktree's CLI (`pnpm build`) so eval runs the **freshly-built** ag-ui target, not the
    global `gth` (skip with `SKIP_BUILD=1`);
 2. starts `gth api ag-ui --port <PORT>` in its own **process group** (`setsid`), pointed at the SUT
@@ -63,6 +64,9 @@ The script:
    merges under the judge profile (reproducible on any box), wrapped in `timeout` so a hung SSE stream
    surfaces as a nonzero exit rather than wedging the run;
 5. prints and propagates the eval's real exit code (`AGUI EVAL EXIT CODE: <n>`).
+
+`--broken` runs whatever `bed.conf` names as this bed's discrimination suite. The harness will not
+start a bed that fails to declare one.
 
 Env: `AGUI_PORT` (default `41757`), `CONCURRENCY` (default `2`), `EVAL_TIMEOUT` seconds (default
 `300`), `SKIP_BUILD=1`.
@@ -78,7 +82,8 @@ The `url` in both suites (`http://127.0.0.1:41757`) must match `AGUI_PORT`. `age
 ```
 evals/ag-ui/
 ├── agent/.gsloth.config.json     # the SERVED SUT: Haiku + the one custom tool `get_ops_status`
-├── run.sh                        # server lifecycle (setsid+trap) + hermetic, timeout-wrapped gth eval
+├── bed.conf                      # port, suites, readiness probe, eval timeout, how to start the server
+├── run.sh                        # two lines: hands the bed to evals/harness/run-bed.sh
 ├── workdir/
 │   ├── agui.suite.yaml           # the passing suite (must_call + marker must_contain + judge + multi-turn)
 │   ├── agui-broken.suite.yaml    # the discrimination proof (asserts a false marker -> exit 1)

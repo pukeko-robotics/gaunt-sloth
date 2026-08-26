@@ -7,7 +7,7 @@
   "scripts": {
     "start:server": "node src/authz-mcp-server.ts",
     "eval": "./run.sh authz.suite.yaml",
-    "eval:broken": "./run.sh authz-broken.suite.yaml"
+    "eval:broken": "./run.sh --broken"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

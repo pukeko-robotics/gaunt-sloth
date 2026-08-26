@@ -60,13 +60,14 @@ The `url` in both suites must match the port the agent is served on (`ADK_A2A_PO
 ```bash
 # builds the CLI, provisions the venv (first run), starts the agent, runs the suite, tears down
 evals/adk/run.sh                        # the passing suite (adk.suite.yaml)   -> exit 0
-evals/adk/run.sh adk-broken.suite.yaml  # the discrimination proof             -> exit 1
+evals/adk/run.sh --broken               # the discrimination proof             -> exit 1
 
 # faster iteration (skip the build and/or the venv provisioning if already done):
 SKIP_BUILD=1 SKIP_VENV=1 evals/adk/run.sh
 ```
 
-The script:
+`run.sh` hands over to [the shared bed harness](../harness/run-bed.sh); what is specific to this
+bed is in `bed.conf` beside it. The run:
 1. builds this worktree's CLI (`pnpm build`) so eval runs the **freshly-built** adk-agent target, not
    the global `gth` (skip with `SKIP_BUILD=1`);
 2. creates `.venv` + installs `requirements.txt` on first run (skip with `SKIP_VENV=1`);
@@ -76,6 +77,9 @@ The script:
 4. runs `gth eval <suite>` from `workdir/` with a **hermetic `HOME`** so no machine-global `~/.gsloth`
    merges under the judge profile (reproducible on any box);
 5. prints and propagates the eval's real exit code (`ADK EVAL EXIT CODE: <n>`).
+
+`--broken` runs whatever `bed.conf` names as this bed's discrimination suite. The harness will not
+start a bed that fails to declare one.
 
 Env: `ADK_A2A_PORT` (default `41539`), `ADK_A2A_MODEL` (default `gemini-flash-lite-latest`),
 `CONCURRENCY` (default `2`), `SKIP_BUILD=1`, `SKIP_VENV=1`.
@@ -90,7 +94,8 @@ written to any committed file.
 evals/adk/
 ├── src/adk_agent.py          # the minimal google-adk LlmAgent + `lookup_shipment` tool, served via to_a2a()
 ├── requirements.txt          # google-adk 2.5.0 + the LOAD-BEARING a2a-sdk==0.3.26 pin (+ uvicorn)
-├── run.sh                    # agent lifecycle (setsid+trap) + hermetic gth eval run + exit-code propagation
+├── bed.conf                  # port, model, suites, readiness probe, venv provisioning, how to start the agent
+├── run.sh                    # two lines: hands the bed to evals/harness/run-bed.sh
 ├── workdir/
 │   ├── adk.suite.yaml        # the passing suite (marker must_contain + judge + multi-turn contextId)
 │   ├── adk-broken.suite.yaml # the discrimination proof (asserts a false marker -> exit 1)
