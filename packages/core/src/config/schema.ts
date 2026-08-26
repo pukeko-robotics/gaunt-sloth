@@ -70,6 +70,7 @@ const ratingConfigSchema = z.object({
   maxRating: z.number().optional(),
   minRating: z.number().optional(),
   errorOnReviewFail: z.boolean().optional(),
+  timeoutMs: z.number().int().min(1).optional(),
 });
 
 const customCommandParameterSchema = z.object({

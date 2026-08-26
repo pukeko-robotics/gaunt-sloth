@@ -945,6 +945,11 @@
                 },
                 "errorOnReviewFail": {
                   "type": "boolean"
+                },
+                "timeoutMs": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
                 }
               }
             },
@@ -1266,6 +1271,11 @@
                 },
                 "errorOnReviewFail": {
                   "type": "boolean"
+                },
+                "timeoutMs": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
                 }
               }
             },

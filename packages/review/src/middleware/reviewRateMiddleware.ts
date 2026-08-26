@@ -14,7 +14,7 @@ import * as z from 'zod';
 import type { GthConfig, RatingConfig } from '@gaunt-sloth/core/config.js';
 import { setArtifact, deleteArtifact, getArtifact } from '@gaunt-sloth/core/state/artifactStore.js';
 import { debugLog, debugLogError } from '@gaunt-sloth/core/utils/debugUtils.js';
-import { displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
+import { displayInfo, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { getNewRunnableConfig } from '@gaunt-sloth/core/utils/llmUtils.js';
 
 /**
@@ -67,6 +67,17 @@ export function normalizeRatingConfig(config: RatingConfig | undefined): Normali
 
 const REVIEW_RATE_TOOL_NAME = 'gth_review_rate';
 
+/**
+ * GS2-105 — default wall-clock budget for the one rating call, in milliseconds.
+ *
+ * A healthy rating call against a local `gemma4:12b` was measured at ~50 s; a runaway at ~485 s.
+ * 120 s sits above the former with headroom and well below the latter, and below the integration
+ * suite's own 300 s per-test ceiling — which matters, because a budget above that ceiling would let
+ * the harness give up first and leave the generation running, which is the behaviour this replaces.
+ * Override per command with `commands.<review|pr>.rating.timeoutMs`.
+ */
+export const DEFAULT_REVIEW_RATE_TIMEOUT_MS = 120_000;
+
 export function createReviewRateMiddleware(
   settings: ReviewRateMiddlewareSettings,
   gthConfig: GthConfig
@@ -95,6 +106,11 @@ export function createReviewRateMiddleware(
     tools: [rateTool],
   });
 
+  // The budget is read here, from the caller's own rating config, and NOT folded into
+  // `normalizedConfig` — that object is spread into the stored artifact, and adding a field to it
+  // would change the artifact's shape for every reader.
+  const timeoutMs = settings?.timeoutMs ?? DEFAULT_REVIEW_RATE_TIMEOUT_MS;
+
   return Promise.resolve(
     createMiddleware({
       name: 'review-rate',
@@ -109,6 +125,11 @@ export function createReviewRateMiddleware(
 
         debugLog('ReviewRateMiddleware: requesting rating evaluation');
 
+        // GS2-105, DL-1 (no action is silent) — this is a SECOND model call, fired after the review
+        // prose is already on screen. Without this line the user sees a finished review followed by
+        // an unexplained pause, with nothing to say a call is still in flight.
+        displayInfo('\nScoring the review…');
+
         try {
           const ratingMessages = [...state.messages, new HumanMessage(ratingPrompt)];
 
@@ -116,7 +137,11 @@ export function createReviewRateMiddleware(
             {
               messages: ratingMessages,
             },
-            getNewRunnableConfig()
+            // `timeout` is a standard `RunnableConfig` field that LangChain turns into an
+            // AbortSignal, so the request is genuinely cancelled rather than merely abandoned.
+            // Abandoning is what let a still-running generation hold the queue while the harness
+            // retried behind it.
+            { ...getNewRunnableConfig(), timeout: timeoutMs }
           );
 
           const artifact = getArtifact(REVIEW_RATE_ARTIFACT_KEY);
@@ -129,9 +154,15 @@ export function createReviewRateMiddleware(
             );
           }
         } catch (error) {
+          // A budget overrun and a provider error are different events and must read differently:
+          // one says the model never answered in time, the other carries the provider's own reason.
+          // Collapsing them would make a hung local model look like a broken configuration.
           displayWarning(
-            'ReviewRateMiddleware: rating agent failed — ' +
-              (error instanceof Error ? error.message : String(error))
+            isAbortError(error)
+              ? `ReviewRateMiddleware: the rating call did not finish within ${timeoutMs}ms and was ` +
+                  'cancelled. No score was produced.'
+              : 'ReviewRateMiddleware: rating agent failed — ' +
+                  (error instanceof Error ? error.message : String(error))
           );
           debugLogError('ReviewRateMiddleware.invoke', error);
         }
@@ -161,6 +192,20 @@ function buildRatingInstructions(config: NormalizedRatingConfig): string {
     `- Rate code needing improvements as ${middle}/${formattedMax}`,
     '- Use the comment field of the tool call for a concise summary referencing the code state.',
   ].join('\n');
+}
+
+/**
+ * Whether a thrown value is an abort — i.e. our own budget cancelled the call.
+ *
+ * Deliberately tolerant about the shape. An abort surfaces as a `DOMException` named `AbortError`
+ * in some runtimes, as a plain `Error` named `AbortError` or `TimeoutError` in others, and provider
+ * SDKs re-wrap it; matching only one of those would silently route a real timeout into the generic
+ * branch and report it as a provider failure.
+ */
+function isAbortError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const name = (error as { name?: unknown }).name;
+  return name === 'AbortError' || name === 'TimeoutError';
 }
 
 function clamp(value: number, min: number, max: number): number {

@@ -668,6 +668,25 @@ export interface RatingConfig {
    * @default true
    */
   errorOnReviewFail?: boolean;
+  /**
+   * Wall-clock budget (ms) for the single rating model call.
+   *
+   * GS2-105 — rating is a SECOND model call fired from `afterAgent` once the review prose is
+   * already written, and it renders nothing while it runs. Without a bound, a model that fails to
+   * emit the rating tool call generates prose until its context window stops it: measured at 15,385
+   * tokens and 485 seconds on `gemma4:12b`, against a healthy rating call of ~50 seconds. The budget
+   * turns that silent hang into a bounded, legible failure, after which the existing
+   * missing-artifact path reports it and exits non-zero.
+   *
+   * It is a WALL-CLOCK budget for one call, not a per-token cap, because the per-token knob is not
+   * portable: `numPredict` is a constructor field on `ChatOllama` rather than a call option, and
+   * that provider declares `tool_choice?: never`, so neither of the obvious source-level remedies is
+   * available where this actually bites. `timeout` is a standard `RunnableConfig` field, so it works
+   * on every provider and genuinely aborts the request instead of merely abandoning it.
+   *
+   * @default 120000
+   */
+  timeoutMs?: number;
 }
 
 /**
