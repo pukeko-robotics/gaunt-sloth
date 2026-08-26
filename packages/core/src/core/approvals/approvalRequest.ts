@@ -253,9 +253,19 @@ export function approvalHosts(pending: Pick<PendingToolInterrupt, 'args' | 'subj
  * question is *who is it talking to*, and answering it with *one of its own tools* buries the part
  * that decides the answer. The kinds are what a call falls back to when it names nobody.
  *
- * **A call with no subject falls to `tool`**, which is true of every gated call and false of none —
- * `promptHeader`'s fail-to-vague, for the same reason: a surface handed a hand-built interrupt gets
- * the unspecific category, never a wrong one.
+ * **The two host extractions have deliberately different appetites, and the `network` arm inherits
+ * both.** A shell command's hosts come from a FETCH-POSITION analysis, so `echo https://x` names
+ * nobody; a tool's come from `core/approvals/toolHost`, whose whole test is *does this argument
+ * parse as a URL* — so writing a file whose entire content is a bare URL reads as `network` here.
+ * That over-detection is `toolHost`'s stated design (a value it fails to recognise costs a broader
+ * grant, never a narrower one) and this arm keeps it rather than second-guessing the extraction the
+ * grant is bound with. It errs toward the more alarming of two true sentences about a call that
+ * does carry a URL, which is the direction to err in.
+ *
+ * **A call with no subject falls to `tool` when it names nobody** — `promptHeader`'s fail-to-vague:
+ * a surface handed a hand-built interrupt gets the unspecific category rather than a specific one
+ * nothing established. It still reaches `network` where a host is named, since that arm reads the
+ * call rather than the subject.
  */
 export function approvalCategoryFor(
   pending: Pick<PendingToolInterrupt, 'args' | 'subject'>

