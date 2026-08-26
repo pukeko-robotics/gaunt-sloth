@@ -32,7 +32,7 @@
 // assertion — `classifyEvalExit` returns 1 for it — and it is the one a per-case pass/fail sweep
 // CANNOT express, because a corpus can sit entirely within per-case tolerance while its aggregate
 // (a false-approve rate, say) is unacceptable. This matters on the shipped dispatchable path: the
-// approvals safety corpus in eval/approvals-anchoring.eval.yaml gates `wrapper_uncovered` at
+// approvals safety corpus in evals/self/approvals-anchoring.eval.yaml gates `wrapper_uncovered` at
 // max_count 0 — "a catastrophic command that reaches the shell… not one case may do this". Ignoring
 // gateFailures would report that run green while `gth eval` failed it.
 //

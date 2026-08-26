@@ -167,6 +167,12 @@ Precedence for your tool use:
 Abstain from using bash commands when you already have a built-in tool,
 every time you use a bash command that is not in allow-list, it needs approval and slows down the process.
 
+## Tests and evals
+
+[TESTING.md](TESTING.md) is the map of every test and eval entry point — what each covers, how to
+run it, what it costs, and whether it gates a merge, the release, or nothing. Read it before
+deciding where a new test goes. The sections below cover the entry points you will reach for most.
+
 ## Integration tests
 
 Running all integration tests (takes ~10 minutes):
