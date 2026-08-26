@@ -16,6 +16,39 @@ import { maxDisplayWidth } from '@gaunt-sloth/core/utils/displayWidth.js';
 import type { PendingApproval, TuiAgent } from '#src/tui/types.js';
 import { App } from '#src/tui/components/App.js';
 import { ApprovalPrompt } from '#src/tui/components/ApprovalPrompt.js';
+import { ApprovalRequestPanel } from '#src/tui/components/ApprovalRequestPanel.js';
+
+/**
+ * [[EXT-137]] — **the approval dialog as a person meets it: both halves, in screen order.**
+ *
+ * The dialog is no longer one component. The half a human answers without scrolling — the pinned
+ * `<ApprovalPrompt>` — carries only text we wrote, and everything the model, a third-party server
+ * or a hostile URL contributed is committed into the conversation above it as an `approval`
+ * transcript item drawn by `<ApprovalRequestPanel>`. `<App>` renders exactly this pair, in exactly
+ * this order.
+ *
+ * Every case below that asks *"was the human shown X"* renders this rather than either half, which
+ * is what keeps those assertions asking the question they were written to ask. The cases that ask
+ * *"is X in the FIXED half"* — the ones this node exists for — render `<ApprovalPrompt>` alone and
+ * live in `approvalFixedBlockBytes.spec.tsx`.
+ *
+ * `columns` is 100 because that is what `ink-testing-library`'s stdout reports, which is the width
+ * the panel was framed at when it was part of the prompt.
+ */
+function ApprovalDialog({
+  pending,
+  columns = 100,
+}: {
+  pending: PendingToolInterrupt;
+  columns?: number;
+}): React.ReactElement {
+  return (
+    <>
+      <ApprovalRequestPanel pending={pending} columns={columns} />
+      <ApprovalPrompt pending={pending} />
+    </>
+  );
+}
 
 /** A fake agent that replays a fixed event script for each turn. */
 function scriptedAgent(events: AgentStreamEvent[]): TuiAgent {
@@ -100,10 +133,10 @@ function makeApprovalHarness() {
   return { subscribeApproval, request };
 }
 
-describe('tui <ApprovalPrompt>', () => {
+describe('tui the approval dialog — both halves', () => {
   it('renders the tool name, command text and the [o]/[s]/[a]/[N] choices', () => {
     const { lastFrame, unmount } = render(
-      <ApprovalPrompt
+      <ApprovalDialog
         pending={{
           name: 'run_shell_command',
           args: { command: 'ls -la /tmp' },
@@ -134,7 +167,7 @@ describe('tui <ApprovalPrompt>', () => {
    */
   it('renders the command inside the renderer-owned gutter, never raw', () => {
     const { lastFrame, unmount } = render(
-      <ApprovalPrompt pending={{ name: 'run_shell_command', args: { command: 'ls -la /tmp' } }} />
+      <ApprovalDialog pending={{ name: 'run_shell_command', args: { command: 'ls -la /tmp' } }} />
     );
     const f = lastFrame() ?? '';
     expect(f).toContain('1 │ ls -la /tmp');
@@ -157,7 +190,7 @@ describe('tui <ApprovalPrompt>', () => {
       'Approve?  [o]nce   [s]ession   [a]lways   [N]o',
     ].join('\n');
     const { lastFrame, unmount } = render(
-      <ApprovalPrompt pending={{ name: 'run_shell_command', args: { command } }} />
+      <ApprovalDialog pending={{ name: 'run_shell_command', args: { command } }} />
     );
     const f = lastFrame() ?? '';
     expect(f).toContain('1 │ echo start\\x0d\\x1b[2J');
@@ -182,7 +215,7 @@ describe('tui <ApprovalPrompt>', () => {
    */
   it('offers NO rung-switching key: the ladder has no "turn the gate down from here" action', () => {
     const { lastFrame, unmount } = render(
-      <ApprovalPrompt pending={{ name: 'run_shell_command', args: { command: 'ls -la /tmp' } }} />
+      <ApprovalDialog pending={{ name: 'run_shell_command', args: { command: 'ls -la /tmp' } }} />
     );
     const f = lastFrame() ?? '';
     expect(f).not.toContain('[y]');
@@ -203,7 +236,7 @@ describe('tui <ApprovalPrompt>', () => {
    */
   it('shows every round of a §5 negotiation, not only the final attempt', () => {
     const { lastFrame, unmount } = render(
-      <ApprovalPrompt
+      <ApprovalDialog
         pending={{
           name: 'run_shell_command',
           args: { command: 'git reset --hard origin/main' },
@@ -260,7 +293,7 @@ describe('tui <ApprovalPrompt>', () => {
    */
   it('says how many times the agent tried, not how many rounds it was handed to draw', () => {
     const { lastFrame, unmount } = render(
-      <ApprovalPrompt
+      <ApprovalDialog
         pending={{
           name: 'run_shell_command',
           args: { command: 'git reset --hard' },
@@ -294,7 +327,7 @@ describe('tui <ApprovalPrompt>', () => {
    */
   it('renders no negotiation block when there was no negotiation', () => {
     const { lastFrame, unmount } = render(
-      <ApprovalPrompt
+      <ApprovalDialog
         pending={{
           name: 'run_shell_command',
           args: { command: 'terraform destroy' },
@@ -310,7 +343,7 @@ describe('tui <ApprovalPrompt>', () => {
 
   it('shows the auto-rater OUTCOME and reason when a rating escalated the command (§6)', () => {
     const { lastFrame, unmount } = render(
-      <ApprovalPrompt
+      <ApprovalDialog
         pending={{
           name: 'run_shell_command',
           args: { command: 'rm -rf build' },
@@ -331,7 +364,7 @@ describe('tui <ApprovalPrompt>', () => {
    */
   it('shows the approvals.escalate entry that brought the call here', () => {
     const { lastFrame, unmount } = render(
-      <ApprovalPrompt
+      <ApprovalDialog
         pending={{
           name: 'run_shell_command',
           args: { command: 'terraform apply' },
@@ -347,7 +380,7 @@ describe('tui <ApprovalPrompt>', () => {
 
   it('says nothing about approvals.escalate when no such entry fired', () => {
     const { lastFrame, unmount } = render(
-      <ApprovalPrompt pending={{ name: 'run_shell_command', args: { command: 'ls -la' } }} />
+      <ApprovalDialog pending={{ name: 'run_shell_command', args: { command: 'ls -la' } }} />
     );
     expect(lastFrame() ?? '').not.toContain('approvals.escalate');
     unmount();
@@ -360,7 +393,7 @@ describe('tui <ApprovalPrompt>', () => {
    */
   it('shows what a sticky choice will store', () => {
     const { lastFrame, unmount } = render(
-      <ApprovalPrompt
+      <ApprovalDialog
         pending={{
           name: 'run_shell_command',
           args: { command: 'npm test' },
@@ -388,7 +421,7 @@ describe('tui <ApprovalPrompt>', () => {
 
   it('shows no such line when no sticky grant is on offer', () => {
     const { lastFrame, unmount } = render(
-      <ApprovalPrompt pending={{ name: 'run_shell_command', args: { command: 'ls -la' } }} />
+      <ApprovalDialog pending={{ name: 'run_shell_command', args: { command: 'ls -la' } }} />
     );
     const f = lastFrame() ?? '';
     expect(f).not.toContain('will remember');
@@ -400,7 +433,7 @@ describe('tui <ApprovalPrompt>', () => {
 
   it('falls back to JSON of args when there is no command string', () => {
     const { lastFrame, unmount } = render(
-      <ApprovalPrompt pending={{ name: 'run_shell_command', args: { foo: 'bar' } }} />
+      <ApprovalDialog pending={{ name: 'run_shell_command', args: { foo: 'bar' } }} />
     );
     // Framed like everything else: the args are model-authored too, so the fallback is not an
     // escape hatch out of the gutter.
@@ -456,10 +489,20 @@ describe('tui approval flow through <App>', () => {
     const decision = await decisionP;
     expect(decision).toEqual({ type: 'approve', scope });
 
-    // The committed notice reads in the transcript, and the prompt is hidden no longer.
+    // The committed notice reads in the transcript, and the question is no longer being asked.
+    //
+    // [[EXT-137]] — **asserted on the fixed block's own lines, not on the command.** The command is
+    // in the CONVERSATION now and stays there after the answer: the request and the decision notice
+    // under it are the record of what was asked and what was answered, so "the command is gone"
+    // would be asserting the opposite of the design. What must go is the block that owns the
+    // keyboard — its ask line and its menu.
     await vi.waitFor(() => {
       expect(frames.join('\n')).toContain(`Command approved (${scope})`);
-      expect(lastFrame()).not.toContain('echo hi'); // approval prompt dismissed
+      expect(lastFrame()).not.toContain('Approve?');
+      expect(lastFrame()).not.toContain('⚠ Gaunt Sloth is asking you to approve a call.');
+      // ...and the record of the request is still there, which is what makes the absence above a
+      // dismissal rather than the whole dialog having failed to render.
+      expect(lastFrame()).toContain('echo hi');
     });
     unmount();
   });
@@ -635,7 +678,7 @@ describe('tui approval flow through <App>', () => {
  * EXT-70 §6 / §4.7.1 — the menu names what a sticky choice will store, offers the sticky controls
  * only where one is on offer, and the TUI's own trust affordance.
  */
-describe('tui <ApprovalPrompt> — §6 names the grant, and offers it only when there is one', () => {
+describe('tui the approval dialog — §6 names the grant, and offers it only when there is one', () => {
   const toolGrant = {
     name: 'gth_web_fetch',
     args: { input: 'https://docs.internal.example/guide' },
@@ -650,7 +693,7 @@ describe('tui <ApprovalPrompt> — §6 names the grant, and offers it only when 
    * than a shell one and therefore the display that carries most weight.
    */
   it('names the tool and its host, and not the arguments', () => {
-    const { lastFrame, unmount } = render(<ApprovalPrompt pending={toolGrant} />);
+    const { lastFrame, unmount } = render(<ApprovalDialog pending={toolGrant} />);
     const f = plain([lastFrame() ?? '']);
     // [[TUI-C26]] — named on the framed line beneath the label, gutter and all.
     expect(f).toContain('will remember:');
@@ -664,14 +707,14 @@ describe('tui <ApprovalPrompt> — §6 names the grant, and offers it only when 
    * absence assertion alone, so the same prompt WITH a grant is asserted in the same test.
    */
   it('offers [s]/[a] with a grant and NOT WITHOUT one — the control is absent, never disabled', () => {
-    const withGrant = render(<ApprovalPrompt pending={toolGrant} />);
+    const withGrant = render(<ApprovalDialog pending={toolGrant} />);
     const wf = plain([withGrant.lastFrame() ?? '']);
     expect(wf).toContain('[s]ession');
     expect(wf).toContain('[a]lways');
     withGrant.unmount();
 
     const without = render(
-      <ApprovalPrompt pending={{ name: 'gth_web_fetch', args: { input: 'x' } }} />
+      <ApprovalDialog pending={{ name: 'gth_web_fetch', args: { input: 'x' } }} />
     );
     const nf = plain([without.lastFrame() ?? '']);
     expect(nf).not.toContain('[s]ession');
@@ -690,7 +733,7 @@ describe('tui <ApprovalPrompt> — §6 names the grant, and offers it only when 
  * same four keys. A prompt that looks the same for `npm install lodash` and a typosquatted
  * `curl | bash` teaches the reader to answer it the same way, which costs more than no prompt.
  */
-describe('tui <ApprovalPrompt> — §6 the menu and the severity', () => {
+describe('tui the approval dialog — §6 the menu and the severity', () => {
   /**
    * Ink emits SGR runs only when chalk thinks the stream supports colour, which it does not under
    * a test runner — so a colour assertion needs the level forced, exactly as `LiveTurn.spec.tsx`
@@ -726,7 +769,7 @@ describe('tui <ApprovalPrompt> — §6 the menu and the severity', () => {
    * first half rather than passing the second.
    */
   it('offers [d]eny always where no grant exists, and nothing sticky where neither does', () => {
-    const withDeny = render(<ApprovalPrompt pending={denyOnly} />);
+    const withDeny = render(<ApprovalDialog pending={denyOnly} />);
     const df = plain([withDeny.lastFrame() ?? '']);
     expect(df).toContain('[d]eny always');
     expect(df).toContain('[o]nce');
@@ -737,7 +780,7 @@ describe('tui <ApprovalPrompt> — §6 the menu and the severity', () => {
     withDeny.unmount();
 
     const neither = render(
-      <ApprovalPrompt pending={{ name: 'gth_web_fetch', args: { input: 'x' } }} />
+      <ApprovalDialog pending={{ name: 'gth_web_fetch', args: { input: 'x' } }} />
     );
     const nf = plain([neither.lastFrame() ?? '']);
     expect(nf).not.toContain('[d]eny always');
@@ -755,7 +798,7 @@ describe('tui <ApprovalPrompt> — §6 the menu and the severity', () => {
    * up the dialog and would pass with the deny value painted raw.
    */
   it('names what the deny choice will record, framed, and says the lifetime', () => {
-    const { lastFrame, unmount } = render(<ApprovalPrompt pending={denyOnly} />);
+    const { lastFrame, unmount } = render(<ApprovalDialog pending={denyOnly} />);
     const lines = frameLines(lastFrame() ?? '');
     const label = lines.indexOf('[d] will refuse this exact call, and save it to this project:');
     expect(label).toBeGreaterThanOrEqual(0);
@@ -775,7 +818,7 @@ describe('tui <ApprovalPrompt> — §6 the menu and the severity', () => {
    */
   it('shows the breadth honestly when the refusal is of the tool rather than one command', () => {
     const { lastFrame, unmount } = render(
-      <ApprovalPrompt
+      <ApprovalDialog
         pending={{
           name: 'run_shell_command',
           args: { notACommand: true },
@@ -803,7 +846,7 @@ describe('tui <ApprovalPrompt> — §6 the menu and the severity', () => {
   it('keeps a long command’s deny block short enough to leave the menu on screen', () => {
     const command = Array.from({ length: 18 }, (_, index) => `line ${index + 1}`).join('\n');
     const { lastFrame, unmount } = render(
-      <ApprovalPrompt
+      <ApprovalDialog
         pending={{
           name: 'run_shell_command',
           args: { command },
@@ -821,16 +864,26 @@ describe('tui <ApprovalPrompt> — §6 the menu and the severity', () => {
     // Each block is a few rows, not eighteen — and it says what it dropped rather than dropping it
     // quietly.
     expect(recordedAs - label).toBeLessThanOrEqual(5);
-    expect(menu - recordedAs).toBeLessThanOrEqual(5);
+    // [[EXT-137]] — the second half of this pair used to be `menu - recordedAs <= 5`, and the split
+    // made that distance meaningless: the command's own frame now sits between the deny block and
+    // the menu, in the scrolling half where its length is nobody's problem. What replaces it is the
+    // stronger statement the split bought — **nothing above can push the menu off at all**, because
+    // the menu is in the fixed block and the fixed block's rows are the last rows of the frame.
+    expect(lines.slice(menu).filter((line) => line !== '')).toHaveLength(1);
     expect(lines.slice(label, menu).join('\n')).toContain('more rows hidden');
     // The command itself is NOT bounded that way — it is the thing being ruled on, and every one of
-    // its lines is still numbered above.
-    // Scoped to the rows ABOVE the deny label, since the bounded block below it is made of rows of
-    // the same shape. (The gutter pads the number to the widest one, so a single-digit row carries
-    // an extra space.)
-    expect(lines.slice(0, label).filter((line) => /^ +\d+ │ line \d+$/u.test(line)).length).toBe(
-      18
-    );
+    // its lines is still numbered.
+    //
+    // [[EXT-137]] — scoped to the rows BELOW the sentence that introduces the call, which is where
+    // the command's own frame now sits. The scoping is what makes the count mean something: the
+    // bounded deny block above is made of rows of the very same shape, so an unscoped count would
+    // be satisfied by those. (The gutter pads the number to the widest one, so a single-digit row
+    // carries an extra space.)
+    const introduces = lines.findIndex((line) => line.endsWith('run_shell_command tool:'));
+    expect(introduces).toBeGreaterThan(recordedAs);
+    expect(
+      lines.slice(introduces, menu).filter((line) => /^ +\d+ │ line \d+$/u.test(line)).length
+    ).toBe(18);
     unmount();
   });
 
@@ -857,7 +910,7 @@ describe('tui <ApprovalPrompt> — §6 the menu and the severity', () => {
     ).join('\n');
     const entry = `{ "type": "shell", "matcher": "exact", "pattern": "${command.replace(/\n/gu, '\\n')}" }`;
     const { lastFrame, unmount } = render(
-      <ApprovalPrompt
+      <ApprovalDialog
         pending={{
           name: 'run_shell_command',
           args: { command },
@@ -900,7 +953,7 @@ describe('tui <ApprovalPrompt> — §6 the menu and the severity', () => {
    */
   it('a catastrophic verdict leaves [o]nce, [N]o and [d]eny always — and nothing else', () => {
     const { lastFrame, unmount } = render(
-      <ApprovalPrompt
+      <ApprovalDialog
         pending={{
           name: 'run_shell_command',
           args: { command: 'terraform destroy' },
@@ -927,7 +980,7 @@ describe('tui <ApprovalPrompt> — §6 the menu and the severity', () => {
   it('renders catastrophic differently from destructive, in the words AND the colour', () => {
     const of = (outcome: 'destructive' | 'catastrophic') =>
       render(
-        <ApprovalPrompt
+        <ApprovalDialog
           pending={{
             name: 'run_shell_command',
             args: { command: 'rm -rf /var/data' },
@@ -971,7 +1024,7 @@ describe('tui <ApprovalPrompt> — §6 the menu and the severity', () => {
    */
   it('says nothing about severity when there was no rating at all', () => {
     const { lastFrame, unmount } = render(
-      <ApprovalPrompt pending={{ name: 'run_shell_command', args: { command: 'ls -la' } }} />
+      <ApprovalDialog pending={{ name: 'run_shell_command', args: { command: 'ls -la' } }} />
     );
     const f = plain([lastFrame() ?? '']);
     expect(f).not.toContain('Auto-rater');
@@ -987,7 +1040,7 @@ describe('tui <ApprovalPrompt> — §6 the menu and the severity', () => {
    */
   it('attributes the reason to the rater, and frames it', () => {
     const { lastFrame, unmount } = render(
-      <ApprovalPrompt
+      <ApprovalDialog
         pending={{
           name: 'run_shell_command',
           args: { command: 'rm -rf build' },
@@ -1009,7 +1062,7 @@ describe('tui <ApprovalPrompt> — §6 the menu and the severity', () => {
    */
   it('paints the rater’s turns apart from the agent’s, across all three rounds', () => {
     const { lastFrame, unmount } = render(
-      <ApprovalPrompt
+      <ApprovalDialog
         pending={{
           name: 'run_shell_command',
           args: { command: 'git reset --hard origin/main' },
@@ -1061,7 +1114,7 @@ describe('tui <ApprovalPrompt> — §6 the menu and the severity', () => {
    */
   it('binds a long justification to the frame width, gutter and all', () => {
     const { lastFrame, unmount } = render(
-      <ApprovalPrompt
+      <ApprovalDialog
         pending={{
           name: 'run_shell_command',
           args: { command: 'git reset --hard origin/main' },
@@ -1093,7 +1146,7 @@ describe('tui <ApprovalPrompt> — §6 the menu and the severity', () => {
    */
   it('frames the approvals.escalate entry instead of interpolating it', () => {
     const { lastFrame, unmount } = render(
-      <ApprovalPrompt
+      <ApprovalDialog
         pending={{
           name: 'run_shell_command',
           args: { command: 'terraform apply' },
@@ -1535,10 +1588,17 @@ describe('tui <ApprovalPrompt> — [[TUI-C75]] the negotiation block’s height 
     denySummary: COMMAND,
   });
 
-  /** Rows the prompt draws at 80×24, unclipped, so the cost is visible rather than cut off. */
+  /**
+   * Rows the dialog draws at 80×24, unclipped, so the cost is visible rather than cut off.
+   *
+   * `columns` is passed rather than left at the harness default: the request block is framed at the
+   * width it is TOLD, and framing at 100 inside an 80-column terminal makes the terminal wrap every
+   * row a second time — which would inflate every count here by an amount that has nothing to do
+   * with the block being measured.
+   */
   const rowsAt80x24 = (pending: PendingToolInterrupt): string[] => {
     const stdout = new SizedStdout(80, 24);
-    const instance = inkRender(<ApprovalPrompt pending={pending} />, {
+    const instance = inkRender(<ApprovalDialog pending={pending} columns={80} />, {
       stdout: stdout as unknown as NodeJS.WriteStream,
       debug: true,
       exitOnCtrlC: false,

@@ -151,6 +151,13 @@ export type TranscriptItem =
   // a stop have to reach the screen inside the [[TUI-C26]] gutter. The parts carry who wrote each
   // piece; the raw error's own fields stay the record.
   | { kind: 'stop'; id: number; parts: readonly ApprovalStopPart[] }
+  // [[EXT-137]] — the scrollable half of a tool-approval request, rendered via
+  // <ApprovalRequestPanel>. The dock's <ApprovalPrompt> carries only text we wrote, so everything
+  // the model, a third-party server or a hostile URL contributed — the rating, the negotiation,
+  // the command and the hosts — is committed here instead, where the conversation scrolls and
+  // nothing needs a cap. The whole pending call travels rather than pre-rendered lines: core's
+  // renderer needs the terminal width, which is not known when the request arrives.
+  | { kind: 'approval'; id: number; pending: PendingToolInterrupt }
   // TUI-C18 — a committed turn's thinking reprinted by `/reasoning`. Rendered via the shared
   // TUI-C15 <ReasoningPanel> (expanded) so a recalled block matches the original 💭/gutter styling;
   // `turnNumber` is the 1-based transcript turn it was recalled from.

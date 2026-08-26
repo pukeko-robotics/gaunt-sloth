@@ -67,7 +67,7 @@ export class A2AClientWrapper {
     // `@a2a-js/sdk` 1.0 removed the `A2AClient` class outright; a client is now built by a
     // `ClientFactory` from the agent card. `legacyCompat` is enabled on the card resolver AND on
     // every transport factory so we keep talking to agents still on protocol v0.3 — which is what
-    // Google ADK agents (our only real A2A peer today, see adk-eval-it/) currently speak. With it
+    // Google ADK agents (our only real A2A peer today, see evals/adk/) currently speak. With it
     // on, the resolver detects a v0.3-shaped card, translates it to the v1.0 model and stamps each
     // synthesized interface `protocolVersion: '0.3'`, and the matching factory then instantiates
     // the v0.3 wire transport. A v1.0 agent is served by the native transports unchanged, so this

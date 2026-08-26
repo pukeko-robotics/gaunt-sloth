@@ -22,6 +22,21 @@
  * this surface is that they stay in their own fields rather than being interpolated into the
  * prompt's own prose — so a client can style them as untrusted, and nothing the model writes can
  * impersonate the request's title.
+ *
+ * ## [[EXT-137]] — what this surface does instead of a fixed block, stated rather than rediscovered
+ *
+ * The terminal surfaces split the prompt in two: a pinned block carrying only text we wrote, and
+ * the scrollable conversation carrying everything else. **That split is an Ink concept and does not
+ * transfer here, because this surface owns no layout at all** — the editor decides what is pinned,
+ * what truncates and in which direction.
+ *
+ * What IS ours is the shape of the request, and this dialect already has the property the terminal
+ * split had to be built to get: the command travels in `subject`, the gate's explanation in
+ * `description`, and the `title` is our own line. So an attacker padding a URL's path lengthens a
+ * structured field the client renders as data, and changes nothing about the request's own prose.
+ * The residue is named honestly at {@link permissionRequestFor} — the non-shell title interpolates
+ * the registered tool name, which for an MCP tool is partly a third-party server's — and that line
+ * is [[TUI-C89]]'s to settle, not something to close from here.
  */
 
 import type { PermissionOption } from '@agentclientprotocol/sdk';
@@ -144,8 +159,16 @@ export function permissionRequestFor(options: {
   const description = descriptionFor(pending);
   return {
     sessionId,
-    // The title is the AGENT's own words and carries no untrusted text: what the model wrote is in
-    // the subject, where a client can style it as the model's.
+    // The title is the AGENT's own words and carries **no command-derived text**: what the model
+    // wrote is in the subject, where a client can style it as the model's. That is the property
+    // [[EXT-137]] pins — on the shell arm this is a constant, so padding a URL's path to any length
+    // cannot change a byte of the line a person reads before answering.
+    //
+    // **The `tool` arm interpolates the registered name, and for an MCP tool that name is partly a
+    // third-party server's**, so "no untrusted text at all" would overstate it. It is left as it is
+    // deliberately: the name is what makes the prompt about a call the client is already drawing,
+    // this surface's title is not a fixed-height row that truncation can empty, and the ACP
+    // permission title is [[TUI-C89]]'s to settle rather than something to change from here.
     title: command !== undefined ? 'Run a shell command' : `Run the ${pending.name} tool`,
     ...(description === undefined ? {} : { description }),
     subject: subjectFor(pending, toolCallId, cwd),

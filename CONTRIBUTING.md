@@ -151,6 +151,11 @@ REGISTRY=https://registry.npmjs.org pnpm run release:publish
 
 Tests are required for pull requests that change behavior, fix bugs, or add features.
 
+**[TESTING.md](https://github.com/pukeko-robotics/gaunt-sloth/blob/main/TESTING.md) is the map**:
+every test and eval entry point, what it covers, how to run it, what it costs, and what it gates.
+Start there when you are deciding where a new test belongs or which suites your change needs to be
+run through.
+
 - Add or update unit tests in `spec/` when changing application logic
 - Add or update integration tests in `integration-tests/` when changing end-to-end behavior, command flows, provider integration, or output contracts
 - If a change does not need tests, explain why in the pull request description

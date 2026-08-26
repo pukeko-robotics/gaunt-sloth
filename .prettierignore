@@ -11,5 +11,7 @@ packages/app/integration-tests/workdir-with-profiles
 packages/*/tui-e2e/.tui-test/
 vitest-it.config.js
 vitest-it.config.d.ts
-eval-it/workdir/out/
-eval-it/workdir/.gsloth/gth_*/
+evals/*/workdir/out/
+evals/*/workdir/.gsloth/gth_*/
+.venv/
+__pycache__/

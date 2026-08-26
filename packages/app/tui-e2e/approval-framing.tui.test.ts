@@ -155,9 +155,21 @@ test.describe('approval framing — a substitution fifteen lines in is SHOWN, an
     // rule exists — it is what makes the eye land on the payload rather than on line one of a
     // prose paragraph. Asserted as row indices, because "both are visible" would hold just as well
     // with the two blocks swapped.
+    //
+    // [[EXT-137]] — scoped to the command's OWN frame, the way `gutterRows` already is. The request
+    // block now opens with what a sticky answer would store, and those blocks are numbered rows of
+    // this very command, so an unscoped search for the first `1 │` row finds one of them and reads
+    // the ordering backwards. The scope starts at the sentence that introduces the call, which is
+    // the row the command's notices and body follow.
     const rows = screenRows(terminal);
-    const noticeRow = rows.findIndex((row) => row.includes('line 15 · command substitution'));
-    const bodyRow = rows.findIndex((row) => /^ {2} *1 │ /u.test(row));
+    const introRow = rows.findIndex((row) =>
+      row.startsWith('The agent wants to run a shell command')
+    );
+    expect(introRow).toBeGreaterThan(-1);
+    const noticeRow = rows.findIndex(
+      (row, index) => index > introRow && row.includes('line 15 · command substitution')
+    );
+    const bodyRow = rows.findIndex((row, index) => index > introRow && /^ {2} *1 │ /u.test(row));
     expect(noticeRow).toBeGreaterThan(-1);
     expect(bodyRow).toBeGreaterThan(-1);
     expect(noticeRow).toBeLessThan(bodyRow);

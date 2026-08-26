@@ -6,6 +6,7 @@ import { Rule } from '#src/tui/components/Rule.js';
 import { BlankRow } from '#src/tui/components/BlankRow.js';
 import { CommandNotice } from '#src/tui/components/CommandNotice.js';
 import { ApprovalStopMessage } from '#src/tui/components/ApprovalStopMessage.js';
+import { ApprovalRequestPanel } from '#src/tui/components/ApprovalRequestPanel.js';
 import { transcriptWindowEnd, transcriptWindowStart } from '#src/tui/transcriptWindow.js';
 import type { TranscriptScroll } from '#src/tui/transcriptScroll.js';
 import type { TranscriptGeometry } from '#src/tui/useTranscriptScroll.js';
@@ -291,6 +292,11 @@ function renderItem(
       // this surface prints, so they go through the shared framing renderer rather than into the
       // single `<Text>` a `system` item would have given them.
       return <ApprovalStopMessage parts={item.parts} columns={columns} />;
+    case 'approval':
+      // [[EXT-137]] — the scrollable half of an approval request. Like a `stop` it is not a
+      // `system` item: its untrusted halves have to reach the screen inside the [[TUI-C26]] gutter
+      // rather than in one <Text> Ink is free to re-wrap.
+      return <ApprovalRequestPanel pending={item.pending} columns={columns} />;
     case 'reasoning':
       // TUI-C18 — `/reasoning` reprint: a dim Rule brackets it like a notice, then the shared
       // TUI-C15 ReasoningPanel (expanded, non-live) reuses the 💭/gutter styling, tagged with the

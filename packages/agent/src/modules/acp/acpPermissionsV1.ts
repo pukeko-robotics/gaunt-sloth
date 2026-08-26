@@ -33,6 +33,15 @@
  * UI, where terminal control codes are inert, and framing them would ship a line-number gutter into
  * a GUI. What matters is that they stay in their own fields rather than being interpolated into the
  * prompt's own prose, so nothing the model writes can impersonate the request itself.
+ *
+ * ## [[EXT-137]] — the fixed-block split does not transfer here either
+ *
+ * `acpPermissions.ts` carries the argument: an editor client owns its own layout, so there is no
+ * pinned row for a padded path to empty. This dialect's own line is `toolCall.title`, which is the
+ * registered tool name and is deliberately the SAME value the creating update sent — a different
+ * title here would rename that row mid-flight. The command reaches the client as `rawInput` and as
+ * the leading `content` entry, both structured, so its length is the client's layout problem and
+ * never a truncation of our prose.
  */
 
 import type {

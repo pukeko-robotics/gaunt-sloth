@@ -179,7 +179,13 @@ test.describe('approval menu — a negotiated destructive escalation', () => {
     await expect(terminal.getByText('saved to this project', { strict: false })).toBeVisible();
     await expect(terminal.getByText('/approvals undeny', { strict: false })).toBeVisible();
     // The command never ran: the marker it would have printed is not on the screen.
-    expect(screenRows(terminal).join('\n')).not.toContain('menu-negotiate-marker\n');
+    //
+    // [[EXT-137]] — asserted on COLUMN ZERO rather than on the marker being absent outright. The
+    // request block is committed to the conversation and stays there after the answer, so the
+    // command is still quoted on the screen — inside the gutter, indented, as the record of what
+    // was asked. What the command's own OUTPUT would look like is the bare marker beginning a row,
+    // and nothing in the record can produce that.
+    notAtColumnZero(terminal, 'menu-negotiate-marker');
   });
 });
 

@@ -748,7 +748,7 @@ cases:
           '..',
           '..'
         );
-        const suitePath = path.join(rootDir, 'eval', 'approvals-anchoring.eval.yaml');
+        const suitePath = path.join(rootDir, 'evals', 'self', 'approvals-anchoring.eval.yaml');
         const { parseEvalSuite } = await import('#src/evalSuite.js');
 
         const suite = parseEvalSuite(fs.readFileSync(suitePath, 'utf8'), suitePath);

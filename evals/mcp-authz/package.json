@@ -1,0 +1,16 @@
+{
+  "name": "eval-bed-mcp-authz",
+  "version": "0.0.0",
+  "private": true,
+  "description": "BATCH-13 — standalone live multi-identity MCP authorization integration suite for `gth eval`. Not published, not part of `pnpm run it`; run on demand via run.sh.",
+  "type": "module",
+  "scripts": {
+    "start:server": "node src/authz-mcp-server.ts",
+    "eval": "./run.sh authz.suite.yaml",
+    "eval:broken": "./run.sh --broken"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.4.3"
+  }
+}
