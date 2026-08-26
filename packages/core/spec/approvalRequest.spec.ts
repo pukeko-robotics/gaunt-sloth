@@ -122,6 +122,55 @@ describe('[[EXT-137]] approvalRequestRows — the order the identity survives', 
     ).toContain('https://evil.example/x.sh');
   });
 
+  /**
+   * **The tool that exists to reach a counterparty gets a counterparty block.** A gated web fetch is
+   * a `tool` subject with no command string at all, so a hosts block built only on the shell
+   * extractions would leave the one call whose entire purpose is a host with no host anywhere in it
+   * — the same loss the node was filed on, moved from a truncated line to an absent one. The
+   * extraction is `core/approvals/toolHost`, which is what the gate itself binds a tool grant's host
+   * with, so this is not a second classifier.
+   */
+  it('names the counterparty of a tool call, which carries it in an argument and not a command', () => {
+    const url = `https://evil.example/${'a'.repeat(200)}`;
+    const fetch = {
+      name: 'gth_web_fetch',
+      args: { url },
+      subject: { kind: 'tool', name: 'gth_web_fetch', host: 'evil.example' },
+    } as unknown as PendingToolInterrupt;
+    const rows = approvalRequestRows(fetch, { columns });
+    const text = rows.map((row) => row.text).join('\n');
+    expect(text).toContain(APPROVAL_HOSTS_LABEL);
+    expect(text).toContain('evil.example');
+    // Last, for the same reason it is last for a command: it is the row that must survive.
+    expect(rows[rows.length - 1].text).toContain('evil.example');
+  });
+
+  /**
+   * **All of them, not the subject's one.** `ApprovalSubject.host` is populated only where a call
+   * names exactly one host, because a grant may record only one — so a block reading that field
+   * would go silent on the multi-host call, which is the one where a reader most needs them named.
+   */
+  it('names every host a tool call reaches, including the case a grant could not record', () => {
+    const two = {
+      name: 'gth_web_fetch',
+      args: { url: 'https://first.example/a', fallbackUrl: 'https://second.example/b' },
+      subject: { kind: 'tool', name: 'gth_web_fetch' },
+    } as unknown as PendingToolInterrupt;
+    expect(two.subject?.host).toBeUndefined();
+    const rows = approvalRequestRows(two, { columns });
+    // Read out of the HOSTS BLOCK and not out of the whole render: a tool call's arguments are
+    // shown verbatim as the call, so both hosts are on screen either way and a scan of everything
+    // would pass with no hosts block at all.
+    const label = indexOfRow(rows, (text) => text === APPROVAL_HOSTS_LABEL);
+    expect(label).toBeGreaterThanOrEqual(0);
+    const block = rows
+      .slice(label + 1)
+      .map((row) => row.text)
+      .join('\n');
+    expect(block).toContain('first.example');
+    expect(block).toContain('second.example');
+  });
+
   it('says nothing about hosts when the call names none', () => {
     const rows = approvalRequestRows(shellPending('npm test'), { columns });
     expect(rows.map((row) => row.text).join('\n')).not.toContain(APPROVAL_HOSTS_LABEL);
@@ -177,6 +226,28 @@ describe('[[EXT-137]] the category is drawn from an enumerated vocabulary', () =
     );
   });
 
+  /**
+   * **A named counterparty outranks the kind of call that names it.** Reading the four sentences,
+   * *It wants to use one of its own tools* over a fetch of a hostile URL is the one that buries the
+   * part the human is actually ruling on — and a gated web fetch is a `tool` subject. The `network`
+   * arm is therefore not a shell arm: it is keyed on whether a host was named at all.
+   */
+  it('calls a tool that names a host a network call, not a generic tool call', () => {
+    const fetch = {
+      name: 'gth_web_fetch',
+      args: { url: 'https://evil.example/x' },
+      subject: { kind: 'tool', name: 'gth_web_fetch', host: 'evil.example' },
+    } as unknown as PendingToolInterrupt;
+    expect(approvalCategoryFor(fetch)).toBe('network');
+    // The control, so the case above is about the host and not about tool calls in general.
+    const local = {
+      name: 'gth_write_file',
+      args: { path: 'src/index.ts', content: 'x' },
+      subject: { kind: 'tool', name: 'gth_write_file' },
+    } as unknown as PendingToolInterrupt;
+    expect(approvalCategoryFor(local)).toBe('tool');
+  });
+
   it('names the MCP arm from the subject the gate decided on, never from the tool name', () => {
     const mcp = {
       name: 'mcp__jira__create_issue',
@@ -187,6 +258,14 @@ describe('[[EXT-137]] the category is drawn from an enumerated vocabulary', () =
     // The sentence names the CLASS and never the server, which is a third party's string.
     expect(approvalCategoryLine(mcp)).toBe(APPROVAL_CATEGORY_LINES.mcpTool);
     expect(approvalCategoryLine(mcp)).not.toContain('jira');
+    // …and the same server handed a URL is a network call, because the counterparty outranks the
+    // kind of call that names it. Which server it is stays in the scrollable half either way.
+    const fetching = {
+      name: 'mcp__jira__create_issue',
+      args: { summary: 'ship it', attachment: 'https://evil.example/x' },
+      subject: { kind: 'mcpTool', server: 'jira', name: 'create_issue', host: 'evil.example' },
+    } as unknown as PendingToolInterrupt;
+    expect(approvalCategoryFor(fetching)).toBe('network');
   });
 
   /**

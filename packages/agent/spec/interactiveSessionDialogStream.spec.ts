@@ -272,7 +272,7 @@ describe('interactiveSessionModule — [[EXT-105]] the escalation dialog is writ
       '[s]/[a] will remember:', // what a sticky answer stores
       '[d] will refuse this exact call, and save it to this project:',
       'The agent wants to use the run_shell_command tool', // WHAT is being called
-      'Hosts this command names:', // the counterparty, last of the untrusted half
+      'Hosts this call names:', // the counterparty, last of the untrusted half
       '  1 │ http://x.test/y', // ...named in full, inside the gutter
       '⚠ Gaunt Sloth is asking you to approve a call.', // our own bounded block
       'Approve? [o]nce', // the question, last
@@ -293,7 +293,7 @@ describe('interactiveSessionModule — [[EXT-105]] the escalation dialog is writ
     expect(commandRows.length).toBeGreaterThan(0);
     const commandFrame = commandRows[commandRows.length - 1];
     expect(commandFrame).toBeGreaterThan(at(lines, 'The agent wants to use the run_shell_command'));
-    expect(commandFrame).toBeLessThan(at(lines, 'Hosts this command names:'));
+    expect(commandFrame).toBeLessThan(at(lines, 'Hosts this call names:'));
   });
 
   /**

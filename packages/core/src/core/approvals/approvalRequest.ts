@@ -71,6 +71,7 @@
 import type { DialogTone } from '#src/utils/consoleUtils.js';
 import type { PendingToolInterrupt } from '#src/core/types.js';
 import { approvalPromptHeader } from '#src/core/approvals/promptHeader.js';
+import { toolCallHosts } from '#src/core/approvals/toolHost.js';
 import {
   describeRaterOutcome,
   RATER_REASON_LABEL,
@@ -121,11 +122,14 @@ export interface ApprovalRequestRow {
  * category]`, so the set of strings that line can ever hold is enumerated in this file and is four
  * long. Widen it only with another constant sentence — never with a value read out of the call.
  *
- * - `shell` — a shell command with no host literal in a fetch or transfer position.
- * - `network` — a shell command that names a host in one. Split from `shell` because it is the one
- *   class where the counterparty, not the verb, is what the human is really ruling on.
- * - `mcpTool` — a tool call reaching a third-party MCP server.
- * - `tool` — any other gated tool, including the built-in write tools and custom tools.
+ * - `network` — any call that names a counterparty: a shell command with a host literal in a fetch
+ *   or transfer position, or a tool whose arguments carry a URL. It outranks the other three
+ *   because it is the class where the counterparty, not the verb, is what the human is really
+ *   ruling on.
+ * - `shell` — a shell command naming no host.
+ * - `mcpTool` — a tool call to a third-party MCP server, naming no host.
+ * - `tool` — any other gated tool naming no host, including the built-in write tools and custom
+ *   tools.
  */
 export type ApprovalCategory = 'shell' | 'network' | 'mcpTool' | 'tool';
 
@@ -171,8 +175,13 @@ export const APPROVAL_DETAILS_ABOVE_LINE = 'The call is shown above, in the conv
 /** The heading the scrollable block opens with — our own, and never a place a name is spliced. */
 export const APPROVAL_REQUEST_HEADING = '⚠ Gaunt Sloth is asking about this call:';
 
-/** Our label for the hosts block, which sits last so it survives a long command above it. */
-export const APPROVAL_HOSTS_LABEL = 'Hosts this command names:';
+/**
+ * Our label for the hosts block, which sits last so it survives a long call above it.
+ *
+ * *This call* rather than *this command*: a gated tool names its counterparty in a structured
+ * argument, and that block is the same block.
+ */
+export const APPROVAL_HOSTS_LABEL = 'Hosts this call names:';
 
 /**
  * The command a pending call would run, when the call carries one as a plain string.
@@ -204,12 +213,25 @@ export function approvalCallText(pending: Pick<PendingToolInterrupt, 'args'>): s
  * "no host block" mean "no host".
  *
  * Neither is a new notion of what a host position is: they are the two the gate itself decides on.
- * Empty for a call with no command string — both read a shell command line, and inventing a host
- * out of a tool's arguments would be the second classifier this codebase keeps warning about.
+ *
+ * **A call that is not a shell command is asked of `core/approvals/toolHost` instead**, which is
+ * again the gate's own extraction rather than a new one: it is what §4.7.4 binds a sticky tool
+ * grant's host with, read off the structured arguments by `URL` parsing. Without this arm the one
+ * tool whose whole purpose is to reach a counterparty — a gated web fetch — would render as a
+ * generic tool call with no host anywhere in the block, which is the exact loss this module exists
+ * to prevent, moved from a truncated line to an absent one.
+ *
+ * **It is asked for ALL the hosts, not for the subject's one.** `ApprovalSubject.host` is set only
+ * where a call names exactly one, because a grant may record only one — but a call naming several
+ * is the case where a reader most needs them named, and reading the subject's field would have gone
+ * silent on precisely that call.
  */
-export function approvalHosts(pending: Pick<PendingToolInterrupt, 'args'>): string[] {
+export function approvalHosts(pending: Pick<PendingToolInterrupt, 'args' | 'subject'>): string[] {
+  const kind = pending.subject?.kind;
   const command = commandStringOf(pending);
-  if (command === undefined) return [];
+  if (kind === 'tool' || kind === 'mcpTool' || command === undefined) {
+    return toolCallHosts(pending.args);
+  }
   const hosts = [...findOpenWorldHostLiterals(command)];
   for (const host of findComposedOpenWorld(command)?.hosts ?? []) {
     if (!hosts.includes(host)) hosts.push(host);
@@ -222,8 +244,14 @@ export function approvalHosts(pending: Pick<PendingToolInterrupt, 'args'>): stri
  *
  * The branch reads the subject the GATE decided on (`core/approvals/matcher`'s `ApprovalSubject`),
  * so this is not a second classifier — `promptHeader` makes the same argument for the same reason.
- * The one thing it adds is the `shell`/`network` split, which asks the open-world extraction the
- * floor already runs.
+ * The one thing it adds is the `network` arm, which asks the same host extractions the gate itself
+ * ran ({@link approvalHosts}).
+ *
+ * **A named counterparty outranks the kind of call that names it, whatever the kind.** A fetch is
+ * the class where the host and not the verb is what the human is really ruling on, and that is as
+ * true of a gated web-fetch tool or an MCP tool handed a URL as it is of `curl` — the reader's
+ * question is *who is it talking to*, and answering it with *one of its own tools* buries the part
+ * that decides the answer. The kinds are what a call falls back to when it names nobody.
  *
  * **A call with no subject falls to `tool`**, which is true of every gated call and false of none —
  * `promptHeader`'s fail-to-vague, for the same reason: a surface handed a hand-built interrupt gets
@@ -232,9 +260,8 @@ export function approvalHosts(pending: Pick<PendingToolInterrupt, 'args'>): stri
 export function approvalCategoryFor(
   pending: Pick<PendingToolInterrupt, 'args' | 'subject'>
 ): ApprovalCategory {
-  if (pending.subject?.kind === 'shell') {
-    return approvalHosts(pending).length > 0 ? 'network' : 'shell';
-  }
+  if (approvalHosts(pending).length > 0) return 'network';
+  if (pending.subject?.kind === 'shell') return 'shell';
   if (pending.subject?.kind === 'mcpTool') return 'mcpTool';
   return 'tool';
 }
