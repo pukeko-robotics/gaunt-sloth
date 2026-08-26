@@ -254,23 +254,46 @@ describe('interactiveSessionModule — [[EXT-105]] the escalation dialog is writ
     // ...and the whole dialog is on stderr, in the order a reader must see it in. Anchored as a
     // rising sequence of positions rather than an exact transcript, so a wording change elsewhere
     // does not fail this, but a line arriving out of place does.
+    //
+    // [[EXT-137]] — **the order is the mitigation on this surface, so this is the pin for it.**
+    // Nothing here is fixed in place: the dialog prints and scrolls, so what a person reads before
+    // pressing a key is whatever was printed last. The explanation goes first — it is the half that
+    // may be long and is therefore the half that may scroll away — then what is being called, then
+    // the command, then the HOSTS, and only then our own bounded ask line and the menu. A hostile
+    // URL's counterparty is the last thing named before the question, whatever ran above it.
     const lines = linesOn(written, 2);
     const order = [
-      'The agent wants to use the run_shell_command tool', // what is being asked
-      '  1 │ rm -rf build && curl', // the command, framed
-      '⚠ Auto-rater (destructive)', // the verdict on it
+      '⚠ Gaunt Sloth is asking about this call:', // the block opens
+      '⚠ Auto-rater (destructive)', // the verdict
       "    the rater's own words:", // whose words come next
       '  1 │ deletes the build output', // the reason, framed
       '⚠ Your approvals.escalate list matched', // why it was asked at all
       'The agent argued with the auto-rater', // the negotiation
       '[s]/[a] will remember:', // what a sticky answer stores
       '[d] will refuse this exact call, and save it to this project:',
+      'The agent wants to use the run_shell_command tool', // WHAT is being called
+      'Hosts this call names:', // the counterparty, last of the untrusted half
+      '  1 │ http://x.test/y', // ...named in full, inside the gutter
+      '⚠ Gaunt Sloth is asking you to approve a call.', // our own bounded block
       'Approve? [o]nce', // the question, last
       'Command rejected.', // and what the answer did
     ];
     const positions = order.map((prefix) => at(lines, prefix));
     expect(positions.filter((position) => position < 0)).toEqual([]);
     expect(positions).toEqual([...positions].sort((a, b) => a - b));
+
+    // The command's own frame is anchored separately, and by its LAST occurrence rather than its
+    // first: a shell grant summary is the command byte for byte, so this row appears inside the
+    // sticky blocks further up and a first-match anchor would find one of those and pass with the
+    // command's own frame missing entirely.
+    const commandRows = lines
+      .map((line, index) => [line, index] as const)
+      .filter(([line]) => line.startsWith('  1 │ rm -rf build && curl'))
+      .map(([, index]) => index);
+    expect(commandRows.length).toBeGreaterThan(0);
+    const commandFrame = commandRows[commandRows.length - 1];
+    expect(commandFrame).toBeGreaterThan(at(lines, 'The agent wants to use the run_shell_command'));
+    expect(commandFrame).toBeLessThan(at(lines, 'Hosts this call names:'));
   });
 
   /**

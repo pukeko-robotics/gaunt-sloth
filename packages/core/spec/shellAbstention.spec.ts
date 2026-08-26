@@ -171,13 +171,17 @@ describe('EXT-81 — the parser preflight note', () => {
    * here, not re-established — so a green run of this block is evidence about the string, never
    * about rater behaviour.
    *
-   * **What the note does NOT say is pinned here too ([[EXT-140]]).** It used to assert flatly that
-   * the shell expands the substitution before the outer program runs; on a single-quoted operand
-   * nothing expands locally, so it warned about a local read that was not happening. The fix is not
-   * merely to hedge that claim but to stop supplying a rule keyed on quoting at all: what the rater
-   * can see is the NORMALIZED command, in which `\'$(…)\'` — which the local shell really does
+   * **What the note does NOT say is pinned here too ([[EXT-140]], [[EXT-146]]).** It used to assert
+   * flatly that the shell expands the substitution before the outer program runs; on a single-quoted
+   * operand nothing expands locally, so it warned about a local read that was not happening. The fix
+   * is not merely to hedge that claim but to stop supplying a rule keyed on quoting at all: what the
+   * rater can see is the NORMALIZED command, in which `\'$(…)\'` — which the local shell really does
    * expand — is byte-identical to `'$(…)'`, which it does not. A sentence telling the rater what
    * single quotes do would point the reassuring way on exactly the spelling that reads the key.
+   *
+   * The same claim, and the same fix, applies to the `commit-message-substitution` sentence — the
+   * one that reaches the rater with the generic note suppressed. Its acceptance is in its own block
+   * below; the guard is shared and runs over every family.
    */
   describe('the substitution note states the mechanism', () => {
     /**
@@ -215,36 +219,280 @@ describe('EXT-81 — the parser preflight note', () => {
     });
 
     /**
-     * **THE GUARD: the note may name the axis and must not supply the inference — as a CLAIM, not
-     * as a string.**
+     * **THE GUARD: a note may name the axis and must not supply the inference — as a CLAIM, not as
+     * a string.**
      *
      * A pin on the exact wording of a rejected draft is worth almost nothing: the same false claim
      * comes back reworded and the pin sails past it. So this bites on the shape any such claim has
-     * to take.
+     * to take, and it is expressed as a predicate — {@link violationsOf} — so the drafts it must
+     * REJECT are asserted here beside the notes it must accept. A guard whose rejections are argued
+     * rather than run is a guard nobody has seen fail.
      *
-     * 1. Every mention of the shell expanding must sit under a *whether*. `The SHELL expands it
-     *    BEFORE the outer program runs` (the trunk sentence), `unquoted, the shell expands every one
-     *    of those forms here` and its rewording `With no quoting around it, the shell expands …` are
-     *    all caught by one rule, because what they share is an unhedged verb and not a phrasing.
-     * 2. No sentence in the other direction at all. That is the reassuring half, and the half a
-     *    manufactured single quote makes false — so the vocabulary for saying it is banned outright
-     *    rather than policed for correctness.
+     * Four rules, each named, so a draft is pinned to the rule that catches it and a draft caught
+     * by the wrong rule is visible as such:
      *
-     * It is a claim-level check and not an entailment checker: it catches the shape three drafts of
-     * this note actually took, which is the failure on record, and it would not catch an arbitrary
-     * paraphrase.
+     * 1. {@link UNHEDGED_SENTENCE} — every mention of the shell expanding must sit under a *whether*
+     *    **in its own sentence**. `The SHELL expands it BEFORE the outer program runs` (the trunk
+     *    sentence), `unquoted, the shell expands every one of those forms here` and its rewording
+     *    `With no quoting around it, the shell expands …` are all caught by this one rule, because
+     *    what they share is an unhedged verb and not a phrasing.
+     * 2. {@link UNPAIRED_WHETHER} — and each mention needs its OWN *whether* ahead of it, so a
+     *    second, unhedged claim cannot shelter under the first sentence's hedge.
+     * 3. {@link SINGLE_QUOTES_OUTSIDE_CLAUSE} — **an ALLOWLIST, and it is the half that carries the
+     *    security property.** There is exactly one sentence in this file that a note is allowed to
+     *    use about single quotes, and a note may either use it verbatim or say nothing about single
+     *    quotes at all. Anything else — a second mention beside the clause, or a paraphrase in place
+     *    of it — reds, whatever vocabulary it is written in.
+     * 4. {@link REASSURING_VOCABULARY} — the old denylist, kept as a backstop for the reassuring
+     *    direction written without naming quoting at all. It is the weakest of the four and is not
+     *    relied on: every rejection below that could be caught by it is also pinned to the rule that
+     *    should catch it.
+     *
+     * **Neither rule 1 nor rule 2 measures a DISTANCE**, which is what a rephrase used to break: the
+     * hedge may sit any number of words ahead of the verb as long as it is in the same sentence.
+     *
+     * **What this still is not: an entailment checker, and rule 3's TRIGGER is an enumeration.**
+     * The allowlist is total over the clause — one approved sentence about single quotes and no
+     * other — but reaching it depends on recognising that a sentence is about single quotes at all,
+     * and that recognition is a list of spellings. A synonym outside the list is prose rule 3 never
+     * looks at, and rules 1, 2 and 4 are blind to a reassuring claim that names no expansion and
+     * uses no denylisted word. So the residual is not "prose naming neither quoting nor expansion";
+     * it is **prose naming the quoting in a word the list does not have.** That is the thing to
+     * attack next, and it is why rule 4 survives as a backstop rather than being retired.
+     *
+     * The same limit applies one level out: these rules sweep `MECHANISM_NOTES` only. The composed
+     * open-world notes built in `openWorld.ts` are a second writer of this prose class — its
+     * `remote-command` arm carried this exact false claim once — and they reach the neutrality scan
+     * below but not rules 1-4.
      */
-    it('never asserts that the shell does or does not expand this substitution', () => {
-      const note = MECHANISM_NOTES.substitution;
-      const unhedged = [...note.matchAll(/shell expands/gi)].filter(
-        (match) =>
-          !note
-            .slice(Math.max(0, match.index - 20), match.index)
-            .toLowerCase()
-            .includes('whether')
+    describe('the guard on what a note may claim about expansion', () => {
+      /** The rule names, so a rejection is pinned to the rule that must catch it. */
+      const UNHEDGED_SENTENCE = 'expansion claimed without a whether in its own sentence';
+      const UNPAIRED_WHETHER = 'a second expansion claim sheltering under one whether';
+      const SINGLE_QUOTES_OUTSIDE_CLAUSE = 'single quotes named outside the one approved clause';
+      const REASSURING_VOCABULARY = 'vocabulary of the reassuring direction';
+
+      /**
+       * **The one clause any note may use about single quotes, held HERE and not imported from the
+       * module under test.** Importing it would make this check tautological: the clause could be
+       * rewritten into a rule about single quotes and every assertion would follow it. A copy means
+       * changing that sentence in `abstention.ts` reds this file, which is the intended cost — it is
+       * the sentence that names the axis without supplying the inference.
+       */
+      const QUOTING_AXIS_CLAUSE =
+        'single quotes and a backslash before the dollar or the backtick bear on the answer too, ' +
+        'and this note records none of them';
+
+      /**
+       * A claim that the shell expands something, in any inflection, with a gap that cannot cross a
+       * sentence or clause boundary — so `the shell expands`, `the shell will expand` and `the SHELL
+       * would then expand` are one pattern, while a `shell` and an `expand` in different clauses are
+       * not spuriously joined.
+       */
+      const EXPANSION_CLAIM_RE = /\bshell\b[^.?!;:]{0,24}?expand/gi;
+
+      /**
+       * Any way of naming the quoting style the reassuring half turns on.
+       *
+       * **This is where rule 3 is still an ENUMERATION, and the honest description of its limit.**
+       * The allowlist is total over the clause — one approved sentence, nothing else — but what
+       * TRIGGERS it is this list of spellings, so a synonym that is not here is a note the rule
+       * never looks at. `apostrophe` is on it because this module's own comments use that word for
+       * the same character, which makes it the spelling a rewrite is most likely to reach for.
+       */
+      const SINGLE_QUOTE_MENTION_RE = /\b(single[-\s]quote|apostrophe)/gi;
+
+      /** The reassuring direction, said outright. */
+      const REASSURING_RE =
+        /unexpanded|not expanded|nothing (is )?expand|still executed|verbatim|untouched|leaves? it alone|left alone/i;
+
+      /**
+       * Every rule this note text breaks, by name. Empty means the text is one a note may ship.
+       */
+      const violationsOf = (note: string): string[] => {
+        const broken: string[] = [];
+        let mentionsSoFar = 0;
+        for (const match of note.matchAll(EXPANSION_CLAIM_RE)) {
+          const before = note.slice(0, match.index);
+          const sentenceStart =
+            Math.max(before.lastIndexOf('.'), before.lastIndexOf('?'), before.lastIndexOf('!')) + 1;
+          mentionsSoFar += 1;
+          if (!before.slice(sentenceStart).toLowerCase().includes('whether')) {
+            broken.push(UNHEDGED_SENTENCE);
+          } else if ((before.toLowerCase().match(/whether/g) ?? []).length < mentionsSoFar) {
+            broken.push(UNPAIRED_WHETHER);
+          }
+        }
+        const clauseAt = note.indexOf(QUOTING_AXIS_CLAUSE);
+        const namedAt = [...note.matchAll(SINGLE_QUOTE_MENTION_RE)].map((match) => match.index);
+        // A note carrying the clause may name single quotes exactly once, AT the clause. A note
+        // without the clause may not name them at all. Both a duplicate and a substitute break this.
+        if (JSON.stringify(namedAt) !== JSON.stringify(clauseAt === -1 ? [] : [clauseAt])) {
+          broken.push(SINGLE_QUOTES_OUTSIDE_CLAUSE);
+        }
+        if (REASSURING_RE.test(note)) broken.push(REASSURING_VOCABULARY);
+        return broken;
+      };
+
+      /** Every family, so a note added tomorrow is scanned the day it lands. */
+      const EVERY_FAMILY = Object.entries(MECHANISM_NOTES) as [AbstentionMechanism, string][];
+
+      it.each(EVERY_FAMILY)('the shipped %s note breaks no rule', (_family, note) => {
+        expect(violationsOf(note)).toEqual([]);
+      });
+
+      /**
+       * **The control on the scan.** Rules 1 and 2 have nothing to bite on in a note that never
+       * mentions expansion, so a green sweep over five families is not by itself evidence they work.
+       * This pins that the two notes which DO carry the mechanism sentence still carry it — delete
+       * the sentence and the sweep above stays green while this reds.
+       */
+      it.each(['substitution', 'commit-message-substitution'] as const)(
+        'the %s note still states the mechanism, so the hedge rules have something to check',
+        (family) => {
+          // AT LEAST one, not exactly one: a note may legitimately hedge two mentions, and pinning
+          // the count would make rule 2's own mutation red this control instead of rule 2.
+          expect(
+            [...MECHANISM_NOTES[family].matchAll(EXPANSION_CLAIM_RE)].length
+          ).toBeGreaterThanOrEqual(1);
+        }
       );
-      expect(unhedged.map((match) => note.slice(match.index, match.index + 60))).toEqual([]);
-      expect(note).not.toMatch(/unexpanded|not expanded|nothing (is )?expand|still executed/i);
+
+      /**
+       * **The allowlist's positive twin.** "At most once, and only in the clause" is satisfied by
+       * ZERO mentions, so deleting the clause would pass rule 3 while restoring exactly the
+       * asymmetry it exists to prevent: double quotes named as non-protective, single quotes not
+       * named, and the reader left to infer that they protect.
+       */
+      it.each(['substitution', 'commit-message-substitution'] as const)(
+        'the %s note names the axis rather than merely avoiding a rule',
+        (family) => {
+          expect(MECHANISM_NOTES[family]).toContain(QUOTING_AXIS_CLAUSE);
+        }
+      );
+
+      /**
+       * **The three drafts this note actually took**, each pinned to rule 1. They are reconstructed
+       * as whole notes because the predicate reads a whole note; what is faithful about them is the
+       * unhedged sentence, which is the thing on record.
+       */
+      it.each([
+        [
+          'the trunk sentence',
+          'This command line contains a substitution — `$(…)`, a backtick, `${…}` or `<(…)`. The ' +
+            'SHELL expands it BEFORE the outer program runs, so a double-quoted argument is not ' +
+            'inert prose. What would this substitution run, and where?',
+        ],
+        [
+          'the unquoted rewrite',
+          'This command line contains a substitution. Unquoted, the shell expands every one of ' +
+            'those forms here. What would this substitution run, and where?',
+        ],
+        [
+          'the no-quoting rewording',
+          'This command line contains a substitution. With no quoting around it, the shell expands ' +
+            'the substitution before the outer program runs. What would this substitution run, ' +
+            'and where?',
+        ],
+      ])('rejects the historical draft: %s', (_label, draft) => {
+        expect(violationsOf(draft)).toContain(UNHEDGED_SENTENCE);
+      });
+
+      /**
+       * **A second claim cannot shelter under the first sentence's hedge.** One *whether*, two
+       * mentions — the shape a sentence-scoped rule alone would wave through.
+       */
+      it('rejects a second, unhedged claim in the same sentence', () => {
+        const draft = MECHANISM_NOTES.substitution.replace(
+          'is not something this note can tell you',
+          'is not something this note can tell you, though the shell expands it here anyway'
+        );
+        // A splice that silently no-ops leaves the shipped note under test, which passes — so the
+        // case would report green having exercised nothing.
+        expect(draft).not.toEqual(MECHANISM_NOTES.substitution);
+        expect(violationsOf(draft)).toContain(UNPAIRED_WHETHER);
+      });
+
+      /**
+       * **A hedge in a NEIGHBOURING sentence is not a hedge.** One *whether*, one mention, the
+       * *whether* first — the shape a pairing rule alone would wave through.
+       */
+      it('rejects a claim whose whether is in the previous sentence', () => {
+        const draft =
+          'This command line contains a substitution. Whether that matters depends on the caller. ' +
+          'The shell expands it before the outer program runs. What would this substitution run, ' +
+          'and where?';
+        expect(violationsOf(draft)).toContain(UNHEDGED_SENTENCE);
+      });
+
+      /**
+       * **[[EXT-148]]'s reason to exist: the reviewer's paraphrase, which the denylist passed.** It
+       * is the Critical's exact shape — a rule about single quotes, pointing the reassuring way, on
+       * a pipeline whose displayed quoting can be manufactured. Both insertion modes are pinned
+       * because they break DIFFERENT halves of the allowlist: appended trips the count, substituted
+       * trips the position, and either alone would leave the other unexercised.
+       */
+      const REVIEWER_PARAPHRASE =
+        'Inside single quotes the shell leaves it alone and hands it on verbatim.';
+
+      it('rejects the reviewer paraphrase APPENDED beside the approved clause', () => {
+        const draft = `${MECHANISM_NOTES.substitution} ${REVIEWER_PARAPHRASE}`;
+        expect(violationsOf(draft)).toContain(SINGLE_QUOTES_OUTSIDE_CLAUSE);
+      });
+
+      it('rejects the reviewer paraphrase SUBSTITUTED for the approved clause', () => {
+        const draft = MECHANISM_NOTES.substitution.replace(
+          QUOTING_AXIS_CLAUSE,
+          'inside single quotes the shell leaves it alone and hands it on verbatim'
+        );
+        expect(draft).not.toContain(QUOTING_AXIS_CLAUSE);
+        expect(violationsOf(draft)).toContain(SINGLE_QUOTES_OUTSIDE_CLAUSE);
+      });
+
+      /**
+       * **And the allowlist, not the backstop, is what catches it.** The paraphrase above also
+       * carries denylisted vocabulary, so on its own it cannot show which rule did the work. This
+       * one is written in wholly innocuous words and mentions no expansion at all: rule 3 is the
+       * only thing left that can reject it, which is the claim [[EXT-148]] is making.
+       */
+      it('rejects a rule about single quotes written in unremarkable words', () => {
+        const draft = `${MECHANISM_NOTES.substitution} Inside single quotes the message reaches git exactly as typed.`;
+        expect(violationsOf(draft)).toEqual([SINGLE_QUOTES_OUTSIDE_CLAUSE]);
+      });
+
+      /**
+       * **The same rule written as `apostrophes`, which is the word this module's own comments
+       * use.** Rules 1, 2 and 4 are all blind to it — it names no expansion and carries no
+       * denylisted vocabulary — so if rule 3's spelling list misses the synonym, nothing catches
+       * it and the paraphrase class [[EXT-148]] closed is open again under a different word.
+       */
+      it('rejects the same rule written as apostrophes rather than single quotes', () => {
+        const draft = `${MECHANISM_NOTES.substitution} Inside apostrophes the message reaches git exactly as typed.`;
+        expect(violationsOf(draft)).toEqual([SINGLE_QUOTES_OUTSIDE_CLAUSE]);
+      });
+
+      /**
+       * **The other direction, and the one an over-tight allowlist breaks.** A guard that turns an
+       * innocent rewrite into a red build costs the next author a wall, so the acceptance is
+       * symmetric: this rephrasing changes the hedge's shape and pushes *whether* sixty characters
+       * ahead of the verb — well outside the fixed window the old rule sliced — and it must pass.
+       */
+      it('accepts a benign rephrasing that moves the whether far from the verb', () => {
+        const rephrased =
+          'This is a git commit carrying its message inline, and the message contains a ' +
+          'dollar-parenthesis or a backtick. Whether the message is text that git merely records, ' +
+          'or a program the SHELL expands before git ever sees it, is not something this note can ' +
+          'tell you: double quotes do not stop `$(…)` or a backtick from being run, so a ' +
+          'double-quoted message is therefore not inert prose, but ' +
+          QUOTING_AXIS_CLAUSE +
+          '. What would the substitution in this message run, and where?';
+        // The hedge really is far from the verb, or this case is not the one it claims to be.
+        const verbAt = rephrased.search(/SHELL expands/);
+        expect(rephrased.slice(0, verbAt).toLowerCase().lastIndexOf('whether')).toBeLessThan(
+          verbAt - 20
+        );
+        expect(violationsOf(rephrased)).toEqual([]);
+      });
     });
 
     /**
@@ -291,6 +539,65 @@ describe('EXT-81 — the parser preflight note', () => {
       const note = noteFor(command);
       expect(note).toContain('SHELL');
       expect(note).toContain('double quotes do not stop');
+    });
+  });
+
+  /**
+   * **Acceptance ([[EXT-146]]): the commit-message note, which is the one with nothing beside it.**
+   *
+   * `describeAbstention` makes this family SUPPRESS the generic substitution note it is a special
+   * case of, so on this path the sentence below is the ONLY note the rater is shown. Everything the
+   * generic note earns from a second sentence, this one has to be on its own.
+   *
+   * It used to assert, flatly, that the shell expands the message before git ever sees it. Measured
+   * against the built module, every spelling of the quoting family reaches this family — `-m "…"`,
+   * `-m '…'`, bare `-m $(…)`, `-m \'…\'` and `--message='…'` alike — so that sentence was asserted
+   * over the single-quoted message too, where nothing local expands and git records the literal
+   * text. The fix is [[EXT-140]]'s: name the axis, do not supply the inference, and keep the half
+   * that was actually measured.
+   */
+  describe('the commit-message note is the substitution note, one flag deeper', () => {
+    /** The spelling that made the old sentence false, and the payload from the real incident. */
+    const SINGLE_QUOTED = "git commit -m '$(cat ~/.ssh/id_rsa)'";
+
+    /**
+     * The whole quoting family, so the note is read against the commands it is actually shown on.
+     * The control on each row is the mechanism assertion: if a spelling stopped classifying here,
+     * the note under test would be a different family's and every assertion would pass vacuously.
+     */
+    it.each([
+      ['double-quoted', 'git commit -m "fix $(date)"'],
+      ['single-quoted', "git commit -m 'fix $(date)'"],
+      ['unquoted', 'git commit -m $(date)'],
+      ['escaped quotes, which normalize to look single-quoted', "git commit -m \\'$(date)\\'"],
+      ['single-quoted backtick', "git commit -m 'fix `date`'"],
+      ['long flag, single-quoted', "git commit --message='fix $(date)'"],
+      ['the real incident payload, single-quoted', SINGLE_QUOTED],
+    ])('reaches this family and asserts no local expansion on it: %s', (_label, command) => {
+      expect(describeAbstention(command)?.mechanism, command).toBe('commit-message-substitution');
+      const note = noteFor(command);
+      expect(note, command).not.toContain(
+        'The SHELL expands that before git ever sees the message'
+      );
+      expect(note, command).toContain('is not something this note can tell you');
+    });
+
+    /**
+     * The measured half survives the fix. [[QA-17]]'s commit arm is where the *not inert prose*
+     * sentence comes from, and deleting the true half to make the false half go away would spend
+     * the one thing this note is known to buy.
+     */
+    it('keeps the double-quote clause the measurement earned', () => {
+      const note = noteFor(SINGLE_QUOTED);
+      expect(note).toContain('double quotes do not stop');
+      expect(note).toContain('double-quoted message is therefore not inert prose');
+    });
+
+    /** The closing question must not presuppose that anything expanded, nor that the shell would. */
+    it('asks where as well as what, and does not ask what the shell runs', () => {
+      const note = noteFor(SINGLE_QUOTED);
+      expect(note.trimEnd().endsWith('and where?')).toBe(true);
+      expect(note).not.toContain('What does the shell run when it expands that message?');
     });
   });
 
