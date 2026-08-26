@@ -1,0 +1,7 @@
+{
+  "$schema": "https://gauntsloth.app/schema/v2/gsloth-config.schema.json",
+  "llm": {
+    "type": "xai",
+    "model": "grok-4.3"
+  }
+}

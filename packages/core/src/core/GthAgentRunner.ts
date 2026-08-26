@@ -31,6 +31,8 @@ import { BaseCheckpointSaver } from '@langchain/langgraph';
 import {
   AgentResolvers,
   AgentStreamEvent,
+  type ApprovalLifetime,
+  type ApprovalOutcomeCallback,
   type AttackHaltCallback,
   GthAgentFactory,
   GthAgentInterface,
@@ -319,6 +321,13 @@ export class GthAgentRunner {
   private toolApprovalCallback: ToolApprovalCallback | null = null;
 
   /**
+   * [[EXT-150]] — consumer hook invoked once per human-answered approval, AFTER the answer has been
+   * recorded, carrying the lifetime it landed with. Set via {@link setApprovalOutcomeCallback}; when
+   * unset the outcome is simply not reported, which is where every surface was before this existed.
+   */
+  private approvalOutcomeCallback: ApprovalOutcomeCallback | null = null;
+
+  /**
    * [[TUI-C68]] §6.1 — consumer hook invoked when the rater rates a command an `attack`, so an
    * interactive surface can show the red banner before the run ends. Set via
    * {@link setAttackHaltCallback}; **when unset the runner halts immediately**, which is the
@@ -471,6 +480,24 @@ export class GthAgentRunner {
    */
   public setToolApprovalCallback(callback: ToolApprovalCallback | null): void {
     this.toolApprovalCallback = callback;
+  }
+
+  /**
+   * [[EXT-150]] — register the handler that is told **what a human's answer actually landed as**.
+   * Pass `null` to clear.
+   *
+   * Separate from {@link setToolApprovalCallback} for the reason {@link setAttackHaltCallback} is
+   * separate: it is a different question asked at a different moment. The approval callback is
+   * consulted *before* anything is written and returns the human's REQUEST; the scope that survives
+   * is decided here afterwards, because [[EXT-149]] degrades an `always` whose write did not reach
+   * disk to the `session` answer it really is. A surface with no way to hear that can only confirm
+   * the key that was pressed — and core's own ERROR naming the unwritten file then contradicts it.
+   *
+   * It reports; it never decides. Nothing downstream reads it, so a surface that ignores it, or
+   * never wires it, changes no behaviour of the gate.
+   */
+  public setApprovalOutcomeCallback(callback: ApprovalOutcomeCallback | null): void {
+    this.approvalOutcomeCallback = callback;
   }
 
   /**
@@ -2327,17 +2354,42 @@ export class GthAgentRunner {
     // dump unable to tell a rater escalation from a declared one.
     record.humanAnswer = decision.type === 'approve' ? 'approve' : 'reject';
 
+    // [[EXT-150]] — **what the answer landed as**, which is not what the answer asked for. It starts
+    // at `once` and only a record that was actually made moves it, so the three paths that store
+    // nothing report the one-shot answer they really are: an approve with no grant on offer (a
+    // `catastrophic` verdict, a command that does not statically resolve, a call nothing can
+    // attribute), a reject carrying no scope, and a reject at a scope for a call with no deny entry.
+    let lifetime: ApprovalLifetime = 'once';
     // Record the human's scoped grant so the same call stops re-prompting.
     if (decision.type === 'approve' && grant) {
-      this.recordApproval(grant, decision.scope ?? 'once');
+      lifetime = this.recordApproval(grant, decision.scope ?? 'once');
     }
     // §6 — and the mirror: *always reject* records the refusal, so the next identical call is
     // refused by rule at step (1) without reaching a person. [[EXT-107]] — at the scope the surface
     // asked for, which for every escalation menu's `[d]` is `always`; the lifetime that LANDS is
     // `recordDenial`'s to decide and to report.
     if (decision.type === 'reject' && decision.scope !== undefined && denyEntry) {
-      this.recordDenial(denyEntry, decision.scope);
+      lifetime = this.recordDenial(denyEntry, decision.scope);
     }
+    return this.reportOutcome(pending, decision, lifetime);
+  }
+
+  /**
+   * [[EXT-150]] — tell the surface what its own answer landed as, and hand the decision straight
+   * back.
+   *
+   * A one-liner returning the decision, exactly as {@link stage} is, and for the identical reason:
+   * the report happens ON the return that carries the decision rather than on the line above it, so
+   * no early return can later be inserted between the two and leave a surface waiting for an answer
+   * that never comes. There is one return out of {@link decideToolApprovalInner} after the callback
+   * is awaited, and this is it.
+   */
+  private reportOutcome(
+    pending: PendingToolInterrupt,
+    decision: ToolApprovalDecision,
+    lifetime: ApprovalLifetime
+  ): ToolApprovalDecision {
+    this.approvalOutcomeCallback?.({ pending, decision: decision.type, lifetime });
     return decision;
   }
 
@@ -2754,16 +2806,23 @@ export class GthAgentRunner {
    *
    * The persisted store is still told even when it cannot write, because telling it is what reports
    * the refused or failed write to the user, and it declines to hold what it did not write.
+   *
+   * **It RETURNS the lifetime it recorded** ([[EXT-150]]) — the same value it stamps the record with,
+   * handed back rather than left for a caller to re-derive. The surface that asked has to say what
+   * happened, and re-deriving it there would put the "did the write land" question in two places
+   * that could come to disagree, which is the whole failure this and [[EXT-149]] are about.
    */
-  private recordDenial(entry: ApprovalEntry, scope: ToolRejectScope): void {
-    if (scope === 'once') return;
+  private recordDenial(entry: ApprovalEntry, scope: ToolRejectScope): ApprovalLifetime {
+    if (scope === 'once') return 'once';
     const persisted = scope === 'always' ? this.getPersistedDenials() : null;
     const grantedAt = new Date().toISOString();
     const saved = persisted?.add({ entry, grantedAt, scope: 'always' }) ?? false;
+    const landed: ApprovalGrantScope = saved ? 'always' : 'session';
     // Both stores, exactly as `recordApproval` writes both: the in-memory copy is what keeps the
     // refusal in force for this run even when the file cannot be written, and the display
     // de-duplicates by entry identity.
-    this.denyGrants.add({ entry, grantedAt, scope: saved ? 'always' : 'session' });
+    this.denyGrants.add({ entry, grantedAt, scope: landed });
+    return landed;
   }
 
   /**
@@ -2787,17 +2846,22 @@ export class GthAgentRunner {
    *
    * The store is still loaded only for `always`, unchanged: a display must not create the file in
    * order to show it, and a `session` grant has no business opening it.
+   *
+   * **It RETURNS the lifetime it recorded** ([[EXT-150]]), the mirror of {@link recordDenial} and for
+   * the same reason: the surface's confirmation is written from this value rather than from the key
+   * the human pressed.
    */
   private recordApproval(
     grant: Omit<ApprovalGrant, 'grantedAt' | 'scope'>,
     scope: ToolApprovalScope
-  ): void {
-    if (scope === 'once') return;
+  ): ApprovalLifetime {
+    if (scope === 'once') return 'once';
     const persisted = scope === 'always' ? this.getPersistedGrants() : null;
     const grantedAt = new Date().toISOString();
     const saved = persisted?.add({ ...grant, grantedAt, scope: 'always' }) ?? false;
     const grantScope: ApprovalGrantScope = saved ? 'always' : 'session';
     this.sessionGrants.add({ ...grant, grantedAt, scope: grantScope });
+    return grantScope;
   }
 
   /**

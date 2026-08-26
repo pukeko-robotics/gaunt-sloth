@@ -169,7 +169,10 @@ import type { SurfaceType } from '../scripts/type-surface.mjs';
  *   reachable, nameable by nobody, and correctly not required.
  * - **A type nothing hands out.** `ToolApprovalCallback` is the case to know: an embedder passes
  *   one IN, so no reachable declaration is typed as one and the derivation cannot require it. It
- *   is named in the handwritten probe for exactly that reason.
+ *   is named in the handwritten probe for exactly that reason. `ApprovalOutcomeCallback` is the
+ *   second of the same kind and is named there for the same reason — a callback the embedder
+ *   supplies is exactly the shape this derivation is blind to, so every one of them needs a line
+ *   in the probe or it can be dropped from the barrel with every test still green.
  *
  * **A reference position the walk ENTERS and cannot name is a hard red, and it is not a barrel
  * regression.** The resolver takes a heritage clause in whatever form it arrives and counts
@@ -247,6 +250,9 @@ function renderSurfaceProbe(required: SurfaceType[]): string {
  * never needs either value in scope.
  */
 const PROBE = `import type {
+  ApprovalLifetime,
+  ApprovalOutcome,
+  ApprovalOutcomeCallback,
   ApprovalSubject,
   DeclaredToolAnnotations,
   GthAgentInterface,
@@ -294,6 +300,14 @@ export const decide: ToolApprovalCallback = (
     return { type: 'approve', scope: 'once' };
   }
   return { type: 'reject', message: 'declined' };
+};
+
+export const saved: string[] = [];
+
+export const onOutcome: ApprovalOutcomeCallback = (result: ApprovalOutcome): void => {
+  const landed: ApprovalLifetime = result.lifetime;
+  const asked: PendingToolInterrupt = result.pending;
+  if (landed === 'always' && result.decision === 'reject') saved.push(asked.name);
 };
 `;
 
@@ -471,12 +485,14 @@ describe('@gaunt-sloth/core root barrel type surface', () => {
       expect.arrayContaining(['RATER_OUTCOMES', 'ShellSafetyVerdictSchema'])
     );
 
-    // Two: `ToolApprovalCallback` is the one name in the embedder scenario the derivation can never
-    // demand. Nothing reachable from the barrel is declared to be one — it is a callback an
-    // embedder passes IN — so it is absent from `required` by construction, and deleting it from
-    // the probe would otherwise leave every test green. This line is its only guard.
+    // Two: the callbacks an embedder passes IN, which the derivation can never demand. Nothing
+    // reachable from the barrel is declared to be one, so each is absent from `required` by
+    // construction, and deleting one from the probe would otherwise leave every test green. These
+    // lines are their only guard. Add a line here for every new callback type the barrel exports.
     expect(PROBE).toContain('  ToolApprovalCallback,\n');
     expect(PROBE).toContain(': ToolApprovalCallback');
+    expect(PROBE).toContain('  ApprovalOutcomeCallback,\n');
+    expect(PROBE).toContain(': ApprovalOutcomeCallback');
   });
 
   it('goes red on a missing export, a bad literal and a wrong discriminator', () => {

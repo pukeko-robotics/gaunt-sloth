@@ -32,8 +32,18 @@
       "arity": 0
     },
     {
+      "name": "ApprovalLifetime",
+      "file": "core/types.d.ts",
+      "arity": 0
+    },
+    {
       "name": "ApprovalMatcher",
       "file": "config/shell-policy.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ApprovalOutcome",
+      "file": "core/types.d.ts",
       "arity": 0
     },
     {
