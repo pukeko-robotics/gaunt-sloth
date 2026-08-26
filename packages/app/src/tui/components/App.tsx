@@ -16,7 +16,11 @@ import type {
   TranscriptItem,
   TuiAppProps,
 } from '#src/tui/types.js';
-import type { AttackHaltAnswer, ToolApprovalScope } from '@gaunt-sloth/core/core/types.js';
+import type {
+  ApprovalLifetime,
+  AttackHaltAnswer,
+  ToolApprovalScope,
+} from '@gaunt-sloth/core/core/types.js';
 import type { LiveNegotiationRound } from '@gaunt-sloth/core/core/shell/negotiation.js';
 import type { ApprovalRung } from '@gaunt-sloth/core/config.js';
 import { buildRejectionMessage } from '@gaunt-sloth/core/core/shell/rejection.js';
@@ -597,11 +601,29 @@ export function App(props: TuiAppProps): React.ReactElement {
   // Resolve the currently-shown approval (the queue head) and commit a brief notice so the
   // decision reads in the transcript (TUI-C14 notice conventions). Dequeues the head so the next
   // queued approval (if any) surfaces. Approve carries the chosen scope; reject is fail-closed.
+  //
+  // [[EXT-150]] — **an answer that promises a FILE waits to be told what it got.** The two `always`
+  // answers ask for something the runner may not be able to do: [[EXT-149]] degrades an `always`
+  // whose write did not reach disk to the session answer it really is, and decides that only after
+  // this surface's decision has already been handed back. Written from the keystroke, the
+  // confirmation is a claim about a file nobody has tried to write yet — and on a checkout that
+  // cannot be written it says *saved to this project* beside core's own ERROR naming the file it
+  // could not save to. So `resolve` now answers back, and the two sticky notices are committed from
+  // what LANDED (DL-4: confirming something that did not happen is a transparency failure).
+  //
+  // **One notice, once, when it is known** — never an optimistic line corrected afterwards. A claim
+  // that appears and then changes is its own defect, and a user who read the first version has
+  // already acted on it.
   const resolveApproval = (
     decision: 'once' | 'session' | 'always' | 'reject' | 'reject-always'
   ): void => {
     const head = pendingApproval;
     if (!head) return;
+    // [[EXT-150]] — **dequeue on the keystroke, ahead of any wait.** The dialog leaving the screen
+    // is what makes the answer feel taken, and the next queued approval must surface at once. A
+    // dequeue moved below the wait would hold the interface for as long as a write takes, and hold
+    // it forever if the outcome never came — trading a false sentence for a wedged prompt.
+    setApprovalQueue((q) => q.slice(1));
     if (decision === 'reject' || decision === 'reject-always') {
       // [[TUI-C26]] §6 — *always reject* is a rejection that is also REMEMBERED: the runner records
       // a deny entry for this call, and the matcher consults it before anything else, so the next
@@ -611,8 +633,9 @@ export function App(props: TuiAppProps): React.ReactElement {
       // EXT-58 (§7): hand the model the moves it has (re-call with a justification, or a
       // different command) plus — when the rater named an already-granted alternative (§4.4) —
       // that tool and the clause saying it will not interrupt the user. This is the message the
-      // MODEL sees; the on-screen notice below is unchanged.
-      head.resolve({
+      // MODEL sees, and it is a different thing from the on-screen notice below: one is addressed
+      // to the agent and one to the person, and neither is derived from the other.
+      const outcome = head.resolve({
         type: 'reject',
         // [[EXT-107]] — `always`, which is what the menu label promised. The lifetime that actually
         // lands is core's to decide (a project file that cannot be written degrades to a session
@@ -624,52 +647,96 @@ export function App(props: TuiAppProps): React.ReactElement {
           verdict: head.pending.safetyVerdict,
         }),
       });
-      push({
-        kind: 'notice',
-        title: sticky ? 'Command refused and saved' : 'Command rejected',
-        lines: sticky
-          ? [
-              // Exactly what it does, and no more — which [[EXT-107]] makes a project file, so it
-              // also says how to undo it. A saved refusal the user cannot find is the one failure
-              // mode persisting it introduces, and the control that lifts it has to be named where
-              // the refusal is made. The call is deliberately NOT quoted here: a transcript notice
-              // is painted raw, and the command is the untrusted string this whole dialog frames.
-              'This exact call will be refused from now on, without asking again.',
-              'It is saved to this project, so it stays refused in new sessions.',
-              'Lift it with /approvals undeny, which lists what is refused and takes its number.',
-            ]
-          : ['The shell command was not run; the agent was told you declined.'],
-        tone: 'warn',
+      if (!sticky) {
+        // The ordinary refusal records nothing at all, so there is no outcome to wait for and
+        // nothing here that core could fail to keep.
+        push({
+          kind: 'notice',
+          title: 'Command rejected',
+          lines: ['The shell command was not run; the agent was told you declined.'],
+          tone: 'warn',
+        });
+        return;
+      }
+      // [[EXT-150]] — the refusal IS in force either way (core holds it in memory whatever the file
+      // does), so only its lifetime is in question, and only core can answer that. `null` — the
+      // session ended before the answer came — is read as *not saved*, the fail-closed direction
+      // for a claim.
+      void outcome.then((landed) => {
+        const savedToProject = landed?.lifetime === 'always';
+        push({
+          kind: 'notice',
+          // Exactly what it does, and no more — which [[EXT-107]] makes a project file, so it also
+          // says how to undo it. A saved refusal the user cannot find is the one failure mode
+          // persisting it introduces, and the control that lifts it has to be named where the
+          // refusal is made. `/approvals undeny` lists and lifts a session refusal too, so that
+          // line is true on both branches and stays on both. The call is deliberately NOT quoted
+          // here: a transcript notice is painted raw, and the command is the untrusted string this
+          // whole dialog frames.
+          title: savedToProject ? 'Command refused and saved' : 'Command refused for this session',
+          lines: [
+            savedToProject
+              ? 'This exact call will be refused from now on, without asking again.'
+              : 'This exact call will be refused for the rest of this session, without asking again.',
+            savedToProject
+              ? 'It is saved to this project, so it stays refused in new sessions.'
+              : 'It was not written to the project, so a new session will ask about it again.',
+            'Lift it with /approvals undeny, which lists what is refused and takes its number.',
+          ],
+          tone: 'warn',
+        });
       });
-    } else {
-      const scope: ToolApprovalScope = decision;
-      head.resolve({ type: 'approve', scope });
-      // CFG-28 (§4.2) / EXT-70 §6 — **a scope this dialog confirms is a scope the gate will
-      // honour.** A sticky approve is reachable only where `grantPreview` is present, which the
-      // runner attaches exactly where it would store something and withholds for a `catastrophic`
-      // verdict, a command it cannot statically resolve, and a call it cannot attribute. The keys
-      // are gated on the same value in `useInput`, so there is no keystroke that arrives here
-      // asking for a persistence the store will discard — which is why this says what the pressed
-      // scope means and needs no branch for a promise that could not be kept. **The gate is what
-      // carries that, not this text:** an honest confirmation does not make an approval the menu
-      // never offered safe, because the command runs either way.
-      const describe = (): string => {
-        // EXT-71 §3.1 — a grant is exactly the command the human saw, so the confirmation says
-        // that and not "this operation". A longer command that merely starts with it asks again.
-        if (scope === 'session')
-          return 'Approved — this exact command will not ask again this session.';
-        if (scope === 'always')
-          return 'Approved and remembered — this exact command is saved to the project allow-list.';
-        return 'Approved this single invocation only.';
-      };
+      return;
+    }
+    const scope: ToolApprovalScope = decision;
+    const outcome = head.resolve({ type: 'approve', scope });
+    // CFG-28 (§4.2) / EXT-70 §6 — **a scope this dialog confirms is a scope the gate will
+    // honour.** A sticky approve is reachable only where `grantPreview` is present, which the
+    // runner attaches exactly where it would store something and withholds for a `catastrophic`
+    // verdict, a command it cannot statically resolve, and a call it cannot attribute. The keys
+    // are gated on the same value in `useInput`, so there is no keystroke that arrives here
+    // asking for a persistence the store will discard. **The gate is what carries that, not this
+    // text:** an honest confirmation does not make an approval the menu never offered safe,
+    // because the command runs either way.
+    //
+    // [[EXT-150]] — **that argument covers `once` and `session` and stops short of `always`.** What
+    // the gate guarantees is that a control it offered has somewhere to store its answer; it says
+    // nothing about the store's file being writable, and [[EXT-149]] is the case where the offer was
+    // legitimate and the write still failed. `once` persists nothing and `session` is held in
+    // memory, so both are true the moment they are written; `always` is a claim about a file and
+    // waits for the answer below.
+    const describe = (landed: ApprovalLifetime): string => {
+      // EXT-71 §3.1 — a grant is exactly the command the human saw, so the confirmation says
+      // that and not "this operation". A longer command that merely starts with it asks again.
+      if (landed === 'always')
+        return 'Approved and remembered — this exact command is saved to the project allow-list.';
+      if (scope === 'always')
+        return 'Approved for this session only — it was not written to the project allow-list.';
+      if (landed === 'session')
+        return 'Approved — this exact command will not ask again this session.';
+      return 'Approved this single invocation only.';
+    };
+    if (scope !== 'always') {
       push({
         kind: 'notice',
         title: `Command approved (${scope})`,
-        lines: [describe()],
+        lines: [describe(scope)],
         tone: 'info',
       });
+      return;
     }
-    setApprovalQueue((q) => q.slice(1));
+    void outcome.then((landed) => {
+      const savedToProject = landed?.lifetime === 'always';
+      push({
+        kind: 'notice',
+        // The title carries a lifetime too, so it is written from the landed one for the same
+        // reason the body is — a heading saying `always` over a body saying *this session only*
+        // would be the contradiction moved up one line.
+        title: `Command approved (${savedToProject ? 'always' : 'session'})`,
+        lines: [describe(savedToProject ? 'always' : 'session')],
+        tone: 'info',
+      });
+    });
   };
 
   const handleSubmit = useCallback(

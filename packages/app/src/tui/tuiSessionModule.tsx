@@ -10,6 +10,7 @@ import {
 } from '@gaunt-sloth/core/core/toolOutputChannel.js';
 import { StatusLevel } from '@gaunt-sloth/core/core/types.js';
 import type {
+  ApprovalOutcome,
   AttackHaltAnswer,
   PendingAttackHalt,
   PendingToolInterrupt,
@@ -278,28 +279,64 @@ function createDebugBridge(config: GthConfig, resolvers: AgentResolvers) {
  * Fail-closed: if the session ends / the app unmounts while an approval is still pending, every
  * outstanding record is resolved as a reject (`abortPending`), so a suspended run can never hang
  * — matching the readline path's "anything not o/s/a → reject" default.
+ *
+ * [[EXT-150]] — **and the answer comes back the other way.** The runner reports what a decision
+ * LANDED as only after the callback above has returned (the write is attempted then), so the
+ * decision promise cannot carry it. `report` is wired to `runner.setApprovalOutcomeCallback` and
+ * settles a second promise per request, which is what `resolve` hands the App. The two are paired by
+ * the `pending` object's identity rather than by arrival order: this bridge holds a SET of
+ * outstanding records and the App a queue, so ordering is not a property either of them keeps, and a
+ * mis-paired outcome would confirm one call's persistence on another call's dialog.
  */
 function createApprovalBridge() {
   const listeners = new Set<(record: PendingApproval) => void>();
   // Records that have been emitted but not yet resolved (used by abortPending on teardown).
   const outstanding = new Set<PendingApproval>();
+  // [[EXT-150]] — how to settle the outcome promise of a request still waiting to hear one, keyed by
+  // the interrupt the runner will name. Cleared as each is settled, so nothing accumulates.
+  const awaitingOutcome = new Map<
+    PendingToolInterrupt,
+    (outcome: ApprovalOutcome | null) => void
+  >();
   return {
     /** Wired to `runner.setToolApprovalCallback`: returns a Promise the runner awaits. */
     request: (pending: PendingToolInterrupt): Promise<ToolApprovalDecision> =>
       new Promise<ToolApprovalDecision>((resolve) => {
         let settled = false;
+        // Created before the record so `resolve` can hand it back; the executor runs synchronously,
+        // so `settleOutcome` is the real resolver by the time anything can call it.
+        let settleOutcome: (outcome: ApprovalOutcome | null) => void = () => {};
+        const outcome = new Promise<ApprovalOutcome | null>((settleIt) => {
+          settleOutcome = settleIt;
+        });
+        awaitingOutcome.set(pending, (reported) => {
+          awaitingOutcome.delete(pending);
+          settleOutcome(reported);
+        });
         const record: PendingApproval = {
           pending,
           resolve: (decision) => {
-            if (settled) return;
-            settled = true;
-            outstanding.delete(record);
-            resolve(decision);
+            if (!settled) {
+              settled = true;
+              outstanding.delete(record);
+              resolve(decision);
+            }
+            // The same promise on every call, so the idempotent second `resolve` of a race is still
+            // told the outcome rather than handed one that can never settle.
+            return outcome;
           },
         };
         outstanding.add(record);
         for (const l of listeners) l(record);
       }),
+    /**
+     * [[EXT-150]] — wired to `runner.setApprovalOutcomeCallback`: hand the waiting request what its
+     * answer actually landed as. An outcome for a request nobody is waiting on (teardown got there
+     * first) is dropped, which is why the map entry is removed as it settles.
+     */
+    report: (outcome: ApprovalOutcome): void => {
+      awaitingOutcome.get(outcome.pending)?.(outcome);
+    },
     subscribe: (cb: (record: PendingApproval) => void) => {
       listeners.add(cb);
       return () => {
@@ -311,6 +348,10 @@ function createApprovalBridge() {
       for (const record of [...outstanding]) {
         record.resolve({ type: 'reject', message: 'Session ended before approval.' });
       }
+      // [[EXT-150]] — and tell everything still waiting that no outcome is coming. Fail-closed here
+      // means `null`, which the App renders as *no persistence claim*: a surface that hung waiting
+      // would be as bad as one that guessed, and guessing is what this node removes.
+      for (const settle of [...awaitingOutcome.values()]) settle(null);
     },
   };
 }
@@ -560,6 +601,12 @@ export async function createTuiSession(
     // command in the mounted <App> and awaits the human's scoped decision (o/s/a → approve,
     // anything else → reject, fail-closed).
     runner.setToolApprovalCallback((pending) => approvalBridge.request(pending));
+
+    // [[EXT-150]] — the return leg of the same conversation: what the answer LANDED as, which the
+    // runner knows only after the callback above has returned and the write has been attempted.
+    // Without it the dialog's confirmation can only describe the key that was pressed, and on a
+    // checkout the deny file cannot be written that confirmation contradicts core's own ERROR.
+    runner.setApprovalOutcomeCallback(approvalBridge.report);
 
     // [[TUI-C68]] §6.1 — the attack banner. An `attack` verdict ends the run, and wiring this is
     // what opts this session into being asked first; a surface that never wires it keeps the halt,

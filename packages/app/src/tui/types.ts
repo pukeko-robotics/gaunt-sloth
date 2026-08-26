@@ -1,5 +1,6 @@
 import type {
   AgentStreamEvent,
+  ApprovalOutcome,
   AttackHaltAnswer,
   PendingAttackHalt,
   PendingToolInterrupt,
@@ -29,10 +30,20 @@ import type { MouseSubscribe } from '#src/tui/useMouse.js';
  * (EXT-9 Phase B2): the {@link PendingToolInterrupt} the runner suspended on, plus a `resolve`
  * that hands the human's {@link ToolApprovalDecision} back to the awaiting runner callback.
  * Idempotent — calling `resolve` more than once is a no-op (the first decision wins).
+ *
+ * [[EXT-150]] — **`resolve` answers back.** It returns the {@link ApprovalOutcome} the runner
+ * reports once it has recorded the answer, which is the only way this surface can learn whether an
+ * `always` reached the project file: [[EXT-149]] decides that inside the runner, after the decision
+ * has already been handed back. `null` means no outcome will arrive — the session ended with the
+ * approval still in flight — and a surface must then claim no persistence at all.
+ *
+ * The return type is deliberately not optional. A field a surface may omit would let one keep
+ * compiling while it went on confirming the key that was pressed, which is the defect [[EXT-150]]
+ * exists to remove; a required promise makes every implementer say where its answer comes from.
  */
 export interface PendingApproval {
   pending: PendingToolInterrupt;
-  resolve: (decision: ToolApprovalDecision) => void;
+  resolve: (decision: ToolApprovalDecision) => Promise<ApprovalOutcome | null>;
 }
 
 /**
