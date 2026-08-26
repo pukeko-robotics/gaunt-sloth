@@ -812,4 +812,57 @@ describe('GthAgentRunner — [[EXT-107]] the persisted deny store', () => {
       expect(String(told[0][1])).toContain('still saved in it');
     });
   });
+
+  /**
+   * [[EXT-139]] — **the documented numbering order, which nothing pinned.**
+   *
+   * `refusalRecords()` states the order as config → saved → session and explains what it buys: the
+   * entries a user cannot lift here come first and stay put. [[EXT-107]]'s peer review reordered it
+   * (its mutation **M6**) and the whole suite stayed green — the only one of twelve that survived —
+   * because display and lift share the one builder, so a user still lifts what they saw and nothing
+   * else notices.
+   *
+   * What is left unheld is the order itself, which is what a user reads and types. This case is the
+   * only one in the suite where all three origins are in force at once, which is what makes it
+   * discriminating: M6 (saved before config) and its mirror (session before saved) both red on the
+   * first assertion.
+   *
+   * **This is not the `bypass` half of the node.** That one asked for an assertion that the saved
+   * deny store is read at `bypass` while the saved allow store is not — and both were already
+   * pinned, in `persistedDenials.spec.ts` ('still refuses at bypass, where every other check is
+   * off') and in `GthAgentRunner.spec.ts` ('does not touch the persisted grant file at bypass').
+   * Neither is a §8 hardline-floor test.
+   */
+  it('[[EXT-139]] numbers refusals config → saved → session, and lifts the number it showed', async () => {
+    // One of each: a config line the user wrote, an entry saved in the project file, and a refusal
+    // made at the prompt for this session only.
+    writeFileSync(denyFile, shellGrantFile(['npm publish']), 'utf8');
+    const { runner } = await runWith({
+      commands: ['rm -rf build'],
+      approvals: {
+        mode: 'write',
+        deny: [{ type: 'shell', matcher: 'exact', pattern: 'git push --force' }],
+      },
+      decide: () => ({ type: 'reject' as const, scope: 'session' as const }),
+    });
+
+    expect(runner.getRefusals()).toEqual([
+      { index: 1, description: 'git push --force', origin: 'config' },
+      { index: 2, description: 'npm publish', origin: 'persisted', recordedAt: expect.any(String) },
+      { index: 3, description: 'rm -rf build', origin: 'session', recordedAt: expect.any(String) },
+    ]);
+
+    // The number a user reads is the number they type: lifting 2 lifts the SAVED one, not the
+    // config line above it or the session one below.
+    expect(runner.liftRefusal(2)).toMatchObject({
+      outcome: 'lifted',
+      description: 'npm publish',
+      origin: 'persisted',
+    });
+    // …and the entries a user cannot lift keep the numbers they had.
+    expect(runner.getRefusals()).toEqual([
+      { index: 1, description: 'git push --force', origin: 'config' },
+      { index: 2, description: 'rm -rf build', origin: 'session', recordedAt: expect.any(String) },
+    ]);
+  });
 });
