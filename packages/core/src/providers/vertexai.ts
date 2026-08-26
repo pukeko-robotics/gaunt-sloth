@@ -44,6 +44,27 @@ export async function processJsonConfig(
     ...llmConfig,
     model: llmConfig.model || getCuratedFallbackModel('vertexai'),
     vertexai: true,
+    // CFG-58 — pick the provider from the config, not from whatever key happens to be exported.
+    // `@langchain/google` ranks an ambient `GOOGLE_API_KEY` ABOVE service-account credentials and
+    // ADC (its documented order), and `NodeApiClient.fetch` sets the api-key header ahead of both
+    // branches. So an AI Studio key exported for a `google-genai` profile silently turns a
+    // `vertexai` session into a Vertex EXPRESS session: express auth header, and an express URL
+    // with no project or location. The user configured Vertex; only the environment disagreed.
+    //
+    // An EMPTY STRING is what demotes it, and none of the near-misses do:
+    //   - `googleAuthOptions` alone does NOT work. The client builds `GoogleAuth` from it and then
+    //     never reaches that branch, because the api-key check comes first.
+    //   - `undefined` / `null` do NOT work either. The lookup is `params.apiKey ?? env`, and `??`
+    //     treats both as absent, so the ambient key flows straight back in.
+    //   - Unsetting the variable is not ours to do: this process also runs other providers, other
+    //     tools and spawned children.
+    // An empty string is not nullish, so the env lookup is skipped; it is falsy, so the constructor
+    // still builds ADC and `fetch` still takes the ADC branch. The library models this state
+    // itself — its own `hasApiKey()` is `typeof apiKey === 'string' && apiKey !== ''`.
+    //
+    // A key the user actually WROTE still wins, and must: an `apiKey` on the `llm` block is how
+    // Vertex express mode is requested on purpose. Only the ambient environment is demoted.
+    apiKey: llmConfig.apiKey || '',
   };
   delete configFields.type;
   delete configFields.apiKeyEnvironmentVariable;
