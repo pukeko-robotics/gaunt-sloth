@@ -138,6 +138,23 @@ describe('GS2-105 — the review rating call is one bounded, visible round trip'
   });
 
   describe('what a failed rating round reports', () => {
+    it('settles within the budget even when the call never returns at all', async () => {
+      // THE BEHAVIOURAL TEST, and the one that earns its place. Asserting that `timeout` was passed
+      // in the config proves plumbing, not behaviour: it stays green even if the runnable layer
+      // stops honouring the field. Here the mocked call never settles — exactly what a provider
+      // that ignores the timeout looks like — so only a bound this module owns can end it.
+      invokeMock.mockReturnValue(new Promise(() => {}));
+
+      const started = Date.now();
+      await runAfterAgent({ timeoutMs: 60 });
+      const elapsed = Date.now() - started;
+
+      expect(elapsed).toBeLessThan(2000);
+      expect(displayWarningMock).toHaveBeenCalledWith(
+        expect.stringContaining('did not finish within 60ms')
+      );
+    });
+
     it('says the call was cancelled when the budget aborts it', async () => {
       invokeMock.mockRejectedValue(Object.assign(new Error('aborted'), { name: 'AbortError' }));
 

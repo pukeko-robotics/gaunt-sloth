@@ -149,13 +149,37 @@ export function createReviewRateMiddleware(
         try {
           const ratingMessages = [...state.messages, new HumanMessage(ratingPrompt)];
 
-          // ONE call. The budget is a wall-clock bound on it: `timeout` is a standard
-          // `RunnableConfig` field, honoured at this layer even though `ChatOllama` ignores a
-          // model-level timeout, and it aborts rather than merely abandoning the request.
-          const answer = await boundModel.invoke(ratingMessages, {
-            ...getNewRunnableConfig(),
-            timeout: timeoutMs,
-          });
+          // ONE call, bounded TWICE, and the second bound is not redundant.
+          //
+          // `timeout` on the runnable config is the good bound: it is honoured at this layer (though
+          // `ChatOllama` ignores a model-level timeout) and it ABORTS the request rather than
+          // abandoning it. But it is someone else's implementation, and a middleware that owns no
+          // bound of its own cannot be tested for one — a spec could only assert that the field was
+          // passed, which stays green even if the field stops being honoured.
+          //
+          // So the deadline below is this module's own guarantee: whatever the provider or the
+          // runnable layer does, `afterAgent` settles within the budget. It races rather than
+          // cancels, so on this path the generation may still be running when we stop waiting —
+          // that is why it is the backstop and `timeout` is the primary.
+          const answer = await Promise.race([
+            boundModel.invoke(ratingMessages, {
+              ...getNewRunnableConfig(),
+              timeout: timeoutMs,
+            }),
+            new Promise<never>((_resolve, reject) => {
+              const timer = setTimeout(
+                () =>
+                  reject(
+                    Object.assign(new Error('rating budget exhausted'), {
+                      name: 'TimeoutError',
+                    })
+                  ),
+                timeoutMs
+              );
+              // Never hold the process open for a budget that is only a backstop.
+              timer.unref?.();
+            }),
+          ]);
 
           // Run whichever rating call the model made. Extra calls in one response are ignored
           // rather than replayed — the score is settled by the first, and honouring the rest is

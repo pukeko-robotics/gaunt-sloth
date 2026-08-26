@@ -437,6 +437,37 @@ describe('reviewModule', () => {
       expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(1);
     });
 
+    it('should exit non-zero when rating is enabled but no rating was produced (GS2-105)', async () => {
+      // Andrew's ruling, 2026-08-26: "no rater means fail. It should not return 0 if it failed to
+      // rate." That is already the behaviour; this pins it, so the GS2-105 work on the rating call
+      // itself cannot quietly cost us the exit code. A review that was never scored is not a review
+      // that passed, and the exit code is what every CI job downstream actually reads.
+      const configWithRating: GthConfig = {
+        ...mockConfig,
+        commands: {
+          review: {
+            rating: {
+              enabled: true,
+              passThreshold: 6,
+              errorOnReviewFail: true,
+            },
+          },
+        },
+      };
+
+      // No artifact: the model never called the rating tool, or the call was cancelled.
+      artifactStoreMock.getArtifact.mockReturnValueOnce(undefined);
+
+      const { review } = await import('#src/modules/reviewModule.js');
+      await review('test-source', 'test-preamble', 'test-diff', configWithRating, 'review');
+
+      expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(1);
+      // And it must SAY so rather than exiting non-zero in silence.
+      expect(consoleUtilsMock.displayWarning).toHaveBeenCalledWith(
+        expect.stringContaining('did not return a score')
+      );
+    });
+
     it('should display FAIL rating but not exit when errorOnReviewFail is false', async () => {
       const configWithRating: GthConfig = {
         ...mockConfig,
