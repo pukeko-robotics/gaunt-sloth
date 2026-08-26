@@ -8,7 +8,7 @@
 
 import { HumanMessage } from '@langchain/core/messages';
 import { tool } from '@langchain/core/tools';
-import { createAgent, createMiddleware, type AgentMiddleware } from 'langchain';
+import { createMiddleware, type AgentMiddleware } from 'langchain';
 import * as z from 'zod';
 
 import type { GthConfig, RatingConfig } from '@gaunt-sloth/core/config.js';
@@ -101,10 +101,18 @@ export function createReviewRateMiddleware(
     }
   );
 
-  const ratingAgent = createAgent({
-    model: gthConfig.llm,
-    tools: [rateTool],
-  });
+  // GS2-105 — ONE bound model call, not an agent loop.
+  //
+  // Rating is a single round trip by nature: read the conversation, emit one tool call carrying the
+  // score. Running it through an agent loop adds turns it has no use for, and a small model exploits
+  // every one of them — measured on `gemma4:12b`, the model called the rating tool and the loop fed
+  // the result back and asked again, four times, never emitting a final answer. The loop, not the
+  // model, is what has no terminating condition here: the score is already stored after the first
+  // call, so every later turn is pure cost.
+  const boundModel =
+    typeof gthConfig.llm?.bindTools === 'function'
+      ? gthConfig.llm.bindTools([rateTool])
+      : undefined;
 
   // The budget is read here, from the caller's own rating config, and NOT folded into
   // `normalizedConfig` — that object is spread into the stored artifact, and adding a field to it
@@ -130,19 +138,34 @@ export function createReviewRateMiddleware(
         // an unexplained pause, with nothing to say a call is still in flight.
         displayInfo('\nScoring the review…');
 
+        if (!boundModel) {
+          displayWarning(
+            'ReviewRateMiddleware: the configured model cannot be given tools, so no rating ' +
+              'could be requested.'
+          );
+          return state;
+        }
+
         try {
           const ratingMessages = [...state.messages, new HumanMessage(ratingPrompt)];
 
-          await ratingAgent.invoke(
-            {
-              messages: ratingMessages,
-            },
-            // `timeout` is a standard `RunnableConfig` field that LangChain turns into an
-            // AbortSignal, so the request is genuinely cancelled rather than merely abandoned.
-            // Abandoning is what let a still-running generation hold the queue while the harness
-            // retried behind it.
-            { ...getNewRunnableConfig(), timeout: timeoutMs }
+          // ONE call. The budget is a wall-clock bound on it: `timeout` is a standard
+          // `RunnableConfig` field, honoured at this layer even though `ChatOllama` ignores a
+          // model-level timeout, and it aborts rather than merely abandoning the request.
+          const answer = await boundModel.invoke(ratingMessages, {
+            ...getNewRunnableConfig(),
+            timeout: timeoutMs,
+          });
+
+          // Run whichever rating call the model made. Extra calls in one response are ignored
+          // rather than replayed — the score is settled by the first, and honouring the rest is
+          // how a scoring step turns into an argument with itself.
+          const calls = (answer?.tool_calls ?? []).filter(
+            (call) => call.name === REVIEW_RATE_TOOL_NAME
           );
+          if (calls[0]) {
+            await rateTool.invoke(calls[0].args as RateResponse);
+          }
 
           const artifact = getArtifact(REVIEW_RATE_ARTIFACT_KEY);
           if (!artifact) {
