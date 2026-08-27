@@ -20,14 +20,41 @@ import { displayWarning } from '#src/utils/consoleUtils.js';
  * than it reads. This is the one place that turns that silence into a message, so a second native
  * provider does not have to reinvent it.
  *
- * **Scope: paths INSIDE a `configuration` block, and nothing else.** A top-level key of the `llm`
- * block that the chosen provider does not read — `llm.defaultHeaders` on `xai`, say — is the same
- * silently-ignored-key defect, and this module does not cover it: the loose schema accepts it, no
- * factory reads it, and nothing is printed. Guidance that sends a setting "to the top level" is
- * therefore only safe for a field that provider actually has, which is why every `guidance` here
- * names the replacement rather than a direction.
- *
  * Use it from a native-client factory only, and pass the paths that factory genuinely consumes.
+ *
+ * **Scope: an `llm` setting that goes nowhere because of WHERE it was written.** Two shapes of that,
+ * needing two messages because the reason differs:
+ *
+ * - a path inside a `configuration` block the provider cannot use — {@link warnUnusedConfiguration},
+ *   with {@link warnUnappliedConfigurationPath} for a path the factory declares it reads and then
+ *   skips as empty;
+ * - two honoured locations that set the same thing, one of which silently wins —
+ *   {@link warnShadowedField}.
+ *
+ * **A top-level `llm` field the provider class does not read at all — `llm.defaultHeaders` on `xai`
+ * — is the same silently-ignored-key defect and is still NOT covered here.** It cannot be, without
+ * naming providers: `llmConfigSchema` is a `z.looseObject` and every factory spreads the whole block
+ * into its class on purpose, which is how OpenRouter's `provider`, `models` and `route` work with no
+ * schema entry each. One mechanism, two opposite meanings.
+ *
+ * **Measuring it — build the class with and without the field, and see whether anything moved —
+ * was built and reverted, because it CANNOT work on all providers and cannot tell that it can't.**
+ * `ChatGoogle` (so `google-genai` and `vertexai`) copies every field it is given, read or not, into
+ * the same bag, and consumes it later at request-build time. Measured on a plain google config: a
+ * canary key no provider could read moves `params.<key>`, `apiClient.params.<key>`,
+ * `lc_kwargs.<key>` and their nested twins — and `temperature`, which that model genuinely uses,
+ * moves exactly those same five paths under its own name. A used field and an ignored one are
+ * structurally identical, so the probe answered "temperature and topK reach nothing" for a working
+ * config with none of its own refusal gates firing. Nor does a positive control rescue it:
+ * `ChatGoogle` DOES hoist `model` to a top-level property while not hoisting `temperature`, so
+ * "this class hoists what it reads" is false of the very class that needs it. Only a per-provider
+ * list of consumable names would close the gap, which is the enumeration this codebase avoids.
+ * See [[CFG-46]] for the full measurement. Until a provider-independent signal exists, silence is
+ * the safer half of the trade — a false warning on a working field teaches users to ignore the
+ * message, and the fields it would hit are the ones the docs recommend.
+ *
+ * Guidance that sends a setting "to the top level" therefore has to name a field that provider
+ * genuinely has, which is why every `guidance` here names the replacement rather than a direction.
  */
 
 /** A `configuration` sub-object is a plain record; anything else cannot carry consumable settings. */
@@ -151,34 +178,66 @@ export function warnUnusedConfiguration({
 }
 
 /**
- * Warn when a `configuration` path the factory DOES consume silently beats a top-level field of the
- * `llm` block that sets the same thing.
+ * Warn when one honoured location of the `llm` block silently beats another that sets the same
+ * thing.
  *
  * Neither value is unusable here and neither location is wrong, so this is not a case for
  * {@link warnUnusedConfiguration}: both are honoured surfaces, and the only defect is that one wins
  * without saying so. The user's config then reads as two settings and behaves as one.
  *
+ * **The two paths are arbitrary, and they have to be**, because the precedence in this block is not
+ * one direction. For `baseURL` the `configuration` value beats the top-level field; for the
+ * OpenRouter attribution headers the top-level `siteUrl`/`siteName` beat the header inside the
+ * block, and the losing path is a nested one that shares no name with the winner. A helper that
+ * took a single `field` and hardcoded which side of it wins could only ever announce the first of
+ * those, which is how the second stayed silent.
+ *
  * Values are never printed — a base URL can carry credentials — so the message names the two paths
  * and which of them takes effect.
  *
- * @param appliedValue The value the factory actually applied. Pass the result of the SAME expression
- *   that decides it, never a second copy of the test, for the reason given on
- *   {@link warnUnappliedConfigurationPath}.
+ * **Named fields, and the reason the names are not the whole guard.** `ignoredPath`/`appliedPath`
+ * are two strings and `ignoredValue`/`appliedValue` two `unknown`s, so a transposition type-checks
+ * either way round; the rendered message still contains both paths and only their ROLES are
+ * swapped, which no `toContain` on either path can see. What catches it is in
+ * `configurationPassthrough.spec.ts`: the paths are pinned IN THEIR SLOTS in the rendered sentence,
+ * and the values by the discriminating pair around the empty-value guard below (an empty LOSER is
+ * silent, an empty WINNER is not).
  */
-export function warnConfigurationOverridesTopLevelField(
-  provider: string,
-  field: string,
-  topLevelValue: unknown,
-  appliedValue: unknown
-): void {
-  // Nothing to lose: no top-level field set, or the block's value was not applied over it.
-  if (topLevelValue === undefined || topLevelValue === null || topLevelValue === '') return;
+export interface ShadowedFieldWarning {
+  /** The gth provider namespace, printed to the user (`openrouter`, …). */
+  provider: string;
+  /**
+   * The path whose value is NOT used, relative to the `llm` block and printed with an `llm.`
+   * prefix — `baseURL`, or `configuration.defaultHeaders.HTTP-Referer`.
+   */
+  ignoredPath: string;
+  /** The path whose value IS used, in the same form. */
+  appliedPath: string;
+  /** The value at {@link ignoredPath}, as the user wrote it. Never printed. */
+  ignoredValue: unknown;
+  /**
+   * The value the factory actually applied. Pass the result of the SAME expression that decides it,
+   * never a second copy of the test, for the reason given on {@link warnUnappliedConfigurationPath}.
+   * Never printed.
+   */
+  appliedValue: unknown;
+}
+
+export function warnShadowedField({
+  provider,
+  ignoredPath,
+  appliedPath,
+  ignoredValue,
+  appliedValue,
+}: ShadowedFieldWarning): void {
+  // Nothing to lose: the losing location is unset, or carries no usable value of its own.
+  if (ignoredValue === undefined || ignoredValue === null || ignoredValue === '') return;
   if (appliedValue === undefined || appliedValue === null) return;
-  // The same endpoint written twice is redundant, not a conflict, and warning on it would train
+  // The same setting written twice is redundant, not a conflict, and warning on it would train
   // users to ignore the message.
-  if (topLevelValue === appliedValue) return;
+  if (ignoredValue === appliedValue) return;
   displayWarning(
-    `Ignoring llm.${field} — the "${provider}" provider also has llm.configuration.${field} set, ` +
+    `Ignoring llm.${ignoredPath} — the "${provider}" provider also has llm.${appliedPath} set, ` +
       `and that one takes precedence. Set only one of the two so the "llm" block reads the way it ` +
       `behaves.`
   );

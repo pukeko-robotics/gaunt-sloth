@@ -783,3 +783,196 @@ describe('CFG-34 — findUnusedConfigurationPaths', () => {
     ).toBe(true);
   });
 });
+
+/**
+ * CFG-46 — `warnShadowedField`, and the transposition its named fields do NOT prevent.
+ *
+ * The lesson this module already paid for: moving to an object with named fields did not make a
+ * swap a compile error, because two strings type-check in two string fields either way round. Both
+ * pairs here are transposable, and the message would still contain every path and read exactly
+ * backwards. So the paths are pinned in their SLOTS in the rendered sentence, and the values by
+ * the pair around the empty-value guard — an empty LOSER is nothing to warn about, an empty winner
+ * is not the same statement.
+ */
+describe('CFG-46 — warnShadowedField says which of two honoured locations wins', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('puts the losing path and the winning path in their own slots', async () => {
+    const { warnShadowedField } = await import('#src/providers/configurationPassthrough.js');
+
+    warnShadowedField({
+      provider: 'openrouter',
+      ignoredPath: 'alpha',
+      appliedPath: 'beta.gamma',
+      ignoredValue: 'https://loser.example.com/',
+      appliedValue: 'https://winner.example.com/',
+    });
+
+    const warning = onlyWarning();
+    // The whole sentence, not two independent `toContain`s: with the two paths transposed the
+    // message still mentions both and only their roles are wrong, which is the mistake the named
+    // fields cannot catch on their own.
+    expect(warning).toContain(
+      'Ignoring llm.alpha — the "openrouter" provider also has llm.beta.gamma set, and that one takes precedence.'
+    );
+    expect(warning).not.toContain('Ignoring llm.beta.gamma');
+    // Neither value is quoted back: either can carry a credential.
+    expect(warning).not.toContain('loser.example.com');
+    expect(warning).not.toContain('winner.example.com');
+  });
+
+  it('is silent when the losing location carries nothing, and speaks when the winner does not', async () => {
+    const { warnShadowedField } = await import('#src/providers/configurationPassthrough.js');
+
+    // Nothing is lost when the loser is empty, so there is nothing to say.
+    for (const ignoredValue of [undefined, null, '']) {
+      warnShadowedField({
+        provider: 'openrouter',
+        ignoredPath: 'alpha',
+        appliedPath: 'beta',
+        ignoredValue,
+        appliedValue: 'applied',
+      });
+    }
+    expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+
+    // The same pair the other way round is a different statement and is NOT silent — which is what
+    // makes the cell above discriminate a value transposition rather than merely describe one.
+    warnShadowedField({
+      provider: 'openrouter',
+      ignoredPath: 'alpha',
+      appliedPath: 'beta',
+      ignoredValue: 'applied',
+      appliedValue: '',
+    });
+    expect(onlyWarning()).toContain('Ignoring llm.alpha');
+  });
+
+  it('says nothing when the two locations agree, or when the winner was never applied', async () => {
+    const { warnShadowedField } = await import('#src/providers/configurationPassthrough.js');
+
+    warnShadowedField({
+      provider: 'openrouter',
+      ignoredPath: 'alpha',
+      appliedPath: 'beta',
+      ignoredValue: 'same',
+      appliedValue: 'same',
+    });
+    for (const appliedValue of [undefined, null]) {
+      warnShadowedField({
+        provider: 'openrouter',
+        ignoredPath: 'alpha',
+        appliedPath: 'beta',
+        ignoredValue: 'set',
+        appliedValue,
+      });
+    }
+
+    expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * CFG-46 — the attribution headers, whose precedence runs OPPOSITE to `baseURL`'s.
+ *
+ * `configuration.baseURL` beats the top-level `baseURL`, and that has been announced. The
+ * attribution headers go the other way — the block feeds `siteUrl`/`siteName` only as a fallback,
+ * so a top-level value wins — and that direction said nothing at all, which left the user unable to
+ * work out from either the behaviour or the messages which level wins. The precedence itself is
+ * deliberately unchanged here; what ends is the asymmetry in what is said about it.
+ */
+describe('CFG-46 — openrouter announces the top level beating the block, too', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    systemUtilsMock.env = { OPEN_ROUTER_API_KEY: 'test-key' };
+  });
+
+  it('names both attribution headers, in the losing slot, when the top level beats them', async () => {
+    const { processJsonConfig } = await import('#src/providers/openrouter.js');
+
+    await processJsonConfig({
+      type: 'openrouter',
+      model: 'x-ai/grok',
+      siteUrl: 'https://top-level.example.com/',
+      siteName: 'Top Level Name',
+      configuration: {
+        defaultHeaders: {
+          'HTTP-Referer': 'https://from-block.example.com/',
+          'X-Title': 'Block Name',
+        },
+      },
+    } as never);
+
+    expect(consoleUtilsMock.displayWarning).toHaveBeenCalledTimes(2);
+    const warnings = consoleUtilsMock.displayWarning.mock.calls.map((call) => String(call[0]));
+    expect(warnings[0]).toContain(
+      'Ignoring llm.configuration.defaultHeaders.HTTP-Referer — the "openrouter" provider also has llm.siteUrl set, and that one takes precedence.'
+    );
+    expect(warnings[1]).toContain(
+      'Ignoring llm.configuration.defaultHeaders.X-Title — the "openrouter" provider also has llm.siteName set, and that one takes precedence.'
+    );
+    // No value from either location is printed.
+    for (const warning of warnings) {
+      expect(warning).not.toContain('example.com');
+      expect(warning).not.toContain('Block Name');
+    }
+    // Precedence is described, not altered.
+    const built = chatOpenRouterConstructorMock.mock.calls[0][0];
+    expect(built.siteUrl).toBe('https://top-level.example.com/');
+    expect(built.siteName).toBe('Top Level Name');
+  });
+
+  it('stays silent — and applies the block — when nothing beats it', async () => {
+    const { processJsonConfig } = await import('#src/providers/openrouter.js');
+
+    await processJsonConfig({
+      type: 'openrouter',
+      model: 'x-ai/grok',
+      configuration: {
+        defaultHeaders: {
+          'HTTP-Referer': 'https://from-block.example.com/',
+          'X-Title': 'Block Name',
+        },
+      },
+    } as never);
+
+    expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+    const built = chatOpenRouterConstructorMock.mock.calls[0][0];
+    expect(built.siteUrl).toBe('https://from-block.example.com/');
+    expect(built.siteName).toBe('Block Name');
+  });
+
+  it('stays silent when the two locations carry the same attribution', async () => {
+    const { processJsonConfig } = await import('#src/providers/openrouter.js');
+
+    await processJsonConfig({
+      type: 'openrouter',
+      model: 'x-ai/grok',
+      siteUrl: 'https://same.example.com/',
+      configuration: { defaultHeaders: { 'HTTP-Referer': 'https://same.example.com/' } },
+    } as never);
+
+    expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+  });
+
+  it('does not ALSO report the beaten header as an unusable configuration path', async () => {
+    const { processJsonConfig } = await import('#src/providers/openrouter.js');
+
+    await processJsonConfig({
+      type: 'openrouter',
+      model: 'x-ai/grok',
+      siteUrl: 'https://top-level.example.com/',
+      configuration: { defaultHeaders: { 'HTTP-Referer': 'https://from-block.example.com/' } },
+    } as never);
+
+    // `defaultHeaders.HTTP-Referer` is a path this factory DOES consume, so the orphaned-config
+    // message must keep its hands off it: the header is not unusable, it was outranked, and those
+    // are different things to tell a user.
+    const warning = onlyWarning();
+    expect(warning).toContain('takes precedence');
+    expect(warning).not.toContain('is not passed through');
+    expect(warning).not.toContain('no usable value');
+  });
+});
