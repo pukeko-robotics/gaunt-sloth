@@ -795,34 +795,59 @@ export async function hasAnyConfig(
  * selection rather than at config load. Forking the walk to silence it would mean a second
  * inheritance engine; ignoring `extends` would mean silently dropping an inherited `tui`.
  *
+ * The chain is walked for BOTH layers, each on the branch a run walks it on: the project layer
+ * always, the global layer only when NO project layer was discovered (see the note at that call).
+ * The global half is the branch `--global` always takes, where the global layer is the only layer
+ * and an inherited `tui` is therefore the whole answer rather than an underlay.
+ *
  * Ordering: this is DETECTION, so per the GS2-11 invariant above it must run before any
  * {@link initConfig} in the process — as it does, alongside {@link hasAnyConfig} in `startSession`.
  */
 export async function loadConfiguredTui(
   commandLineConfigOverrides: CommandLineConfigOverrides
 ): Promise<boolean | undefined> {
-  const projectTui = await readProjectConfiguredTui(commandLineConfigOverrides);
-  if (projectTui !== undefined) {
-    return projectTui;
+  const discovered = findProjectConfigPath(commandLineConfigOverrides);
+  if (discovered) {
+    const projectTui = await readProjectConfiguredTui(discovered.path, commandLineConfigOverrides);
+    if (projectTui !== undefined) {
+      return projectTui;
+    }
   }
   const globalRaw = await loadGlobalRawConfigUnvalidated(
     globalLayerProfile(commandLineConfigOverrides)
   );
-  const globalTui = globalRaw?.raw.tui;
+  if (!globalRaw) {
+    return undefined;
+  }
+  let raw = globalRaw.raw;
+  // The global layer's `extends` is resolved on EXACTLY the branch a run resolves it: only when no
+  // project layer was discovered. That is the branch `initConfig` composes the chain on, and the
+  // one `--global` always takes; with a project layer present the run underlays the RAW global
+  // config ({@link applyGlobalConfigBase}) and never walks its `extends`, so a `tui` reached
+  // through the chain is not part of that run and must not decide the surface either. The scope
+  // travels with the run too — `globalOnly` only under `--global`, because only then are profile
+  // names confined to `~/.gsloth/.gsloth-settings/`.
+  if (!discovered && typeof raw.extends === 'string') {
+    raw = await resolveConfigExtends(raw, globalLayerProfile(commandLineConfigOverrides), {
+      globalOnly: commandLineConfigOverrides.global,
+    });
+  }
+  const globalTui = raw.tui;
   return typeof globalTui === 'boolean' ? globalTui : undefined;
 }
 
-/** The PROJECT layer's `tui`, or undefined when there is no project config or it does not set it. */
+/**
+ * The PROJECT layer's `tui`, or undefined when it does not set it. Takes the already-discovered
+ * config path so the caller can ask the same discovery question once and use the answer for both
+ * layers — the global branch needs to know whether a project layer exists at all.
+ */
 async function readProjectConfiguredTui(
+  discoveredPath: string,
   commandLineConfigOverrides: CommandLineConfigOverrides
 ): Promise<boolean | undefined> {
-  const discovered = findProjectConfigPath(commandLineConfigOverrides);
-  if (!discovered) {
-    return undefined;
-  }
   let raw: Record<string, unknown>;
   try {
-    raw = await readRawConfigAtPath(discovered.path);
+    raw = await readRawConfigAtPath(discoveredPath);
   } catch (e) {
     // Quiet by design — see the note on loadConfiguredTui. initConfig reports this same file.
     displayDebug(e instanceof Error ? e : String(e));
@@ -848,12 +873,35 @@ async function readProjectConfiguredTui(
 }
 
 /**
+ * CFG-56 / CFG-57 — the one statement of why `global` and `customConfigPath` cannot travel
+ * together: both choose WHERE configuration comes from, so honouring either makes the other a
+ * silent no-op. Exported because the CLI refuses the pair at flag-parse time (before anything is
+ * read) and the loader refuses it wherever config is BUILT; two spellings of one rule is how the
+ * two guards drift apart.
+ */
+export const CONFLICTING_CONFIG_SOURCES_MESSAGE =
+  '--global and --config select conflicting configuration sources ' +
+  '(the global config in ~/.gsloth versus the named file). Pass only one.';
+
+/**
  * Initialize configuration by loading from available config files
  * @returns The loaded GthConfig
  */
 export async function initConfig(
   commandLineConfigOverrides: CommandLineConfigOverrides
 ): Promise<GthConfig> {
+  // CFG-57 — the CLI's refusal of the `-g` + `-c` pair covers the flags; this covers every other
+  // way a config gets built, which is the only refusal an embedder calling initConfig directly can
+  // ever receive. Without it the pair silently loads the global config and ignores the named file.
+  //
+  // FIRST, ahead of the `-c` existence check below: with both set, that check reports "does not
+  // exist" about a file the run was never going to read, sending the user to look for a path that
+  // is not their problem. A {@link ConfigDiscoveryError} reaches a person exactly as the CLI's own
+  // refusal does — the top-level guard prints the message and exits 1.
+  if (commandLineConfigOverrides.global && commandLineConfigOverrides.customConfigPath) {
+    throw new ConfigDiscoveryError(CONFLICTING_CONFIG_SOURCES_MESSAGE);
+  }
+
   if (
     commandLineConfigOverrides.customConfigPath &&
     !existsSync(commandLineConfigOverrides.customConfigPath)

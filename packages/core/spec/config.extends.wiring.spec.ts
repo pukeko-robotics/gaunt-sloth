@@ -22,10 +22,13 @@ vi.mock('@langchain/anthropic', () => ({ ChatAnthropic: ChatAnthropicMock }));
 
 vi.mock('#src/utils/globalConfigUtils.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('#src/utils/globalConfigUtils.js')>();
-  const { resolve: resolvePath } = await import('node:path');
   return {
     ...actual,
-    getGlobalGslothConfigReadPath: (filename: string) => resolvePath(hoisted.globalDir, filename),
+    // Only the DIR is redirected: the profile segment stays production code
+    // (`resolveGlobalConfigPath`), so a profile-scoped global lookup can never silently resolve to
+    // the unscoped path here — the reimplementation this seam exists to avoid.
+    getGlobalGslothConfigReadPath: (filename: string, identityProfile?: string) =>
+      actual.resolveGlobalConfigPath(hoisted.globalDir, filename, identityProfile),
   };
 });
 

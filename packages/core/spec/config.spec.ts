@@ -68,13 +68,28 @@ const systemUtilsMock = {
 };
 vi.mock('#src/utils/systemUtils.js', () => systemUtilsMock);
 
+/**
+ * The ABSENT-global sentinel, honouring the profile argument the production resolver takes
+ * (CFG-57): a profile-scoped lookup must resolve somewhere OTHER than the unscoped path, or a mock
+ * answers one question for two different asks and hides a scoping defect.
+ *
+ * It is a sentinel, not a path: `node:fs` is mocked in this file and every path is matched by
+ * exact equality or by `includes('.gsloth.config.json')`, so it must (a) stay a plain string —
+ * `resolve()` would produce a drive-lettered path on win32 that no matcher here recognises — and
+ * (b) never contain a real config filename, which is what keeps "absent" absent. The
+ * `.gsloth-settings` segment comes from the production constant so the profile spelling cannot
+ * drift.
+ */
+const absentGlobalConfigPath = (_filename: string, identityProfile?: string): string =>
+  identityProfile
+    ? `/mock/global-absent/${GSLOTH_SETTINGS_DIR}/${identityProfile}/no-such-config`
+    : '/mock/global-absent/no-such-config';
+
 // Global config layer (CFG-3). By default the global path is a sentinel that the
 // fs mocks below treat as non-existent, so existing tests see no global config.
 // Individual tests override getGlobalGslothConfigReadPath to point at a real path.
 const globalConfigUtilsMock = {
-  getGlobalGslothConfigReadPath: vi
-    .fn()
-    .mockImplementation(() => '/mock/global-absent/no-such-config'),
+  getGlobalGslothConfigReadPath: vi.fn().mockImplementation(absentGlobalConfigPath),
   getGlobalGslothConfigWritePath: vi
     .fn()
     .mockImplementation((filename: string) => `/mock/global-write/${filename}`),
@@ -114,9 +129,7 @@ describe('config', async () => {
     // something other than the interactive session they claim to.
     systemUtilsMock.env.TERM = 'xterm-256color';
     // Default: global config path is absent (sentinel never matched by fs mocks).
-    globalConfigUtilsMock.getGlobalGslothConfigReadPath.mockImplementation(
-      () => '/mock/global-absent/no-such-config'
-    );
+    globalConfigUtilsMock.getGlobalGslothConfigReadPath.mockImplementation(absentGlobalConfigPath);
     globalConfigUtilsMock.getGlobalGslothConfigWritePath.mockImplementation(
       (filename: string) => `/mock/global-write/${filename}`
     );
@@ -709,11 +722,15 @@ describe('config', async () => {
       globalConfig: Record<string, unknown> | undefined,
       projectConfig: Record<string, unknown>
     ) {
-      globalConfigUtilsMock.getGlobalGslothConfigReadPath.mockImplementation((filename: string) => {
-        if (filename === PROJECT_JSON_MARKER) return GLOBAL_JSON_PATH;
-        // JS/MJS global variants resolve to non-existent sentinel paths.
-        return `/mock/global-absent/${filename}`;
-      });
+      globalConfigUtilsMock.getGlobalGslothConfigReadPath.mockImplementation(
+        (filename: string, identityProfile?: string) => {
+          // The global config sits at the UNSCOPED path, which is where a run without `--global`
+          // reads it; a profile-scoped lookup must miss it rather than be served the same file.
+          if (!identityProfile && filename === PROJECT_JSON_MARKER) return GLOBAL_JSON_PATH;
+          // JS/MJS global variants resolve to non-existent sentinel paths.
+          return absentGlobalConfigPath(filename, identityProfile);
+        }
+      );
 
       fileUtilsMock.getGslothConfigReadPath.mockImplementation(
         (filename: string) => `/mock/read/${filename}`
@@ -818,10 +835,12 @@ describe('config', async () => {
     });
 
     it('Should ignore (and warn about) malformed global JSON without breaking project load', async () => {
-      globalConfigUtilsMock.getGlobalGslothConfigReadPath.mockImplementation((filename: string) => {
-        if (filename === PROJECT_JSON_MARKER) return GLOBAL_JSON_PATH;
-        return `/mock/global-absent/${filename}`;
-      });
+      globalConfigUtilsMock.getGlobalGslothConfigReadPath.mockImplementation(
+        (filename: string, identityProfile?: string) =>
+          !identityProfile && filename === PROJECT_JSON_MARKER
+            ? GLOBAL_JSON_PATH
+            : absentGlobalConfigPath(filename, identityProfile)
+      );
       fileUtilsMock.getGslothConfigReadPath.mockImplementation(
         (filename: string) => `/mock/read/${filename}`
       );
@@ -860,10 +879,12 @@ describe('config', async () => {
 
     /** Serve a global JSON config while NO project config file of any format exists. */
     function setupGlobalOnly(globalConfig: Record<string, unknown> | undefined) {
-      globalConfigUtilsMock.getGlobalGslothConfigReadPath.mockImplementation((filename: string) => {
-        if (filename === PROJECT_JSON_MARKER) return GLOBAL_JSON_PATH;
-        return `/mock/global-absent/${filename}`;
-      });
+      globalConfigUtilsMock.getGlobalGslothConfigReadPath.mockImplementation(
+        (filename: string, identityProfile?: string) =>
+          !identityProfile && filename === PROJECT_JSON_MARKER
+            ? GLOBAL_JSON_PATH
+            : absentGlobalConfigPath(filename, identityProfile)
+      );
       fileUtilsMock.getGslothConfigReadPath.mockImplementation(
         (filename: string) => `/mock/read/${filename}`
       );
@@ -944,7 +965,7 @@ describe('config', async () => {
 
     it('hasAnyConfig returns true when a project config exists', async () => {
       globalConfigUtilsMock.getGlobalGslothConfigReadPath.mockImplementation(
-        () => '/mock/global-absent/no-such-config'
+        absentGlobalConfigPath
       );
       fileUtilsMock.getGslothConfigReadPath.mockImplementation(
         (filename: string) => `/mock/read/${filename}`
@@ -1119,7 +1140,7 @@ describe('config', async () => {
         PROJECT_JSON_MARKER
       );
       globalConfigUtilsMock.getGlobalGslothConfigReadPath.mockImplementation(
-        () => '/mock/global-absent/no-such-config'
+        absentGlobalConfigPath
       );
       fileUtilsMock.getGslothConfigReadPath.mockImplementation(
         (filename: string) => `/mock/read/${filename}`
@@ -1162,7 +1183,7 @@ describe('config', async () => {
      */
     const setupPlainProjectOnly = () => {
       globalConfigUtilsMock.getGlobalGslothConfigReadPath.mockImplementation(
-        () => '/mock/global-absent/no-such-config'
+        absentGlobalConfigPath
       );
       fileUtilsMock.getGslothConfigReadPath.mockImplementation(
         (filename: string) => `/mock/read/${filename}`
@@ -1225,7 +1246,7 @@ describe('config', async () => {
       // gated on its absence so an explicit path keeps behaving as an explicit path.
       const customConfigPath = customPathPrefix + '.json';
       globalConfigUtilsMock.getGlobalGslothConfigReadPath.mockImplementation(
-        () => '/mock/global-absent/no-such-config'
+        absentGlobalConfigPath
       );
       fileUtilsMock.getGslothConfigReadPath.mockImplementation(
         (filename: string) => `/mock/read/${filename}`

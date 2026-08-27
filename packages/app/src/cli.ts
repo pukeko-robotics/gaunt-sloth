@@ -19,6 +19,7 @@ import { argv, exit, getSlothVersion, readStdin } from '@gaunt-sloth/core/utils/
 import { commandSkipsStdin, resolveInvokedCommandName } from '#src/utils/stdinPolicy.js';
 import { guardProgramConfigErrors } from '#src/utils/configErrorGuard.js';
 import type { CommandLineConfigOverrides } from '@gaunt-sloth/core/config.js';
+import { CONFLICTING_CONFIG_SOURCES_MESSAGE } from '@gaunt-sloth/core/config.js';
 
 import { coerceBooleanOrString, displayError } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { installCrashHandler } from '@gaunt-sloth/core/utils/crashHandler.js';
@@ -79,13 +80,12 @@ if (program.getOptionValue('config')) {
 }
 // CFG-56 — `-g/--global` and `-c/--config` both choose WHERE configuration comes from, and
 // honouring either one makes the other a silent no-op. Refuse the pair here, before anything is
-// read, rather than quietly loading one source while the user watches for the other.
+// read, rather than quietly loading one source while the user watches for the other. The loader
+// refuses the same pair wherever config is built (CFG-57), so an embedder is covered too; both
+// speak the one shared sentence.
 if (program.getOptionValue('global')) {
   if (cliConfigOverrides.customConfigPath) {
-    displayError(
-      '--global and --config select conflicting configuration sources ' +
-        '(the global config in ~/.gsloth versus the named file). Pass only one.'
-    );
+    displayError(CONFLICTING_CONFIG_SOURCES_MESSAGE);
     exit(1);
   }
   cliConfigOverrides.global = true;
