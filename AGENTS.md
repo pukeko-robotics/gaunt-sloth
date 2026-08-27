@@ -264,7 +264,9 @@ pnpm run lint-n-fix
 pnpm run format
 
 # Render the docs site and check the render (needs a build first; a CI step of test-and-lint).
-# `pnpm typedoc` alone exits 0 with hundreds of warnings — this is what turns a broken anchor red.
+# `pnpm typedoc` alone exits 0 with hundreds of warnings — this is what turns a broken anchor, or
+# any warning the committed baseline does not account for, red. Report BOTH of its numbers: the
+# summary is "0 errors and N warnings", and calling that "docs:check 0" hides a new warning.
 pnpm run docs:check
 
 # Install globally for development

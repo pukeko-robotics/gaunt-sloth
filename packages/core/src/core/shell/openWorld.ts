@@ -1640,9 +1640,10 @@ function analyzeComposed(command: string, form: CommandForm): ComposedOpenWorldF
  * **The raw pass recovers what normalization DESTROYS; it must not manufacture what normalization
  * REFUSED.** Both look identical from here — either way the raw form is the only one with an answer —
  * so the difference is drawn where the claim is made rather than by comparing the two results: each
- * pass says which form it handed in ({@link CommandForm}), and the token reading that decides which
- * hosts a claim may name reads them as the shell hands them over. See
- * {@link hostSurvivesAsPassed}.
+ * pass says which form it handed in (the module-internal `CommandForm`), and the token reading that
+ * decides which hosts a claim may name reads them as the shell hands them over — see
+ * `hostSurvivesAsPassed`, alongside it in this module. Both are named here rather than linked
+ * because neither is exported: a `{@link}` to an undocumented symbol renders as dead text.
  *
  * @param command The raw command string as the model proposed it.
  */
