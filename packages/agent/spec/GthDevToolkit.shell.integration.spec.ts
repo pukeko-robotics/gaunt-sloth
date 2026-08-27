@@ -46,7 +46,7 @@ d('GthDevToolkit shell hardening (real spawn)', () => {
     const { ShellCommandFailedError } = await import('#src/tools/GthDevToolkit.js');
     const start = Date.now();
     // EXT-20: a timeout-kill now REJECTS with ShellCommandFailedError (exitCode null) so the
-    // deep-agent middleware renders ✗; the killed-after-N message is preserved on the error.
+    // softening middleware renders ✗; the killed-after-N message is preserved on the error.
     const error = await run('sleep 30', { shell: { enabled: true, timeout: 300 } }).catch(
       (e) => e as InstanceType<typeof ShellCommandFailedError>
     );

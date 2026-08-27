@@ -333,9 +333,9 @@ describe('appendCommitCoAuthorNote (GS2-35/EXT-83)', () => {
   });
 
   it('claims nothing about which tools this session has when it names none', () => {
-    // The two backends read the SAME `filesystem` value but register filesystem tools by different
-    // rules, so a note asserting the session HAS no file-writing tool would be flatly false on one
-    // of them. The restricted branch is conditional instead: it never states the absence.
+    // Registering filesystem tools is the agent's decision, made from the same `filesystem` value,
+    // so a note asserting the session HAS no file-writing tool could be flatly false. The
+    // restricted branch is conditional instead: it never states the absence.
     for (const filesystem of [...WRITE_TOOL_ABSENT_STRINGS, ...WRITE_TOOL_ABSENT_ARRAYS]) {
       const note = noteFor(filesystem);
       expect(note).toContain('If nothing in this session can write that file');

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * GS2-79 — `readModePrompt`: the single per-command mode-prompt selection both agent backends and
+ * GS2-79 — `readModePrompt`: the single per-command mode-prompt selection the agent and
  * the subagent profiles delegate to.
  *
  * It replaced an inline three-branch ternary that had been copied to each of those call sites. The

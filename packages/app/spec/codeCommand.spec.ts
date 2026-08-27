@@ -202,8 +202,8 @@ describe('codeCommand', () => {
       expect.any(MemorySaver)
     );
 
-    // The system prompt now lives in the deep-agent graph (createDeepAgent({ systemPrompt }));
-    // the interactive session no longer prepends a SystemMessage to the first turn.
+    // The system prompt lives in the agent graph (createAgent({ systemPrompt })); the interactive
+    // session no longer prepends a SystemMessage to the first turn.
     expect(gthAgentRunnerInstanceMock.processMessages).toHaveBeenCalledWith([
       new HumanMessage('test message'),
     ]);

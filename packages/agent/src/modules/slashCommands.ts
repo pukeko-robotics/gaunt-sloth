@@ -328,7 +328,7 @@ export interface SlashCommandResult {
   level?: string;
   /** When true, the component clears the transcript. */
   clearTranscript?: boolean;
-  /** When true, the component toggles the docked debug panel (subagents + debug views). */
+  /** When true, the component toggles the docked debug panel (the debug views). */
   toggleDebug?: boolean;
   /** When true, the component toggles tool-call panels between collapsed and expanded. */
   toggleTools?: boolean;
@@ -483,16 +483,13 @@ export function debugToggleNotice(visible: boolean): SlashCommandNotice {
     ? {
         title: 'Debug panel: shown',
         lines: [
-          'Docked panel with the subagent tree and sent-to-model / raw-response views.',
+          'Docked panel with the sent-to-model, tools, MCP and raw-response views.',
           'Run /debug again to hide it; Tab cycles its views.',
         ],
       }
     : {
         title: 'Debug panel: hidden',
-        lines: [
-          'The docked subagent + debug views are now closed.',
-          'Run /debug again to bring them back.',
-        ],
+        lines: ['The docked debug views are now closed.', 'Run /debug again to bring them back.'],
       };
 }
 
@@ -1285,7 +1282,7 @@ export function createCommandRegistry(): SlashCommand[] {
     },
     {
       name: 'debug',
-      description: 'Toggle the docked subagents + debug panel',
+      description: 'Toggle the docked debug panel',
       availableDuringRun: true,
       // State-aware: report the notice for the state the toggle will land on (the inverse of now).
       run: (ctx) => ({ toggleDebug: true, notice: debugToggleNotice(!ctx.debugVisible) }),

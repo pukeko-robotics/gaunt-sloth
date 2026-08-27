@@ -92,7 +92,6 @@ const resolveAgentFactoryMock = vi.hoisted(() => vi.fn());
 vi.mock('@gaunt-sloth/agent/core/resolveAgentFactory.js', () => ({
   resolveAgentFactory: resolveAgentFactoryMock,
 }));
-vi.mock('@gaunt-sloth/agent/core/GthDeepAgent.js', () => ({ GthDeepAgent: vi.fn() }));
 
 // ── tui-local deps ─────────────────────────────────────────────────────────────
 vi.mock('#src/tui/components/App.js', () => ({ App: vi.fn(() => null) }));
@@ -221,9 +220,9 @@ describe('createTuiSession — the full-screen surface (TUI-C48)', () => {
 
     await createTuiSession(sessionConfig, overrides);
 
-    // The TUI is the default interactive surface, so it must default to LEAN like the readline /
-    // ask / exec paths (deep is opt-in). It routes through resolveAgentFactory so an explicit
-    // config.agent.backend is still honored — not a hardcoded factory.
+    // The TUI is the default interactive surface, so it must ask for LEAN like the readline /
+    // ask / exec paths. It routes through resolveAgentFactory rather than a hardcoded factory, so
+    // the config seam stays the one place a backend is chosen.
     expect(resolveAgentFactoryMock).toHaveBeenCalledWith(backendConfig, 'lean');
     // …and the resolved factory is the one handed to the runner as the 3rd ctor arg.
     const runnerCall = (GthAgentRunner as unknown as { mock: { calls: unknown[][] } }).mock

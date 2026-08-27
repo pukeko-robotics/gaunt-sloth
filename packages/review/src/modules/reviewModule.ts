@@ -51,7 +51,7 @@ export interface ReviewContext {
 export async function review(
   source: string,
   // GS2-79: `_preamble` is retained for signature stability but is NO LONGER injected as a leading
-  // SystemMessage. Both agent backends COMPOSE the full system prompt themselves — backstory +
+  // SystemMessage. The agent COMPOSES the full system prompt itself — backstory +
   // guidelines + the per-command mode prompt + system prompt — and hand it to createAgent as
   // `systemPrompt`; for `review`/`pr` that mode prompt IS the review instructions (core's
   // `readModePrompt`). Passing this preamble as well produced TWO system messages, which

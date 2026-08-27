@@ -101,7 +101,7 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
     });
     expect(result.toggleDebug).toBe(true);
     expect(result.notice?.title).toBe('Debug panel: shown');
-    expect(result.notice?.lines[0]).toContain('subagent tree');
+    expect(result.notice?.lines[0]).toContain('sent-to-model');
     expect(result.exit).toBeUndefined();
   });
 

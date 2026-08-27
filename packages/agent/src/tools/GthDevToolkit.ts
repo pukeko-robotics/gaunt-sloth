@@ -245,13 +245,13 @@ export default class GthDevToolkit extends BaseToolkit {
    *
    * Resolves with a model-facing string on a CLEAN exit (`code === 0`). EXT-20: a non-zero exit
    * and a timeout-kill instead REJECT with a {@link ShellCommandFailedError} that carries the FULL
-   * model-facing body — the deep-agent {@link GthDeepShellExitSoftening} middleware converts that
+   * model-facing body — the agent's `GthLeanShellExitSoftening` middleware converts that
    * throw into an error `ToolMessage` (status:'error' → ✗) while preserving the output, so the
    * model still sees the killed-after-N / exit-code message and can continue. GS2-36: spawn-level
    * failures (`child.on('error')` — missing shell binary, a non-existent cwd, EMFILE, …) ALSO reject
-   * with a {@link ShellCommandFailedError} (exitCode null) so the same softeners convert them into a
-   * recoverable error `ToolMessage`; previously they rejected a plain `Error` that neither softener
-   * recognised, so a spawn failure aborted the whole run.
+   * with a {@link ShellCommandFailedError} (exitCode null) so the same softener converts them into a
+   * recoverable error `ToolMessage`; previously they rejected a plain `Error` the softener did not
+   * recognise, so a spawn failure aborted the whole run.
    */
   private async executeCommand(
     command: string,
@@ -351,7 +351,7 @@ export default class GthDevToolkit extends BaseToolkit {
           `</COMMAND_OUTPUT>\n`;
 
         if (timedOut) {
-          // EXT-20: a timeout-kill is a failure — reject so the deep-agent middleware flips the
+          // EXT-20: a timeout-kill is a failure — reject so the softening middleware flips the
           // tool result to status:'error' (✗). The FULL body is preserved on the error so the
           // model's observation is unchanged except for the status.
           reject(
@@ -390,11 +390,11 @@ export default class GthDevToolkit extends BaseToolkit {
         if (settled) return;
         settled = true;
         clearTimers();
-        // GS2-36: a spawn-level failure used to reject a plain Error, which neither the lean
-        // (GthLeanShellExitSoftening) nor the deep (GthDeepShellExitSoftening) softener recognises —
-        // so it propagated to GthAgentRunner as a fatal `Stream processing failed` and crashed the
-        // run. Reject a ShellCommandFailedError (exitCode null, like a timeout-kill) so BOTH softeners
-        // convert it into a recoverable status:'error' ToolMessage and the model can route around it.
+        // GS2-36: a spawn-level failure used to reject a plain Error, which the softener
+        // (GthLeanShellExitSoftening) does not recognise — so it propagated to GthAgentRunner as a
+        // fatal `Stream processing failed` and crashed the run. Reject a ShellCommandFailedError
+        // (exitCode null, like a timeout-kill) so the softener converts it into a recoverable
+        // status:'error' ToolMessage and the model can route around it.
         // The message is phrased as an action-oriented recovery hint (EXT-34 hermes style).
         const errorMsg =
           `Failed to start command '${command}': ${error.message}. ` +
@@ -517,8 +517,8 @@ export default class GthDevToolkit extends BaseToolkit {
     }
 
     // Opt-in general-purpose shell tool. Unlike the fixed run_* commands, the model supplies
-    // the command, so the guardrail is the per-command confirmation dialog wired by the deep
-    // agent (createDeepAgent `interruptOn`), not a parameter sanitizer — a real shell command
+    // the command, so the guardrail is the per-command confirmation dialog wired by the agent
+    // (`interruptOn`), not a parameter sanitizer — a real shell command
     // legitimately contains pipes / `$` / `;`, so validateParameterValue must NOT be applied.
     if (isShellToolEnabled(this.commands, this.command)) {
       tools.push(

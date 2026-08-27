@@ -166,7 +166,7 @@ export function readExecPrompt(config: PromptReadConfig): string {
 
 /**
  * GS2-79 — the SINGLE place a command's mode prompt is chosen, for every site that composes a
- * system prompt via {@link buildSystemMessages}: both agent backends and the subagent profiles.
+ * system prompt via {@link buildSystemMessages}: the agent and the subagent profiles.
  *
  * It exists because the selection used to be an inline three-branch ternary copied to each of
  * those sites, and a command missing from one copy is silently served the CHAT prompt — the

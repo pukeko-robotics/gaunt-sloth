@@ -480,6 +480,10 @@ const TOOL_DISPLAY_REGISTRY: Record<string, ToolDisplayEntry> = {
   },
   run_lint: { glyph: SHELL_GLYPH, formatBody: formatShellBody, shellShaped: true },
   run_build: { glyph: SHELL_GLYPH, formatBody: formatShellBody, shellShaped: true },
+  // Dormant, deliberately: the `task` tool went with the deepagents runtime (EXT-114), and nothing
+  // emits one until GS2-25 lands the lean subagent primitive. Kept rather than swept because an
+  // unregistered name falls back to the generic glyph, so an unused row renders nothing and says
+  // nothing to anyone until a producer returns.
   task: { glyph: '🤖', summariseArgs: ['subagent_type', 'description'] },
 };
 

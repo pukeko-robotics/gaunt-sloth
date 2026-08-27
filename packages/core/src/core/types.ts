@@ -114,7 +114,7 @@ export interface GthToolResult {
  * Typed events emitted by the agent's {@link GthAgentInterface#streamWithEvents} path.
  * This is the renderer contract shared by every consumer of an agent run — the AG-UI
  * SSE encoder, the (future) TUI, and any embedder — so it is intentionally agnostic of
- * how the underlying graph was built (lean `createAgent` or `createDeepAgent`).
+ * how the underlying graph was built.
  */
 export type AgentStreamEvent =
   | { type: 'text'; delta: string }
@@ -183,9 +183,9 @@ export type AgentStreamEvent =
 
 /**
  * The minimal structural surface of a compiled LangGraph agent that the shared agent
- * plumbing in {@link GthAbstractAgent} drives. Both `createAgent` (lean) and
- * `createDeepAgent` return graphs that satisfy this, so the base class can stream/invoke
- * either without knowing which builder produced it. Inputs are intentionally loose
+ * plumbing in {@link GthAbstractAgent} drives. `createAgent` (lean) returns a graph that
+ * satisfies this, so the base class can stream/invoke it without knowing which builder
+ * produced it. Inputs are intentionally loose
  * (`any`) so concrete builder return types assign without casts; the base re-applies
  * precise typing at the point of use via `AIMessage`/`AIMessageChunk` guards.
  */
@@ -195,8 +195,8 @@ export interface GthCompiledGraph {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   stream(input: any, config?: any): Promise<IterableReadableStream<any>>;
   /**
-   * Read the checkpointed graph state for a thread. Present on LangGraph compiled graphs
-   * (both `createAgent` and `createDeepAgent`); used to detect a graph suspended on a
+   * Read the checkpointed graph state for a thread. Present on LangGraph compiled graphs;
+   * used to detect a graph suspended on a
    * human-in-the-loop `interrupt()` (its pending {@link PendingToolInterrupt} lives in
    * `state.tasks[].interrupts[].value`). Optional because the structural surface predates it.
    */

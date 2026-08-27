@@ -17,7 +17,7 @@
  * 2. **The suffix is derived from the rung in force AND from the set of tools that rung actually
  *    gates.** "A description that disagrees with what the gate will actually do is worse than no
  *    description at all" (§4.5), so {@link isGrantedAtRung} takes the LIVE gated set as a parameter
- *    and both backends pass the SAME `resolveGatedToolNames` result. The two can therefore not
+ *    and the agent passes the SAME `resolveGatedToolNames` result. The two can therefore not
  *    drift: widening what a rung gates ([[EXT-30]]) widens the descriptions in the same breath.
  *    That set is narrower than the rung-independent one wired into the interrupt
  *    (`resolveInterruptToolNames`), because a call the live rung does not gate is approved on
@@ -25,7 +25,7 @@
  *
  * **Scope, per §4.3.** The *rater* covers the shell only: every other gated tool goes to the human
  * without a rating call until [[EXT-30]] widens the rater. The *gate* is wider than the rater. At
- * the two deterministic rungs (`manual`, `write`) both backends gate every bound tool the rung's
+ * the two deterministic rungs (`manual`, `write`) the agent gates every bound tool the rung's
  * access class does not auto-grant — the write built-ins, the shell, MCP tools (whatever their
  * `readOnlyHint` says) and custom tools — so at those rungs a non-granted call always reaches the
  * human. At `assisted`, `auto` and `bypass` the gated set is the shell alone.
@@ -207,7 +207,7 @@ export function getRungToolDescriptionSuffix(rung: ApprovalRung): string | null 
  *
  * **This is the one implementation of that rule.** {@link isGrantedAtRung} decides a grant with it,
  * and `config/shell-policy.ts`'s `isToolGatedAtRung` decides gated-set membership with it — which
- * is in turn what the backends' interrupt set and `GthAgentRunner`'s own live-rung check are built
+ * is in turn what the agent's interrupt set and `GthAgentRunner`'s own live-rung check are built
  * from. So the gate cannot escalate a call the descriptions and the rater's granted list call free
  * — the drift §4.5 names as worse than having no description at all. Two derivations of one rule is
  * exactly what this function exists to prevent; do not inline it back into either caller.
@@ -231,7 +231,7 @@ export function isAccessClassGrantedAtRung(toolName: string, rung: ApprovalRung)
  *   `resolveGatedToolNames` for the rung in force. **This is the parameter that keeps the
  *   descriptions honest**: a tool the rung does not gate cannot require approval, whatever a rung's
  *   table row says about tool classes, so it is granted. It is deliberately NOT the wider,
- *   rung-independent set the backends wire into `interruptOn` (`resolveInterruptToolNames`): a call
+ *   rung-independent set the agent wires into `interruptOn` (`resolveInterruptToolNames`): a call
  *   the live rung does not gate is auto-approved the moment it arrives at the runner, so describing
  *   it as needing approval would be a promise nothing keeps.
  *
@@ -288,7 +288,7 @@ export interface DescribableTool {
  * that is NOT auto-approved at that rung, and leave every granted tool's description untouched.
  *
  * Mutates in place (and returns the same array): the tools are about to be handed to
- * `createAgent`/`createDeepAgent`, and the array is freshly resolved per init. Idempotent — any
+ * `createAgent`, and the array is freshly resolved per init. Idempotent — any
  * previously-appended suffix is stripped first, so re-registration at a different rung replaces
  * the sentence rather than stacking one.
  *

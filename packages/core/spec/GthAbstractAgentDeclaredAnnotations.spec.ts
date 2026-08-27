@@ -5,7 +5,7 @@ import { GthAbstractAgent } from '#src/core/GthAbstractAgent.js';
 
 /**
  * EXT-70 §4.7.1 — the ONE place a `tools/list` annotation enters the approvals stack: the shared
- * tool-registration hook both backends call with their final tool array.
+ * tool-registration hook every backend calls with its final tool array.
  *
  * The tools here are built the way `@langchain/mcp-adapters` builds them — a
  * `DynamicStructuredTool` carrying `metadata: { annotations }` copied verbatim from the server's

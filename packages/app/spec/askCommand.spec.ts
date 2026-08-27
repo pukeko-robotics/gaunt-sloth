@@ -145,7 +145,7 @@ describe('askCommand', () => {
       'ask',
       resolvedFactory
     );
-    // ask defaults to the lean backend; an explicit agent.backend would override it.
+    // ask asks for the lean backend, the only one shipped; agent.backend names no other.
     expect(resolveAgentFactoryMock.resolveAgentFactory).toHaveBeenCalledWith(mockConfig, 'lean');
     expect(systemUtilsMock.setExitCode).not.toHaveBeenCalled();
   });

@@ -98,7 +98,10 @@ export function debugPanelLines({
 
 /** Flatten the subagent tree into renderable lines for the bounded viewport. */
 function subagentLines(tree: SubagentTreeViewModel): string[] {
-  if (tree.nodes.length === 0) return ['(no subagents spawned yet)'];
+  // No agent backend dispatches subagents in this release, so this tab has no producer and the
+  // empty state must not promise one — "yet" would read as "on the next turn". The tab and its
+  // fold are kept for the lean subagent primitive (GS2-25); see the `subagents` config key.
+  if (tree.nodes.length === 0) return ['(subagent dispatch is not available in this release)'];
   const lines: string[] = [];
   for (const node of tree.nodes) {
     const marker = node.status === 'done' ? '✓' : '⋯';

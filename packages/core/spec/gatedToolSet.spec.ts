@@ -3,7 +3,7 @@
  *
  * `manual` and `write` publish a promise: everything beyond reading (respectively, beyond
  * reading and writing files in the working folder) comes to the user for approval. That promise is
- * kept by {@link resolveGatedToolNames}, which both backends and `GthAgentRunner` build their gated
+ * kept by {@link resolveGatedToolNames}, which the agent and `GthAgentRunner` build their gated
  * set from.
  *
  * Two properties are asserted, and they are different questions:

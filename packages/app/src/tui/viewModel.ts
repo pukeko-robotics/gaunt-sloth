@@ -303,15 +303,23 @@ export function foldEventSequence(
 }
 
 /* ------------------------------------------------------------------------- *
- * Subagent tree (deepagents `task` tool)                                     *
+ * Subagent tree (the `task` tool)                                            *
  * ------------------------------------------------------------------------- *
- * deepagents spawns subagents through a single tool named `task`; each call's
+ * A subagent is spawned through a single tool named `task`, whose call
  * arguments carry `{ subagent_type, description }`. We fold those task tool-call
  * events (already present in the AgentStreamEvent stream) into a flat list of
  * subagent nodes for the debug panel. This is pure view-model work over events
- * the TUI already receives — no new event types, no streaming-core changes.    */
+ * the TUI already receives — no new event types, no streaming-core changes.
+ *
+ * No agent backend emits a `task` call in this release, so nothing reaches this
+ * fold today; it is kept for the lean subagent primitive (GS2-25).            */
 
-/** The tool name deepagents uses to dispatch a subagent. */
+/**
+ * The tool name a subagent is dispatched by. Dormant like the fold below: the `task` tool went with
+ * the deepagents runtime (EXT-114) and nothing emits one until GS2-25 lands the lean subagent
+ * primitive. The guard in {@link foldSubagentEvents} still reads it on every event, so this is live
+ * code awaiting a producer, not an unused constant.
+ */
 export const SUBAGENT_TOOL_NAME = 'task';
 
 /** A single subagent invocation, derived from one `task` tool call. */

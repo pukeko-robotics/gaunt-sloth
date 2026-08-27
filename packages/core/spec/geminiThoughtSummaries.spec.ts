@@ -152,7 +152,7 @@ describe('google presets ask for thought summaries (CFG-33)', () => {
       type: 'google-genai',
       model: 'gemini-3.6-flash',
     } as never);
-    // createAgent/createDeepAgent both bind tools, which returns a RunnableBinding rather than the
+    // createAgent binds tools, which returns a RunnableBinding rather than the
     // model. The override lives on the instance the binding wraps, so the built params still carry
     // it — a fix that only worked on the bare model would do nothing in a real run.
     const bound = model.bindTools!([
@@ -174,7 +174,9 @@ describe('google presets ask for thought summaries (CFG-33)', () => {
 
 /**
  * The inverse knob, for a surface that renders content blocks by `type` and therefore cannot tell a
- * Gemini thought summary from an answer (the ACP front door — see the agent package's ACP spec).
+ * Gemini thought summary from an answer. No production module calls it today — these cases are its
+ * only caller; it stays published API and is what a parent reading a child agent's stream will
+ * need (GS2-25).
  *
  * The one thing that must not slip: it withholds the SUMMARY, it does not stop the model THINKING.
  * A zero/minimal budget would do the latter, and the coercion differs by model family — a pro model
@@ -239,7 +241,7 @@ describe('withholding thought summaries on a surface that cannot route them (CFG
   it('leaves a non-Google model completely alone', async () => {
     const { disableGeminiThoughtSummaries } = await import('#src/providers/geminiThinking.js');
     // Every other provider builds no `generationConfig`, so there is nothing to withhold and the
-    // built params must come back byte-identical — this runs on EVERY model the ACP entry is given.
+    // built params must come back byte-identical — this holds for EVERY model the override is given.
     const params = { model: 'claude-x', max_tokens: 64 };
     const fake = { model: 'claude-x', invocationParams: () => params };
     disableGeminiThoughtSummaries(fake as never);

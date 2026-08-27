@@ -368,7 +368,7 @@ export class GthAgentRunner {
   /**
    * CFG-27 — the runtime, session-scoped approvals posture, seeded at {@link init} from
    * {@link resolveApprovals} and thereafter switchable for the session by `/approvals <rung>`.
-   * **This field, not the interrupt wiring, is where the rung lives.** The backends wire the
+   * **This field, not the interrupt wiring, is where the rung lives.** The agent wires the
    * interrupt rung-independently, so every tool any rung could gate arrives at the top of
    * {@link decideToolApproval} and is judged against the rung recorded here — which is what makes
    * `/approvals manual` take effect mid-session, and what keeps a config that pre-selects
@@ -1190,10 +1190,10 @@ export class GthAgentRunner {
    * streamed across all resume turns (empty when nothing was resumed).
    *
    * No-ops (returns '') when the agent does not support interrupts (`getPendingToolInterrupts`/
-   * `streamResume` absent) — that is the only exemption. As of EXT-52 BOTH backends gate
-   * `run_shell_command` and expose the interrupt surface, so the lean (default) agent is now
-   * exactly the agent this loop serves; only an agent implementation without those methods
-   * (e.g. a test double) skips it.
+   * `streamResume` absent) — that is the only exemption. As of EXT-52 the shipped agent gates
+   * `run_shell_command` and exposes the interrupt surface, so the lean agent is exactly the agent
+   * this loop serves; only an agent implementation without those methods (e.g. a test double)
+   * skips it.
    */
   private async resolveToolInterrupts(): Promise<string> {
     const agent = this.agent;
@@ -1336,7 +1336,7 @@ export class GthAgentRunner {
    * (defense in depth in `GthDevToolkit.executeCommand`), so an allow-listed `rm -rf /` still
    * cannot run.
    *
-   * **Step 0 is the rung.** The backends wire the interrupt over every tool ANY rung could gate,
+   * **Step 0 is the rung.** The agent wires the interrupt over every tool ANY rung could gate,
    * because the graph is built once and `/approvals <rung>` moves the rung under it for the rest of
    * the session. So a call arriving here has not yet been judged against the rung in force: this is
    * where that happens, on `sessionApprovals.rung`, which a mid-session switch has already updated.
@@ -1579,7 +1579,7 @@ export class GthAgentRunner {
     const isShellCommand = tool.name === SHELL_TOOL_NAME && command !== null;
     const approvals = this.sessionApprovals;
 
-    // (0) Does the rung IN FORCE gate this tool at all? Same shared predicate the backends built the
+    // (0) Does the rung IN FORCE gate this tool at all? Same shared predicate the agent built the
     // interrupt from, asked about this one call, so the wiring and the decision cannot disagree.
     // Scope `once`, so nothing is written to any allow-list: this is not a grant, it is the absence
     // of a gate.
@@ -2567,7 +2567,7 @@ export class GthAgentRunner {
     const registered = this.agent?.getRegisteredToolNames?.() ?? [];
     if (registered.length === 0) return [];
     // The LIVE gated set, from the SAME shared policy `decideToolApproval` decides on and the
-    // backends derive their interrupt from, so "granted" here means exactly what it means at
+    // agent derives its interrupt from, so "granted" here means exactly what it means at
     // tool-registration time (§4.5) and at the gate.
     //
     // EXT-80 makes this non-drift property load-bearing rather than incidental. At `manual` the
@@ -3029,9 +3029,9 @@ export class GthAgentRunner {
    *
    * No-ops (yields nothing) when the agent does not support interrupts
    * (`getPendingToolInterrupts`/`streamWithEventsResume` absent) — that is the only exemption.
-   * As of EXT-52 BOTH backends gate `run_shell_command` and expose the interrupt surface, so the
-   * lean (default) agent is now exactly the agent this loop serves; only an agent implementation
-   * without those methods (e.g. a test double) skips it. Aborts (`signal`) propagate through the
+   * As of EXT-52 the shipped agent gates `run_shell_command` and exposes the interrupt surface, so
+   * the lean agent is exactly the agent this loop serves; only an agent implementation without
+   * those methods (e.g. a test double) skips it. Aborts (`signal`) propagate through the
    * resumed stream.
    */
   private async *resolveToolInterruptsWithEvents(

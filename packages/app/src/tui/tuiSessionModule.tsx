@@ -233,7 +233,7 @@ function createStatusBridge() {
 type DebugListener = (capture: TuiDebugCapture) => void;
 
 /**
- * Fan-out so the deep agent's wrapModelCall debug sink can reach the mounted React app.
+ * Fan-out so the agent's wrapModelCall debug sink can reach the mounted React app.
  *
  * TUI-C20: `config` + `resolvers` are threaded in so each request capture can also carry the MCP
  * tab's overview. The per-server discovery instructions come from EXT-32's
@@ -434,7 +434,7 @@ function createAttackHaltBridge() {
 
 /**
  * Ink TUI counterpart to `createInteractiveSession` (the readline path). Same lifecycle —
- * init config, session logging, a `GthAgentRunner` driving the deep agent — but it renders
+ * init config, session logging, a `GthAgentRunner` driving the agent — but it renders
  * over the typed {@link import('@gaunt-sloth/core/core/types.js').AgentStreamEvent} stream
  * (`processMessagesWithEvents`) instead of `consoleUtils`. The status callback is bridged
  * into the React app rather than written to stdout, which would corrupt Ink's frame.
@@ -570,10 +570,10 @@ export async function createTuiSession(
   const approvalBridge = createApprovalBridge();
   const attackHaltBridge = createAttackHaltBridge();
   const negotiationBridge = createNegotiationBridge();
-  // B5: TUI code/chat default to the LEAN backend; an explicit config.agent.backend overrides it
-  // (deep is now opt-in / experimental). Mirrors the readline path in createInteractiveSession,
-  // askCommand, and execCommand — the TUI is the default interactive surface, so it must match.
-  // createResolvers() is unchanged, so a lean session keeps the full toolset.
+  // B5: TUI code/chat ask for the LEAN backend, which is the only one Gaunt Sloth ships — the
+  // `config.agent.backend` seam is still read but can name nothing else. Mirrors the readline path
+  // in createInteractiveSession, askCommand, and execCommand — the TUI is the default interactive
+  // surface, so it must match. createResolvers() is unchanged, so the session keeps the full toolset.
   const runner = new GthAgentRunner(bridge.emit, resolvers, resolveAgentFactory(config, 'lean'));
 
   // GS2-93: the interactive TUI ALWAYS shows the technical run-header preamble (Workdir/Model/
@@ -619,10 +619,10 @@ export async function createTuiSession(
     // neither draws nor sleeps, which is what keeps the 800 ms off every headless run.
     runner.setNegotiationDisplay(negotiationBridge);
 
-    // Attach the debug sink to the live agent (opt-in; each backend's wrapModelCall middleware
+    // Attach the debug sink to the live agent (opt-in; the agent's wrapModelCall middleware
     // reads it lazily, so this only enables capture for the TUI's /debug panel — the AG-UI
-    // contract is untouched). Both the lean (default) and deep backends extend GthAbstractAgent
-    // and install the capture middleware, so the panel populates on either.
+    // contract is untouched). The lean agent extends GthAbstractAgent and installs the capture
+    // middleware, so the panel populates.
     const agent = runner.getAgent();
     if (agent instanceof GthAbstractAgent) {
       agent.debugCapture = debugBridge.capture;

@@ -726,10 +726,9 @@ describe('GthLangChainAgent', () => {
       );
     });
 
-    // EXT-21: the lean-path (exec / ask --write) sibling of the deep agent's
-    // GthDeepShellExitSoftening. A failed run_* command throws a ShellCommandFailedError; this
-    // middleware must convert it into a status:'error' ToolMessage (→ ✗) with the full body
-    // preserved, while leaving every other throw untouched.
+    // EXT-21: the lean-path (exec / ask --write) shell-exit softener. A failed run_* command
+    // throws a ShellCommandFailedError; this middleware must convert it into a status:'error'
+    // ToolMessage (→ ✗) with the full body preserved, while leaving every other throw untouched.
     describe('GthLeanShellExitSoftening (run_* ✗ signal)', () => {
       const getSoftening = () => {
         const middleware = createAgentMock.mock.calls.at(-1)?.[0].middleware as {
@@ -841,8 +840,8 @@ describe('GthLangChainAgent', () => {
       });
     });
 
-    // EXT-52: the lean backend must wire the SAME humanInTheLoopMiddleware approval interrupt the
-    // deep backend gets via deepagents' interruptOn — otherwise the runner's approval stack
+    // EXT-52: the lean backend must wire the humanInTheLoopMiddleware approval interrupt that the
+    // now-removed deep backend got via its own interruptOn — otherwise the runner's approval stack
     // (decideToolApproval) is dead code on lean and gated shell commands run unprompted. These
     // assert the WIRING (gate present/absent per EXT-12 semantics, and its position relative to the
     // EXT-35 repair middleware); the end-to-end suspend/route behaviour is proven in a real
@@ -1379,9 +1378,9 @@ describe('GthLangChainAgent', () => {
       });
     });
 
-    // The lean agent must install the SAME `/debug` capture middleware as the deep agent, so the
-    // TUI's System-prompt / Tools / Chat-history panels populate on the (now default) lean backend.
-    // Regression guard: before this, capture was deep-only and the panels stayed empty.
+    // The lean agent must install the `/debug` capture middleware, so the TUI's System-prompt /
+    // Tools / Chat-history panels populate. Regression guard: capture was once installed only by
+    // the removed deep backend, and the panels stayed empty on lean.
     describe('GthMiddlewareDebugCapture (TUI /debug sink)', () => {
       const getDebugMw = () => {
         const middleware = createAgentMock.mock.calls.at(-1)?.[0].middleware as {
@@ -1683,7 +1682,7 @@ describe('GthLangChainAgent', () => {
       // were composed ONLY in the deep backend, so a lean code session (e.g. on Windows) got NO
       // shell-dialect guidance and NO cwd value even though lean ALSO exposes run_shell_command and
       // runs on the real fs. Both are now composed in the shared code-mode path so the lean model
-      // receives them too. (The deepagents virtual-fs-namespace note stays deep-only.)
+      // receives them too. (The virtual-fs-namespace note went with that backend.)
       it('composes the OS/shell-dialect note and the real-cwd note into the lean code prompt', async () => {
         systemUtilsMock.getCurrentWorkDir.mockReturnValue('/proj/work');
 

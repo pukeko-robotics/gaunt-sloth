@@ -13,7 +13,7 @@
  *
  * The `mcp__<server>__*` namespace (single-sourced from MCP_TOOL_NAME_PREFIX) makes these
  * tools inherit the `allowedTools` glob opt-out and TUI-C20 server-grouping for free, and
- * lets both agent backends consume them generically via the resolveTools array (zero
+ * lets the agent consume them generically via the resolveTools array (zero
  * agent-backend edits).
  *
  * Concrete-URI list/read only: resource TEMPLATES (parameterized URIs) are deferred.

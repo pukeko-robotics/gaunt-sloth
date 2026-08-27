@@ -171,9 +171,9 @@ export async function createInteractiveSession(
   if (logFileName) {
     initSessionLogging(logFileName, config.streamSessionInferenceLog);
   }
-  // B5: interactive code/chat default to the LEAN backend; an explicit config.agent.backend
-  // overrides it (deep is now opt-in / experimental). createResolvers() is unchanged, so a lean
-  // session keeps the full toolset (filesystem + hardened dev/shell).
+  // B5: interactive code/chat ask for the LEAN backend, the only one Gaunt Sloth ships —
+  // config.agent.backend names no other. createResolvers() is unchanged, so the session keeps the
+  // full toolset (filesystem + hardened dev/shell).
   const runner = new GthAgentRunner(
     defaultStatusCallback,
     createResolvers(),

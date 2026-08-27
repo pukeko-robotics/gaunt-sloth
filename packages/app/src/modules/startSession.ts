@@ -106,7 +106,8 @@ export async function startSession(
     // The general rule the list was approximating: **falling back can only help a failure the
     // readline path would not also have.** Everything `createTuiSession` does before it starts
     // taking over the terminal — load config, open the conversation, start session logging, build
-    // the runner, `runner.init` (which resolves the `subagents[].profile` configs) — the readline
+    // the runner, `runner.init` (which validates config and warns about what it cannot honour, such
+    // as a declared `subagents` list) — the readline
     // path does identically, so restarting under readline re-runs the same work and fails the same
     // way, having first printed a false diagnosis. Only two things here are the TUI's alone:
     //

@@ -115,7 +115,7 @@ export function createResolvers(): AgentResolvers {
     // successfully-loaded MCP tools nor log a misleading "MCP tools error". Per-server try/catch so
     // one unreachable/instruction-less server does not abort the rest. Absent/empty/whitespace-only
     // instructions contribute nothing (trimmed, then omitted). The captured value is injected —
-    // fenced + per-server-labelled — into the composed system prompt on BOTH backends.
+    // fenced + per-server-labelled — into the agent's composed system prompt.
     if (mcpClientInstance) {
       // Narrow the mutable `| null` field once so the synthesized resource tools can close over a
       // non-null client (like A2A tools close over their wrapper).
@@ -130,8 +130,8 @@ export function createResolvers(): AgentResolvers {
           }
           // EXT-48: if this server advertises the `resources` capability, synthesize two
           // agent-callable tools (mcp__<server>__list_resources / __read_resource) bound to the
-          // live client + server name, and push them into the SAME tools array both backends
-          // consume — no agent-backend edit. On-by-default when advertised; opt-out is the
+          // live client + server name, and push them into the SAME tools array the agent
+          // consumes — no agent-backend edit. On-by-default when advertised; opt-out is the
           // existing allowedTools glob (mcp__<server>__*). Concrete-URI list/read only —
           // resource TEMPLATES are deferred. Reuses this loop's per-server try/catch: a server
           // that lacks resources or throws on capability/synthesis contributes no resource tools

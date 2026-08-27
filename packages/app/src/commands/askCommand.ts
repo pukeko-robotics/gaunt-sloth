@@ -116,7 +116,7 @@ export function askCommand(
           config,
           createResolvers(),
           'ask',
-          // ask defaults to the lean backend; an explicit config.agent.backend overrides it.
+          // ask asks for the lean backend, the only one shipped; config.agent.backend names no other.
           resolveAgentFactory(config, 'lean')
         ));
       } catch (error) {

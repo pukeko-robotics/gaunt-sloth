@@ -126,7 +126,8 @@ export function App(props: TuiAppProps): React.ReactElement {
   const [live, setLive] = useState<TurnViewModel | null>(null);
   const [running, setRunning] = useState(false);
   const [turnCount, setTurnCount] = useState(0);
-  // Subagent tree (deepagents `task` calls) folded from the live event stream.
+  // Subagent tree, folded from `task` tool calls on the live event stream. No backend dispatches
+  // subagents in this release, so nothing fills it today; kept for GS2-25's lean primitive.
   const [subagents, setSubagents] = useState<SubagentTreeViewModel>(initialSubagentTree);
   // Docked debug panel state (toggled by /debug).
   const [debugVisible, setDebugVisible] = useState(false);
@@ -1315,7 +1316,7 @@ export function App(props: TuiAppProps): React.ReactElement {
   }, []);
 
   // Capture debug payloads (full history sent to the model + the raw resolved response) from
-  // the deep agent's wrapModelCall middleware, for the `/debug` panel. Routed into local state
+  // the agent's wrapModelCall middleware, for the `/debug` panel. Routed into local state
   // — never to stdout — and split into lines for the panel's bounded viewport.
   useEffect(() => {
     if (!props.subscribeDebug) return;

@@ -37,7 +37,7 @@ export function getExecSystemPrompt(config: GthConfig): string {
 /**
  * The system prompt a `review` / `pr` run sends.
  *
- * Composed from the same segments, in the same order, that the agent backends compose for these
+ * Composed from the same segments, in the same order, that the agent composes for these
  * commands — backstory + guidelines + the review instructions (the `review`/`pr` mode prompt) +
  * system prompt. `commandIntrospectionReviewPrompt.spec.ts` pins the two against each other, so a
  * change to what a review run is given cannot leave `gth get system-prompt review` reporting the

@@ -11,7 +11,7 @@
  * `GthLangChainAgent` `GthLeanShellExitSoftening`).
  *
  * The throw site (`GthDevToolkit.executeCommand`) lives in the `agent` package and re-exports this
- * class, so its `throw new ShellCommandFailedError(...)` is one and the same type both agents catch.
+ * class, so its `throw new ShellCommandFailedError(...)` is one and the same type the agent catches.
  */
 
 /**
@@ -53,10 +53,10 @@ export class ShellCommandFailedError extends Error {
 }
 
 /**
- * Recognise a {@link ShellCommandFailedError} for the softening middleware in either agent.
+ * Recognise a {@link ShellCommandFailedError} for an agent's softening middleware.
  *
- * Prefers a plain `instanceof` (both agents share this one core module, so the class identity is
- * the same), but falls back to a STRUCTURAL check keyed on `name === 'ShellCommandFailedError'`
+ * Prefers a plain `instanceof` (thrower and catcher share this one core module, so the class
+ * identity is the same), but falls back to a STRUCTURAL check keyed on `name === 'ShellCommandFailedError'`
  * plus the carried fields. The structural arm is deliberate defence against a dual-package /
  * realm-boundary hazard: if the error ever crossed a module boundary that broke `instanceof`, we
  * would otherwise silently rethrow a real shell failure and regress the ✗ signal. Every field the

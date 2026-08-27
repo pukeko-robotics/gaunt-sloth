@@ -181,7 +181,7 @@ export function execCommand(
           execConfig,
           createResolvers(),
           'exec',
-          // exec defaults to the lean backend; an explicit config.agent.backend overrides it.
+          // exec asks for the lean backend, the only one shipped; config.agent.backend names no other.
           resolveAgentFactory(execConfig, 'lean')
         ));
       } catch (error) {
