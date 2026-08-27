@@ -81,6 +81,70 @@ export function classifyStructuredFailure(error: string, timeoutMs: number): Str
   return 'call-failed';
 }
 
+/**
+ * The sentence each {@link StructuredFailureKind} is reported as — the wording a reader of a red run
+ * actually sees, and the half of {@link describeStructuredFailure} that can be wrong without any
+ * mechanism being wrong.
+ *
+ * It lives here, beside the classifier it is keyed on, for two reasons that are really one. The
+ * `Record` is annotated with the union, so the compiler checks the map is **total at its definition
+ * site**: adding a kind to {@link StructuredFailureKind} without giving it a sentence is a build
+ * error rather than a message that reads `undefined` at the moment someone needs it. And a sentence
+ * that sits beside the classifier is reachable by the unit suite, so each one is pinned to the class
+ * it names — a map the tests cannot see can have its bodies exchanged, and the failure that results
+ * is a stall announcing itself as a rejection, which is the exact confusion these sentences exist to
+ * end.
+ *
+ * Each entry receives the raw `error` and the budget the call was made with, so the sentence can
+ * quote both rather than describe them.
+ */
+const STRUCTURED_FAILURE_SENTENCES: Record<
+  StructuredFailureKind,
+  (error: string, timeoutMs: number) => string
+> = {
+  timeout: (error, timeoutMs) =>
+    `STALLED: the provider returned no response within the ${timeoutMs}ms call budget. ` +
+    'Nothing was rejected and nothing was parsed, so this is NOT the schema guard firing — it ' +
+    'is the provider failing to answer. ' +
+    `askStructured said: ${error}`,
+  unparseable: (error) =>
+    "REJECTED BY OUR OWN SCHEMA: the provider answered, and the answer failed this case's " +
+    'schema. This IS the guard firing — the null-vs-absent half. ' +
+    `askStructured said: ${error}`,
+  'call-failed': (error) =>
+    'REJECTED BEFORE ANY ANSWER: the call failed outright. A 400 naming `required` IS the ' +
+    'guard firing — the strict-schema half; anything else is auth, transport or configuration. ' +
+    `askStructured said: ${error}`,
+};
+
+/**
+ * Say WHICH of {@link askStructured}'s three failures happened, in one sentence a reader can act on.
+ *
+ * The two a reader has to tell apart first are a provider that never answered and a provider that
+ * refused the request: they want opposite responses — re-run the one, investigate the other — and
+ * from the outside they arrive as the same red. Naming the class is what stops a real rejection
+ * being shrugged off as flakiness, which is how a guard stops guarding with nobody deciding to
+ * remove it.
+ *
+ * There is no `default` arm and no fallback sentence, deliberately. The module-internal
+ * `STRUCTURED_FAILURE_SENTENCES` map, declared above, is typed by the union, so an unhandled kind
+ * cannot reach here — the compiler rejects the map instead. A defensive arm would only catch a case
+ * the build already refuses, at the price of hiding the compile error that is the real signal.
+ * It is named here rather than linked because it is not exported, and a `{@link}` to an
+ * undocumented symbol renders as dead text in the API reference.
+ *
+ * @param error The `error` from a `{ ok: false }` {@link AskStructuredResult}.
+ * @param timeoutMs The budget passed to that same {@link askStructured} call — as for
+ *   {@link classifyStructuredFailure}, a different value here reports a genuine timeout as
+ *   `call-failed`.
+ */
+export function describeStructuredFailure(error: string, timeoutMs: number): string {
+  return STRUCTURED_FAILURE_SENTENCES[classifyStructuredFailure(error, timeoutMs)](
+    error,
+    timeoutMs
+  );
+}
+
 /** Inputs to {@link askStructured}. The caller supplies the model (via config), the two message
  * texts, and an optional timeout — the Zod schema is a separate positional argument so `<T>` can
  * be inferred from it. */
