@@ -201,8 +201,25 @@ file:
 
 Each agent becomes available as a tool named `a2a_agent_<agentId>` in `chat` and `code` commands.
 
-Set `"writeOutputToFile": false` alongside `a2aAgents` if you are experimenting interactively and do
-not want each run written out to a file.
+A complete working example, against a local time agent on Vertex AI — `writeOutputToFile: false`
+keeps an interactive experiment from writing every run out to a file:
+
+```json
+{
+  "llm": {
+    "type": "vertexai",
+    "model": "gemini-3-pro-preview",
+    "location": "global"
+  },
+  "a2aAgents": {
+    "timeAgent": {
+      "agentId": "hello-time-agent",
+      "agentUrl": "http://localhost:8080/a2a"
+    }
+  },
+  "writeOutputToFile": false
+}
+```
 
 ---
 
