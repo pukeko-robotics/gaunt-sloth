@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SessionConfig } from '#src/modules/interactiveSessionModule.js';
@@ -150,6 +150,17 @@ describe('[[EXT-154]] the readline confirmation is written from what the runner 
   const tmpRoot = mkdtempSync(join(tmpdir(), 'gth-ext154-readline-'));
   /** Never created, and nothing on the way to the store's path creates it. */
   const unwritableDir = join(tmpRoot, 'no-such-checkout');
+  /**
+   * The writable dir for the APPROVE control, deliberately not the one the refusal control uses.
+   *
+   * A refusal that lands writes an exact entry for {@link COMMAND} into that dir's deny file, and
+   * the deny store is consulted at every rung — so an approve case pointed at the same dir would be
+   * refused before anyone was asked, and would fail as a missing confirmation rather than as the
+   * contamination it is. Nesting is safe because both stores resolve through
+   * `getGslothConfigWritePath`, which joins onto the project dir and never walks up.
+   */
+  const approveRoot = join(tmpRoot, 'approve-ok');
+  mkdirSync(approveRoot, { recursive: true });
   let priorProjectDir: string | undefined;
 
   beforeEach(async () => {
@@ -194,9 +205,12 @@ describe('[[EXT-154]] the readline confirmation is written from what the runner 
    * cases turn on are not this line's alone — the menu above it names the project file too, and a
    * `toContain` over everything the dialog wrote would be answered by the label rather than by the
    * confirmation, and would go on being answered by it with the confirmation deleted.
+   *
+   * Both openers, because both remembering answers are driven below. `Approve?` — the menu's own
+   * row — does not match `Approved`, so widening it does not widen what this can pick up.
    */
   const confirmation = (lines: string[]): string =>
-    lines.find((line) => line.startsWith('Refused —')) ?? '';
+    lines.find((line) => line.startsWith('Refused —') || line.startsWith('Approved')) ?? '';
 
   it('a deny file that cannot be written gets the session sentence, and makes no project claim', async () => {
     const lines = await sessionAnswering('d', unwritableDir);
@@ -224,5 +238,36 @@ describe('[[EXT-154]] the readline confirmation is written from what the runner 
 
     // The file the sentence claims, on disk.
     expect(existsSync(join(tmpRoot, 'shell-denylist.json'))).toBe(true);
+  });
+
+  /**
+   * The same pair for `[a]`, and not a formality: the two answers are separate branches of the
+   * copy, so a refusal that reads correctly says nothing about what an approval claims. Without
+   * these, the approve-and-not-saved sentence is a branch no case ever produces, and swapping it
+   * for either of its neighbours goes unnoticed.
+   */
+  it('an allow-list that cannot be written gets the session sentence, and makes no project claim', async () => {
+    const lines = await sessionAnswering('a', unwritableDir);
+    const said = confirmation(lines);
+
+    expect(said).not.toBe('');
+    expect(said).toContain('Approved for this session only');
+    expect(said).toContain('not written to the project allow-list');
+    expect(said).not.toContain('Approved and remembered');
+
+    expect(existsSync(unwritableDir)).toBe(false);
+  });
+
+  it('CONTROL — with a writable project dir the same keystroke says saved to the project', async () => {
+    const lines = await sessionAnswering('a', approveRoot);
+    const said = confirmation(lines);
+
+    expect(said).toContain('Approved and remembered');
+    expect(said).toContain('saved to the project allow-list');
+    expect(said).not.toContain('for this session only');
+
+    // The file the sentence claims, on disk. This is also what proves `[a]` was on offer at all —
+    // an unoffered option reads as an empty confirmation, which names nothing about the cause.
+    expect(existsSync(join(approveRoot, 'shell-allowlist.json'))).toBe(true);
   });
 });
