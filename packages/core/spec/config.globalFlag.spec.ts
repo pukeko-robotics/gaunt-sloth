@@ -310,6 +310,112 @@ describe('CFG-56: -g / --global flag (bypass project config)', () => {
       expect(report.ok).toBe(false);
       expect(report.layers[0].errorMessage).toContain('nowhere');
     });
+
+    /**
+     * CFG-57 — the same rule for the OTHER reader of the global layer. `loadConfiguredTui` answers
+     * the surface question before a session exists, so a `tui` it fails to see is a surface the
+     * user asked for and did not get. Each cell asserts the reader AND the config `initConfig`
+     * builds: one assertion alone cannot tell agreement from a shared mistake.
+     */
+    it('loadConfiguredTui reads a tui inherited through the global extends under --global', async () => {
+      // The node's repro: with `-g` the global layer is the only layer, so a `tui` reached through
+      // `extends` is the whole answer rather than an underlay.
+      writeGlobalProfileConfig('base-profile', { tui: true });
+      writeGlobalConfig({ llm: { type: 'vertexai' }, extends: 'base-profile' });
+
+      const { loadConfiguredTui, initConfig } = await import('#src/config/loader.js');
+
+      expect(await loadConfiguredTui({ global: true })).toBe(true);
+      const resolved = await initConfig({ global: true });
+      expect(resolved.tui).toBe(true);
+    });
+
+    it('reads it for a global-only run without --global too, from the scope the run searches', async () => {
+      // No `-g`, no project config: `initConfig` still takes its global-only branch and resolves
+      // `extends` there — with the PROJECT scope, because only `--global` confines profile names to
+      // `~/.gsloth/.gsloth-settings/`. A reader that hardcoded the global scope would fail to find
+      // this base and raise, so this cell pins the scope as well as the walk.
+      writeProjectProfileConfig('base-profile', { tui: true });
+      writeGlobalConfig({ llm: { type: 'vertexai' }, extends: 'base-profile' });
+
+      const { loadConfiguredTui, initConfig } = await import('#src/config/loader.js');
+
+      expect(await loadConfiguredTui({})).toBe(true);
+      const resolved = await initConfig({});
+      expect(resolved.tui).toBe(true);
+    });
+
+    it('does NOT read it when a project config exists, because the run does not resolve it there', async () => {
+      // The negative cell that pins the gate. With a project layer the run underlays the RAW global
+      // config (applyGlobalConfigBase) and never resolves its `extends`, so the inherited `tui` is
+      // not part of that run — a reader that walked the chain unconditionally would hand the
+      // dispatcher a surface the session it is choosing for does not agree with. The base sits in
+      // the PROJECT profile scope, which is exactly where an unconditional walk would find it.
+      writeProjectProfileConfig('base-profile', { tui: true });
+      writeProjectConfig({ llm: { type: 'vertexai', model: 'project-model' } });
+      writeGlobalConfig({ llm: { type: 'vertexai' }, extends: 'base-profile' });
+
+      const { loadConfiguredTui, initConfig } = await import('#src/config/loader.js');
+
+      expect(await loadConfiguredTui({})).toBeUndefined();
+      const resolved = await initConfig({});
+      expect(resolved.tui).toBeUndefined();
+    });
+  });
+
+  /**
+   * CFG-57 — `-g` and `-c` both choose WHERE configuration comes from, so the pair is refused. The
+   * CLI refuses it at flag-parse time; the loader refuses it wherever config is BUILT, which is the
+   * only place an embedder calling `initConfig` directly can be refused at all.
+   */
+  describe('--global and --config are refused by the loader, not only at the CLI edge', () => {
+    it('refuses the pair instead of silently loading the global config and ignoring the named file', async () => {
+      const customPath = resolve(projectRoot, 'custom.gsloth.config.json');
+      writeFileSync(
+        customPath,
+        JSON.stringify({ llm: { type: 'vertexai', model: 'custom-model' } })
+      );
+      writeGlobalConfig({ llm: { type: 'vertexai', model: 'global-model' } });
+
+      const { initConfig } = await import('#src/config/loader.js');
+
+      const error = await initConfig({ global: true, customConfigPath: customPath }).catch(
+        (e: unknown) => e
+      );
+      expect(isConfigDiscoveryError(error)).toBe(true);
+      expect((error as Error).message).toContain('--global and --config');
+    });
+
+    it('names the conflict rather than the missing file when the named path does not exist', async () => {
+      // Ordering: the conflict is decided before the `-c` existence check, so a user who passed both
+      // is told what is actually wrong instead of being sent to look for a file they never needed.
+      writeGlobalConfig({ llm: { type: 'vertexai', model: 'global-model' } });
+
+      const { initConfig } = await import('#src/config/loader.js');
+
+      const error = await initConfig({
+        global: true,
+        customConfigPath: resolve(projectRoot, 'no-such-config.json'),
+      }).catch((e: unknown) => e);
+      expect(isConfigDiscoveryError(error)).toBe(true);
+      expect((error as Error).message).toContain('--global and --config');
+      expect((error as Error).message).not.toContain('does not exist');
+    });
+
+    it('still loads a lone --config, so the guard refuses only the pair', async () => {
+      // The control: without `global` the same named file loads exactly as before. A guard that
+      // fired on `customConfigPath` alone would pass both cells above and break every `-c` run.
+      const customPath = resolve(projectRoot, 'custom.gsloth.config.json');
+      writeFileSync(
+        customPath,
+        JSON.stringify({ llm: { type: 'vertexai', model: 'custom-model' } })
+      );
+
+      const { initConfig } = await import('#src/config/loader.js');
+
+      const resolved = await initConfig({ customConfigPath: customPath });
+      expect(resolved.modelDisplayName).toBe('custom-model');
+    });
   });
 
   /**
