@@ -54,7 +54,8 @@ import { displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { createResolvers } from '#src/resolvers.js';
 import { resolveAgentFactory } from '#src/core/resolveAgentFactory.js';
 import { AcpV1UpdateMapper } from '#src/modules/acp/acpUpdatesV1.js';
-import { decisionForOutcome } from '#src/modules/acp/acpPermissions.js';
+import { decisionForOutcome, rememberedAnswerNote } from '#src/modules/acp/acpPermissions.js';
+import type { PendingToolInterrupt } from '@gaunt-sloth/core/core/types.js';
 import { permissionRequestForV1 } from '#src/modules/acp/acpPermissionsV1.js';
 import {
   ACP_AGENT_NAME,
@@ -190,6 +191,12 @@ export function createAcpV1AgentApp(options: AcpAgentAppOptions = {}): acp.Agent
       // No `user_message` echo. v1 replays a conversation only on `session/load`; during a turn the
       // client already has the message it just sent, and echoing it would draw it twice.
       //
+      // [[EXT-154]] — the calls answered with one of the two REMEMBERING options, waiting to hear
+      // what that answer landed as. Per turn, and keyed by the interrupt object rather than by
+      // arrival, for the reason {@link ApprovalOutcome} gives: the runner drains gated calls as a
+      // batch, so several can be open at once and a positional pairing would describe the wrong one.
+      const rememberAsked = new Set<PendingToolInterrupt>();
+
       // The gate's last hop. Registered per turn so it closes over THIS turn's mapper, which is
       // what knows the id of the tool call a permission request is about.
       session.runner.setToolApprovalCallback(async (pending) => {
@@ -220,7 +227,34 @@ export function createAcpV1AgentApp(options: AcpAgentAppOptions = {}): acp.Agent
           asked.then((response) => response.outcome),
           cancelledWhenAborted(abort.signal),
         ]);
-        return decisionForOutcome(outcome);
+        const decision = decisionForOutcome(outcome);
+        // [[EXT-154]] — noted from the DECISION, so the set holds exactly the answers that asked the
+        // runner to store something. The cancellation this race synthesises, and an option id this
+        // build does not know, both fail closed into a plain rejection and are therefore not noted —
+        // the direction that cannot invent a promise.
+        if (decision.scope === 'always') rememberAsked.add(pending);
+        return decision;
+      });
+
+      // [[EXT-154]] — **and the answer comes back.** The runner records a remembering answer only
+      // after the callback that gave it has returned, so *Allow and remember* / *Reject and remember*
+      // were an offer nothing had ever checked was kept. This says what it was.
+      //
+      // v1 has no whole-message update, so the note is a chunk carrying **its own `messageId`** — a
+      // change of id is what starts a new message in this dialect, and reusing the assistant's would
+      // splice the line into whatever the model was saying. NOT a `tool_call_update`: on v1 that
+      // update's `content` REPLACES rather than appends, so the tool's own output would erase the
+      // note, or the note the output.
+      //
+      // Not awaited: this callback returns `void` and runs inside the runner's own continuation.
+      // A send that fails is dropped, exactly as the turn's other notifications are.
+      session.runner.setApprovalOutcomeCallback((outcome) => {
+        if (!rememberAsked.delete(outcome.pending)) return;
+        void sendUpdate(session, {
+          sessionUpdate: 'agent_message_chunk',
+          messageId: randomUUID(),
+          content: { type: 'text', text: rememberedAnswerNote(outcome.decision, outcome.lifetime) },
+        } as acp.SessionUpdate).catch(() => undefined);
       });
 
       for await (const event of session.runner.processMessagesWithEvents(
@@ -241,6 +275,9 @@ export function createAcpV1AgentApp(options: AcpAgentAppOptions = {}): acp.Agent
       return { ok: false, message };
     } finally {
       session.runner.setToolApprovalCallback(null);
+      // [[EXT-154]] — cleared with its partner. Both close over this turn's state, and a stale one
+      // left wired would report a later turn's answer into a set that can no longer contain it.
+      session.runner.setApprovalOutcomeCallback(null);
       session.abort = null;
     }
   };

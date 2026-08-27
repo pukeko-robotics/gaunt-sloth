@@ -85,11 +85,26 @@ type PendingLike = {
 let capturedApprovalCallback:
   | ((_pending: PendingLike) => Promise<{ type: string; scope?: string; message?: string }>)
   | undefined;
+/**
+ * [[EXT-154]] — the runner's return leg. A remembering answer's confirmation is written from what
+ * the write LANDED as, so a case that wants to read one has to report an outcome for the very
+ * interrupt it answered.
+ */
+let capturedOutcomeCallback:
+  | ((_outcome: {
+      pending: PendingLike;
+      decision: 'approve' | 'reject';
+      lifetime: 'once' | 'session' | 'always';
+    }) => void)
+  | undefined;
 const runnerInstanceMock = {
   init: vi.fn().mockResolvedValue(undefined),
   processMessages: vi.fn().mockResolvedValue(undefined),
   setToolApprovalCallback: vi.fn((cb) => {
     capturedApprovalCallback = cb;
+  }),
+  setApprovalOutcomeCallback: vi.fn((cb) => {
+    capturedOutcomeCallback = cb;
   }),
   cleanup: vi.fn().mockResolvedValue(undefined),
 };
@@ -150,6 +165,7 @@ describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity
   beforeEach(() => {
     vi.resetAllMocks();
     capturedApprovalCallback = undefined;
+    capturedOutcomeCallback = undefined;
     rlQuestionMock.mockImplementation(async (prompt: string) => {
       if (typeof prompt === 'string' && prompt.includes('>')) return 'exit';
       return '';
@@ -160,12 +176,18 @@ describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity
     runnerInstanceMock.setToolApprovalCallback.mockImplementation((cb) => {
       capturedApprovalCallback = cb;
     });
+    runnerInstanceMock.setApprovalOutcomeCallback.mockImplementation((cb) => {
+      capturedOutcomeCallback = cb;
+    });
   });
 
   const startSession = async () => {
     const { createInteractiveSession } = await import('#src/modules/interactiveSessionModule.js');
     await createInteractiveSession(sessionConfig, {});
     expect(capturedApprovalCallback).toBeTypeOf('function');
+    // [[EXT-154]] — asserted, not assumed: with this leg unwired the remembering answers go silent,
+    // and every case here that checks for an ABSENT claim would pass for that reason instead.
+    expect(capturedOutcomeCallback).toBeTypeOf('function');
     displayDialogLineMock.mockClear();
     displayMock.mockClear();
     displayInfoMock.mockClear();
@@ -179,6 +201,32 @@ describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity
     rlQuestionMock.mockResolvedValueOnce(key);
     return capturedApprovalCallback!(pending);
   };
+
+  /**
+   * [[EXT-154]] — play the runner's half: report what the answer for `pending` landed as. The
+   * interrupt goes by IDENTITY, the correlation the seam defines, so a report about some other
+   * object is one this surface must drop.
+   */
+  const report = (
+    pending: PendingLike,
+    decision: 'approve' | 'reject',
+    lifetime: 'once' | 'session' | 'always'
+  ) => capturedOutcomeCallback!({ pending, decision, lifetime });
+
+  /**
+   * [[EXT-154]] — the ONE confirmation line a remembering answer produced, or `''` when it produced
+   * none.
+   *
+   * Scoped rather than swept. Every claim these cases make is about a single sentence, and the
+   * words in it — *saved to this project*, *session* — are not this surface's alone: `/approvals`
+   * renders a refusals listing whose rows carry the same phrase. A `toContain` over the whole
+   * terminal is therefore answered by a producer the case never named, and it would keep answering
+   * with the confirmation deleted outright.
+   */
+  const confirmation = (): string =>
+    linesInTone('notice').find(
+      (line) => line.startsWith('Refused —') || line.startsWith('Approved')
+    ) ?? '';
 
   /**
    * [[EXT-107]] §6 — the label the `[d]` control is written in. Held as a constant so the test that
@@ -248,13 +296,72 @@ describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity
     expect(info).toContain(DENY_LABEL);
     // …and the scope the decision carries, which is the half that makes it true.
     expect(decision).toMatchObject({ type: 'reject', scope: 'always' });
-    const out = allLines().join(LF);
-    expect(out).toContain('saved to this project');
-    expect(out).toContain('/approvals undeny');
+    // [[EXT-154]] — and the confirmation is not among them YET: at this instant the runner has not
+    // tried the write, so a sentence here would be a claim about a file nobody has made.
+    expect(confirmation()).toBe('');
+
+    report(DENYABLE, 'reject', 'always');
+    const said = confirmation();
+    expect(said).toContain('saved to this project');
+    expect(said).toContain('/approvals undeny');
     // The old promise is gone: this refusal does NOT end with the session.
-    expect(out).not.toContain('for the rest of this session');
+    expect(said).not.toContain('for the rest of this session');
     // And it is not confused with the allow side's file.
-    expect(out).not.toContain('saved to the project allow-list');
+    expect(said).not.toContain('saved to the project allow-list');
+  });
+
+  /**
+   * [[EXT-154]] — **the same keystroke, on a write that did not reach disk.** [[EXT-149]] degrades an
+   * `always` whose project file could not be written to the session refusal it really is, and the
+   * runner decides that after this surface has already answered. So the sentence has to come from
+   * the reported lifetime and from nothing else.
+   *
+   * Paired with the case above rather than standing alone: on its own it would pass just as well
+   * against a build that had dropped the saved wording altogether.
+   */
+  it('answering d says the refusal is session-only when the write did not land', async () => {
+    await startSession();
+    await ask('d', DENYABLE);
+    report(DENYABLE, 'reject', 'session');
+
+    const said = confirmation();
+    // Committed at all — asserted first, because every absence below is satisfied by silence.
+    expect(said).not.toBe('');
+    expect(said).toContain('will not ask again this session');
+    expect(said).toContain('a new session will ask about it again');
+    // The claim the file would have earned, and only that file's claim.
+    expect(said).not.toContain('saved to this project');
+    expect(said).not.toContain('stays refused in new sessions');
+    // Still lift-able, and still said: `/approvals undeny` lists a session refusal too.
+    expect(said).toContain('/approvals undeny');
+  });
+
+  /**
+   * [[EXT-154]] — the pairing rule, which is the whole reason the seam carries the interrupt object.
+   * Several gated calls can be open at once, and an outcome matched by arrival order rather than by
+   * identity would confirm one call's persistence in a sentence about another's.
+   */
+  it('drops an outcome reported for an interrupt this prompt never answered', async () => {
+    await startSession();
+    await ask('d', DENYABLE);
+    report({ ...DENYABLE }, 'reject', 'always');
+    expect(confirmation()).toBe('');
+    // The control: the same report, about the interrupt that was actually answered, does land.
+    report(DENYABLE, 'reject', 'always');
+    expect(confirmation()).toContain('saved to this project');
+  });
+
+  /**
+   * [[EXT-154]] — the ordinary refusal is confirmed where it is chosen, and is NOT waiting on an
+   * outcome. It records nothing, so its sentence is true the instant it is written; a build that
+   * routed it through the outcome leg would leave every one-shot refusal silent until the runner
+   * spoke, and silent for good wherever it did not.
+   */
+  it('confirms an ordinary refusal immediately, with no outcome reported at all', async () => {
+    await startSession();
+    await ask('n', DENYABLE);
+    expect(linesInTone('notice')).toContain('Command rejected.');
+    expect(confirmation()).toBe('');
   });
 
   /**

@@ -84,11 +84,14 @@ unambiguous meaning — and there is no per-prompt "turn the gate down from here
   different modes. A surface with no slash commands — the ACP and AG-UI servers — renders neither,
   so no copy from this builder reaches a server surface, and AG-UI renders no approvals string at
   all. **ACP renders its own, though** — the permission request's title, the explanation built from
-  the rater's verdict, the matched `approvals.escalate` entry and the grant preview, and its four
-  option labels — so there the boundary above **is** crossed, and every claim in that copy has to be
-  re-earned rather than inherited from here. One of them already is: ACP's two remembering answers
-  are labelled *Allow and remember* and *Reject and remember*, the pair of scopes that reach a
-  project file — one menu item may not mean two lifetimes across the three surfaces that offer it.
+  the rater's verdict, the matched `approvals.escalate` entry and the grant preview, its four option
+  labels, and the confirmation a remembering answer earns — so there the boundary above **is**
+  crossed, and every claim in that copy has to be re-earned rather than inherited from here. One of
+  them already is: ACP's two remembering answers are labelled *Allow and remember* and *Reject and
+  remember*, the pair of scopes that reach a project file — one menu item may not mean two lifetimes
+  across the three surfaces that offer it. The confirmation is re-earned in the same way and says so
+  in that surface's own words: an editor has no menu key to name and no `/approvals` to point at, so
+  copy that names either is copy that does not belong there.
 - **A confirmation states what LANDED, and waits for it if it has to (DL-4).** The two answers that
   promise a project file — *always approve* and *always reject* — ask for something the runner may
   not be able to do: a store whose file cannot be written records the answer for this session
@@ -101,6 +104,14 @@ unambiguous meaning — and there is no per-prompt "turn the gate down from here
   never on the write), and **the notice is committed once, when it is known** — an optimistic line
   corrected a moment later is its own DL-4 failure, because the user has already read the first
   version. The one-shot and session answers persist nothing and need no wait.
+  **This binds every surface that offers a remembering answer**, terminal and editor alike, and the
+  wait is not optional anywhere: the runner reports the landed lifetime only after the approval
+  callback has returned, so a surface writing its confirmation where the answer is chosen is
+  describing a file nobody has tried to write. Where a surface offers the remembering control
+  *unconditionally* — ACP does, so that its menu stays learnable — a third case exists that the
+  terminal menus cannot reach: the gate had nothing to store, so **nothing** was remembered, not even
+  for the session. That copy has to say so; *this session only* would replace one false claim with
+  another.
 - **Invokable during inference (DL-9).** The prompt stays mounted while a turn streams, so
   `/approvals` (and the other read-only / toggle commands marked `availableDuringRun`) can be run
   mid-turn to change how the run's remaining tool calls are handled; idle-only commands (`/clear`,

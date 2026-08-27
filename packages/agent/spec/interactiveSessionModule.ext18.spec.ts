@@ -78,6 +78,7 @@ const processMessagesMock = vi.fn().mockResolvedValue(undefined);
 const runnerInstanceMock = {
   init: vi.fn().mockResolvedValue(undefined),
   processMessages: processMessagesMock,
+  setApprovalOutcomeCallback: vi.fn(),
   setToolApprovalCallback: vi.fn((cb) => {
     capturedApprovalCallback = cb;
   }),

@@ -38,7 +38,7 @@
  * production gate decided to raise.
  */
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as acp from '@agentclientprotocol/sdk/experimental/v2';
@@ -1026,6 +1026,181 @@ describe('the ACP v2 agent — session/request_permission', () => {
       }
     );
     expect(refused[0]).toMatchObject({ type: 'reject', scope: 'always' });
+  });
+
+  /**
+   * [[EXT-154]] — **the two remembering options promise a project file, and this is where the promise
+   * is checked.**
+   *
+   * *Allow and remember* / *Reject and remember* are chosen before anything is written, and
+   * [[EXT-149]] degrades an `always` whose write did not reach disk to the session answer it really
+   * is — decided inside the runner AFTER this surface has already answered. So the client is told
+   * what the answer LANDED as, in an `agent_message` of its own, and never what it asked for.
+   *
+   * The unwritable fixture is a project dir that does not exist: with no `.gsloth` dir the store's
+   * write path resolves straight into it with no `mkdir` on the way, so the load succeeds and the
+   * write fails with ENOENT on every platform. **Not `chmod`**, a win32 no-op that would make both
+   * Windows cells pass vacuously.
+   */
+  describe('[[EXT-154]] a remembering answer is confirmed from what it landed as', () => {
+    /**
+     * The text of each `agent_message` — this agent speaking about the session, which is where the
+     * confirmation goes. Scoped to that update kind rather than read off the whole message store,
+     * because the model's own words arrive in the same store as chunks and a sweep over it would be
+     * answered by whatever the fixture happened to say.
+     */
+    const agentSaid = (view: SessionView): string[] =>
+      view.updates
+        .filter((update) => update.sessionUpdate === 'agent_message')
+        .map((update) =>
+          ((update as unknown as { content?: { text?: string }[] }).content ?? [])
+            .map((block) => block.text ?? '')
+            .join('')
+        );
+
+    /** Drive one gated command to the client and answer it with `optionId`. */
+    const answerWith = async (optionId: string, command: string, approvals: unknown = 'write') =>
+      withClient(
+        {
+          script: gatedShellScript(command),
+          approvals,
+          answer: () => ({ outcome: 'selected', optionId }) as acp.RequestPermissionOutcome,
+        },
+        async (ctx, h) => {
+          const sessionId = await newSession(ctx);
+          await ctx.request(acp.AGENT_METHODS.session_prompt, {
+            sessionId,
+            prompt: [{ type: 'text', text: 'run it' }],
+          });
+          await waitForStop(h.view);
+          return agentSaid(h.view);
+        }
+      );
+
+    it('says the refusal is saved when the deny file could be written', async () => {
+      const writable = mkdtempSync(join(projectDir, 'writable-'));
+      setProjectDir(writable);
+      const said = await answerWith('reject-always', 'curl remembered.example');
+
+      expect(said).toHaveLength(1);
+      expect(said[0]).toContain('Rejected and remembered');
+      expect(said[0]).toContain("saved to this project's approvals settings");
+      // The file the sentence claims, on disk.
+      expect(existsSync(join(writable, 'shell-denylist.json'))).toBe(true);
+    });
+
+    it('says the refusal is session-only when the deny file could NOT be written', async () => {
+      const unwritable = join(projectDir, 'no-such-checkout');
+      setProjectDir(unwritable);
+      const said = await answerWith('reject-always', 'curl degraded.example');
+
+      // Said at all — asserted before anything is looked for inside it, since every absence below
+      // is satisfied just as well by a surface that stayed silent.
+      expect(said).toHaveLength(1);
+      expect(said[0]).toContain('Rejected for this session only');
+      expect(said[0]).toContain('could not be written');
+      expect(said[0]).not.toContain("saved to this project's approvals settings");
+      expect(said[0]).not.toContain('Rejected and remembered');
+      // Nothing reached disk, which is what the sentence was describing.
+      expect(existsSync(unwritable)).toBe(false);
+    });
+
+    it('says the approval is saved when the allow-list could be written', async () => {
+      const writable = mkdtempSync(join(projectDir, 'writable-'));
+      setProjectDir(writable);
+      const said = await answerWith('allow-always', 'npm run remembered');
+
+      expect(said).toHaveLength(1);
+      expect(said[0]).toContain('Allowed and remembered');
+      expect(said[0]).toContain("saved to this project's approvals settings");
+      expect(existsSync(join(writable, 'shell-allowlist.json'))).toBe(true);
+    });
+
+    it('says the approval is session-only when the allow-list could NOT be written', async () => {
+      const unwritable = join(projectDir, 'no-such-checkout');
+      setProjectDir(unwritable);
+      const said = await answerWith('allow-always', 'npm run degraded');
+
+      expect(said).toHaveLength(1);
+      expect(said[0]).toContain('Allowed for this session only');
+      expect(said[0]).toContain('could not be written');
+      expect(said[0]).not.toContain('Allowed and remembered');
+      expect(existsSync(unwritable)).toBe(false);
+    });
+
+    /**
+     * **The third case, which only this surface can reach.** ACP's menu is fixed — all four options
+     * on every request, so a user can learn it — so both remembering options are offered where the
+     * gate has nothing to store. §4.7.5: an MCP-namespaced call no configured server key explains
+     * is an `mcpTool` under the unnameable server, and the entry grammar can hold neither a grant
+     * nor a refusal for it. So the answer records NOTHING — not the project file, and not even the
+     * session. The terminal menus withdraw the control in exactly that case and never meet it.
+     *
+     * Telling this user *this session only* would replace one false claim with another, which is
+     * why the copy is re-earned here rather than inherited from the TUI's two branches. Both
+     * options are driven, because the two sentences are separate strings and a case covering one
+     * says nothing about the other.
+     */
+    it.each([
+      ['allow-always', 'Allowed', ['Allowed and remembered', 'Allowed for this session only']],
+      ['reject-always', 'Rejected', ['Rejected and remembered', 'Rejected for this session only']],
+    ])(
+      'says nothing was remembered for %s where the gate had nothing to store',
+      async (optionId, opener, absent) => {
+        const writable = mkdtempSync(join(projectDir, 'writable-'));
+        setProjectDir(writable);
+        // No `mcpServers` are configured, so nothing explains this name and the subject resolves to
+        // the unnameable server — the one shape neither an allow nor a deny entry can be built for.
+        const unattributable = 'mcp__ghost-server__do_thing';
+        const said = await withClient(
+          {
+            approvals: 'manual',
+            answer: () => ({ outcome: 'selected', optionId }) as never,
+            script: {
+              events: [
+                { type: 'tool_start', id: 'call-9', name: unattributable },
+                { type: 'tool_args', id: 'call-9', delta: JSON.stringify({ target: 'prod' }) },
+                { type: 'tool_end', id: 'call-9' },
+              ],
+              pending: [{ name: unattributable, args: { target: 'prod' } }],
+              resumeEvents: [{ type: 'tool_result', id: 'call-9', content: 'done' }],
+            },
+          },
+          async (ctx, h) => {
+            const sessionId = await newSession(ctx);
+            await ctx.request(acp.AGENT_METHODS.session_prompt, {
+              sessionId,
+              prompt: [{ type: 'text', text: 'do it' }],
+            });
+            await waitForStop(h.view);
+            return agentSaid(h.view);
+          }
+        );
+
+        expect(said).toHaveLength(1);
+        expect(said[0]).toContain(`${opener} for this one call only`);
+        expect(said[0]).toContain('nothing was remembered');
+        expect(said[0]).toContain('the next identical call will ask again');
+        // Neither of the two claims the other lifetimes earn.
+        for (const claim of absent) expect(said[0]).not.toContain(claim);
+        expect(existsSync(join(writable, 'shell-allowlist.json'))).toBe(false);
+        expect(existsSync(join(writable, 'shell-denylist.json'))).toBe(false);
+      }
+    );
+
+    /**
+     * The answers that record nothing get no sentence, and that is the gate keeping this from
+     * becoming one more line after every prompt. Both are asserted, since a build that reported
+     * every outcome would still pass a case that only looked at one of them.
+     */
+    it.each([['allow-once'], ['reject-once']])(
+      'sends nothing at all for %s, which promises no file',
+      async (optionId) => {
+        const writable = mkdtempSync(join(projectDir, 'writable-'));
+        setProjectDir(writable);
+        expect(await answerWith(optionId, 'echo once')).toEqual([]);
+      }
+    );
   });
 
   /**

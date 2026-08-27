@@ -100,6 +100,7 @@ const gthAgentRunnerMock = vi.fn(function GthAgentRunnerMock() {
 const gthAgentRunnerInstanceMock = {
   init: vi.fn(),
   processMessages: vi.fn(),
+  setApprovalOutcomeCallback: vi.fn(),
   setToolApprovalCallback: vi.fn(),
   setAttackHaltCallback: vi.fn(),
   setNegotiationDisplay: vi.fn(),
