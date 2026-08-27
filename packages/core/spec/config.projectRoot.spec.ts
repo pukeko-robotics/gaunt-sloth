@@ -7,6 +7,9 @@ import { resolve } from 'node:path';
 // nothing. cwd is driven via INIT_CWD, which getCurrentWorkDir() honours before process.cwd().
 import { getProjectDir, setProjectDir } from '#src/utils/systemUtils.js';
 import { getGslothConfigReadPath } from '#src/utils/fileUtils.js';
+// Reaches this file through the `...actual` spread in the globalConfigUtils mock below, so it IS
+// the production composition rule for `<globalDir>/[.gsloth-settings/<profile>/]<filename>`.
+import { resolveGlobalConfigPath } from '#src/utils/globalConfigUtils.js';
 
 // Mock only the provider so initConfig can complete without live credentials.
 const processJsonConfig = vi.fn();
@@ -16,12 +19,25 @@ vi.mock('#src/providers/vertexai.js', () => ({
 }));
 
 // Mock the global-config path resolver so the developer's real ~/.gsloth never leaks into
-// these tests; the global-only case repoints it at a temp global config.
-const getGlobalGslothConfigReadPath = vi.fn();
-vi.mock('#src/utils/globalConfigUtils.js', () => ({
-  getGlobalGslothConfigReadPath,
-  getGlobalGslothConfigWritePath: vi.fn((filename: string) => resolve('/no-such-global', filename)),
+// these tests; the global-only case repoints it at a temp global config. A PARTIAL mock: the rest
+// of the module (`resolveGlobalConfigPath`, `getGlobalGslothDir`) stays real, so the redirected
+// resolver composes the profile segment with the production rule instead of a copy of it, and a
+// loader path that reaches for another export of this module finds it rather than `undefined`.
+// Hoisted, because the partial factory below runs as soon as this module's own import of
+// globalConfigUtils is evaluated — before a plain `const` at this position exists.
+const { getGlobalGslothConfigReadPath } = vi.hoisted(() => ({
+  getGlobalGslothConfigReadPath: vi.fn<(_filename: string, _identityProfile?: string) => string>(),
 }));
+vi.mock('#src/utils/globalConfigUtils.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('#src/utils/globalConfigUtils.js')>();
+  return {
+    ...actual,
+    getGlobalGslothConfigReadPath,
+    getGlobalGslothConfigWritePath: vi.fn((filename: string) =>
+      resolve('/no-such-global', filename)
+    ),
+  };
+});
 
 const JSON_CONFIG = '{"llm":{"type":"vertexai"}}';
 
@@ -32,9 +48,11 @@ describe('project-root propagation (GS2-11)', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     processJsonConfig.mockResolvedValue({ type: 'vertexai' });
-    // Default: no global config (a sentinel path the real fs never finds).
-    getGlobalGslothConfigReadPath.mockImplementation((filename: string) =>
-      resolve('/no-such-global', filename)
+    // Default: no global config (a sentinel dir the real fs never finds). The profile argument is
+    // honoured through the production rule, so a profile-scoped lookup resolves to a profile-scoped
+    // path here too rather than collapsing onto the unscoped one.
+    getGlobalGslothConfigReadPath.mockImplementation((filename: string, identityProfile?: string) =>
+      resolveGlobalConfigPath(resolve('/no-such-global'), filename, identityProfile)
     );
     root = mkdtempSync(resolve(tmpdir(), 'gsloth-projroot-'));
     // Reset hook: a prior test (or a direct fileUtils call) must not leak a project root.
@@ -108,8 +126,8 @@ describe('project-root propagation (GS2-11)', () => {
     // A standalone global config, no project config anywhere up to the boundary.
     const globalDir = mk(resolve(root, 'global'));
     writeFile(globalDir, '.gsloth.config.json', JSON_CONFIG);
-    getGlobalGslothConfigReadPath.mockImplementation((filename: string) =>
-      resolve(globalDir, filename)
+    getGlobalGslothConfigReadPath.mockImplementation((filename: string, identityProfile?: string) =>
+      resolveGlobalConfigPath(globalDir, filename, identityProfile)
     );
 
     const proj = mk(resolve(root, 'proj'));
