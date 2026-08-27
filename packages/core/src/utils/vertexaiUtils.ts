@@ -1,3 +1,5 @@
+import { env } from '#src/utils/systemUtils.js';
+
 export function isVertexGoogleLlm(llm: unknown): boolean {
   if (!llm || typeof llm !== 'object') {
     return false;
@@ -91,6 +93,111 @@ const VERTEX_AUTH_GUIDANCE: Record<VertexAuthMode, string> = {
     'Vertex AI endpoints.',
 };
 
+/**
+ * The longest value still treated as a filesystem path. 260 is Windows' classic `MAX_PATH`, which is
+ * a defensible ceiling for a path and sits an order of magnitude below any credential: the deepest
+ * realistic ADC path — a CI runner's temp directory plus
+ * `application_default_credentials.json` — is around 120 characters, while a service-account key is
+ * ~1700 as JSON and ~2300 base64-encoded. Nothing has to land in the gap for the test to be useful.
+ */
+const MAX_CREDENTIAL_PATH_LENGTH = 260;
+
+/**
+ * Whether a value is the credential ITSELF rather than a path to one.
+ *
+ * Deliberately tested by SIZE first rather than by shape. The shape test alone (`{`) catches a
+ * pasted JSON key and misses the base64 form that CI secret stores hand out, and widening it one
+ * encoding at a time only ever covers the last spelling somebody thought of — the value is
+ * attacker-irrelevant but user-supplied and its formats are open-ended. Length closes the class
+ * because every credential is enormous next to every path. The shape test is kept alongside it for
+ * the short, hand-trimmed JSON that a size test alone would let through.
+ */
+function isCredentialContent(value: string): boolean {
+  return value.length > MAX_CREDENTIAL_PATH_LENGTH || value.trimStart().startsWith('{');
+}
+
+/**
+ * Where an ADC session's credentials are being read from when an environment variable names a file,
+ * and the spelling of the variable that named it — `undefined` when no such variable is in play.
+ *
+ * THIS IS THE ONE ENVIRONMENT READ IN THIS FILE AND IT IS DELIBERATE, so read it against the
+ * comment on {@link vertexAuthMode} rather than as a contradiction of it. That function decides
+ * WHICH credential is in use and must keep doing so from the constructed client alone. This one
+ * decides nothing: the session has already been classified as ADC from the client, and the
+ * environment is consulted only to compose the DIAGNOSTIC SENTENCE for it. Read-only, through the
+ * `systemUtils` accessor like every other environment read in this package.
+ *
+ * It is not client-derived because there is nothing client-derived to be had. Measured on
+ * google-auth-library 10.9.1: `GoogleAuth.keyFilename` is populated only from constructor options,
+ * so on a Vertex client it is `undefined` both with and without the variable set, and stays
+ * `undefined` after a resolution attempt. The only artifact a successful resolution leaves behind is
+ * `jsonContent` — the parsed key file, which holds the private key and must never be printed.
+ *
+ * Mirrors `googleauth.js` rather than reinventing it: both spellings, upper case first, and an empty
+ * value falls through to the well-known file instead of counting as set.
+ */
+function adcCredentialFileFromEnvironment(): { variable: string; path: string } | undefined {
+  for (const variable of ['GOOGLE_APPLICATION_CREDENTIALS', 'google_application_credentials']) {
+    const path = env[variable];
+    if (!path) {
+      continue;
+    }
+    // First non-empty wins, exactly as the library's `||` does — so a value that is credential
+    // CONTENT rather than a path ends the search rather than falling through to the other spelling.
+    //
+    // Pasting the service-account key into the variable instead of writing it to a file is a common
+    // CI misconfiguration, and such a session must NOT be described below. There is no file for the
+    // message to point at, so naming one would be exactly the kind of claim-that-does-not-hold this
+    // hint exists to avoid; and the value is a private key, while this message also reaches the log
+    // stream and debug dumps. It falls back to the pinned `adc` sentence, which asserts nothing
+    // about where the credentials came from.
+    return isCredentialContent(path) ? undefined : { variable, path };
+  }
+  return undefined;
+}
+
+/**
+ * The remedy for an ADC session whose credentials come from a file named in the environment.
+ *
+ * The diagnosis is the same as the plain `adc` one and is CORRECT — this really is ADC. What
+ * differs is that the plain remedy is inert here: `google-auth-library` resolves this variable
+ * before it reads the well-known file, so `gcloud auth application-default login` writes a file
+ * this session never opens, reports success, and leaves the failure exactly where it was. Naming
+ * the command anyway is the point — the reader has usually just run it.
+ */
+function adcFromEnvironmentGuidance(variable: string, path: string): string {
+  return (
+    'This session authenticates through Application Default Credentials, and those credentials ' +
+    'come from `' +
+    variable +
+    '` in your environment, which points at `' +
+    path +
+    '`. That variable is resolved BEFORE the well-known credentials file, so ' +
+    '`gcloud auth application-default login` writes a file this session never reads and the ' +
+    'failure survives it. Repair or replace the credentials in the file above, or unset ' +
+    '`' +
+    variable +
+    '` so the well-known Application Default Credentials file is used instead. ' +
+    'No API key is in use — a `type: vertexai` config ignores any `GOOGLE_API_KEY` in your ' +
+    'environment, so unsetting that will not help here.'
+  );
+}
+
+/**
+ * The sentence for a classified session. Only the ADC branch is refined further, and only into the
+ * one sub-case whose remedy would otherwise be inert; every other mode returns its pinned string
+ * unchanged.
+ */
+function vertexAuthGuidance(mode: VertexAuthMode): string {
+  if (mode === 'adc') {
+    const fromEnvironment = adcCredentialFileFromEnvironment();
+    if (fromEnvironment) {
+      return adcFromEnvironmentGuidance(fromEnvironment.variable, fromEnvironment.path);
+    }
+  }
+  return VERTEX_AUTH_GUIDANCE[mode];
+}
+
 export function enhanceVertexUnauthorizedMessage(originalMessage: string, llm: unknown): string {
   if (!isVertexGoogleLlm(llm) || !VERTEX_AUTH_ERROR_PATTERN.test(originalMessage)) {
     return originalMessage;
@@ -99,6 +206,6 @@ export function enhanceVertexUnauthorizedMessage(originalMessage: string, llm: u
   return (
     `${originalMessage}\n\n` +
     'Vertex AI authentication failed. ' +
-    `${VERTEX_AUTH_GUIDANCE[vertexAuthMode(llm)]}\n`
+    `${vertexAuthGuidance(vertexAuthMode(llm))}\n`
   );
 }
