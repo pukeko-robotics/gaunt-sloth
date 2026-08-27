@@ -1226,7 +1226,7 @@ describe('[[EXT-153]] the prose guard reaches every writer of the class', () => 
     ['openWorld.ts — local-into-transfer', 'neither one moves local data off the machine'],
     ['openWorld.ts — substitution-into-transfer', 'in a position whose value'],
     ['openWorld.ts — file-into-transfer', 'begins with an at-sign, which tells'],
-    ['openWorld.ts — remote-command', 'are the command'],
+    ['openWorld.ts — remote-command', 'not on this machine, and one of them is a substitution'],
     ['openWorld.ts — remote-command, the other hosts', 'That remote command also names'],
     ['openWorld.ts — the residual, one host', 'Another part of this line also names'],
     ['openWorld.ts — the residual, several', 'Other parts of this line also name'],
