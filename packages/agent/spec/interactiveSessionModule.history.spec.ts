@@ -66,6 +66,7 @@ const runnerInstanceMock = {
   init: vi.fn().mockResolvedValue(undefined),
   processMessages: vi.fn().mockResolvedValue('the answer'),
   getRunStats: vi.fn(() => ({ tokensInput: 11, tokensOutput: 5, tools: ['read_file'] })),
+  setApprovalOutcomeCallback: vi.fn(),
   setToolApprovalCallback: vi.fn(),
   setAttackHaltCallback: vi.fn(),
   setNegotiationDisplay: vi.fn(),

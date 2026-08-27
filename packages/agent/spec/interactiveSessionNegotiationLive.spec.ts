@@ -69,6 +69,7 @@ let capturedDisplay: NegotiationDisplay | null | undefined;
 const runnerInstanceMock = {
   init: vi.fn().mockResolvedValue(undefined),
   processMessages: vi.fn().mockResolvedValue(undefined),
+  setApprovalOutcomeCallback: vi.fn(),
   setToolApprovalCallback: vi.fn(),
   setAttackHaltCallback: vi.fn(),
   setNegotiationDisplay: vi.fn((display: NegotiationDisplay | null) => {

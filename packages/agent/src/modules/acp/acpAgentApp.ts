@@ -56,7 +56,12 @@ import { displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { createResolvers } from '#src/resolvers.js';
 import { resolveAgentFactory } from '#src/core/resolveAgentFactory.js';
 import { AcpUpdateMapper } from '#src/modules/acp/acpUpdates.js';
-import { decisionForOutcome, permissionRequestFor } from '#src/modules/acp/acpPermissions.js';
+import {
+  decisionForOutcome,
+  permissionRequestFor,
+  rememberedAnswerNote,
+} from '#src/modules/acp/acpPermissions.js';
+import type { PendingToolInterrupt } from '@gaunt-sloth/core/core/types.js';
 import {
   ACP_AGENT_NAME,
   ACP_AGENT_TITLE,
@@ -191,6 +196,14 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
       await sendUpdate(session, userMessage);
       await sendState(session, { state: 'running' });
 
+      // [[EXT-154]] — the calls answered with one of the two REMEMBERING options, waiting to hear
+      // what that answer landed as. Per turn, like the callbacks either side of it, and keyed by the
+      // interrupt object because that is the correlation {@link ApprovalOutcome} defines: this
+      // surface can have several gated calls open at once (the runner drains a batch), so pairing an
+      // outcome with "the oldest unanswered request" would confirm one command's persistence in a
+      // sentence about another's.
+      const rememberAsked = new Set<PendingToolInterrupt>();
+
       // The gate's last hop. Registered per turn so it closes over THIS turn's mapper, which is
       // what knows the id of the tool call a permission request is about.
       session.runner.setToolApprovalCallback(async (pending) => {
@@ -211,13 +224,45 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
             // wait rather than trusting this to end it.
             { cancellationSignal: abort.signal }
           );
-          return decisionForOutcome(response.outcome);
+          const decision = decisionForOutcome(response.outcome);
+          // [[EXT-154]] — noted from the DECISION rather than from the option id, so the set holds
+          // exactly the answers that asked the runner to store something. A cancelled request and an
+          // option this build does not recognise both fail closed into a plain rejection above and
+          // are therefore not noted, which is the direction that cannot invent a promise.
+          if (decision.scope === 'always') rememberAsked.add(pending);
+          return decision;
         } finally {
           // Never allowed to become the callback's result. A notification that fails — the usual
           // reason being the connection going away mid-prompt — must not turn a decision the human
           // actually made into an error the runner records as a failed gate.
           await sendState(session, { state: 'running' }).catch(() => undefined);
         }
+      });
+
+      // [[EXT-154]] — **and the answer comes back.** The runner records a remembering answer only
+      // after the callback that gave it has returned, so the option labels — *Allow and remember*,
+      // *Reject and remember* — are an offer that nothing had ever checked was kept. This says what
+      // it was.
+      //
+      // It goes as an `agent_message` of its own, which is this dialect's way for the agent to put a
+      // line in the conversation about the session rather than about the model's answer (the same
+      // channel a failed turn reports through). NOT as `tool_call_update` content: that field is
+      // REPLACED by each later update, so the tool's own output would erase the note — or the note
+      // the output.
+      //
+      // Not awaited, because nothing about the run may wait on a notification: the runner is inside
+      // its own continuation here and this callback returns `void`. A send that fails is dropped for
+      // the same reason the state updates around it are — the connection going away must not turn a
+      // decision a human actually made into a failed gate.
+      session.runner.setApprovalOutcomeCallback((outcome) => {
+        if (!rememberAsked.delete(outcome.pending)) return;
+        void sendUpdate(session, {
+          sessionUpdate: 'agent_message',
+          messageId: randomUUID(),
+          content: [
+            { type: 'text', text: rememberedAnswerNote(outcome.decision, outcome.lifetime) },
+          ],
+        }).catch(() => undefined);
       });
 
       for await (const event of session.runner.processMessagesWithEvents(
@@ -263,6 +308,9 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
       }
     } finally {
       session.runner.setToolApprovalCallback(null);
+      // [[EXT-154]] — cleared with its partner. Both close over this turn's state, and a stale one
+      // left wired would report a later turn's answer into a set that can no longer contain it.
+      session.runner.setApprovalOutcomeCallback(null);
       session.abort = null;
       // `turn` is deliberately NOT cleared here: this runs inside the promise it holds, so clearing
       // it would let a `session/close` that reads the field in that instant skip the wait entirely.

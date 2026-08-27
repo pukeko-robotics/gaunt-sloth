@@ -47,7 +47,11 @@ import type {
   RequestPermissionSubject,
   SessionId,
 } from '@agentclientprotocol/sdk/experimental/v2';
-import type { PendingToolInterrupt, ToolApprovalDecision } from '@gaunt-sloth/core/core/types.js';
+import type {
+  ApprovalLifetime,
+  PendingToolInterrupt,
+  ToolApprovalDecision,
+} from '@gaunt-sloth/core/core/types.js';
 import { toolKindFor } from '#src/modules/acp/acpToolCalls.js';
 
 /** The gated tool whose argument is a shell command, and so has an ACP `command` subject. */
@@ -174,6 +178,51 @@ export function permissionRequestFor(options: {
     subject: subjectFor(pending, toolCallId, cwd),
     options: [...ACP_PERMISSION_OPTIONS],
   };
+}
+
+/**
+ * [[EXT-154]] — **what one of the two remembering answers actually did**, in a sentence for the
+ * editor's conversation, sent once the runner has said what the answer landed as.
+ *
+ * `maintenance/ux-guidelines.md` (DL-4): a confirmation states what LANDED, and waits for it if it
+ * has to. *Allow and remember* and *Reject and remember* both promise a project file, and the write
+ * is attempted after the {@link ToolApprovalCallback} has returned — so the labels are an offer and
+ * this is the only place either promise can be checked. The other two options record nothing, so
+ * they earn no sentence and are not sent one.
+ *
+ * ## The copy is this surface's, not the terminal's
+ *
+ * Re-earned rather than pasted across, as the guidelines require of every claim ACP renders. The
+ * client is an editor: there is no menu key to name, no `/approvals undeny` to point at (an editor
+ * has no slash commands — the gap [[EXT-142]] owns), and *allow-list* / *deny-list* are the
+ * terminal's vocabulary for something an editor user only ever meets as project settings. What
+ * carries over is the answer's own word — *remembered* — because that is what the option said.
+ *
+ * ## Three cases, where the terminal surfaces have two
+ *
+ * **This menu is fixed** — all four options on every request, so a user can learn it — which means
+ * *Allow and remember* is offered where the gate has nothing to store: a `catastrophic` verdict, a
+ * command that does not statically resolve, a call nothing can attribute. There the answer records
+ * NOTHING, not even for the session, and `landed` is `once`. The terminal menus hide the control in
+ * exactly those cases and so cannot reach it; telling that user *this session only* would be a
+ * second false claim in place of the one this removes.
+ */
+export function rememberedAnswerNote(
+  decision: 'approve' | 'reject',
+  landed: ApprovalLifetime
+): string {
+  if (decision === 'approve') {
+    if (landed === 'always')
+      return "Allowed and remembered — this exact command is saved to this project's approvals settings and will run without asking in future sessions.";
+    if (landed === 'session')
+      return "Allowed for this session only — this project's approvals settings could not be written, so the next session will ask about this command again.";
+    return 'Allowed for this one call only — nothing was remembered, so the next identical call will ask again.';
+  }
+  if (landed === 'always')
+    return "Rejected and remembered — this exact call is saved to this project's approvals settings and will be refused without asking in future sessions.";
+  if (landed === 'session')
+    return "Rejected for this session only — this project's approvals settings could not be written, so the next session will ask about this call again.";
+  return 'Rejected for this one call only — nothing was remembered, so the next identical call will ask again.';
 }
 
 /**

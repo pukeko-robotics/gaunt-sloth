@@ -35,7 +35,7 @@
  * cases evidence: the request that reaches the client is one the production gate decided to raise.
  */
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as acp from '@agentclientprotocol/sdk';
@@ -1016,6 +1016,90 @@ describe('the ACP v1 agent — session/request_permission', () => {
 
     expect(decisions).toHaveLength(1);
     expect(decisions[0]).toMatchObject({ type: 'reject' });
+  });
+
+  /**
+   * [[EXT-154]] — **the promise in *Allow and remember* / *Reject and remember*, checked on this
+   * dialect too.**
+   *
+   * The options are chosen before anything is written and [[EXT-149]] degrades an `always` whose
+   * write did not reach disk, so the client is told what the answer LANDED as rather than what it
+   * asked for. The sentence itself is the shared one both dialects render, exercised across all
+   * three lifetimes on v2; what these cases carry is v1's own delivery.
+   *
+   * **v1 has no whole-message update, so the note is a chunk with its OWN `messageId`** — a change
+   * of id is what starts a new message here, and reusing the assistant's would splice this line
+   * into whatever the model was saying. That is what the separate-message assertion is for.
+   *
+   * The unwritable fixture is a project dir that does not exist: with no `.gsloth` dir the store's
+   * write path resolves straight into it with no `mkdir` on the way, so the load succeeds and the
+   * write fails with ENOENT everywhere. **Not `chmod`**, a win32 no-op that would make both Windows
+   * cells pass vacuously.
+   */
+  describe('[[EXT-154]] a remembering answer is confirmed from what it landed as', () => {
+    /** Each agent message the client would be rendering, as one string per message id. */
+    const agentMessageTexts = (view: SessionView): string[] =>
+      [...view.agentMessages.values()].map((message) =>
+        message.content.map((block) => (block as { text?: string }).text ?? '').join('')
+      );
+
+    /** Drive one gated command and answer it with `optionId`; hand back the rendered messages. */
+    const answerWith = async (optionId: string, command: string) =>
+      withClient(
+        {
+          script: gatedShellScript(command),
+          approvals: 'write',
+          answer: () => ({ outcome: 'selected', optionId }) as acp.RequestPermissionOutcome,
+        },
+        async (ctx, h) => {
+          const sessionId = await newSession(ctx);
+          await ctx.request(acp.AGENT_METHODS.session_prompt, {
+            sessionId,
+            prompt: [{ type: 'text', text: 'run it' }],
+          });
+          return agentMessageTexts(h.view);
+        }
+      );
+
+    it('sends the saved sentence as its own message when the deny file could be written', async () => {
+      const writable = mkdtempSync(join(projectDir, 'v1-writable-'));
+      setProjectDir(writable);
+      const messages = await answerWith('reject-always', 'curl remembered.example');
+
+      // Its own message, beside the model's — never spliced into it. Asserted as the whole string
+      // rather than with `toContain`, which a single merged message would satisfy just as well.
+      expect(messages).toContain(
+        "Rejected and remembered — this exact call is saved to this project's approvals settings and will be refused without asking in future sessions."
+      );
+      expect(existsSync(join(writable, 'shell-denylist.json'))).toBe(true);
+    });
+
+    it('sends the session sentence instead when the deny file could NOT be written', async () => {
+      const unwritable = join(projectDir, 'v1-no-such-checkout');
+      setProjectDir(unwritable);
+      const messages = await answerWith('reject-always', 'curl degraded.example');
+
+      // Said at all — asserted first, since the absence below is satisfied by silence too.
+      const note = messages.find((text) => text.startsWith('Rejected'));
+      expect(note).toBeDefined();
+      expect(note).toContain('Rejected for this session only');
+      expect(note).toContain('could not be written');
+      expect(note).not.toContain("saved to this project's approvals settings");
+      expect(existsSync(unwritable)).toBe(false);
+    });
+
+    /**
+     * The answers that record nothing get no sentence, which is what keeps this from becoming one
+     * more line after every prompt. The model's own `done` is still there, so this is an assertion
+     * about what was ADDED rather than about a silent turn.
+     */
+    it.each([['allow-once'], ['reject-once']])('adds nothing for %s', async (optionId) => {
+      const writable = mkdtempSync(join(projectDir, 'v1-writable-'));
+      setProjectDir(writable);
+      const messages = await answerWith(optionId, 'echo once');
+
+      expect(messages.some((text) => /remembered|approvals settings/u.test(text))).toBe(false);
+    });
   });
 });
 

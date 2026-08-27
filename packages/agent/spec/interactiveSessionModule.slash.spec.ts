@@ -56,6 +56,7 @@ vi.mock('@gaunt-sloth/core/utils/fileUtils.js', () => ({
 const runnerInstanceMock = {
   init: vi.fn(),
   processMessages: vi.fn(),
+  setApprovalOutcomeCallback: vi.fn(),
   setToolApprovalCallback: vi.fn(),
   setAttackHaltCallback: vi.fn(),
   setNegotiationDisplay: vi.fn(),

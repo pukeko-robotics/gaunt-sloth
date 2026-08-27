@@ -89,11 +89,26 @@ type PendingLike = {
 let capturedApprovalCallback:
   | ((_pending: PendingLike) => Promise<{ type: string; scope?: string; message?: string }>)
   | undefined;
+/**
+ * [[EXT-154]] — the return leg. A remembering answer's confirmation is no longer written where the
+ * key is read, so a case that wants to see one has to play the runner's part and report what the
+ * answer landed as.
+ */
+let capturedOutcomeCallback:
+  | ((_outcome: {
+      pending: PendingLike;
+      decision: 'approve' | 'reject';
+      lifetime: 'once' | 'session' | 'always';
+    }) => void)
+  | undefined;
 const runnerInstanceMock = {
   init: vi.fn().mockResolvedValue(undefined),
   processMessages: vi.fn().mockResolvedValue(undefined),
   setToolApprovalCallback: vi.fn((cb) => {
     capturedApprovalCallback = cb;
+  }),
+  setApprovalOutcomeCallback: vi.fn((cb) => {
+    capturedOutcomeCallback = cb;
   }),
   cleanup: vi.fn().mockResolvedValue(undefined),
 };
@@ -139,6 +154,7 @@ describe('interactiveSessionModule CFG-28 — the readline confirmation tells th
   beforeEach(() => {
     vi.resetAllMocks();
     capturedApprovalCallback = undefined;
+    capturedOutcomeCallback = undefined;
     rlQuestionMock.mockImplementation(async (prompt: string) => {
       if (typeof prompt === 'string' && prompt.includes('>')) return 'exit';
       return '';
@@ -155,6 +171,10 @@ describe('interactiveSessionModule CFG-28 — the readline confirmation tells th
     const { createInteractiveSession } = await import('#src/modules/interactiveSessionModule.js');
     await createInteractiveSession(sessionConfig, {});
     expect(capturedApprovalCallback).toBeTypeOf('function');
+    // [[EXT-154]] — asserted, not assumed. Without this leg the two remembering answers are silent
+    // rather than wrong, and every "does not claim persistence" case below would pass for the one
+    // reason that proves nothing.
+    expect(capturedOutcomeCallback).toBeTypeOf('function');
     displayDialogLineMock.mockClear(); // only record what the approval callback itself prints
     displayInfoMock.mockClear();
     displayWarningMock.mockClear();
@@ -167,10 +187,13 @@ describe('interactiveSessionModule CFG-28 — the readline confirmation tells th
    * never sends, and the sticky/not-sticky assertions would have agreed with each other whatever
    * the surface did.
    */
+  /** The interrupt the last {@link answer} was given, so {@link report} can name the same object. */
+  let lastPending: PendingLike | undefined;
+
   const answer = async (key: string, safetyVerdict: PendingLike['safetyVerdict']) => {
     rlQuestionMock.mockResolvedValueOnce(key);
     const sticky = safetyVerdict?.outcome !== 'catastrophic';
-    return capturedApprovalCallback!({
+    lastPending = {
       name: 'run_shell_command',
       args: { command: 'terraform destroy -auto-approve' },
       safetyVerdict,
@@ -181,8 +204,22 @@ describe('interactiveSessionModule CFG-28 — the readline confirmation tells th
             grantSummary: 'terraform destroy -auto-approve',
           }
         : {}),
-    });
+    };
+    return capturedApprovalCallback!(lastPending);
   };
+
+  /**
+   * [[EXT-154]] — the runner's half: tell the surface what the answer it just gave landed as.
+   *
+   * The interrupt is passed by IDENTITY, which is the correlation the seam defines and the thing
+   * production keys its pending set on — so a report naming some other object must be dropped, and
+   * a case below proves it is.
+   */
+  const report = (
+    decision: 'approve' | 'reject',
+    lifetime: 'once' | 'session' | 'always',
+    pending: PendingLike = lastPending!
+  ) => capturedOutcomeCallback!({ pending, decision, lifetime });
 
   /**
    * [[TUI-C26]] §1.1 — on a `catastrophic` verdict the runner sends no grant preview, the menu
@@ -218,9 +255,18 @@ describe('interactiveSessionModule CFG-28 — the readline confirmation tells th
     expect(printed()).toContain('Approved — this exact command will not ask again this session.');
   });
 
-  it('on a destructive verdict, "a" still promises the allow-list write', async () => {
+  /**
+   * [[EXT-154]] — the same promise, now made only once the write has answered. `[a]` is the twin of
+   * `[d]`: it asks for the same project file and used to make the same claim about it on the way
+   * past. So the keystroke alone must say NOTHING about a file, and the sentence arrives with the
+   * outcome.
+   */
+  it('on a destructive verdict, "a" promises the allow-list write once the runner reports it', async () => {
     await startSession();
     await answer('a', DESTRUCTIVE);
+    // Nothing yet: at this instant the runner has not tried the write.
+    expect(printed()).not.toContain('allow-list');
+    report('approve', 'always');
     expect(printed()).toContain(
       'Approved and remembered — this exact command is saved to the project allow-list.'
     );

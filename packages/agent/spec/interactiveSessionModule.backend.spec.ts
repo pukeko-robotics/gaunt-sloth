@@ -52,6 +52,7 @@ const runnerCtorArgs: unknown[][] = [];
 const runnerInstanceMock = {
   init: vi.fn().mockResolvedValue(undefined),
   processMessages: vi.fn().mockResolvedValue(undefined),
+  setApprovalOutcomeCallback: vi.fn(),
   setToolApprovalCallback: vi.fn(),
   cleanup: vi.fn().mockResolvedValue(undefined),
 };

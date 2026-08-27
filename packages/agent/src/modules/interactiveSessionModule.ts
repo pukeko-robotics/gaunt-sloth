@@ -52,7 +52,11 @@ import {
   stdin as input,
   stdout as output,
 } from '@gaunt-sloth/core/utils/systemUtils.js';
-import type { GthRunStats } from '@gaunt-sloth/core/core/types.js';
+import type {
+  ApprovalLifetime,
+  GthRunStats,
+  PendingToolInterrupt,
+} from '@gaunt-sloth/core/core/types.js';
 import { type BaseMessage, HumanMessage } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
 import { createResolvers } from '#src/resolvers.js';
@@ -98,6 +102,40 @@ import {
  */
 const dialogLines = (lines: readonly string[], tone: DialogTone = 'plain'): void => {
   for (const line of lines) displayDialogLine(line, tone);
+};
+
+/**
+ * [[EXT-154]] — **the sentence a remembering answer earns, written from the lifetime the runner
+ * recorded rather than from the key that was pressed.**
+ *
+ * `maintenance/ux-guidelines.md` (DL-4): a confirmation states what LANDED. The two answers this
+ * covers — `[a]` and `[d]` — ask for a project file, and [[EXT-149]] degrades an `always` whose write
+ * did not reach disk to the session answer it really is. That is decided inside the runner AFTER the
+ * approval callback has returned, so these lines cannot be written where they are chosen; they are
+ * written where the outcome arrives, once, and only then.
+ *
+ * **Binary on this surface, and that is a property rather than a simplification.** `[a]` and `[d]`
+ * are shown only where `grantPreview`/`denyPreview` are attached, which is exactly where the runner
+ * has an entry to record — so an answer here always records something and `once` is unreachable.
+ * (The ACP surface offers its remembering options unconditionally and therefore does need the third
+ * case; see `acpPermissions.ts`.)
+ *
+ * `/approvals undeny` is named on the refusal branch whichever way the write went, because it lists
+ * and lifts a session refusal too, so the line is true on both.
+ */
+const rememberedAnswerLine = (decision: 'approve' | 'reject', landed: ApprovalLifetime): string => {
+  const savedToProject = landed === 'always';
+  if (decision === 'approve') {
+    return savedToProject
+      ? 'Approved and remembered — this exact command is saved to the project allow-list.'
+      : 'Approved for this session only — it was not written to the project allow-list.';
+  }
+  return savedToProject
+    ? 'Refused — this exact call will not run and will not ask again. It is saved to this ' +
+        'project, so it stays refused in new sessions; lift it with /approvals undeny.'
+    : 'Refused — this exact call will not run and will not ask again this session. It was not ' +
+        'written to the project, so a new session will ask about it again; lift it with ' +
+        '/approvals undeny.';
 };
 
 export interface SessionConfig {
@@ -197,6 +235,17 @@ export async function createInteractiveSession(
     // The runner consults the allow-list BEFORE calling this, so trusted commands never reach
     // this prompt at all. (The Ink TUI surfaces the same scoped prompt via an approval bridge —
     // see tuiSessionModule's createApprovalBridge + the <ApprovalPrompt> component.)
+    // [[EXT-154]] — the interrupts whose answer asked for a PROJECT FILE, waiting to be told what
+    // they got. Only `[a]` and `[d]` land here; every other answer records nothing and is confirmed
+    // where it is chosen.
+    //
+    // **Keyed by the interrupt object, the correlation the seam documents**, rather than by "the
+    // one that is outstanding". This surface does prompt strictly one at a time, but that is a
+    // property of the runner's drain loop, not of this module — and holding a claim about someone
+    // else's loop here is how one call's persistence ends up confirmed on another call's dialog.
+    // Emptied as each is consumed, so nothing accumulates over a long session.
+    const rememberAsked = new Set<PendingToolInterrupt>();
+
     runner.setToolApprovalCallback(async (pending) => {
       // [[EXT-137]] — **the request block, rendered by core and printed linearly here.**
       //
@@ -292,10 +341,12 @@ export async function createInteractiveSession(
         return { type: 'approve', scope: 'session' };
       }
       if (sticky && (answer === 'a' || answer === 'always')) {
-        displayDialogLine(
-          'Approved and remembered — this exact command is saved to the project allow-list.',
-          'notice'
-        );
+        // [[EXT-154]] — **no sentence here.** This answer asks for a project file and the write has
+        // not been attempted yet, so anything written on this line would be a claim about a file
+        // nobody has tried to make. Recorded instead, and confirmed by the outcome callback below
+        // once the runner says what it landed as. The approve twin of the `[d]` branch, and the one
+        // [[EXT-150]] found telling the identical lie beside the reject branch its node named.
+        rememberAsked.add(pending);
         return { type: 'approve', scope: 'always' };
       }
       // [[TUI-C26]] §6 — *always reject*: a refusal that is also recorded, so the next identical
@@ -314,16 +365,14 @@ export async function createInteractiveSession(
       // widens what is answerable at any prompt. Read this as the reason not to add a fourth alias,
       // never as licence to delete the three that are here.
       const stickyRejected = stickyDeny && answer === 'd';
-      // The confirmation says what actually happened and stops there — and [[EXT-107]] makes what
-      // happens a project file, so it also says where the refusal now lives and how to undo it. A
-      // saved refusal nobody can find is the one failure mode persisting it introduces.
-      displayDialogLine(
-        stickyRejected
-          ? 'Refused — this exact call will not run and will not ask again. It is saved to this ' +
-              'project, so it stays refused in new sessions; lift it with /approvals undeny.'
-          : 'Command rejected.',
-        'notice'
-      );
+      // [[EXT-154]] — the ORDINARY refusal is confirmed here and the remembered one is not, and the
+      // split is the whole fix. This line records nothing, so it is true the instant it is written;
+      // *always reject* asks for a project file, which [[EXT-107]] makes real and [[EXT-149]] can fail
+      // to write, and neither is known until the runner has tried. So the remembering answer is
+      // noted and the sentence it earns is committed by the outcome callback below — once, when it
+      // is known, never optimistically and then corrected.
+      if (stickyRejected) rememberAsked.add(pending);
+      else displayDialogLine('Command rejected.', 'notice');
       // EXT-58 (§7): the model is told the moves it has — re-call with a justification, or call a
       // different command — and, when the rater named an already-granted alternative (§4.4), that
       // tool plus the clause saying it needs no approval. A bare "user rejected" leaves the model
@@ -340,6 +389,19 @@ export async function createInteractiveSession(
           verdict: pending.safetyVerdict,
         }),
       };
+    });
+
+    // [[EXT-154]] — **the return leg**, and the reason the two sentences above moved. The runner
+    // records a remembering answer only after the callback that gave it has returned, so this is
+    // the first moment either one can be described truthfully; written any earlier, the *saved to
+    // this project* line sits on screen beside core's own ERROR naming the file it could not write.
+    //
+    // Nothing here decides anything — by the time it fires the answer is made and the record is
+    // written — and an outcome for an interrupt this surface did not note is dropped, which is what
+    // keeps `[o]`, `[s]` and the ordinary refusal from being confirmed twice.
+    runner.setApprovalOutcomeCallback((outcome) => {
+      if (!rememberAsked.delete(outcome.pending)) return;
+      displayDialogLine(rememberedAnswerLine(outcome.decision, outcome.lifetime), 'notice');
     });
 
     // [[TUI-C68]] §6.1 — the ATTACK BANNER on the plain surface. An `attack` verdict says the
