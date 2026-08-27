@@ -94,6 +94,29 @@ const VERTEX_AUTH_GUIDANCE: Record<VertexAuthMode, string> = {
 };
 
 /**
+ * The longest value still treated as a filesystem path. 260 is Windows' classic `MAX_PATH`, which is
+ * a defensible ceiling for a path and sits an order of magnitude below any credential: the deepest
+ * realistic ADC path — a CI runner's temp directory plus
+ * `application_default_credentials.json` — is around 120 characters, while a service-account key is
+ * ~1700 as JSON and ~2300 base64-encoded. Nothing has to land in the gap for the test to be useful.
+ */
+const MAX_CREDENTIAL_PATH_LENGTH = 260;
+
+/**
+ * Whether a value is the credential ITSELF rather than a path to one.
+ *
+ * Deliberately tested by SIZE first rather than by shape. The shape test alone (`{`) catches a
+ * pasted JSON key and misses the base64 form that CI secret stores hand out, and widening it one
+ * encoding at a time only ever covers the last spelling somebody thought of — the value is
+ * attacker-irrelevant but user-supplied and its formats are open-ended. Length closes the class
+ * because every credential is enormous next to every path. The shape test is kept alongside it for
+ * the short, hand-trimmed JSON that a size test alone would let through.
+ */
+function isCredentialContent(value: string): boolean {
+  return value.length > MAX_CREDENTIAL_PATH_LENGTH || value.trimStart().startsWith('{');
+}
+
+/**
  * Where an ADC session's credentials are being read from when an environment variable names a file,
  * and the spelling of the variable that named it — `undefined` when no such variable is in play.
  *
@@ -116,9 +139,19 @@ const VERTEX_AUTH_GUIDANCE: Record<VertexAuthMode, string> = {
 function adcCredentialFileFromEnvironment(): { variable: string; path: string } | undefined {
   for (const variable of ['GOOGLE_APPLICATION_CREDENTIALS', 'google_application_credentials']) {
     const path = env[variable];
-    if (path) {
-      return { variable, path };
+    if (!path) {
+      continue;
     }
+    // First non-empty wins, exactly as the library's `||` does — so a value that is credential
+    // CONTENT rather than a path ends the search rather than falling through to the other spelling.
+    //
+    // Pasting the service-account key into the variable instead of writing it to a file is a common
+    // CI misconfiguration, and such a session must NOT be described below. There is no file for the
+    // message to point at, so naming one would be exactly the kind of claim-that-does-not-hold this
+    // hint exists to avoid; and the value is a private key, while this message also reaches the log
+    // stream and debug dumps. It falls back to the pinned `adc` sentence, which asserts nothing
+    // about where the credentials came from.
+    return isCredentialContent(path) ? undefined : { variable, path };
   }
   return undefined;
 }

@@ -249,6 +249,69 @@ describe('the credential a Vertex hint names (CFG-58)', () => {
     }
   });
 
+  it('POPULATION 6c — the variable holds pasted credentials, not a path: echo nothing', async () => {
+    // The common CI misconfiguration: the service-account JSON is pasted INTO the variable instead
+    // of being written to a file. `google-auth-library` treats the whole blob as a filename and
+    // fails to open it, so this session is still ADC and still reaches this hint.
+    //
+    // It must not take the branch above. There is no file to point at, so "the file it points at"
+    // would be precisely the kind of claim-that-does-not-hold this node exists to remove — and the
+    // value is a private key, while the message it would land in is also written to the log stream
+    // and to debug dumps. Falling back to the pinned sentence asserts nothing about it.
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = SERVICE_ACCOUNT;
+
+    const hint = await hintForPreset({});
+
+    expect(hint).not.toContain('not-a-real-private-key');
+    expect(hint).not.toContain('service_account');
+    expect(hint).not.toContain('GOOGLE_APPLICATION_CREDENTIALS');
+    expect(hint).toContain('Credentials: run `gcloud auth login`');
+  });
+
+  it('POPULATION 6d — the same when the pasted credentials are base64, not JSON', async () => {
+    // The CI idiom is to carry the key through a secret store base64-encoded and decode it into a
+    // file; skipping the decode leaves an opaque blob in the variable. It does not start with `{`,
+    // so the shape test that catches POPULATION 6c does not see it — and enumerating paste
+    // encodings would only ever be as complete as the last one somebody thought of.
+    //
+    // What the two have in common is SIZE, and that is what is pinned here: a credential is orders
+    // of magnitude longer than any filesystem path. This cell is what stops the guard being widened
+    // back down to a shape test.
+    const realisticKey = Buffer.from(
+      JSON.stringify({
+        type: 'service_account',
+        project_id: 'test-project',
+        // Filler of the length a real PEM private key has. Not a key, and not derived from one.
+        private_key:
+          '-----BEGIN PRIVATE KEY-----\n' + 'A'.repeat(1600) + '\n-----END PRIVATE KEY-----',
+        client_email: 'test@test-project.iam.gserviceaccount.com',
+      })
+    ).toString('base64');
+    expect(realisticKey.startsWith('{')).toBe(false); // the 6c shape test cannot catch this one
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = realisticKey;
+
+    const hint = await hintForPreset({});
+
+    expect(hint).not.toContain(realisticKey);
+    expect(hint).not.toContain('AAAAAAAAAA');
+    expect(hint).not.toContain('GOOGLE_APPLICATION_CREDENTIALS');
+    expect(hint).toContain('Credentials: run `gcloud auth login`');
+  });
+
+  it('a long-but-plausible credentials PATH is still named — the cap is not a shape test', async () => {
+    // The control for the two above: the guard must exclude credential CONTENT, not merely long
+    // values, or a deep CI path would silently lose the remedy this node exists to give it.
+    const deepPath =
+      '/home/runner/work/_temp/8f3c1a90-4b21-4d5e-9c77-0ab12cd34ef5/' +
+      'gcp/service-account/application_default_credentials.json';
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = deepPath;
+
+    const hint = await hintForPreset({});
+
+    expect(hint).toContain(deepPath);
+    expect(hint).toContain('GOOGLE_APPLICATION_CREDENTIALS');
+  });
+
   it('asserts NO credential when the client cannot be read, instead of guessing one', () => {
     // Reachable only from a double or a future refactor. Guessing here is what produces a
     // confidently wrong diagnosis, so this branch names all three and blames none.
