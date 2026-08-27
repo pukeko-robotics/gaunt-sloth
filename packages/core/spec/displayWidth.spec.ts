@@ -223,6 +223,23 @@ describe('utils/displayWidth', () => {
     expect(displayWidth(WITNESS)).toBe(10);
     expect(clustersOf(WITNESS).length).toBe(19);
 
+    // The total the WALK attributes to a string is not a number it exposes, but it is exactly the
+    // budget the string needs to come back whole — so asserting that this budget is
+    // `displayWidth(text)`, and that one column less is not enough, pins the sum of the walked
+    // cluster widths to the whole-string measurement. Under an ANSI-blind walk the witness needs
+    // seventeen columns to survive while it measures ten, and this is what says so.
+    for (const text of COLOURED) {
+      const width = stringWidth(text);
+      // A string of escapes alone measures zero, where the budget it needs is decided by the
+      // documented `maxWidth <= 0` rule rather than by anything the walk added up.
+      if (width === 0) continue;
+      expect(sliceToWidth(text, width)).toBe(text);
+      expect(sliceToWidth(text, width - 1)).not.toBe(text);
+    }
+    // The same statement on the witness alone, with the two numbers written out.
+    expect(sliceToWidth(WITNESS, 10)).toBe(WITNESS);
+    expect(sliceToWidth(WITNESS, 9)).not.toBe(WITNESS);
+
     for (const text of COLOURED) {
       // Sum of the widths of what the walk KEEPS, taken one budget at a time, equals the
       // whole-string measurement once the budget covers it all.
