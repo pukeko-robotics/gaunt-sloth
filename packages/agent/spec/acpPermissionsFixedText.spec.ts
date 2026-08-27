@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { PendingToolInterrupt } from '@gaunt-sloth/core/core/types.js';
+import type { GthCommand, PendingToolInterrupt } from '@gaunt-sloth/core/core/types.js';
+import { commandAnswersApprovals } from '@gaunt-sloth/core/config.js';
+import { failClosedVerdict } from '@gaunt-sloth/core/core/shell/rater.js';
 import { permissionRequestFor } from '#src/modules/acp/acpPermissions.js';
 import { permissionRequestForV1 } from '#src/modules/acp/acpPermissionsV1.js';
 
@@ -105,5 +107,87 @@ describe('[[EXT-137]] the ACP permission request keeps the call in its own field
     } as unknown as PendingToolInterrupt;
     const request = permissionRequestFor({ sessionId: SESSION, pending: mcp, cwd: '/p' });
     expect(request.title).toBe('Run the mcp__jira__create_issue tool');
+  });
+});
+
+/**
+ * [[EXT-82]] — **the fail-closed cause on the headless surfaces, asserted rather than assumed.**
+ *
+ * A headless consumer is where a rater that answers nothing is hardest to notice: there is no
+ * terminal to read a notice in, and the only thing an editor sees is a stream of `destructive`
+ * verdicts that all say the same sentence. Both ACP dialects build their own explanation string, so
+ * "the plumbing is obviously shared" is exactly the reasoning that would leave one of them behind —
+ * and the v1 description had no assertion on it at all.
+ *
+ * The verdict here is built by the REAL producer rather than hand-written, so a wording change in
+ * the rater cannot leave this passing against a string nothing produces any more.
+ */
+describe('[[EXT-82]] the fail-closed cause reaches the headless surfaces', () => {
+  const REJECTED = failClosedVerdict('threw', undefined, {
+    status: 400,
+    message: 'tool_choice is not supported by this model',
+  });
+
+  const rejectedRating = (): PendingToolInterrupt =>
+    ({
+      name: 'run_shell_command',
+      args: { command: 'rm -rf build' },
+      subject: { kind: 'shell', command: 'rm -rf build' },
+      safetyVerdict: REJECTED,
+    }) as unknown as PendingToolInterrupt;
+
+  it('v2 sends the provider rejection to the client, not a bare "could not assess"', () => {
+    const request = permissionRequestFor({
+      sessionId: SESSION,
+      pending: rejectedRating(),
+      cwd: '/p',
+    });
+    expect(request.description).toContain('AI rater');
+    expect(request.description).toContain('HTTP 400');
+    expect(request.description).toContain('tool_choice is not supported by this model');
+    expect(request.description, 'the sentence the old output could not support').toContain(
+      'The model was never asked'
+    );
+    // The control: a rating that failed with nothing to report still reaches the client, and says
+    // only what it knows. Without it, the assertions above would also pass on a description that
+    // interpolated some constant of its own.
+    const bare = permissionRequestFor({
+      sessionId: SESSION,
+      pending: {
+        ...rejectedRating(),
+        safetyVerdict: failClosedVerdict('threw'),
+      } as PendingToolInterrupt,
+      cwd: '/p',
+    });
+    expect(bare.description).toContain('AI rater');
+    expect(bare.description).not.toContain('HTTP 400');
+  });
+
+  it('v1 sends it too — a separate builder, so a separate assertion', () => {
+    const request = permissionRequestForV1({ sessionId: SESSION, pending: rejectedRating() });
+    const content = JSON.stringify(request.toolCall.content);
+    expect(content).toContain('AI rater');
+    expect(content).toContain('HTTP 400');
+    expect(content).toContain('tool_choice is not supported by this model');
+    expect(content).toContain('The model was never asked');
+  });
+
+  /**
+   * **The AG-UI half of this node's acceptance cannot be built, and this is why.**
+   *
+   * The node asks for the same cause to reach AG-UI. It cannot: `api` is not a command that
+   * answers approvals, so no rating is ever performed on that surface, no `ShellSafetyVerdict` is
+   * ever constructed there, and there is no cause to carry. Building plumbing for it would be
+   * plumbing for a path that never executes — green cells over a component that is not there.
+   *
+   * This case is the falsifiable form of that statement rather than a comment: the day `api` starts
+   * answering approvals, it reds, and the AG-UI row becomes real work instead of a claim in a
+   * report nobody can check.
+   */
+  it('AG-UI carries no cause because it performs no rating — pinned, not assumed', () => {
+    expect(commandAnswersApprovals('api' as GthCommand)).toBe(false);
+    // The control, so this is a statement about `api` and not about the predicate being false for
+    // everything: the surfaces above DO answer approvals, which is why they carry a verdict at all.
+    expect(commandAnswersApprovals('code' as GthCommand)).toBe(true);
   });
 });

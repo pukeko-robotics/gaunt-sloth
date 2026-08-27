@@ -2364,6 +2364,193 @@ describe('GthAgentRunner', () => {
         scope: 'once',
       });
     });
+
+    /**
+     * [[EXT-82]] — **the rate, through the REAL rating path.**
+     *
+     * The tracker's arithmetic is pinned on its own in `raterHealth.spec.ts` and the sanitiser's in
+     * `shellRater.spec.ts`; what is pinned here is that the runner joins them to the thing a user
+     * actually meets — a session in which every rating call is rejected and every verdict is the
+     * gate defaulting. Nothing is mocked between the thrown provider error and the warning: the
+     * runner builds the prompt through `rateShellCommand`, the failure is described where the error
+     * is caught, and the signal comes back through the session's own status callback.
+     */
+    describe('[[EXT-82]] the session-level signal when the rater stops answering', () => {
+      /** A recognisable fake credential, written as a literal and never read from the environment. */
+      const FAKE_KEY = 'sk-ext82RUNNERfakeDONOTUSE000000';
+      /** A rated command distinctive enough that its appearance in any output is unambiguous. */
+      const CANARY = 'rm -rf /tmp/ext82-runner-canary';
+
+      /** The shape an OpenAI-compatible client throws when a provider rejects the request. */
+      function rejection(message: string): Error {
+        return Object.assign(new Error(`400 ${message}`), { status: 400, error: { message } });
+      }
+
+      /**
+       * A rated config whose rater answers the given script in order — an `Error` is thrown, and
+       * anything else is returned as a verdict — then answers `SAFE` forever after.
+       */
+      function scriptedRater(...script: readonly unknown[]) {
+        const invoke = vi.fn();
+        for (const answer of script) {
+          if (answer instanceof Error) invoke.mockRejectedValueOnce(answer);
+          else invoke.mockResolvedValueOnce(answer);
+        }
+        invoke.mockResolvedValue(SAFE);
+        const withStructuredOutput = vi.fn().mockReturnValue({ invoke });
+        // The label fields `raterModelLabel` reads, so the notice can NAME the model the way a
+        // real one does — an id and a provider type, never the instance and never a key.
+        const llm = {
+          withStructuredOutput,
+          _llmType: () => 'ext82-provider',
+          model: 'ext82-scripted-rater',
+        };
+        return {
+          config: {
+            ...mockConfig,
+            llm: llm as any,
+            streamOutput: true as const,
+            approvals: { mode: 'assisted' },
+            commands: { code: { builtInTools: { run_shell_command: { enabled: true } } } },
+          },
+          invoke,
+        };
+      }
+
+      /** Every session-level rater signal this run raised, in order. */
+      function signals(): string[] {
+        return statusUpdateCallback.mock.calls
+          .map((call: unknown[]) => String(call[1]))
+          .filter((message) => message.includes('The command safety rater is not answering'));
+      }
+
+      /** N distinct commands, so each rating is its own gated call rather than a repeat. */
+      function commands(count: number): string[] {
+        return Array.from({ length: count }, (_unused, index) => `ls -la /tmp/ext82-${index}`);
+      }
+
+      async function driveRun(config: unknown, ...gated: string[]): Promise<void> {
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        pendingSequence(...gated);
+        await runner.init('code', config as never);
+        runner.setToolApprovalCallback(
+          vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' })
+        );
+        await runner.processMessages([new HumanMessage('go')]);
+      }
+
+      it('raises the signal exactly once on a run of rejected ratings, naming model and cause', async () => {
+        const error = rejection('tool_choice is not supported by this model');
+        const { config, invoke } = scriptedRater(error, error, error, error, error, error);
+        await driveRun(config, ...commands(6));
+
+        const raised = signals();
+        // Assert the run HAPPENED before asserting what it produced: a "one notice" count is also
+        // what a run of one rating produces, and a "no notice" count is what a run of none does.
+        expect(invoke, 'six commands were really rated').toHaveBeenCalledTimes(6);
+        expect(raised, 'six rejections, one notice').toHaveLength(1);
+        expect(raised[0], 'the notice names the rater that is not answering').toContain(
+          'ext82-provider/ext82-scripted-rater'
+        );
+        expect(raised[0]).toContain('HTTP 400');
+        expect(raised[0]).toContain('tool_choice is not supported by this model');
+        expect(raised[0]).toContain('The model was never asked');
+        expect(raised[0]).toContain('approvals.rater');
+      });
+
+      /**
+       * The escalation the human sees carries the same cause. This is the verdict-level half
+       * arriving on the surface a person reads, rather than only in the session notice.
+       */
+      it('hands the human a verdict whose reason names the provider rejection', async () => {
+        const { config } = scriptedRater(rejection('tool_choice is not supported by this model'));
+        const runner = new GthAgentRunner(statusUpdateCallback);
+        pendingOnce(CANARY);
+        await runner.init('code', config as never);
+        const human = vi.fn().mockResolvedValue({ type: 'approve', scope: 'once' });
+        runner.setToolApprovalCallback(human);
+
+        await runner.processMessages([new HumanMessage('go')]);
+
+        const verdict = human.mock.calls[0][0].safetyVerdict;
+        expect(verdict.outcome, 'fail-closed stays fail-closed').toBe('destructive');
+        expect(verdict.reason).toContain('HTTP 400');
+        expect(verdict.reason).toContain('tool_choice is not supported by this model');
+        expect(verdict.reason).toContain('The model was never asked');
+        // One occurrence is not a rate, so the session notice has not fired.
+        expect(signals()).toEqual([]);
+      });
+
+      /**
+       * **The leak assertion, on a fixture that really carries both hazards.** The provider error
+       * echoes a fake key AND the rated command, so the negatives below have something real to
+       * exclude — and PRESENCE is asserted first, because a `not.toContain` on an empty notice
+       * passes for the wrong reason.
+       */
+      it('carries no key, no request body and no rated command', async () => {
+        const hostile = rejection(
+          `request rejected: {"messages":[{"content":"<command_to_evaluate>${CANARY}</command_to_evaluate>"}]} with key ${FAKE_KEY}`
+        );
+        const { config } = scriptedRater(hostile, hostile, hostile);
+        await driveRun(config, CANARY, `${CANARY}-two`, `${CANARY}-three`);
+
+        const raised = signals();
+        expect(raised, 'the notice exists at all').toHaveLength(1);
+        expect(raised[0], 'and still reports what it knows').toContain('HTTP 400');
+        expect(raised[0], 'saying so where it dropped the rest').toContain('withheld');
+
+        expect(raised[0]).not.toContain(FAKE_KEY);
+        expect(raised[0]).not.toContain('sk-ext82');
+        expect(raised[0]).not.toContain('ext82-runner-canary');
+        expect(raised[0]).not.toContain('command_to_evaluate');
+        expect(raised[0]).not.toContain('"messages"');
+      });
+
+      /**
+       * The reset half. Two short runs of failures around one answered call are not one long run,
+       * and that is the difference between "the rater is flaky" and "the rater cannot answer".
+       */
+      it('a single interleaved success resets the run, so no signal is raised', async () => {
+        const error = rejection('tool_choice is not supported by this model');
+        const { config, invoke } = scriptedRater(error, error, SAFE, error, error);
+        await driveRun(config, ...commands(5));
+
+        // Without this, an empty signal list is satisfied by a run that never reached five
+        // ratings at all — which is what a broken fixture, not a working reset, looks like.
+        expect(
+          invoke,
+          'five commands were really rated, four of them rejected'
+        ).toHaveBeenCalledTimes(5);
+        expect(signals()).toEqual([]);
+      });
+
+      /**
+       * §3.2 — on an `approvals.allow` glob the rating is a TRIPWIRE: the command runs on the
+       * human's standing grant whatever the rater says, so a rejected tripwire rating left no
+       * verdict defaulting and must not count toward the rate. Driven through the real allow-match
+       * path, because the exclusion lives in the runner and a tracker-level fixture cannot see it.
+       */
+      it('a run of rejected TRIPWIRE ratings raises no signal', async () => {
+        const error = rejection('tool_choice is not supported by this model');
+        const { config, invoke } = scriptedRater(error, error, error, error);
+        await driveRun(
+          {
+            ...config,
+            approvals: {
+              mode: 'assisted',
+              allow: [{ type: 'shell', matcher: 'glob', pattern: 'npm test*' }],
+            },
+          },
+          'npm test --one',
+          'npm test --two',
+          'npm test --three',
+          'npm test --four'
+        );
+
+        expect(invoke, 'the tripwire really fired on every one of them').toHaveBeenCalledTimes(4);
+        expect(signals(), 'a tripwire that failed gated nothing').toEqual([]);
+      });
+    });
   });
 
   /**

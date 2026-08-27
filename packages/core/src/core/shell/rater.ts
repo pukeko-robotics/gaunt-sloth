@@ -69,6 +69,11 @@ import type {
 } from '#src/core/shell/raterVocabulary.js';
 import { structuredOutputBoundary } from '#src/runtime/structuredOutput.js';
 import { debugLog, debugLogError } from '#src/utils/debugUtils.js';
+// [[EXT-82]] — the ONE redaction policy, used here as a DETECTOR rather than as a substitution:
+// a provider message the pass would have changed is dropped whole instead of being carried
+// scrubbed. Reusing it is what keeps a second, drifting policy from existing.
+import { collectSecretValues, redactText } from '#src/utils/redactSecrets.js';
+import { env } from '#src/utils/systemUtils.js';
 
 /**
  * The gate's closed vocabularies are defined in {@link ./raterVocabulary.js} — a leaf module with no
@@ -208,19 +213,192 @@ export const FAIL_CLOSED_VERDICT: ShellSafetyVerdict = {
 export type FailClosedCause = 'no-model' | 'timeout' | 'unparseable' | 'threw';
 
 /**
+ * [[EXT-82]] — **the provider's own account of a rating call that never reached the model**,
+ * sanitised at construction.
+ *
+ * The `threw` arm of {@link FailClosedCause} used to say only *"the auto-rater call failed"*, and a
+ * measured OpenRouter sweep showed what that costs: 27 of 27 rating calls returned HTTP 400 — the
+ * model's provider refuses a pinned `tool_choice` and refuses the JSON-mode route as well, so both
+ * roads the rater can take are closed — and every one of them produced a verdict byte-identical to
+ * the verdict a *working* rater produces on a command it dislikes. The user sees a gate that has
+ * become unbearably noisy and turns it off. Nothing anywhere says the model was never asked.
+ *
+ * **Every field here is carried into text a user may paste into an issue**, so the construction
+ * rules are part of the type:
+ *
+ * - `status` is a number, so it can carry nothing but itself.
+ * - `message` is present **only when nothing hazardous was found anywhere in the provider's text**.
+ *   It is not a scrubbed copy of a message that contained a key: a partial scrub is what leaks, so
+ *   the whole message is dropped instead and {@link withheld} says so.
+ * - `withheld` is the honest half of that rule. "The provider said something we would not repeat"
+ *   is a fact worth reporting; a silently empty field reads as a provider that said nothing.
+ */
+export interface RaterCallFailure {
+  /** The HTTP status the provider returned, when the error carried one. */
+  status?: number;
+  /** A one-line, length-capped fragment of the provider's message, when it is safe to carry. */
+  message?: string;
+  /** Set when the provider's message was dropped whole rather than carried in part. */
+  withheld?: boolean;
+}
+
+/** Hard cap on the provider message any diagnostic carries, ellipsis included. */
+export const RATER_PROVIDER_MESSAGE_MAX_CHARS = 200;
+
+/**
+ * The markers that say the provider handed our own REQUEST back to us. The fenced command is in
+ * that request, so a body echo carries the rated command — the one thing the diagnostic may not
+ * repeat — and the command check below covers the same ground from the other side.
+ */
+const REQUEST_ECHO_MARKERS = ['<command_to_evaluate>', '</command_to_evaluate>'];
+
+/** The HTTP status an error carries, from a field or from the code a provider leads its text with. */
+function providerStatus(error: unknown): number | undefined {
+  const carrier = error as
+    | { status?: unknown; statusCode?: unknown; response?: { status?: unknown } | null }
+    | null
+    | undefined;
+  for (const candidate of [carrier?.status, carrier?.statusCode, carrier?.response?.status]) {
+    if (
+      typeof candidate === 'number' &&
+      Number.isInteger(candidate) &&
+      candidate >= 100 &&
+      candidate <= 599
+    ) {
+      return candidate;
+    }
+  }
+  // Providers whose client carries no field still lead the text with the code: `400 {"error":…}`.
+  const text = providerMessage(error);
+  const leading = /^\s*(\d{3})\b/.exec(text ?? '');
+  const parsed = leading ? Number(leading[1]) : Number.NaN;
+  return parsed >= 100 && parsed <= 599 ? parsed : undefined;
+}
+
+/**
+ * The provider's own message, preferring the PARSED body's `message` (the OpenAI-compatible client
+ * shape) over the client's assembled `Error.message`. The parsed field is the short human sentence
+ * — *"tool_choice is not supported"* — while the assembled one tends to carry the whole response
+ * body around it.
+ */
+function providerMessage(error: unknown): string | undefined {
+  const carrier = error as { error?: { message?: unknown } | null; message?: unknown } | null;
+  if (typeof carrier?.error?.message === 'string') return carrier.error.message;
+  if (typeof carrier?.message === 'string') return carrier.message;
+  if (typeof error === 'string') return error;
+  return undefined;
+}
+
+/**
+ * Whether the provider's message may be repeated at all.
+ *
+ * **This is a detector wired to a DROP, never a scrubber.** The secret test reuses the one
+ * redaction policy this project has ({@link import('#src/utils/redactSecrets.js').redactText} —
+ * literal secret values plus the prefix-anchored provider key shapes) and asks only whether it
+ * would have changed anything. If it would, the message is dropped whole. Emitting the scrubbed
+ * copy instead would make this diagnostic the one place a partially-redacted secret is published,
+ * and a redaction pass that runs in two places with two outcomes is two policies.
+ *
+ * `redactText` never throws — it returns the withheld marker on any internal error — so a hostile
+ * message fails toward dropping rather than toward printing.
+ */
+function providerMessageIsCarryable(
+  message: string,
+  options: { commandSpellings: readonly string[]; secrets: readonly string[] }
+): boolean {
+  if (redactText(message, options.secrets) !== message) return false;
+  if (REQUEST_ECHO_MARKERS.some((marker) => message.includes(marker))) return false;
+  return !options.commandSpellings.some((spelling) => message.includes(spelling));
+}
+
+/**
+ * [[EXT-82]] — build the sanitised {@link RaterCallFailure} for an error a rating call threw.
+ *
+ * Pure: the secrets to substitute are a PARAMETER, exactly as {@link foldHomePath}'s home is, so
+ * nothing here reads ambient process state and a test drives the real detector rather than a
+ * stand-in for it.
+ *
+ * @param error whatever the provider client threw.
+ * @param options `command` — the RAW command being rated, so both the spelling the caller passed
+ *   and the normalized, home-folded spelling the prompt actually carried can be excluded; `home`
+ *   for that folding; `secrets` from
+ *   {@link import('#src/utils/redactSecrets.js').collectSecretValues}.
+ * @returns the failure, or `undefined` when the error carried neither a status nor any text — in
+ *   which case the `threw` arm keeps its original wording rather than gaining an empty clause.
+ */
+export function describeRaterCallFailure(
+  error: unknown,
+  options?: { command?: string; home?: string; secrets?: readonly string[] }
+): RaterCallFailure | undefined {
+  const status = providerStatus(error);
+  const raw = providerMessage(error);
+  const message = raw === undefined ? '' : oneLine(raw);
+  if (status === undefined && message === '') return undefined;
+  const withStatus = status === undefined ? {} : { status };
+  if (message === '') return withStatus;
+
+  const command = options?.command?.trim() ?? '';
+  const commandSpellings = [
+    command,
+    command === '' ? '' : oneLine(foldHomePath(normalizeCommand(command), options?.home)),
+    // The four-character floor keeps a degenerate command (`ls`) from withholding every message
+    // that happens to contain those two letters. A command that short is also the one whose
+    // presence in a provider's error would tell a reader nothing.
+  ].filter((spelling) => spelling.length >= 4);
+
+  if (!providerMessageIsCarryable(message, { commandSpellings, secrets: options?.secrets ?? [] })) {
+    return { ...withStatus, withheld: true };
+  }
+  return { ...withStatus, message: truncateToBudget(message, RATER_PROVIDER_MESSAGE_MAX_CHARS) };
+}
+
+/**
+ * [[EXT-82]] — render a {@link RaterCallFailure} as the clause both the fail-closed reason and the
+ * session-level signal embed, so the two can never describe the same failure differently.
+ *
+ * A trailing full stop is trimmed because every caller supplies its own; a message that ends in one
+ * would otherwise render a double period in the middle of a sentence.
+ */
+export function renderRaterCallFailure(failure: RaterCallFailure): string {
+  const message = failure.message?.replace(/[.\s]+$/, '');
+  const rejected =
+    failure.status === undefined
+      ? 'the auto-rater call failed'
+      : `the provider rejected the auto-rater call with HTTP ${failure.status}`;
+  if (message) return `${rejected}: ${message}`;
+  if (failure.withheld) {
+    return `${rejected}, and its message is withheld because it carried the request or a credential`;
+  }
+  return rejected;
+}
+
+/**
  * The fail-closed verdict for a specific {@link FailClosedCause}. Keeps
  * {@link COULD_NOT_ASSESS_PREFIX} — the statement "this was not assessed" is still true and is what
  * downstream keys on — and appends what actually went wrong.
  *
  * The timeout arm names the budget, because "the rater timed out" is not actionable and "the rater
  * did not answer within 30000ms" points straight at `approvals.raterTimeoutMs`.
+ *
+ * [[EXT-82]] — the `threw` arm takes the provider's own account when there is one, because a bare
+ * *"the auto-rater call failed"* is the sentence a user reads 27 times without ever learning that
+ * their model choice cannot answer the question at all. The clause it gains is the one thing the
+ * old text could not support: **the model was never asked.** With no `failure` the wording is
+ * unchanged, so the preflights and every other producer of this arm read exactly as before.
  */
-export function failClosedVerdict(cause: FailClosedCause, timeoutMs?: number): ShellSafetyVerdict {
+export function failClosedVerdict(
+  cause: FailClosedCause,
+  timeoutMs?: number,
+  failure?: RaterCallFailure
+): ShellSafetyVerdict {
+  const provider = failure ? renderRaterCallFailure(failure) : undefined;
   const detail: Record<FailClosedCause, string> = {
     'no-model': 'no usable rater model is configured, so nothing evaluated it.',
     timeout: `the auto-rater did not answer within ${timeoutMs ?? RATER_DEFAULT_TIMEOUT_MS}ms, so nothing evaluated it. This is the gate giving up, not a judgement about the command — raise approvals.raterTimeoutMs if the rater is a local model.`,
     unparseable: 'the auto-rater returned output that did not match the verdict schema.',
-    threw: 'the auto-rater call failed.',
+    threw: provider
+      ? `${provider}. The model was never asked, so nothing evaluated this command — this is the gate defaulting, not a judgement about it.`
+      : 'the auto-rater call failed.',
   };
   return { outcome: 'destructive', reason: `${COULD_NOT_ASSESS_PREFIX}: ${detail[cause]}` };
 }
@@ -769,8 +947,19 @@ const NEGOTIATION_ELLIPSIS = '…';
  * surrogate into the prompt.
  */
 export function truncateUserMessage(message: string): string {
-  if (message.length <= NEGOTIATION_USER_MESSAGE_MAX_CHARS) return message;
-  let head = message.slice(0, NEGOTIATION_USER_MESSAGE_MAX_CHARS - NEGOTIATION_ELLIPSIS.length);
+  return truncateToBudget(message, NEGOTIATION_USER_MESSAGE_MAX_CHARS);
+}
+
+/**
+ * Truncate `text` to `budget` characters **including** the ellipsis, nudging the slice back off a
+ * trailing high surrogate so a fixed offset cannot land between the halves of an astral character.
+ *
+ * Shared by {@link truncateUserMessage} and [[EXT-82]]'s provider-message cap: two budgets, one
+ * treatment. A second copy of the surrogate nudge is how one of them would come to lack it.
+ */
+function truncateToBudget(text: string, budget: number): string {
+  if (text.length <= budget) return text;
+  let head = text.slice(0, budget - NEGOTIATION_ELLIPSIS.length);
   const lastUnit = head.charCodeAt(head.length - 1);
   if (lastUnit >= 0xd800 && lastUnit <= 0xdbff) head = head.slice(0, -1);
   return head + NEGOTIATION_ELLIPSIS;
@@ -1394,8 +1583,34 @@ export async function rateShellCommand(
     }
     return settle(validateSuggestedTool(parsed.data, options?.grantedTools));
   } catch (error) {
-    debugLogError('rateShellCommand', error);
-    return settle(failClosedVerdict('threw'), 'threw');
+    // [[EXT-82]] — the provider's own account, sanitised here at the point the error is caught.
+    //
+    // **There is no retry, and its absence is the design.** A provider rejection is a fact about
+    // the request, not weather: the measured case returned HTTP 400 to all 27 calls because the
+    // model's provider refuses the shape the rater must send. Retrying that turns one broken call
+    // into a spend leak, so the single `invoke` above is the whole of the attempt. (A 429 is a
+    // different case and is not this node's.)
+    //
+    // Everything that READS the thrown value is guarded, because it all sits inside the arm whose
+    // whole job is that a throw becomes a verdict. Logging it and describing it both touch the
+    // error object's own properties (and the config's secret values), and a thrown value can make
+    // any of those throw in turn — a getter on `message`, a proxy on `config`. Failing to EXPLAIN
+    // the failure must never become failing to fail CLOSED, which would be strictly worse than the
+    // silence this node exists to fix: the diagnostic degrades to the detail-less spelling instead
+    // and the gate is unmoved.
+    let failure: RaterCallFailure | undefined;
+    try {
+      debugLogError('rateShellCommand', error);
+      failure = describeRaterCallFailure(error, {
+        command,
+        home: options?.home,
+        secrets: collectSecretValues(config, env),
+      });
+    } catch (describeError) {
+      debugLogError('rateShellCommand: could not describe the failure', describeError);
+    }
+    if (capture && failure) capture.providerError = failure;
+    return settle(failClosedVerdict('threw', undefined, failure), 'threw');
   } finally {
     if (timer) clearTimeout(timer);
   }

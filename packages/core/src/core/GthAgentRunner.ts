@@ -84,6 +84,7 @@ import {
   type RaterNegotiationRound,
   type ShellSafetyVerdict,
 } from '#src/core/shell/rater.js';
+import { RaterHealth } from '#src/core/shell/raterHealth.js';
 import {
   type AlignmentDecision,
   alignmentApprovalNotice,
@@ -403,6 +404,13 @@ export class GthAgentRunner {
    * escalate-everything has a number attached to it.
    */
   private raterTimeouts = 0;
+
+  /**
+   * [[EXT-82]] — the consecutive-failure tracker behind the session-level signal, per runner and
+   * therefore per session (the ACP surface runs several at once). See
+   * {@link import('#src/core/shell/raterHealth.js').RaterHealth}.
+   */
+  private readonly raterHealth = new RaterHealth();
 
   /**
    * EXT-71 §3.1/§6 — what the escalation menu granted at run time, for the life of THIS runner
@@ -2480,6 +2488,24 @@ export class GthAgentRunner {
           (this.raterTimeouts > 1 ? ` — ${this.raterTimeouts} times this session` : '') +
           '. Raise approvals.raterTimeoutMs if the rater is a local model.'
       );
+    }
+    // [[EXT-82]] — the RATE, not the call. EXT-66's notice above explains ONE occurrence and says
+    // nothing about a session in which the rater never answers at all; this one says that, once,
+    // and the tracker is what makes it a rate rather than a latch. The inputs come from the call's
+    // own capture rather than from the verdict's wording: the rater is itself instructed to say it
+    // could not assess a command, so a reason-prefix test would count a model that obeyed as a gate
+    // that failed.
+    const rating = record.rating;
+    if (rating) {
+      const signal = this.raterHealth.record({
+        failClosed: rating.failClosed,
+        failure: rating.providerError,
+        model: rating.model,
+        // §3.2 — an allow match already decided this call, so a failed tripwire rating did not make
+        // a verdict default and must not be counted as though it had.
+        countsTowardRate: !opts.allowMatched,
+      });
+      if (signal) this.statusUpdate(StatusLevel.WARNING, signal);
     }
     return verdict;
   }
