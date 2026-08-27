@@ -72,6 +72,9 @@ describe('the credential a Vertex hint names (CFG-58)', () => {
   });
   const MODEL = 'gemini-3.7-flash';
   const A_401 = 'Request failed with status code 401';
+  // Never read from the ambient environment: the path is asserted on, so it has to be one this
+  // spec chose. It is never opened — the hint path constructs a client and never authenticates.
+  const FAKE_ADC_FILE = '/nonexistent/EXT-152-adc-not-real.json';
 
   const MANAGED_VARS = [
     'GOOGLE_API_KEY',
@@ -184,6 +187,66 @@ describe('the credential a Vertex hint names (CFG-58)', () => {
     expect(hint).toContain('gcloud auth application-default login');
     expect(hint).not.toContain('express mode');
     expect(hint).not.toContain('service account');
+    // The EXT-152 remedy below is GATED on the variable being set: a session with nothing exported
+    // must not be told to go and look at a variable it does not have. This is the half that makes
+    // the gate provable — without it, an implementation that appends that sentence unconditionally
+    // passes every cell in this file.
+    expect(hint).not.toContain('GOOGLE_APPLICATION_CREDENTIALS');
+  });
+
+  /**
+   * EXT-152 — the sixth population, and the one case here where the diagnosis was already RIGHT.
+   * This session really is on ADC, so naming ADC is correct and must stay correct; what was wrong
+   * is that the remedy could not work. `google-auth-library` (measured on 10.9.1) resolves
+   * `GOOGLE_APPLICATION_CREDENTIALS` in `getApplicationDefaultAsync` at :258, BEFORE it reads at
+   * :270 the well-known file that `gcloud auth application-default login` writes. So the user runs
+   * the command, it reports success, and the failure survives it.
+   *
+   * Keep the distinction: the five populations above asserted a FALSE credential. This one asserts
+   * a TRUE credential with an inert remedy, which is a different defect and not a regression of it.
+   */
+  it('POPULATION 6 — ADC from GOOGLE_APPLICATION_CREDENTIALS: the file that variable names', async () => {
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = FAKE_ADC_FILE;
+
+    const hint = await hintForPreset({});
+
+    // Still ADC, and still said to be ADC — the classifier is right here and is not second-guessed.
+    expect(hint).toContain('Application Default Credentials');
+    // The remedy has to name the thing that is actually in play, and the file it points at.
+    expect(hint).toContain('GOOGLE_APPLICATION_CREDENTIALS');
+    expect(hint).toContain(FAKE_ADC_FILE);
+    // ...and offer an action that could actually change this session's auth state.
+    expect(hint).toMatch(/unset `?GOOGLE_APPLICATION_CREDENTIALS/);
+    // The login command may still be NAMED — explaining that it is the thing that will NOT help is
+    // the whole point — but the clause that offered it as the entire remedy has to be gone.
+    expect(hint).toContain('gcloud auth application-default login');
+    expect(hint).not.toContain('Credentials: run `gcloud auth login`');
+    // As for every ADC population: neither a key nor a service account may be blamed.
+    expect(hint).not.toContain('express mode');
+    expect(hint).not.toContain('service account');
+  });
+
+  it('POPULATION 6b — the same when the variable is spelled in lower case', async () => {
+    // `googleauth.js` :316 reads `GOOGLE_APPLICATION_CREDENTIALS || google_application_credentials`,
+    // so a lower-case-only session is ADC-from-a-file too and would otherwise get the inert remedy.
+    // Asserts on the PATH rather than on which spelling was found, because `process.env` is
+    // case-insensitive on Windows: this same assignment is visible under the upper-case spelling
+    // there, so the spelling in the message is platform-dependent by design and the path is not.
+    const saved = process.env.google_application_credentials;
+    process.env.google_application_credentials = FAKE_ADC_FILE;
+    try {
+      const hint = await hintForPreset({});
+
+      expect(hint).toContain(FAKE_ADC_FILE);
+      expect(hint).toContain('Application Default Credentials');
+      expect(hint).not.toContain('Credentials: run `gcloud auth login`');
+    } finally {
+      if (saved === undefined) {
+        delete process.env.google_application_credentials;
+      } else {
+        process.env.google_application_credentials = saved;
+      }
+    }
   });
 
   it('asserts NO credential when the client cannot be read, instead of guessing one', () => {
