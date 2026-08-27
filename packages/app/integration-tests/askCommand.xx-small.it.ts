@@ -2,13 +2,13 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { TOOL_OUTPUT_PREVIEW_LINES } from '@gaunt-sloth/core/core/toolDisplay.js';
 import { runGth } from './support/commandRunner';
 import {
   checkModelTextForExpectedContent,
   checkOutputForExpectedContent,
   checkToolWasRequested,
 } from './support/outputChecker';
+import { plantedMarkerFile } from './support/plantedMarkerFile';
 
 /**
  * BATCH-40 — the tool-using cases here assert WHICH TOOLS RAN, not which words the model chose.
@@ -62,26 +62,16 @@ interface PlantedCase {
   listingToken: string;
 }
 
-/**
- * `notes.txt`: padding well past the panel's preview cap, then the marker sentence at column 0.
- * The padding count is derived from the cap rather than hardcoded, so raising the cap cannot
- * silently move the marker back into the previewed window.
- */
-function notesFileWith(marker: string): string {
-  const padding = Array.from(
-    { length: TOOL_OUTPUT_PREVIEW_LINES + 3 },
-    (_unused, index) => `Padding line ${index + 1}. Nothing here is asserted on.`
-  );
-  return [...padding, `The secret marker string is ${marker}. Do not lose it.`, ''].join('\n');
-}
-
 function plantCase(label: string): PlantedCase {
   const rand = randomBytes(4).toString('hex');
   const marker = `MARKER-${label.toUpperCase()}-${rand}`;
   const listingToken = `listing-token-${rand}.txt`;
   const dir = path.join(WORKDIR, `xxs-${label}-${rand}`);
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'notes.txt'), notesFileWith(marker), 'utf8');
+  // `notes.txt`: padding well past the panel's preview cap, then the marker sentence at column 0.
+  // BATCH-41 moved that shape into `support/plantedMarkerFile.ts`, shared with
+  // `markerSynthesis.xx-small.it.ts`, and put a unit test under its truncation premise.
+  fs.writeFileSync(path.join(dir, 'notes.txt'), plantedMarkerFile(marker), 'utf8');
   fs.writeFileSync(
     path.join(dir, listingToken),
     'A second file, so a listing of this directory contains something unique to this case.\n',
