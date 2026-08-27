@@ -157,12 +157,16 @@ your data, forbids fallbacks to anyone else, and gives a second model to fall ba
 **`configuration` is not a passthrough here.** Gaunt Sloth talks to OpenRouter through a native
 client rather than an OpenAI one, so the only things read out of a `configuration` block are
 `baseURL` and the `HTTP-Referer` / `X-Title` attribution headers (`siteUrl` and `siteName` at the
-top level are the direct way to set those). `baseURL` also exists as a top-level field; if you set
-it in both places the one under `configuration` wins, and the top-level one is reported as ignored
-so the two never disagree in silence. Anything else you put there is reported as ignored when
+top level are the direct way to set those). Anything else you put there is reported as ignored when
 the provider starts — move OpenRouter's own options (the fields listed above) to the top level.
 Transport settings are the exception: they have no top-level field either, so moving one up only
 makes it ignored quietly instead of loudly — see the next paragraph for what to do with those.
+
+**Two of these settings can be written in two places, and the winner differs.** `baseURL` set under
+`configuration` beats a top-level `baseURL`; a top-level `siteUrl` / `siteName` beats the matching
+`HTTP-Referer` / `X-Title` inside `configuration`. Rather than ask you to remember which way round
+each one goes, Gaunt Sloth names the losing setting and the winning one when you set both, so the
+two never disagree in silence. Set only one of each pair and the message goes away.
 
 Transport settings have no per-provider hook at all: there is no `fetch`, `timeout`, `maxRetries`
 or custom-header option on this client. To send OpenRouter traffic through a **corporate proxy**,
