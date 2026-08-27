@@ -190,10 +190,23 @@ describe('[[EXT-82]] RaterHealth — the signal is the RATE, raised once', () =>
      * convenience is exactly how this stops being true.
      */
     it('has no channel through which a rated command could reach it', () => {
-      const health = new RaterHealth();
-      const signal = run(health, ...Array<RaterCallReport>(N).fill(rejected))[0];
-      expect(Object.keys(rejected).sort()).toEqual(['failClosed', 'failure', 'model']);
+      // The report is given a field the interface does not declare, carrying a command and a fake
+      // credential. Asserting the DECLARED keys would only describe this fixture; a report that
+      // carries more than the signal reads is what a later "just pass the whole record through"
+      // actually looks like, and it must still come out excluded.
+      const smuggled = {
+        ...rejected,
+        command: 'rm -rf /tmp/ext82-tracker-canary',
+        apiKey: 'sk-ext82TRACKERfakeDONOTUSE000000',
+      } as unknown as RaterCallReport;
+      const signal = run(new RaterHealth(), ...Array<RaterCallReport>(N).fill(smuggled))[0];
+
+      expect(signal, 'the signal exists, so the negatives below exclude something').toContain(
+        'HTTP 400'
+      );
       expect(signal).not.toContain('rm -rf');
+      expect(signal).not.toContain('ext82-tracker-canary');
+      expect(signal).not.toContain('sk-ext82');
       expect(signal).not.toContain('<command_to_evaluate>');
     });
   });
