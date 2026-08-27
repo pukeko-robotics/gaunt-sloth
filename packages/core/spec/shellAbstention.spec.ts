@@ -53,8 +53,9 @@ const noteFor = (command: string) => buildParserPreflightNote(command) ?? '';
  *
  * 1. {@link UNHEDGED_SENTENCE} — every mention of the shell expanding must sit under a *whether*
  *    **in its own sentence**.
- * 2. {@link UNPAIRED_WHETHER} — and each mention needs its OWN *whether* ahead of it, so a second,
- *    unhedged claim cannot shelter under the first sentence's hedge.
+ * 2. {@link UNPAIRED_WHETHER} — and each mention needs its OWN *whether* ahead of it **in that same
+ *    sentence**, so a second, unhedged claim cannot shelter under the first one's hedge. A *whether*
+ *    spent on something else, in an earlier sentence, is not supply — see {@link violationsOf}.
  * 3. {@link QUOTING_OUTSIDE_CLAUSE} — **an ALLOWLIST over our own prose, and it is the half that
  *    carries the security property.** See {@link APPROVED_QUOTING_CLAUSES} for its shape and for the
  *    decision [[EXT-153]] took about it.
@@ -198,18 +199,45 @@ const quotingNamedOutsideClauses = (note: string): string[] => {
   return [...new Set([...stripped.matchAll(QUOTING_MENTION_RE)].map((match) => match[0]))];
 };
 
-/** Every rule this note text breaks, by name. Empty means the text is one a note may ship. */
+/**
+ * Every rule this note text breaks, by name. Empty means the text is one a note may ship.
+ *
+ * **Rules 1 and 2 both read the CURRENT SENTENCE, and rule 2 reads it on both sides of its
+ * arithmetic ([[EXT-155]]).** Rule 2 asks whether there are enough *whether*s to go round, which is
+ * a supply against a demand: the *whether*s ahead of this claim, and the claims made so far. Count
+ * either one over the whole note and the rule stops meaning what it says.
+ *
+ * - Count the SUPPLY over the whole note — which is what shipped — and any earlier *whether*, used
+ *   for anything at all, inflates it. One decoy sentence (*"Whether that matters to you is a
+ *   separate question"*) and a later unhedged claim shelters under a hedge that was never about it.
+ *   *Whether* is ordinary English in exactly the register these notes are written in, so the rule
+ *   was most likely to switch itself off in the notes it works hardest on.
+ * - Count the DEMAND over the whole note while scoping the supply — the narrower repair, and the
+ *   one the node's own Scope line reads as — and the rule fires on correctly hedged prose: a second
+ *   sentence hedging its own single claim is asked for two *whether*s. Measured, not reasoned: that
+ *   variant reds the composed note's two-claim case and the writer sweep below.
+ *
+ * So the tally resets with the sentence. Both halves are the span, which is why the fix moves both.
+ */
 const violationsOf = (note: string): string[] => {
   const broken: string[] = [];
-  let mentionsSoFar = 0;
+  let sentenceAt = -1;
+  let mentionsInSentence = 0;
   for (const match of note.matchAll(EXPANSION_CLAIM_RE)) {
     const before = note.slice(0, match.index);
     const sentenceStart =
       Math.max(before.lastIndexOf('.'), before.lastIndexOf('?'), before.lastIndexOf('!')) + 1;
-    mentionsSoFar += 1;
-    if (!before.slice(sentenceStart).toLowerCase().includes('whether')) {
+    // `sentenceStart` only ever moves forward across `matchAll` order, so a change of value is a
+    // change of sentence and the claims counted against this sentence's hedges start again.
+    if (sentenceStart !== sentenceAt) {
+      sentenceAt = sentenceStart;
+      mentionsInSentence = 0;
+    }
+    mentionsInSentence += 1;
+    const sentenceSoFar = before.slice(sentenceStart).toLowerCase();
+    if (!sentenceSoFar.includes('whether')) {
       broken.push(UNHEDGED_SENTENCE);
-    } else if ((before.toLowerCase().match(/whether/g) ?? []).length < mentionsSoFar) {
+    } else if ((sentenceSoFar.match(/whether/g) ?? []).length < mentionsInSentence) {
       broken.push(UNPAIRED_WHETHER);
     }
   }
@@ -514,6 +542,82 @@ describe('EXT-81 — the parser preflight note', () => {
           'The shell expands it before the outer program runs. What would this substitution run, ' +
           'and where?';
         expect(violationsOf(draft)).toContain(UNHEDGED_SENTENCE);
+      });
+
+      /**
+       * **[[EXT-155]] — rule 2's supply is counted in the SENTENCE, and an earlier *whether* spent
+       * on something else is not supply.**
+       *
+       * The rule shipped counting *whether*s over the whole note so far, so one earlier *whether* —
+       * in a sentence carrying no expansion claim at all — raised the supply and let a later
+       * unhedged claim shelter. The word is ordinary English in the hedged register these notes are
+       * required to be written in, which is what made this a rule most likely to disable itself in
+       * the notes it works hardest on. It was never live: every shipped note passed either way.
+       *
+       * **The pair is the whole case, and the base row is the control on it.** Row one proves the
+       * rule CAN fire on this exact text, so the silence in row two was the rule failing rather than
+       * the text being acceptable — without it a green row two is consistent with the sentence
+       * simply being fine.
+       */
+      describe('rule 2 counts the whethers in the sentence, not in the note', () => {
+        /** Two claims, ONE *whether*, one sentence — the shape rule 2 exists to reject. */
+        const TWO_CLAIMS_ONE_WHETHER =
+          'Whether the shell expands it here is unclear, and the shell expands it there as well.';
+
+        /**
+         * A sentence that hedges something else entirely. It is the decoy, and the two assertions
+         * below are what make it one: it supplies a *whether* and makes no expansion claim, so
+         * every difference between the two rows is the decoy's *whether* and nothing else.
+         */
+        const DECOY_SENTENCE = 'Whether that matters to you is a separate question.';
+
+        it('the decoy really is one: it spends a whether and claims no expansion', () => {
+          expect(DECOY_SENTENCE.toLowerCase()).toContain('whether');
+          expect([...DECOY_SENTENCE.matchAll(EXPANSION_CLAIM_RE)]).toHaveLength(0);
+        });
+
+        it('catches the base case, which is the control on the row below', () => {
+          expect(violationsOf(TWO_CLAIMS_ONE_WHETHER)).toEqual([UNPAIRED_WHETHER]);
+        });
+
+        it('still rejects it behind a sentence whose whether hedges something else', () => {
+          const draft = `${DECOY_SENTENCE} ${TWO_CLAIMS_ONE_WHETHER}`;
+          expect(violationsOf(draft)).toEqual([UNPAIRED_WHETHER]);
+        });
+
+        /**
+         * **THE SILENCE CONTROL, and without it the two rows above are satisfied by DELETING the
+         * rule.** A rule 2 that fires on everything — the `else if` removed, or the count scoped so
+         * tightly that correctly hedged prose trips it — catches the decoy case for the wrong
+         * reason and reads identically in a green run. These two rows are the correctly hedged
+         * shapes, one per sentence and both in one sentence, and both must stay silent.
+         *
+         * The second row is the one that distinguishes ENOUGH from MORE THAN ENOUGH: two *whether*s
+         * against two claims is exactly enough, so relaxing the comparison by one — the mutation
+         * that changes only a number — reds it.
+         */
+        it.each([
+          [
+            'one whether per sentence',
+            'Whether the shell expands it here is not something this note can tell you. ' +
+              'Whether the shell expands it there is not something this note can tell you either.',
+          ],
+          [
+            'two whethers ahead of two claims in one sentence',
+            'Whether the shell expands it here, and whether the shell expands it there, is not ' +
+              'something this note can tell you.',
+          ],
+          [
+            'the decoy ahead of correctly hedged prose',
+            `${DECOY_SENTENCE} Whether the shell expands it here is not something this note can ` +
+              'tell you.',
+          ],
+        ])('stays silent on correctly hedged prose: %s', (_shape, hedged) => {
+          // The control on the control: a shape that stopped making an expansion claim would make
+          // the silence below true of prose rules 1 and 2 never look at.
+          expect([...hedged.matchAll(EXPANSION_CLAIM_RE)].length).toBeGreaterThanOrEqual(1);
+          expect(violationsOf(hedged)).toEqual([]);
+        });
       });
 
       /**
