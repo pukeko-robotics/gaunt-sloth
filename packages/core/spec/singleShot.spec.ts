@@ -24,11 +24,11 @@ const fsMock = {
 };
 vi.mock('node:fs', () => fsMock);
 
-// Mock path module
-const pathMock = {
-  resolve: vi.fn(),
-};
-vi.mock('node:path', () => pathMock);
+// OPS-28: `node:path` is deliberately NOT mocked here. `singleShot.ts` does not import it, and
+// nothing else in this file's module graph reaches it — proved by stubbing `resolve` to throw and
+// watching all 28 tests still pass. The mock stubbed `resolve` for a path assertion that no longer
+// exists; it asserted nothing, and left a weaker path contract in place for anything that might
+// later reach it.
 
 // Mock systemUtils module
 const systemUtilsMock = {
@@ -128,10 +128,6 @@ describe('singleShot', () => {
     // Setup mock for our new generateStandardFileName function
     fileUtilsMock.generateStandardFileName.mockReturnValue('gth_2025-05-17_21-00-00_ASK.md');
     fileUtilsMock.getCommandOutputFilePath.mockReturnValue('/test-file-path.md');
-    pathMock.resolve.mockImplementation((path: string, name: string) => {
-      if (name && name.includes('gth_')) return 'test-file-path.md';
-      return '';
-    });
 
     ProgressIndicatorMock.mockClear();
     ProgressIndicatorInstanceMock.stop.mockReset();

@@ -1,4 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+// REAL node:path (never mocked here — see MOCK_DIR below) and the REAL constants production uses,
+// so every expectation is built by the same calls the code under test makes (OPS-28).
+import { resolve } from 'node:path';
+import { GSLOTH_DIR, GSLOTH_SETTINGS_DIR } from '#src/constants.js';
 
 const nodeFsMock = {
   existsSync: vi.fn(),
@@ -6,15 +10,15 @@ const nodeFsMock = {
 };
 vi.mock('node:fs', () => nodeFsMock);
 
-const nodePathMock = {
-  resolve: vi.fn(),
-  dirname: vi.fn().mockImplementation((p: string) => p.substring(0, p.lastIndexOf('/'))),
-};
-vi.mock('node:path', () => nodePathMock);
-
+// `fileUtils.ts` computes `corePackageDir` at MODULE SCOPE from
+// `resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')`, so this stub runs at import time,
+// before any `beforeEach`. It is a plain function rather than `vi.fn().mockReturnValue(...)`
+// deliberately: with the real `dirname` now in play, a reset that cleared the return value would
+// hand `dirname` an `undefined` and make the module fail to import. A plain function cannot be
+// reset, so importability no longer depends on `vi.resetAllMocks()` semantics.
 vi.mock('node:url', () => ({
   default: { pathToFileURL: vi.fn() },
-  fileURLToPath: vi.fn().mockReturnValue('/mock/core/dist/utils/fileUtils.js'),
+  fileURLToPath: () => '/mock/core/dist/utils/fileUtils.js',
 }));
 
 const systemUtilsMock = {
@@ -23,62 +27,79 @@ const systemUtilsMock = {
 };
 vi.mock('#src/utils/systemUtils.js', () => systemUtilsMock);
 
+/**
+ * The project dir production reads through the mocked `getProjectDir()`, and therefore the base it
+ * feeds to the real `resolve()`.
+ *
+ * Everything below is derived from it through that same real `resolve()`. A hand-written POSIX
+ * literal would only match on POSIX: on win32 `resolve()` returns a drive-lettered,
+ * backslash-separated path, so a literal `'/test/project/.gsloth'` compared by exact equality is
+ * never equal — and where the comparison sits inside an `existsSync` predicate it does not merely
+ * fail, it silently steers the code down the OTHER branch while the test stays green. That is why
+ * `node:path` is deliberately NOT mocked in this file: mocking `resolve` to `args.join('/')` made
+ * the mock the definition of joining, so the assertions could only confirm the mock agreed with
+ * itself and would have passed even if production concatenated strings.
+ */
+const MOCK_DIR = '/test/project';
+const GSLOTH_DIR_PATH = resolve(MOCK_DIR, GSLOTH_DIR);
+const GSLOTH_SETTINGS_PATH = resolve(GSLOTH_DIR_PATH, GSLOTH_SETTINGS_DIR);
+const SETTINGS_CONFIG_PATH = resolve(GSLOTH_SETTINGS_PATH, '.gsloth.config.json');
+
 describe('pathUtils', () => {
   beforeEach(() => {
     vi.resetAllMocks();
 
     // Default mock values
-    systemUtilsMock.getCurrentWorkDir.mockImplementation(() => '/test/project');
-    systemUtilsMock.getProjectDir.mockImplementation(() => '/test/project');
-    nodePathMock.resolve.mockImplementation((...args: string[]) => args.join('/'));
+    systemUtilsMock.getCurrentWorkDir.mockImplementation(() => MOCK_DIR);
+    systemUtilsMock.getProjectDir.mockImplementation(() => MOCK_DIR);
   });
 
   it('gslothDirExists should return true when .gsloth directory exists', async () => {
     nodeFsMock.existsSync.mockImplementation((path: string) => {
-      return path === '/test/project/.gsloth';
+      return path === GSLOTH_DIR_PATH;
     });
 
     const { gslothDirExists } = await import('#src/utils/fileUtils.js');
 
     expect(gslothDirExists()).toBe(true);
-    expect(nodeFsMock.existsSync).toHaveBeenCalledWith('/test/project/.gsloth');
+    expect(nodeFsMock.existsSync).toHaveBeenCalledWith(GSLOTH_DIR_PATH);
   });
 
   it('gslothDirExists should return false when .gsloth directory does not exist', async () => {
     nodeFsMock.existsSync.mockImplementation((path: string) => {
-      return !path.includes('.gsloth');
+      return path !== GSLOTH_DIR_PATH;
     });
 
     const { gslothDirExists } = await import('#src/utils/fileUtils.js');
 
     expect(gslothDirExists()).toBe(false);
-    expect(nodeFsMock.existsSync).toHaveBeenCalledWith('/test/project/.gsloth');
+    expect(nodeFsMock.existsSync).toHaveBeenCalledWith(GSLOTH_DIR_PATH);
   });
 
   it('getGslothFilePath should return path within .gsloth directory when it exists', async () => {
     nodeFsMock.existsSync.mockImplementation((path: string) => {
-      return path.includes('.gsloth');
+      return path === GSLOTH_DIR_PATH;
     });
 
     const { getGslothFilePath } = await import('#src/utils/fileUtils.js');
 
     const result = getGslothFilePath('test-file.md');
 
-    expect(result).toBe('/test/project/.gsloth/test-file.md');
-    expect(nodeFsMock.existsSync).toHaveBeenCalledWith('/test/project/.gsloth');
+    expect(result).toBe(resolve(GSLOTH_DIR_PATH, 'test-file.md'));
+    expect(nodeFsMock.existsSync).toHaveBeenCalledWith(GSLOTH_DIR_PATH);
   });
 
   it('getGslothFilePath should return path in project root when .gsloth directory does not exist', async () => {
     nodeFsMock.existsSync.mockImplementation((path: string) => {
-      return !path.includes('.gsloth');
+      return path !== GSLOTH_DIR_PATH;
     });
 
     const { getGslothFilePath } = await import('#src/utils/fileUtils.js');
 
     const result = getGslothFilePath('test-file.md');
 
-    expect(result).toBe('/test/project/test-file.md');
-    expect(nodeFsMock.existsSync).toHaveBeenCalledWith('/test/project/.gsloth');
+    expect(result).toBe(resolve(MOCK_DIR, 'test-file.md'));
+    expect(nodeFsMock.existsSync).toHaveBeenCalledWith(GSLOTH_DIR_PATH);
   });
 
   it('getGslothConfigWritePath should create .gsloth-settings directory when it does not exist', async () => {
@@ -94,11 +115,11 @@ describe('pathUtils', () => {
 
     const result = getGslothConfigWritePath('.gsloth.config.json');
 
-    expect(result).toBe('/test/project/.gsloth/.gsloth-settings/.gsloth.config.json');
+    expect(result).toBe(SETTINGS_CONFIG_PATH);
     expect(
       nodeFsMock.mkdirSync,
       'getGslothConfigWritePath should create the .gsloth/.gsloth-settings'
-    ).toHaveBeenCalledWith('/test/project/.gsloth/.gsloth-settings', {
+    ).toHaveBeenCalledWith(GSLOTH_SETTINGS_PATH, {
       recursive: true,
     });
   });
@@ -111,20 +132,23 @@ describe('pathUtils', () => {
 
     const result = getGslothConfigReadPath('.gsloth.config.json', undefined);
 
-    expect(result).toBe('/test/project/.gsloth/.gsloth-settings/.gsloth.config.json');
+    expect(result).toBe(SETTINGS_CONFIG_PATH);
   });
 
   it('getGslothConfigReadPath should return path in project root when .gsloth exists but config file does not exist in .gsloth-settings', async () => {
-    // Mock existsSync to return true for .gsloth dir but false for config file within .gsloth-settings
+    // .gsloth exists, but the config file inside .gsloth-settings does not. Compared by exact
+    // equality against the path production actually builds — a `includes('.gsloth-settings/...')`
+    // substring test would never match win32's backslashes, so existsSync would answer true for the
+    // config file and this test would silently assert the OTHER branch.
     nodeFsMock.existsSync.mockImplementation((_path: string) => {
-      return !_path.includes('.gsloth-settings/.gsloth.config.json');
+      return _path !== SETTINGS_CONFIG_PATH;
     });
 
     const { getGslothConfigReadPath } = await import('#src/utils/fileUtils.js');
 
     const result = getGslothConfigReadPath('.gsloth.config.json', undefined);
 
-    expect(result).toBe('/test/project/.gsloth.config.json');
+    expect(result).toBe(resolve(MOCK_DIR, '.gsloth.config.json'));
   });
 
   it('getGslothConfigReadPath should return path for identity when identity profile provided', async () => {
@@ -135,7 +159,7 @@ describe('pathUtils', () => {
 
     const result = getGslothConfigReadPath('.gsloth.config.json', 'devops');
 
-    expect(result).toBe('/test/project/.gsloth/.gsloth-settings/devops/.gsloth.config.json');
+    expect(result).toBe(resolve(GSLOTH_SETTINGS_PATH, 'devops', '.gsloth.config.json'));
   });
 
   it('getGslothConfigWritePath should write under .gsloth-settings/<profile> when a profile is given, creating .gsloth as needed', async () => {
@@ -146,11 +170,10 @@ describe('pathUtils', () => {
 
     const result = getGslothConfigWritePath('.gsloth.config.json', 'test2');
 
-    expect(result).toBe('/test/project/.gsloth/.gsloth-settings/test2/.gsloth.config.json');
-    expect(nodeFsMock.mkdirSync).toHaveBeenCalledWith(
-      '/test/project/.gsloth/.gsloth-settings/test2',
-      { recursive: true }
-    );
+    expect(result).toBe(resolve(GSLOTH_SETTINGS_PATH, 'test2', '.gsloth.config.json'));
+    expect(nodeFsMock.mkdirSync).toHaveBeenCalledWith(resolve(GSLOTH_SETTINGS_PATH, 'test2'), {
+      recursive: true,
+    });
   });
 
   it('getGslothConfigWritePath should not recreate an existing profile directory', async () => {
@@ -160,7 +183,7 @@ describe('pathUtils', () => {
 
     const result = getGslothConfigWritePath('.gsloth.config.json', 'test2');
 
-    expect(result).toBe('/test/project/.gsloth/.gsloth-settings/test2/.gsloth.config.json');
+    expect(result).toBe(resolve(GSLOTH_SETTINGS_PATH, 'test2', '.gsloth.config.json'));
     expect(nodeFsMock.mkdirSync).not.toHaveBeenCalled();
   });
 
@@ -176,6 +199,6 @@ describe('pathUtils', () => {
 
     const result = getGslothConfigWritePath('.gsloth.config.json', '   ');
 
-    expect(result).toBe('/test/project/.gsloth/.gsloth-settings/.gsloth.config.json');
+    expect(result).toBe(SETTINGS_CONFIG_PATH);
   });
 });

@@ -31,14 +31,10 @@ const fsMock = {
 };
 vi.mock('node:fs', () => fsMock);
 
-// Mock path module
-const pathMock = {
-  resolve: vi.fn(),
-  default: {
-    resolve: vi.fn(),
-  },
-};
-vi.mock('node:path', () => pathMock);
+// OPS-28: `node:path` is deliberately NOT mocked here. Nothing in this file's module graph reaches
+// it — proved by stubbing `resolve` to throw and watching all 28 tests still pass. The mock stubbed
+// both the named and the default-import `resolve` for a path assertion that no longer exists; it
+// asserted nothing, and left a weaker path contract in place for anything that might later reach it.
 
 // Mock systemUtils module. `execAsync` is here because the gh read-file tool the review module
 // injects shells out through this same module; the CFG-52 cap test below actually INVOKES that
@@ -161,14 +157,6 @@ describe('reviewModule', () => {
 
     // Setup mock for our new generateStandardFileName function
     fileUtilsMock.generateStandardFileName.mockReturnValue('gth_2025-05-17_21-00-00_REVIEW.md');
-    // Setup both the top-level resolve and the default.resolve functions
-    const resolveMock = (path: string, name: string) => {
-      if (name && name.includes('gth_')) return 'test-review-file-path.md';
-      return '';
-    };
-    pathMock.resolve.mockImplementation(resolveMock);
-    pathMock.default.resolve.mockImplementation(resolveMock);
-
     // Setup pathUtils mocks
     fileUtilsMock.getGslothFilePath.mockReturnValue('test-review-file-path.md');
     fileUtilsMock.gslothDirExists.mockReturnValue(false);
