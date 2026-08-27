@@ -314,7 +314,12 @@ export function foldEventSequence(
  * No agent backend emits a `task` call in this release, so nothing reaches this
  * fold today; it is kept for the lean subagent primitive (GS2-25).            */
 
-/** The tool name a subagent is dispatched by. */
+/**
+ * The tool name a subagent is dispatched by. Dormant like the fold below: the `task` tool went with
+ * the deepagents runtime (EXT-114) and nothing emits one until GS2-25 lands the lean subagent
+ * primitive. The guard in {@link foldSubagentEvents} still reads it on every event, so this is live
+ * code awaiting a producer, not an unused constant.
+ */
 export const SUBAGENT_TOOL_NAME = 'task';
 
 /** A single subagent invocation, derived from one `task` tool call. */
