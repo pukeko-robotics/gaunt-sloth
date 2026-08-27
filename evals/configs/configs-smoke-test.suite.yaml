@@ -2,9 +2,19 @@
 # A planted unique marker read via tools proves the model ACTUALLY performed a tool call and
 # synthesized the result. Deterministic must_contain only (no judge) — robust across providers.
 # The identities matrix runs the one case once per provider profile.
+#
+# OPS-81 — ONE IDENTITY PER PROVIDER FAMILY, not one per model. Every name here requires a
+# `.gsloth/.gsloth-settings/<name>/` directory to exist: the suite aborts at its identity
+# precondition before a single case runs if one is missing, which is how a dogfood prune took the
+# release gate down (OPS-80). So THIS LIST IS THE LEVER — to drop a profile directory, remove its
+# name here first. Adding a name back means restoring its directory in the same change.
+#
+# This suite is LOCAL-ONLY and is not CI-runnable: it needs a key per provider, and a red cell here
+# is usually a provider being unavailable rather than a regression. The CI/pre-release gate is the
+# two-identity configs-smoke-test-ci.suite.yaml — do not widen it to match this file.
 target:
   type: gth-agent
-identities: [anthropic-haiku-4-5,anthropic-opus-4-8,anthropic-sonnet-5,deepseek-chat,deepseek-reasoner,deepseek-v4-flash,deepseek-v4-pro,google-3.1-pro,google-3.5-flash-lite,google-3.6-flash,google-flash-latest,groq-gpt-oss-120b,groq-gpt-oss-20b,hf-glm-5.2,hf-kimi-k2.7-code,hf-qwen3.6-27b,inception-mercury-2,ollama-gemma4-12b,ollama-qwen3.6-35b,openai-5.5,openai-5.5-pro,openai-5.6,openai-5.6-luna,openai-5.6-sol,openai-5.6-terra,openrouter-deepseek-v4-pro,openrouter-gemini-3.6-flash,openrouter-kimi-k3,openrouter-longcat-2.0,xai-grok-4.3,xai-grok-4.5]
+identities: [anthropic-sonnet-5,deepseek-reasoner,google-3.5-flash-lite,groq-gpt-oss-120b,hf-glm-5.2,inception-mercury-2,ollama-gemma4-12b,openai-5.6,openrouter-kimi-k3,xai-grok-4.5]
 cases:
   - id: read-marker
     prompt: 'Read the file evals/configs/configs-smoke-test-marker.txt using your tools and report the exact secret marker string it contains.'

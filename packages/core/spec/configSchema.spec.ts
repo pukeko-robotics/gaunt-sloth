@@ -17,7 +17,6 @@ import {
 import { DEFAULT_CONFIG } from '#src/config.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(here, '../../..');
 const committedSchemaPath = resolve(here, '../schema/gsloth-config.schema.json');
 
 function readJson(path: string): Record<string, unknown> {
@@ -189,20 +188,9 @@ describe('config schema (GS2-1 B1)', () => {
       expect(findUnknownTopLevelKeys({ llm: {}, toolLoopGuard: { halt: true } })).toEqual([]);
     });
 
-    it.each([
-      'examples/jira-mcp/.gsloth.config.json',
-      'examples/lmstudio/.gsloth.config.json',
-      'examples/a2a/.gsloth.config.json',
-      'examples/simple-DIY-helper/.gsloth.config.json',
-    ])('accepts %s', (relPath) => {
-      const config = readJson(resolve(repoRoot, relPath));
-      const result = rawGthConfigSchema.safeParse(config);
-      expect(result.success).toBe(true);
-    });
-
-    // NOTE: examples/js-config/.gsloth.config.js exports an async `configure()` and
-    // returns live objects; it is exercised by the loader integration paths, not this
-    // unit test, so it is intentionally skipped here.
+    // OPS-81 removed four cases here that schema-checked the on-disk `examples/` configs, along
+    // with that directory — its content now lives inline in the configuration docs. The realistic
+    // consumer configs below are declared in this file and cover the same shapes.
 
     it('accepts a realistic consumer config (a2ui surface + api/cors)', () => {
       const config = {

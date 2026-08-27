@@ -1,16 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { resolveConfig } from '#src/config/loader.js';
 
 /**
- * Effective-merged acceptance gate (B2b). Runs the real example configs and the consumer-shaped
- * fixture through the SAME merge pipeline the loader uses (resolveConfig: deep-merge with
- * DEFAULT_CONFIG + per-command merge + array policy) and pins the effective output via a committed
- * snapshot. If the array merge policy (or any merge change) silently shifts how a real config
- * resolves, the snapshot breaks. The example configs use only canonical names (2.0 rejects the
- * deprecated shapes outright — see GS2-28), so no pre-map step is involved.
+ * Effective-merged acceptance gate (B2b). Runs consumer-shaped fixtures through the SAME merge
+ * pipeline the loader uses (resolveConfig: deep-merge with DEFAULT_CONFIG + per-command merge +
+ * array policy) and pins the effective output via a committed snapshot. If the array merge policy
+ * (or any merge change) silently shifts how a real config resolves, the snapshot breaks. The
+ * fixtures use only canonical names (2.0 rejects the deprecated shapes outright — see GS2-28), so
+ * no pre-map step is involved.
+ *
+ * OPS-81 removed four cases that read the on-disk `examples/` configs, along with that directory —
+ * its content now lives inline in the configuration docs. The fixtures below are declared in this
+ * file, so the gate no longer depends on any path outside it.
  *
  * `resolveConfig` writes no globals (no LLM instantiation, no `set*` side effects), so `llm`
  * stays the raw spec object — fine for a deterministic snapshot.
@@ -21,15 +22,8 @@ import { resolveConfig } from '#src/config/loader.js';
  * rather than inheriting the runner's piped stdout or a CI image that exports `FORCE_COLOR`.
  * Without this the committed `useColour` would flip with the ambient shell.
  */
-const here = resolve(fileURLToPath(import.meta.url), '..');
-const repoRoot = resolve(here, '..', '..', '..');
-
 function effective(raw: Record<string, unknown>): Record<string, unknown> {
   return resolveConfig(structuredClone(raw) as never, {}) as unknown as Record<string, unknown>;
-}
-
-function readExample(relPath: string): Record<string, unknown> {
-  return JSON.parse(readFileSync(resolve(repoRoot, relPath), 'utf8'));
 }
 
 describe('effective-merged acceptance (B2b)', () => {
@@ -45,15 +39,6 @@ describe('effective-merged acceptance (B2b)', () => {
   afterEach(() => {
     process.stdout.isTTY = realIsTTY as boolean;
     vi.unstubAllEnvs();
-  });
-
-  it.each([
-    'examples/jira-mcp/.gsloth.config.json',
-    'examples/lmstudio/.gsloth.config.json',
-    'examples/a2a/.gsloth.config.json',
-    'examples/simple-DIY-helper/.gsloth.config.json',
-  ])('resolves %s to a stable effective config', (relPath) => {
-    expect(effective(readExample(relPath))).toMatchSnapshot();
   });
 
   it('resolves the consumer-shaped fixture to a stable effective config', () => {

@@ -330,8 +330,20 @@ Then edit your configuration file to point to your LM Studio server:
 - **Important:** The model must support tool calling. Tested models include:
   gpt-oss, granite, nemotron, seed, qwen3
 
-For a complete example, see
-[examples/lmstudio/.gsloth.config.json](https://github.com/pukeko-robotics/gaunt-sloth/blob/main/examples/lmstudio/.gsloth.config.json).
+A complete LM Studio config:
+
+```json
+{
+  "llm": {
+    "type": "openai",
+    "model": "openai/gpt-oss-20b",
+    "apiKey": "none",
+    "configuration": {
+      "baseURL": "http://127.0.0.1:1234/v1"
+    }
+  }
+}
+```
 
 ### Other OpenAI-compatible providers (Inception, etc.)
 
@@ -573,17 +585,145 @@ You can use the `XAI_API_KEY` environment variable instead of specifying `apiKey
 
 JavaScript configuration provides more flexibility than JSON configuration, allowing you to use dynamic imports and include custom tools.
 
-**For a complete working example** demonstrating custom middleware and custom tools, see:
+What a JavaScript config can do that a JSON one cannot:
 
-- [JavaScript Config Example README](https://github.com/pukeko-robotics/gaunt-sloth/blob/main/examples/js-config/README.md) - Full documentation and usage guide
-- [Example Config File](https://github.com/pukeko-robotics/gaunt-sloth/blob/main/examples/js-config/.gsloth.config.js) - Complete working example with custom logging middleware and custom logger tool
+| | JSON (`.gsloth.config.json`) | JavaScript (`.gsloth.config.js`) |
+|---|---|---|
+| Middleware | predefined only (strings or config objects) | custom, built with `createMiddleware` |
+| Tools | built-ins only | custom, built with LangChain's `tool()` |
+| Control | declarative | full programmatic control |
 
-The example demonstrates:
+#### Custom middleware
 
-- Custom middleware with all lifecycle hooks (`beforeAgent`, `beforeModel`, `afterModel`, `afterAgent`)
-- Custom tool creation using LangChain's `tool()` API
-- Combining built-in and custom middleware
-- Practical patterns for extending Gaunt Sloth functionality
+Middleware gives you hooks at four points in agent execution. **Always wrap custom middleware with
+`createMiddleware`** — that is what adds the `MIDDLEWARE_BRAND` marker LangChain and Gaunt Sloth
+expect, and an unwrapped object is not recognised as middleware.
+
+```javascript
+import { createMiddleware } from 'langchain';
+
+const customMiddleware = createMiddleware({
+  name: 'my-middleware',
+
+  beforeAgent(state) {
+    // Called once, before the agent starts. Modify state if needed.
+    return state;
+  },
+
+  beforeModel(state) {
+    // Called before each LLM call.
+    return state;
+  },
+
+  afterModel(state) {
+    // Called after each LLM response.
+    return state;
+  },
+
+  afterAgent(state) {
+    // Called once, after the agent completes.
+    return state;
+  },
+});
+```
+
+#### Custom tools
+
+```javascript
+import { tool } from '@langchain/core/tools';
+import { z } from 'zod';
+
+const myTool = tool(
+  (input) => {
+    return `Result: ${input.param}`;
+  },
+  {
+    name: 'my_tool',
+    description: 'What the tool does',
+    schema: z.object({
+      param: z.string().describe('Parameter description'),
+    }),
+  }
+);
+```
+
+#### A complete config using both
+
+Custom middleware sits alongside built-in middleware in the same array, and `commands` can scope
+filesystem access and built-in tools per command:
+
+```javascript
+import { createMiddleware } from 'langchain';
+import { tool } from '@langchain/core/tools';
+import { z } from 'zod';
+import { ChatVertexAI } from '@langchain/google-vertexai';
+
+const loggingMiddleware = createMiddleware({
+  name: 'custom-logging',
+  beforeAgent(state) {
+    console.log('🚀 beforeAgent - agent execution starting');
+    return state;
+  },
+  beforeModel(state) {
+    console.log(`🤖 beforeModel - messages: ${state.messages?.length || 0}`);
+    return state;
+  },
+  afterModel(state) {
+    console.log('✅ afterModel - LLM responded');
+    return state;
+  },
+  afterAgent(state) {
+    console.log('🏁 afterAgent - agent execution complete');
+    return state;
+  },
+});
+
+const customLoggerTool = tool(
+  ({ message, level = 'info' }) => {
+    const icon = { info: 'ℹ️', warning: '⚠️', success: '✅' }[level] ?? 'ℹ️';
+    console.log(`${icon} [Custom Tool] ${message}`);
+    return `Logged: ${message}`;
+  },
+  {
+    name: 'custom_logger',
+    description:
+      'Custom Logger Tool. Use this tool to log important information during execution.',
+    schema: z.object({
+      message: z.string().describe('The message to log'),
+      level: z.enum(['info', 'warning', 'success']).optional().describe('Log level (default: info)'),
+    }),
+  }
+);
+
+export async function configure() {
+  return {
+    llm: new ChatVertexAI({ model: 'gemini-2.5-pro', temperature: 0 }),
+
+    middleware: [
+      'anthropic-prompt-caching', // built-in
+      loggingMiddleware, // custom
+    ],
+
+    tools: [customLoggerTool],
+
+    commands: {
+      chat: { filesystem: 'read', builtInTools: ['gth_status_update'] },
+      code: { filesystem: 'all', builtInTools: ['gth_status_update'] },
+    },
+  };
+}
+```
+
+Running `gth chat` with that config prints the lifecycle log around the model call, and the tool line
+whenever the agent calls it:
+
+```
+🚀 beforeAgent - agent execution starting
+🤖 beforeModel - messages: 2
+✅ afterModel - LLM responded
+🏁 afterAgent - agent execution complete
+ℹ️ [Custom Tool] Processing data...
+```
 
 For a more realistic custom tool (zod schema, config-dependent availability, external API call),
 see the worked [Jira work-log tool example](../custom-tool-example-jira-log-work.md).

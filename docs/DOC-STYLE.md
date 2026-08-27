@@ -223,7 +223,7 @@ sweep without a full render.
 `docs/DOC-STYLE.md` and everything under `maintenance/` are contributor docs, read on GitHub rather
 than on the docs site — check those as **GitHub** renders them (open the file on your pushed
 branch, or the PR's Files-changed view), against the same four points above — as is any other
-markdown the run does not turn into a page, such as `examples/*/README.md`.
+markdown the run does not turn into a page.
 
 Record what you checked and what you saw (which page, which browser/tooling, screenshot if
 available) in the PR description or task report — "I looked at a diff" is not evidence this gate

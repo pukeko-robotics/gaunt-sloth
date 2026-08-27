@@ -34,8 +34,32 @@ the server, your browser opens automatically; complete the Atlassian OAuth login
 become available. Tokens are cached (see [Token storage](#token-storage) below), so later sessions
 skip the browser step.
 
-For a complete working example, see
-[examples/jira-mcp](https://github.com/pukeko-robotics/gaunt-sloth/tree/main/examples/jira-mcp).
+### Also using Jira as the requirement source for `pr`
+
+The MCP server above gives `chat` and `code` live Jira tools. If you additionally want `gth pr` to
+pull an issue in as the requirements it reviews against, add `requirementSourceConfig` and point the
+`pr` command at it — that path is the Jira REST integration, not MCP, so both can coexist in one
+config:
+
+```json
+{
+  "requirementSourceConfig": {
+    "jira": {
+      "cloudId": "YOURCLOUDID",
+      "displayUrl": "https://YOURDOMAIN.atlassian.net/browse/"
+    }
+  },
+  "commands": {
+    "pr": {
+      "contentSource": "github",
+      "requirementSource": "jira"
+    }
+  }
+}
+```
+
+See [content sources → JIRA](./content-sources.md#jira) for how to find your `cloudId` and for the
+authentication that path needs.
 
 ## Static auth headers (bearer tokens)
 
@@ -177,8 +201,8 @@ file:
 
 Each agent becomes available as a tool named `a2a_agent_<agentId>` in `chat` and `code` commands.
 
-See [examples/a2a](https://github.com/pukeko-robotics/gaunt-sloth/tree/main/examples/a2a) for a
-working example.
+Set `"writeOutputToFile": false` alongside `a2aAgents` if you are experimenting interactively and do
+not want each run written out to a file.
 
 ---
 
