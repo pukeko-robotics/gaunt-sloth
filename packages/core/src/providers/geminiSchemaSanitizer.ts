@@ -370,8 +370,8 @@ type BindToolsFn = (tools: unknown[], kwargs?: unknown) => unknown;
 
 /**
  * Wire the sanitizer into a ChatGoogle model at the tool-binding boundary. Overrides the instance's
- * `bindTools` so every tool passed to it — built-in, custom, or MCP, via `createAgent`/`createDeepAgent`
- * which both call `model.bindTools(tools)` — is sanitized before it reaches `@langchain/google`'s
+ * `bindTools` so every tool passed to it — built-in, custom, or MCP, via `createAgent`,
+ * which calls `model.bindTools(tools)` — is sanitized before it reaches `@langchain/google`'s
  * Gemini converter. Provider-scoped: only the google-genai/vertexai presets call this, so no other
  * provider's tools are affected. Returns the same model instance for convenient chaining.
  */

@@ -3,10 +3,10 @@ import { resolveShellApprovalGate, type GthConfig } from '#src/config.js';
 import { StatusLevel } from '#src/core/types.js';
 
 /**
- * EXT-52 — `resolveShellApprovalGate` is the ONE shell approval-gate policy both backends read
+ * EXT-52 — `resolveShellApprovalGate` is the ONE shell approval-gate policy every backend reads
  * (GthLangChainAgent installs `humanInTheLoopMiddleware` from it, and any future backend passes
- * an `interruptOn` from it). These pin the decision AND the exact user-facing notice copy, so the
- * two backends cannot drift apart again.
+ * an `interruptOn` from it). These pin the decision AND the exact user-facing notice copy, so a
+ * second backend could not drift from the first.
  */
 type PolicyConfig = Pick<GthConfig, 'commands' | 'builtInTools' | 'askWriteMode' | 'approvals'>;
 

@@ -148,8 +148,8 @@ export async function buildProductionRunCell(
         cellConfig,
         resolvers,
         options.command,
-        // batch/eval default to the lean backend, same as exec/ask; an explicit
-        // config.agent.backend wins.
+        // batch/eval ask for the lean backend, same as exec/ask — the only one shipped;
+        // config.agent.backend names no other.
         resolveAgentFactory(cellConfig, 'lean'),
         { displayCommand: options.displayCommand }
       );

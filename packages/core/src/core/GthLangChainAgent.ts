@@ -647,7 +647,7 @@ export class GthLangChainAgent extends GthAbstractAgent {
     // fail-closed reject) was DEAD CODE on lean and shell commands ran unprompted. A matching tool
     // call now suspends the graph with a HITLRequest interrupt; the runner drains it via
     // getPendingToolInterrupts/streamResume (both backend-agnostic in GthAbstractAgent), so ONE
-    // gating code path drives both backends and the existing TUI + readline approval prompts fire
+    // gating code path drives the agent and the existing TUI + readline approval prompts fire
     // identically on lean.
     //
     // The gate condition and its user-facing notices are the SHARED policy

@@ -280,7 +280,7 @@ export interface TuiAppProps {
   /** Subscribe to agent status updates (warnings/info routed out of the event stream). */
   subscribeStatus?: (cb: (level: string, message: string) => void) => () => void;
   /**
-   * Subscribe to debug captures from the deep agent's `wrapModelCall` middleware: the full
+   * Subscribe to debug captures from the agent's `wrapModelCall` middleware: the full
    * history sent to the model and the resolved raw response, for the `/debug` panel. Optional
    * so the readline/AG-UI paths and the fixture agent (which have no such sink) simply omit it.
    */

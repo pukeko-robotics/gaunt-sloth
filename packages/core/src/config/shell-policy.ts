@@ -880,7 +880,7 @@ export function isToolGatedAtRung(options: {
  * summary (§4.4) are both built from this, so neither can tell the model a tool is free while the
  * gate escalates it.
  *
- * **It is NOT what the backends wire into the interrupt.** That is
+ * **It is NOT what the agent wires into the interrupt.** That is
  * {@link resolveInterruptToolNames}, and the two are different sets on purpose: the interrupt is
  * installed once, at agent init, while `/approvals <rung>` moves the rung underneath it for the rest
  * of the session. A set that carried the rung would be frozen at the rung the session started on —
@@ -922,7 +922,7 @@ export function resolveGatedToolNames(options: {
  * unanswered. Measured, not inferred.
  *
  * So a command that answers nothing must be handed **no approval interrupt beyond what the shell
- * gate itself requires** — see the `interruptTools` wiring in both backends. In particular it must
+ * gate itself requires** — see the `interruptTools` wiring in the agent. In particular it must
  * NOT be handed the LIVE set for its configured rung: that set is non-empty at `manual` and
  * `write`, so it carries exactly the same trap, and `commands.api.approvals` (plus a root-level
  * `approvals`, which applies to every command) puts an ordinary config on those rungs.
@@ -964,7 +964,7 @@ export function commandAnswersApprovals(command: GthCommand | undefined): boolea
 }
 
 /**
- * **The interrupt set: which tool names the backends wire into the approval interrupt.** Every bound
+ * **The interrupt set: which tool names the agent wires into the approval interrupt.** Every bound
  * tool that ANY rung could gate — the union of {@link resolveGatedToolNames} over
  * {@link APPROVAL_RUNGS}, which in practice is the shell plus every bound tool that is not a
  * built-in READ tool.

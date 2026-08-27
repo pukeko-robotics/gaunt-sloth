@@ -161,7 +161,7 @@ describe('singleShot', () => {
     await runSingleShot('test-source', 'test-preamble', 'test-content', testConfig);
 
     // Verify that runner was called with correct parameters. BATCH-13: the preamble is no longer
-    // injected as a SystemMessage — the agent backends compose the system prompt themselves (a
+    // injected as a SystemMessage — the agent composes the system prompt itself (a
     // superset), and a second leading system message broke Anthropic single-shot. Only the human
     // turn is passed now.
     expect(gthAgentRunnerInstanceMock.processMessages).toHaveBeenCalledWith([

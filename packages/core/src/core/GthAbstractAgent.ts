@@ -390,7 +390,7 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
   }
 
   /**
-   * EXT-58 (spec §4.5) — the ONE tool-registration hook both backends call with their final tool
+   * EXT-58 (spec §4.5) — the ONE tool-registration hook every backend calls with its final tool
    * array, just before handing it to the graph builder. It does two things:
    *
    * 1. Appends the rung's approval sentence to every tool that is **not** auto-approved at that

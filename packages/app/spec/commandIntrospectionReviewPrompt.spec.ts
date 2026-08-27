@@ -10,7 +10,7 @@ import type { GthConfig } from '@gaunt-sloth/core/config.js';
  * looked right for the whole window in which the model was getting something else.
  *
  * The assertion is an equality against the SHARED composition (`buildSystemMessages` +
- * `readModePrompt`, the same two functions the backends call), with the real prompt readers. It
+ * `readModePrompt`, the same two functions the agent calls), with the real prompt readers. It
  * carries no literal of its own, so it cannot agree with the code about a wrong one.
  */
 describe('review/pr system-prompt introspection (GS2-79)', () => {

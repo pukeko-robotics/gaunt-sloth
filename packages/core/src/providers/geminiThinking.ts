@@ -75,11 +75,16 @@ export function applyGeminiThoughtSummaries<T extends BaseChatModel>(model: T): 
  * summary is withheld. Never express this as a zero/minimal budget — that turns THINKING off, which
  * is a different and much larger change, and the coercion differs between the 2.5 and 3.x presets.
  *
- * This exists because a consumer outside {@link GthAbstractAgent} routes content blocks by `type`,
- * and Gemini's thought summary is typed `text` exactly like an answer block — so a third party has
- * no way to tell them apart and prints the thinking as the assistant's answer. Not asking for the
- * summary is the only thing that reliably stops that; nothing is stripped, so the message kept in
- * graph state (and any `thoughtSignature` riding on it) is untouched. Returns the same instance.
+ * This exists for any consumer that routes content blocks by `type` without going through gsloth's
+ * own reasoning bridge: Gemini's thought summary is typed `text` exactly like an answer block, so
+ * such a consumer has no way to tell them apart and prints the thinking as the assistant's answer.
+ * Not asking for the summary is the only thing that reliably stops that; nothing is stripped, so the
+ * message kept in graph state (and any `thoughtSignature` riding on it) is untouched. Returns the
+ * same instance.
+ *
+ * No module in this repo calls it today. It is kept as published API — `providers/geminiThinking.js`
+ * is a public deep-import path — and because a parent reading a child agent's stream needs exactly
+ * this; that is the lean subagent primitive (GS2-25).
  *
  * It applies to EVERY model family, including the image/tts ones the enable path skips: those are
  * precisely where `@langchain/google` sets `includeThoughts: true` itself once a budget or level is

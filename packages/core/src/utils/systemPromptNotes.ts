@@ -139,9 +139,9 @@ export interface CommitCoAuthor {
  * it literally (the overwhelmingly common case, and a literal name is what makes the instruction
  * actionable); when it is not, the note names no tool, keeps both prohibitions and the file form,
  * and supplies the compliant path that remains: do not commit, and hand the message back to the
- * user. That branch states no availability claim of its own — the backends read the same
- * `filesystem` value but register filesystem tools differently, so a note asserting "you have no
- * file-writing tool" could be flatly false on one of them.
+ * user. That branch states no availability claim of its own — registering filesystem tools is the
+ * agent's decision, made from the same `filesystem` value, so a note asserting "you have no
+ * file-writing tool" could be flatly false.
  *
  * The note's prose carries **no backtick and no other markup** — including no angle-bracket
  * placeholder: it is the one piece of guidance whose subject is how to write a commit message, so

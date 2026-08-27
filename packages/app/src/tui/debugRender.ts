@@ -11,7 +11,7 @@ import type {
 import { MCP_TOOL_NAME_PREFIX } from '@gaunt-sloth/core/constants.js';
 
 /**
- * Pure renderers turning the deep agent's debug captures into the JSON strings the `/debug`
+ * Pure renderers turning the agent's debug captures into the JSON strings the `/debug`
  * panel shows. Kept React-free so they are unit-testable in isolation; the panel just splits
  * the result on newlines into its bounded viewport.
  */
