@@ -10,7 +10,7 @@ import { writeConfigFileWithMessages } from '#src/utils/fileUtils.js';
 import { buildInitConfigContent, getCuratedFallbackModel } from '#src/providers/modelDiscovery.js';
 import {
   NATIVE_CLIENT_REASON,
-  warnConfigurationOverridesTopLevelField,
+  warnShadowedField,
   warnUnappliedConfigurationPath,
   warnUnusedConfiguration,
 } from '#src/providers/configurationPassthrough.js';
@@ -116,19 +116,43 @@ export async function processJsonConfig(
   // below — and the block's value is spread after it, so it wins. Both are honoured surfaces, so
   // the defect is only the silence: say which one takes effect rather than dropping the other
   // without a word.
-  warnConfigurationOverridesTopLevelField(
-    'openrouter',
-    'baseURL',
-    restConfig.baseURL,
-    baseURLOverride.baseURL
-  );
+  warnShadowedField({
+    provider: 'openrouter',
+    ignoredPath: 'baseURL',
+    appliedPath: 'configuration.baseURL',
+    ignoredValue: restConfig.baseURL,
+    appliedValue: baseURLOverride.baseURL,
+  });
 
-  const resolvedSiteUrl =
-    siteUrl ??
-    configObj?.defaultHeaders?.[ATTRIBUTION_HEADERS.siteUrl] ??
-    'https://gauntsloth.app/';
-  const resolvedSiteName =
-    siteName ?? configObj?.defaultHeaders?.[ATTRIBUTION_HEADERS.siteName] ?? 'Gaunt Sloth';
+  // The attribution headers run the OTHER way: the block feeds `siteUrl`/`siteName` only as a
+  // FALLBACK, so a top-level value beats it. Both directions are honoured surfaces and both are
+  // announced; the precedence itself is left exactly as it is, because a user relying on either
+  // order should not have their config change meaning under them. What ends here is the silence —
+  // the block's `baseURL` beating the top-level field was already announced while this, the
+  // opposite direction, was not, and a rule you can only observe in one direction is not one a
+  // user can reason from.
+  const blockSiteUrl = configObj?.defaultHeaders?.[ATTRIBUTION_HEADERS.siteUrl];
+  const blockSiteName = configObj?.defaultHeaders?.[ATTRIBUTION_HEADERS.siteName];
+  const resolvedSiteUrl = siteUrl ?? blockSiteUrl ?? 'https://gauntsloth.app/';
+  const resolvedSiteName = siteName ?? blockSiteName ?? 'Gaunt Sloth';
+
+  // `appliedValue` is the resolved expression itself, not a re-test of it: when only the block is
+  // set the two are the same value and the guard's equality check keeps it silent, which is what
+  // makes one call cover "top level wins" without also firing on "the block was used".
+  warnShadowedField({
+    provider: 'openrouter',
+    ignoredPath: `configuration.defaultHeaders.${ATTRIBUTION_HEADERS.siteUrl}`,
+    appliedPath: 'siteUrl',
+    ignoredValue: blockSiteUrl,
+    appliedValue: resolvedSiteUrl,
+  });
+  warnShadowedField({
+    provider: 'openrouter',
+    ignoredPath: `configuration.defaultHeaders.${ATTRIBUTION_HEADERS.siteName}`,
+    appliedPath: 'siteName',
+    ignoredValue: blockSiteName,
+    appliedValue: resolvedSiteName,
+  });
 
   return new ChatOpenRouter({
     ...restConfig,
