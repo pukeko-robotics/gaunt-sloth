@@ -82,9 +82,9 @@ export function applyGeminiThoughtSummaries<T extends BaseChatModel>(model: T): 
  * message kept in graph state (and any `thoughtSignature` riding on it) is untouched. Returns the
  * same instance.
  *
- * No module in this repo calls it today. It is kept as published API — `providers/geminiThinking.js`
- * is a public deep-import path — and because a parent reading a child agent's stream needs exactly
- * this; that is the lean subagent primitive (GS2-25).
+ * No production module calls it today (only its spec does). It is kept as published API —
+ * `providers/geminiThinking.js` is a public deep-import path — and because a parent reading a child
+ * agent's stream needs exactly this; that is the lean subagent primitive (GS2-25).
  *
  * It applies to EVERY model family, including the image/tts ones the enable path skips: those are
  * precisely where `@langchain/google` sets `includeThoughts: true` itself once a budget or level is

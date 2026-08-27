@@ -174,8 +174,9 @@ describe('google presets ask for thought summaries (CFG-33)', () => {
 
 /**
  * The inverse knob, for a surface that renders content blocks by `type` and therefore cannot tell a
- * Gemini thought summary from an answer. No module in this repo calls it today; it stays published
- * API and is what a parent reading a child agent's stream will need (GS2-25).
+ * Gemini thought summary from an answer. No production module calls it today — these cases are its
+ * only caller; it stays published API and is what a parent reading a child agent's stream will
+ * need (GS2-25).
  *
  * The one thing that must not slip: it withholds the SUMMARY, it does not stop the model THINKING.
  * A zero/minimal budget would do the latter, and the coercion differs by model family — a pro model
