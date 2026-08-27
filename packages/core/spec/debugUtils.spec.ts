@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+// REAL node:path — see LOG_PATH below (OPS-28).
+import { dirname, resolve } from 'node:path';
 
 const fsMock = {
   appendFileSync: vi.fn(),
@@ -7,19 +9,24 @@ const fsMock = {
 };
 vi.mock('node:fs', () => fsMock);
 
-const pathMock = {
-  dirname: vi.fn(),
-  resolve: vi.fn(),
-};
-vi.mock('node:path', () => pathMock);
+/**
+ * `debugUtils.ts` keeps `DEBUG_LOG_FILE` module-private and writes to `resolve(DEBUG_LOG_FILE)` —
+ * a one-argument resolve, i.e. the bare filename against the process cwd. Mirroring just the bare
+ * filename here (no separator, so it is platform-neutral) and running it through the REAL
+ * `resolve()`/`dirname()` builds the expectation the same way production does, on every platform.
+ *
+ * `node:path` used to be mocked in this file with `resolve` stubbed to `` `/resolved/${path}` ``,
+ * which made the mock the definition of resolution: the assertions could only confirm the mock
+ * agreed with itself, and would have passed even if production concatenated strings.
+ * `node:fs` stays mocked, so a real `resolve()` here still cannot reach a real `mkdirSync`.
+ */
+const DEBUG_LOG_FILE = 'gaunt-sloth.log';
+const LOG_PATH = resolve(DEBUG_LOG_FILE);
+const LOG_DIR = dirname(LOG_PATH);
 
 describe('debugUtils', () => {
   beforeEach(() => {
     vi.resetAllMocks();
-
-    // Set up default mock implementations
-    pathMock.resolve.mockImplementation((path: string) => `/resolved/${path}`);
-    pathMock.dirname.mockImplementation((path: string) => path.substring(0, path.lastIndexOf('/')));
   });
 
   describe('initDebugLogging', () => {
@@ -28,9 +35,9 @@ describe('debugUtils', () => {
 
       initDebugLogging(true);
 
-      expect(fsMock.mkdirSync).toHaveBeenCalledWith('/resolved', { recursive: true });
+      expect(fsMock.mkdirSync).toHaveBeenCalledWith(LOG_DIR, { recursive: true });
       expect(fsMock.appendFileSync).toHaveBeenCalledWith(
-        '/resolved/gaunt-sloth.log',
+        LOG_PATH,
         expect.stringContaining('=== Debug logging initialized ==='),
         'utf8'
       );
@@ -56,7 +63,7 @@ describe('debugUtils', () => {
       debugLog('Test message');
 
       expect(fsMock.appendFileSync).toHaveBeenCalledWith(
-        '/resolved/gaunt-sloth.log',
+        LOG_PATH,
         expect.stringMatching(/\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\] Test message\n/),
         'utf8'
       );
@@ -83,12 +90,12 @@ describe('debugUtils', () => {
 
       expect(fsMock.appendFileSync).toHaveBeenCalledTimes(3);
       expect(fsMock.appendFileSync).toHaveBeenCalledWith(
-        '/resolved/gaunt-sloth.log',
+        LOG_PATH,
         expect.stringContaining('=== Test Title ==='),
         'utf8'
       );
       expect(fsMock.appendFileSync).toHaveBeenCalledWith(
-        '/resolved/gaunt-sloth.log',
+        LOG_PATH,
         expect.stringContaining('Line 1\nLine 2'),
         'utf8'
       );
@@ -106,13 +113,13 @@ describe('debugUtils', () => {
       debugLogObject('Test Object', testObj);
 
       expect(fsMock.appendFileSync).toHaveBeenCalledWith(
-        '/resolved/gaunt-sloth.log',
+        LOG_PATH,
         expect.stringContaining('=== Test Object ==='),
         'utf8'
       );
       // Check that inspect format is used (contains properties without quotes around keys)
       expect(fsMock.appendFileSync).toHaveBeenCalledWith(
-        '/resolved/gaunt-sloth.log',
+        LOG_PATH,
         expect.stringContaining("foo: 'bar'"),
         'utf8'
       );
@@ -131,12 +138,12 @@ describe('debugUtils', () => {
       debugLogError('test context', error);
 
       expect(fsMock.appendFileSync).toHaveBeenCalledWith(
-        '/resolved/gaunt-sloth.log',
+        LOG_PATH,
         expect.stringContaining('❌ Error in test context:'),
         'utf8'
       );
       expect(fsMock.appendFileSync).toHaveBeenCalledWith(
-        '/resolved/gaunt-sloth.log',
+        LOG_PATH,
         expect.stringContaining('Message: Test error'),
         'utf8'
       );
