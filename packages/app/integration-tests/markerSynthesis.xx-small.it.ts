@@ -16,10 +16,21 @@ import { checkOutputForExpectedContent } from './support/outputChecker';
  * subdir the CLI runs in; the prompt forces a read_file tool call; then assert BOTH
  *   - `Requested tools:` is present  → a tool actually ran, AND
  *   - the planted marker is present  → the answer was SYNTHESIZED from the tool result
- * The marker never appears in the tool-call echo (that line shows only the filename), so "output
- * contains the marker" is a genuine synthesis check, not a tool-ran check. This is exactly the
- * GS2-59 class of regression (gemma-over-ollama returned EMPTY content on the post-tool turn while
- * every unit test stayed green). The random suffix guards against a stale-output false pass.
+ * This is exactly the GS2-59 class of regression (gemma-over-ollama returned EMPTY content on the
+ * post-tool turn while every unit test stayed green). The random suffix guards against a
+ * stale-output false pass.
+ *
+ * **The marker assertion is weaker than that second bullet claims, and BATCH-40 measured why.**
+ * This file used to say the marker never appears in the tool-call echo because that line shows only
+ * the filename. It is not the echo that carries it: the plain surface also prints a tool PANEL
+ * containing up to `TOOL_OUTPUT_PREVIEW_LINES` lines of each tool RESULT, and the marker file here
+ * is one line long — so a successful read puts the marker on stdout whether or not the model ever
+ * used it, and "output contains the marker" is satisfied without synthesis. What these cases do
+ * still prove is that a read happened and returned the planted file, and the discrimination case at
+ * the bottom still proves the check bites when the asserted marker was never on disk. Synthesis
+ * itself is not proven here. `askCommand.xx-small.it.ts` carries the shape that proves it: pad the
+ * planted file past the preview cap, and search the output with the panels stripped, via
+ * `checkModelTextForExpectedContent` in `support/outputChecker.ts`.
  *
  * Topology (load-bearing): the provider config is discovered UP-TREE at
  * `workdir/.gsloth.config.json`, while file reads anchor on the CLI's cwd (the case subdir). So the
