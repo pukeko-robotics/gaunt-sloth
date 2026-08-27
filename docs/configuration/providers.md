@@ -76,6 +76,19 @@ same native client, so a `configuration` block reaches nothing here either and i
 ignored when the provider starts. Set `customHeaders`, `endpoint`, `apiVersion` or `location` as
 top-level fields of the `llm` block instead, beside `model`.
 
+#### Application Default Credentials from the environment
+
+`gcloud auth application-default login` is inert for a session whose credentials come from
+`GOOGLE_APPLICATION_CREDENTIALS` — typically a CI runner or a container, wherever a service-account
+key file has been provisioned and the variable points at it. That variable is resolved *before* the
+well-known credentials file, so the command writes a file this session never reads, reports success,
+and leaves the failure exactly where it was.
+
+Repair or replace the credentials in the file the variable points at, or unset the variable so the
+well-known Application Default Credentials file is used instead. `google-auth-library` reads the
+lower-case `google_application_credentials` as well, with the upper-case spelling winning when both
+are set — so unset whichever one your environment exports.
+
 ### Anthropic
 
 ```bash
@@ -513,6 +526,9 @@ You can use the `GOOGLE_API_KEY` environment variable instead of specifying `api
 VertexAI uses gcloud authentication; no `apiKey` is needed in the config, so authenticate with
 `gcloud auth application-default login`.
 
+If `GOOGLE_APPLICATION_CREDENTIALS` is set in your environment, that command is inert — see
+[Application Default Credentials from the environment](#application-default-credentials-from-the-environment).
+
 **A `GOOGLE_API_KEY` in your environment does not change this.** The provider is chosen by your
 config, so a `vertexai` block keeps using Application Default Credentials even when an AI Studio
 key is exported for a `google-genai` profile. To use a Vertex AI express-mode key instead, put it
@@ -866,6 +882,8 @@ export async function configure() {
 **Example of .gsloth.config.mjs for VertexAI**
 VertexAI usually needs `gcloud auth application-default login`
 (or both `gcloud auth login` and `gcloud auth application-default login`) and does not need any separate API keys.
+With `GOOGLE_APPLICATION_CREDENTIALS` set, those commands are inert — see
+[Application Default Credentials from the environment](#application-default-credentials-from-the-environment).
 
 **This example builds the client itself, so it does not get the `type: vertexai` behaviour above.**
 A `GOOGLE_API_KEY` exported in your environment takes over the request here, ahead of ADC — and an
