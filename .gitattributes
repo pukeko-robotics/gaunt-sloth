@@ -11,7 +11,8 @@
 # script somebody adds, whatever it is named or wherever it lives. Nothing tracked here needs CRLF
 # in the working tree: there are no Windows batch or PowerShell scripts in this repository.
 #
-# packages/core/spec/lineEndingPolicy.spec.ts pins the result for every file carrying a shebang.
+# packages/core/spec/lineEndingPolicy.spec.ts pins this policy on every platform, and pins its
+# result — no carriage return in a shebang line — only where a checkout could produce one.
 * text=auto eol=lf
 
 # Genuinely binary content, marked so that no conversion or diff heuristic can reach it. These are
