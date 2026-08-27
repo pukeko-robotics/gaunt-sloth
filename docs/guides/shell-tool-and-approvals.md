@@ -206,9 +206,12 @@ Pushing and publishing to somewhere your project already configures — `git pus
 
 **Read the sentence, not just the word in brackets.** Because "could not assess" also lands on
 **destructive**, the bracketed word alone cannot tell you whether a model looked at the command and
-judged it, or whether the gate never got an answer. The reason says which — "could not assess this
-command: the auto-rater did not answer within 30000ms" is the gate giving up, not a finding about
-your command. If you see that one, the fix is a bigger budget (below), not a safer command.
+judged it, or whether the gate never got an answer. The reason says which, and says what went wrong:
+"the auto-rater did not answer within 30000ms" is the gate giving up on a slow rater, and "the
+provider rejected the auto-rater call with HTTP 400" is your rater's provider refusing the request
+outright. Both end with **the model was never asked** — neither is a finding about your command, so
+the fix is a bigger budget or a different rater ([below](#give-a-local-rater-enough-time)), not a
+safer command.
 
 ### A command Gaunt Sloth cannot read is rated like any other
 
@@ -459,6 +462,25 @@ command up to 300000 ms (5 minutes) before it is killed; the default is 120000 m
 A per-command `builtInTools` object **replaces** the default set entirely, which is why
 `gth_checklist` and `gth_grep` (the two defaults) are listed explicitly — drop them and they are
 gone.
+
+### When the rater cannot answer at all
+
+A bigger budget does not help every rater, because some models cannot answer the rating question in
+the first place. A model that runs in thinking mode at its provider may have the request refused
+outright — the rater asks for a structured verdict, and the provider rejects the shape it has to
+send. Then every call fails, every command escalates, and every explanation is the same sentence.
+That reads exactly like a gate that has become unbearably noisy, and the one conclusion it does not
+suggest is the true one.
+
+So after **three rating calls in a row have failed**, with none answered in between, gth says so
+once for the session — naming the rater model and the provider's error — and then stays quiet. One
+answered rating clears the count, because a rater that fails on one command and answers on the next
+is a different problem from a rater that cannot answer at all.
+
+The fix is a different rater, not a safer command: point `approvals.rater` at a profile whose model
+can return a structured verdict. Nothing else changes while it is broken — a rating that fails still
+lands on **destructive** and still asks you, so no command is approved on the strength of a rater
+that never spoke.
 
 ## The ladder: `approvals`
 

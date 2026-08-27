@@ -52,6 +52,7 @@ import type { NegotiationCounters } from '#src/core/shell/negotiation.js';
 import type {
   FailClosedCause,
   PreflightFloorKind,
+  RaterCallFailure,
   ShellSafetyVerdict,
 } from '#src/core/shell/rater.js';
 
@@ -140,6 +141,13 @@ export interface RaterCallCapture {
   verdict?: ShellSafetyVerdict;
   /** Set when the verdict is the gate failing closed rather than the model judging ([[EXT-66]]). */
   failClosed?: FailClosedCause;
+  /**
+   * [[EXT-82]] — the provider's own account of a call that never reached the model, when the
+   * `threw` arm carried one. Already sanitised where it was built ({@link RaterCallFailure}), which
+   * is not an exemption from the archive's redaction pass but a consequence of the same value being
+   * carried into the verdict a user reads live, where no such pass runs.
+   */
+  providerError?: RaterCallFailure;
 }
 
 /** A declared entry or runtime grant that decided the call, rendered as the user would read it. */

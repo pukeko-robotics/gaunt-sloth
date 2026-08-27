@@ -10,8 +10,11 @@ import {
   buildRaterPrompt,
   buildRaterSystemPrompt,
   COULD_NOT_ASSESS_PREFIX,
+  describeRaterCallFailure,
   FAIL_CLOSED_VERDICT,
   failClosedVerdict,
+  RATER_PROVIDER_MESSAGE_MAX_CHARS,
+  renderRaterCallFailure,
   FENCE_RENDERING_NOTE,
   FLOOR_HOST_RENDERING_CLAUSE,
   RATER_DEFAULT_TIMEOUT_MS,
@@ -1195,7 +1198,14 @@ describe('rateShellCommand', () => {
       throw new Error('boom');
     });
     const result = await rateShellCommand('ls -la', CONFIG, { model });
-    expect(result).toEqual(failClosedVerdict('threw'));
+    // [[EXT-82]] — the arm now carries what the caller threw, so the equality is against the
+    // verdict built from that same failure rather than against the detail-less spelling. The
+    // detail-less spelling is still what a caller with no failure gets, which the next assertion
+    // pins so the two cannot silently become one string again.
+    expect(result).toEqual(failClosedVerdict('threw', undefined, { message: 'boom' }));
+    expect(failClosedVerdict('threw').reason).toBe(
+      `${COULD_NOT_ASSESS_PREFIX}: the auto-rater call failed.`
+    );
     expect(result.outcome).toBe('destructive');
     expect(result.reason).toContain(COULD_NOT_ASSESS_PREFIX);
     expect(isFailClosed(result)).toBe(true);
@@ -2209,5 +2219,233 @@ describe('[[EXT-127]] §5.1 — the classifier is handed the command and nothing
     for (const tag of RETIRED_TAGS) {
       expect(messages[1].content).not.toContain(tag);
     }
+  });
+});
+
+/**
+ * [[EXT-82]] — **a rater that answers nothing is indistinguishable from a very cautious one.**
+ *
+ * Pointed at one model through the OpenRouter provider, 27 of 27 rating calls returned HTTP 400.
+ * The gate did exactly what EXT-66 built it to do and nothing unsafe ran — and every verdict was
+ * byte-identical to the verdict a working rater returns on a command it dislikes. What is pinned
+ * here is the distinction that was missing: the failure now names the provider's own rejection, and
+ * says the one thing the old text could not, that the model was never asked.
+ *
+ * Fail-closed stays fail-closed. Every assertion about the new wording sits beside an assertion
+ * that the outcome and the action are unchanged.
+ */
+describe('[[EXT-82]] a provider-rejected rating call says WHY it failed', () => {
+  /**
+   * A recognisable fake credential, written as a literal.
+   *
+   * **Never a value read from the environment.** A test that compares a diagnostic against a real
+   * key by value prints that key into the test output on failure — measured, in this repo — and a
+   * field dropped from the diagnostic would fall back to the environment and make the comparison
+   * pass for the wrong reason. This string exists only here.
+   */
+  const FAKE_KEY = 'sk-ext82FAKEcanaryDONOTUSE000000';
+  /** A rated command distinctive enough that its appearance anywhere is unambiguous. */
+  const CANARY_COMMAND = 'rm -rf /tmp/ext82-canary-directory';
+  /** The fragment the negative assertions hunt for — shorter than the command, so a partial echo
+   * of it would still be caught. */
+  const CANARY_FRAGMENT = 'ext82-canary-directory';
+
+  /**
+   * The shape an OpenAI-compatible client throws on a provider rejection: a numeric `status`, the
+   * parsed body under `error`, and an assembled `Error.message` that leads with the code.
+   */
+  function providerRejection(message: string, status = 400): Error {
+    return Object.assign(new Error(`${status} ${message}`), { status, error: { message } });
+  }
+
+  it('carries the provider status and message rather than a generic string', async () => {
+    const { model } = fakeModel(() => {
+      throw providerRejection('tool_choice is not supported by this model');
+    });
+    const result = await rateShellCommand('ls -la', CONFIG, { model });
+
+    expect(result.reason).toContain('HTTP 400');
+    expect(result.reason).toContain('tool_choice is not supported by this model');
+    expect(result.reason).toContain('The model was never asked');
+    // The control. The same arm with nothing to report keeps the old sentence, so the assertions
+    // above are about a cause being CARRIED and not about a string that is always present.
+    expect(failClosedVerdict('threw').reason).not.toContain('HTTP');
+    expect(failClosedVerdict('threw').reason).not.toContain('never asked');
+
+    // Nothing about what the gate DOES moves. This node is a diagnostic.
+    expect(result.outcome).toBe('destructive');
+    expect(isFailClosed(result)).toBe(true);
+    expect(isRaterTimeout(result), 'a rejection is not a timeout').toBe(false);
+    expect(mapVerdictToAction('ls -la', result, { rung: 'assisted' }).action).toBe('escalate');
+    expect(mapVerdictToAction('ls -la', result, { rung: 'auto' }).action).not.toBe('approve');
+  });
+
+  /**
+   * **Counted, never read off the source.** A rejection is a fact about the request rather than
+   * weather: it never clears, so a retry turns one broken call into a spend leak — and the measured
+   * case is 27 consecutive failures, which is what that would multiply. (A 429 is a different case
+   * and is out of this node's scope.)
+   */
+  it('does NOT retry a rejected call — exactly one attempt', async () => {
+    const { model, structuredInvoke } = fakeModel(() => {
+      throw providerRejection('tool_choice is not supported by this model');
+    });
+    await rateShellCommand('ls -la', CONFIG, { model });
+    expect(structuredInvoke).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a status even when the provider said nothing else', () => {
+    expect(describeRaterCallFailure({ status: 503 })).toEqual({ status: 503 });
+  });
+
+  it('reports nothing at all when the error carried neither status nor text', () => {
+    expect(describeRaterCallFailure(undefined)).toBeUndefined();
+    expect(describeRaterCallFailure({})).toBeUndefined();
+  });
+
+  it('reads the status a provider only spells in its text', () => {
+    expect(describeRaterCallFailure(new Error('429 slow down'))?.status).toBe(429);
+  });
+
+  /**
+   * The reason is rendered into a line-structured approval panel and into a rejection handed back
+   * to the agent, so a newline in provider text must not forge a line of either.
+   */
+  it('renders a multi-line provider message as one line', () => {
+    expect(describeRaterCallFailure(providerRejection('line one\nline two'))?.message).toBe(
+      'line one line two'
+    );
+  });
+
+  it('caps the provider message', () => {
+    const failure = describeRaterCallFailure(providerRejection('z'.repeat(500)));
+    expect(failure?.message?.length).toBe(RATER_PROVIDER_MESSAGE_MAX_CHARS);
+  });
+
+  /**
+   * **The diagnostic carries no key, no request body and no rated command.**
+   *
+   * Each case asserts PRESENCE before absence: that the failure exists, and that it still reports
+   * the status it knows. A `not.toContain` on an empty diagnostic passes for the wrong reason, and
+   * so does one on a fixture that never had the hazard in it — so every fixture below really
+   * carries the thing the assertion excludes, and the first test is the control proving a clean
+   * message is carried whole rather than everything being dropped.
+   *
+   * The rule is DROP THE WHOLE MESSAGE, never scrub it in place: a partially-redacted secret beside
+   * a marker is what leaks, so the message is withheld and the withholding is reported.
+   */
+  describe('the diagnostic carries no key, no request body and no rated command', () => {
+    it('carries a clean provider message whole — the control the negatives need', () => {
+      const failure = describeRaterCallFailure(
+        providerRejection('tool_choice is not supported by this model'),
+        { command: CANARY_COMMAND, secrets: [FAKE_KEY] }
+      );
+      expect(failure).toEqual({
+        status: 400,
+        message: 'tool_choice is not supported by this model',
+      });
+    });
+
+    it('withholds the whole message when a KNOWN KEY SHAPE is in it, and still names the status', () => {
+      const failure = describeRaterCallFailure(
+        providerRejection(`invalid api key ${FAKE_KEY} for this endpoint`),
+        // No declared secrets: the prefix-anchored provider-key arm alone has to catch this.
+        { command: CANARY_COMMAND, secrets: [] }
+      );
+      expect(failure?.status, 'the diagnostic still says what it knows').toBe(400);
+      expect(failure?.withheld, 'and says that it withheld the rest').toBe(true);
+      const rendered = renderRaterCallFailure(failure!);
+      expect(rendered).toContain('HTTP 400');
+      expect(rendered).toContain('withheld');
+      expect(rendered).not.toContain(FAKE_KEY);
+      expect(rendered).not.toContain('sk-ext82');
+    });
+
+    it('withholds the whole message when a DECLARED secret value is in it', () => {
+      // A credential with no well-known prefix — the case the pattern arm cannot see and the
+      // literal-substitution arm can. Separate from the test above so a mutation that removes one
+      // arm cannot be masked by the other still firing.
+      const inline = 'ext82-inline-fake-credential-value';
+      const failure = describeRaterCallFailure(providerRejection(`rejected for ${inline}`), {
+        command: CANARY_COMMAND,
+        secrets: [inline],
+      });
+      expect(failure?.status).toBe(400);
+      expect(failure?.withheld).toBe(true);
+      expect(renderRaterCallFailure(failure!)).not.toContain(inline);
+    });
+
+    it('withholds a message that echoes the RATED COMMAND back', () => {
+      const failure = describeRaterCallFailure(
+        providerRejection(`the request body was rejected: ${CANARY_COMMAND}`),
+        { command: CANARY_COMMAND, secrets: [] }
+      );
+      expect(failure?.status).toBe(400);
+      expect(failure?.withheld).toBe(true);
+      expect(renderRaterCallFailure(failure!)).not.toContain(CANARY_FRAGMENT);
+    });
+
+    /**
+     * The prompt carries the NORMALIZED, home-folded command, so that is the spelling a body echo
+     * comes back in — and checking only the caller's spelling would miss exactly those.
+     */
+    it('withholds a message echoing the command in the spelling the PROMPT carried', () => {
+      const failure = describeRaterCallFailure(
+        providerRejection('rejected: cat ~/.ssh/ext82-canary-key'),
+        { command: 'cat /home/ext82tester/.ssh/ext82-canary-key', home: '/home/ext82tester' }
+      );
+      expect(failure?.withheld).toBe(true);
+      expect(renderRaterCallFailure(failure!)).not.toContain('ext82-canary-key');
+    });
+
+    it('withholds a message that hands our own fenced request back', () => {
+      const failure = describeRaterCallFailure(
+        providerRejection('bad request: <command_to_evaluate>anything</command_to_evaluate>'),
+        { command: 'ls -la' }
+      );
+      expect(failure?.withheld).toBe(true);
+      expect(renderRaterCallFailure(failure!)).not.toContain('command_to_evaluate');
+    });
+
+    it('does not let a two-character command withhold every message that contains it', () => {
+      // A degenerate command must not make the exclusion fire on ordinary prose — that would
+      // withhold every diagnostic and make the negative assertions above vacuous everywhere.
+      const failure = describeRaterCallFailure(providerRejection('model is unavailable'), {
+        command: 'ls',
+      });
+      expect(failure?.message).toBe('model is unavailable');
+    });
+  });
+
+  /**
+   * The two sanitiser inputs `rateShellCommand` supplies are asserted through the REAL call, one at
+   * a time. Both fixtures would be withheld by either arm if they carried both hazards, and a row
+   * that reds on two mutations at once hides whichever one is unguarded.
+   */
+  describe('the wiring supplies the rated command and the config secrets', () => {
+    it('excludes the command the call was rating', async () => {
+      const { model } = fakeModel(() => {
+        throw providerRejection(`upstream rejected: ${CANARY_COMMAND}`);
+      });
+      const result = await rateShellCommand(CANARY_COMMAND, CONFIG, { model });
+      expect(result.reason).toContain('HTTP 400');
+      expect(result.reason).toContain('withheld');
+      expect(result.reason).not.toContain(CANARY_FRAGMENT);
+    });
+
+    it('excludes a secret the CONFIG declared', async () => {
+      const inline = 'ext82-config-fake-credential-value';
+      const { model } = fakeModel(() => {
+        throw providerRejection(`upstream rejected for ${inline}`);
+      });
+      const config = {
+        llm: model,
+        someProvider: { apiKey: inline },
+      } as unknown as GthConfig;
+      const result = await rateShellCommand('ls -la', config, { model });
+      expect(result.reason).toContain('HTTP 400');
+      expect(result.reason).toContain('withheld');
+      expect(result.reason).not.toContain(inline);
+    });
   });
 });
