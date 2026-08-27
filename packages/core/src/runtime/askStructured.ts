@@ -126,10 +126,12 @@ const STRUCTURED_FAILURE_SENTENCES: Record<
  * being shrugged off as flakiness, which is how a guard stops guarding with nobody deciding to
  * remove it.
  *
- * There is no `default` arm and no fallback sentence, deliberately. {@link
- * STRUCTURED_FAILURE_SENTENCES} is typed by the union, so an unhandled kind cannot reach here — the
- * compiler rejects the map instead. A defensive arm would only catch a case the build already
- * refuses, at the price of hiding the compile error that is the real signal.
+ * There is no `default` arm and no fallback sentence, deliberately. The module-internal
+ * `STRUCTURED_FAILURE_SENTENCES` map, declared above, is typed by the union, so an unhandled kind
+ * cannot reach here — the compiler rejects the map instead. A defensive arm would only catch a case
+ * the build already refuses, at the price of hiding the compile error that is the real signal.
+ * It is named here rather than linked because it is not exported, and a `{@link}` to an
+ * undocumented symbol renders as dead text in the API reference.
  *
  * @param error The `error` from a `{ ok: false }` {@link AskStructuredResult}.
  * @param timeoutMs The budget passed to that same {@link askStructured} call — as for
