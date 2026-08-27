@@ -68,9 +68,27 @@ kept in step: whatever only one of them sees drifts back out of format.
 ## Docs render — `pnpm run docs:check`
 
 Renders the TypeDoc site and fails on the render's own errors, on a link to a page that does not
-exist, on a broken anchor, and on an output tree this run did not write. Needs a build first, for
-the same reason the unit suite does. `pnpm run typedoc` alone exits 0 with hundreds of warnings and
-proves nothing.
+exist, on a broken anchor, on an output tree this run did not write, and on any TypeDoc warning that
+`scripts/docs-warnings.baseline.txt` does not already account for. Needs a build first, for the same
+reason the unit suite does. `pnpm run typedoc` alone exits 0 with hundreds of warnings and proves
+nothing.
+
+**Report both numbers.** The render's summary is *"0 errors and N warnings"*, and reporting it as
+"docs:check 0" — meaning zero errors — is what let a broken `{@link}` land under a green gate. The
+warnings are compared against a recorded set, not a count, because a count cannot see one warning
+being fixed and another introduced in the same branch.
+
+A new warning is usually a real defect in published output: a `{@link}` to a symbol that is not
+exported renders as dead text in the API reference. Fix the comment the failure names. If it is
+legitimate and you mean to accept it, record it deliberately:
+
+```bash
+node scripts/check-docs-render.mjs --update-baseline
+```
+
+then commit the changed baseline — one added line per accepted warning. Being in that file is not a
+judgement that a warning is harmless; it records what the tree already produced when the gate was
+added.
 
 ## Integration tests — `pnpm run it <provider>`
 

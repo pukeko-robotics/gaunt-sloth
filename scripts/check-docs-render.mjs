@@ -7,6 +7,14 @@
  *
  * - the render reports no errors, and TypeDoc's own summary line is present (a summary that stopped
  *   matching means this gate lost its input, which must be loud rather than green);
+ * - **no warning that `scripts/docs-warnings.baseline.txt` does not already account for.** TypeDoc's
+ *   warnings are the only signal for a whole class of defect in published output — a `{@link}` to a
+ *   symbol that is not exported renders as dead text in the API reference — and the standing count
+ *   is not zero, so a zero-target would red every unrelated branch. Hence a recorded set. It is a
+ *   set and not a count because **a count cannot see a swap**: one warning fixed and one introduced
+ *   in the same branch leaves the total unchanged while the new defect lands. Comparing the set is
+ *   also what lets the failure name the offending comment, instead of printing a delta that sends
+ *   the reader off to diff two logs by hand;
  * - no `anchor does not exist` warning — a cross-page link whose `#anchor` misses;
  * - no `is not a file and will not be copied` warning — a link to a page that does not exist;
  * - no markdown under `media/`. A link to a real `.md` that `projectDocuments` does not list is
@@ -26,14 +34,18 @@
  *
  * - whether a `docs/` page is *listed* in `typedoc.json` — that is
  *   `packages/core/spec/typedocProjectDocuments.spec.ts`, which runs in the same CI job;
- * - `{@link}` targets in TSDoc comments. Those warn (a large share of the standing warning count)
- *   but are not gated, because the count is not zero and a ratchet on a count reds every unrelated
- *   branch;
+ * - **whether the warnings already in the baseline are defects.** The baseline freezes them and
+ *   adjudicates none of them; it asserts only that this render introduced nothing new. A passing
+ *   run means zero *new* warnings, never zero warnings — do not read a green gate as a clean
+ *   reference;
  * - a non-markdown file copied to `media/`, such as `LICENSE`. Handing that over as a download is
  *   what the link intends;
  * - the exact wording of the two warnings above. They are matched as substrings, so a TypeDoc
  *   reword would silence those two checks; the sweep and the summary-line check are what would
- *   still be standing. Re-read this list when bumping TypeDoc;
+ *   still be standing. Re-read this list when bumping TypeDoc — a reword also reaches the baseline,
+ *   where it reads as every affected line removed and an unfamiliar one added. That is noisy but it
+ *   fails in the direction that makes someone look, and `--update-baseline` clears it once the diff
+ *   has been read;
  * - `cleanOutputDir` turned off from a config source other than `typedoc.json`. The refusals below
  *   read that file only, while TypeDoc would also honour a `typedocOptions` block in `package.json`
  *   or in `tsconfig.json` — neither of which this repo uses. Measured from `tsconfig.json`: the
@@ -43,7 +55,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -147,6 +159,118 @@ function newestWriteUnder(dir) {
   return walk(dir).reduce((newest, f) => Math.max(newest, statSync(f).mtimeMs), 0);
 }
 
+/**
+ * The recorded set of TypeDoc warnings this tree is known to produce, one per line.
+ *
+ * Comparing *text* is only sound because these warnings carry no line numbers, no source offsets
+ * and no absolute paths — only qualified symbol names. Measured: two renders of an unchanged tree
+ * produce byte-identical warning output, and editing one docblock moved exactly the two lines
+ * belonging to it and nothing else. So a line changes when the symbol path or the link target
+ * changes, which is precisely the event worth being told about.
+ *
+ * Duplicates are kept rather than collapsed, making the file a multiset: the same warning reported
+ * twice is two lines. A link that starts being reported one more time than before is a change in
+ * the render, and the safe reading of a change is to put it in front of someone.
+ */
+const BASELINE_FILE = join(repoRoot, 'scripts', 'docs-warnings.baseline.txt');
+const BASELINE_FLAG = '--update-baseline';
+const WARNING_PREFIX = '[warning] ';
+
+/**
+ * TypeDoc prints its end-of-run tally as a warning like any other.
+ *
+ * It has to be excluded or it becomes a baseline line that changes every time any *other* line
+ * does, so the "one reviewable line" that a single legitimate new warning is meant to cost would
+ * always be two, and every baseline diff would carry a number that restates what the diff already
+ * shows. The tally is checked directly, above.
+ */
+const isSummaryLine = (text) => /^Found \d+ errors? and \d+ warnings?$/.test(text);
+
+/** The warnings this render reported, in TypeDoc's order, without the prefix or the tally. */
+function warningsFrom(renderOutput) {
+  return renderOutput
+    .split('\n')
+    .map((line) => line.replace(/\r$/, ''))
+    .filter((line) => line.startsWith(WARNING_PREFIX))
+    .map((line) => line.slice(WARNING_PREFIX.length))
+    .filter((text) => !isSummaryLine(text));
+}
+
+/**
+ * The recorded set, or `null` when there is nothing usable to compare against.
+ *
+ * **A missing or empty baseline reds.** Treating it as "nothing recorded, so nothing is new" would
+ * rebuild the exact vacuous pass this check exists to remove, and deleting a file is a much easier
+ * way to silence a gate than fixing what it found.
+ *
+ * `\r` is stripped on the way in. `docs:check` runs only on ubuntu today, so CRLF is not currently
+ * a live CI cell — but exact string equality between a committed file and a value produced at
+ * runtime is the shape that has broken this repo's Windows cell repeatedly, and a checkout with
+ * CRLF endings would otherwise report the entire baseline as removed and the entire render as new.
+ * Tolerating it costs one call.
+ *
+ * `#` carries the header explaining the file to whoever opens it. No TypeDoc warning begins with
+ * `#`; were one ever to, it would be dropped from the baseline and then reported as new on every
+ * run — loud, and in the direction that makes someone look rather than the one that hides.
+ */
+function readBaseline() {
+  if (!existsSync(BASELINE_FILE)) return null;
+  const entries = readFileSync(BASELINE_FILE, 'utf8')
+    .split('\n')
+    .map((line) => line.replace(/\r$/, ''))
+    .filter((line) => line !== '' && !line.startsWith('#'));
+  return entries.length === 0 ? null : entries;
+}
+
+/** How many times each entry occurs. */
+function tally(entries) {
+  const counts = new Map();
+  for (const entry of entries) counts.set(entry, (counts.get(entry) ?? 0) + 1);
+  return counts;
+}
+
+/**
+ * The entries of `actual` that `expected` does not account for, with multiplicity — so a warning
+ * reported three times against a baseline holding two is reported once, not not at all and not
+ * three times.
+ */
+function surplus(actual, expected) {
+  const unclaimed = tally(expected);
+  const extra = [];
+  for (const entry of actual) {
+    const left = unclaimed.get(entry) ?? 0;
+    if (left > 0) unclaimed.set(entry, left - 1);
+    else extra.push(entry);
+  }
+  return extra;
+}
+
+const BASELINE_HEADER = `\
+# TypeDoc warnings this tree is known to produce, one per line, sorted.
+#
+# \`pnpm run docs:check\` fails when a render reports a warning this file does not account for. A new
+# warning is usually a real defect in published output — most often a \`{@link}\` to a symbol that is
+# not exported, which renders as dead text in the API reference — so the first move is to fix it,
+# not to record it here.
+#
+# To accept one deliberately, regenerate with:
+#
+#     node scripts/check-docs-render.mjs ${BASELINE_FLAG}
+#
+# then read the diff before committing: every added line is a warning you are choosing to live with.
+#
+# Presence here is not a judgement that a warning is harmless. This records what the tree already
+# produced when the gate was added. Nothing has adjudicated it.
+`;
+
+/**
+ * Sorted by code unit, which is locale-independent and therefore reproducible on any machine —
+ * unlike `localeCompare` or the shell's `sort`, either of which would make the committed file a
+ * function of who last regenerated it.
+ */
+const writeBaseline = (entries) =>
+  writeFileSync(BASELINE_FILE, `${BASELINE_HEADER}${[...entries].sort().join('\n')}\n`);
+
 /** Markdown copied out verbatim is a link the reader receives as a download. */
 function markdownCopiedAsMedia(outDir) {
   const media = join(outDir, 'media');
@@ -189,6 +313,79 @@ if (summary) {
     'the render reports no errors',
     `${summary[1]} errors, ${summary[2]} warnings`
   );
+}
+
+// The warning baseline. Every other check here is a fixed assertion about this render; this one
+// compares it against a recorded set, because these warnings are real defects in published output
+// and there is no prospect of the count reaching zero.
+const renderWarnings = warningsFrom(output);
+const renderCameBackClean = status === 0 && summary !== null && summary[1] === '0';
+const updatingBaseline = process.argv.includes(BASELINE_FLAG);
+const baselinePath = relativeToRepo(BASELINE_FILE);
+const guidance = (text) => console.log(`      ${text}`);
+
+if (updatingBaseline && !renderCameBackClean) {
+  record(false, `${BASELINE_FLAG} refused`, 'this render did not come back clean');
+  guidance(
+    'Its warning list may be truncated, and recording a truncated list drops warnings that a'
+  );
+  guidance(
+    'healthy render brings back — they would never be reported again. Fix the render first.'
+  );
+} else if (updatingBaseline) {
+  const previous = readBaseline() ?? [];
+  const added = surplus(renderWarnings, previous);
+  const dropped = surplus(previous, renderWarnings);
+  writeBaseline(renderWarnings);
+  record(
+    true,
+    'the warning baseline was rewritten',
+    `${count(added.length, 'warning')} added, ${dropped.length} no longer reported, ` +
+      `${count(renderWarnings.length, 'warning')} recorded`
+  );
+  list(added);
+  guidance(`Read the diff of ${baselinePath} before committing it.`);
+  guidance('Every added line is a warning you are choosing to live with.');
+} else {
+  const baseline = readBaseline();
+  if (baseline === null) {
+    record(false, 'the warning baseline is readable', `${baselinePath} is missing or empty`);
+    guidance('Without it this check cannot tell a new warning from a known one, and treating that');
+    guidance('as "nothing recorded, so nothing is new" is the vacuous pass it exists to remove.');
+    guidance(`Restore ${baselinePath}, or regenerate it with ${BASELINE_FLAG}.`);
+  } else {
+    const introduced = surplus(renderWarnings, baseline);
+    const resolved = surplus(baseline, renderWarnings);
+    record(
+      introduced.length === 0,
+      'no warning is new since the baseline',
+      `${count(introduced.length, 'new warning')} — ` +
+        `${renderWarnings.length} reported, ${baseline.length} recorded`
+    );
+    list(introduced);
+    if (introduced.length > 0) {
+      guidance('');
+      guidance('Each line above is a warning this render produced that the baseline does not');
+      guidance('account for. These are usually real defects in published output: a {@link} to a');
+      guidance('symbol that is not exported renders as dead text in the API reference, and the');
+      guidance('line names the comment it is in. Fixing that comment is the first move.');
+      guidance('');
+      guidance('If a new warning is legitimate and you mean to accept it, record it deliberately:');
+      guidance('');
+      guidance(`      node scripts/check-docs-render.mjs ${BASELINE_FLAG}`);
+      guidance('');
+      guidance(`then commit the changed ${baselinePath} — one added line per accepted warning.`);
+    }
+    if (resolved.length > 0) {
+      record(
+        true,
+        'warnings fixed since the baseline',
+        `${resolved.length} recorded ${resolved.length === 1 ? 'warning is' : 'warnings are'} ` +
+          `no longer reported — ${BASELINE_FLAG} to bank that`
+      );
+      if (resolved.length <= 10) list(resolved);
+    }
+  }
 }
 
 const lines = output.split('\n');

@@ -1,0 +1,445 @@
+# TypeDoc warnings this tree is known to produce, one per line, sorted.
+#
+# `pnpm run docs:check` fails when a render reports a warning this file does not account for. A new
+# warning is usually a real defect in published output — most often a `{@link}` to a symbol that is
+# not exported, which renders as dead text in the API reference — so the first move is to fix it,
+# not to record it here.
+#
+# To accept one deliberately, regenerate with:
+#
+#     node scripts/check-docs-render.mjs --update-baseline
+#
+# then read the diff before committing: every added line is a warning you are choosing to live with.
+#
+# Presence here is not a judgement that a warning is harmless. This records what the tree already
+# produced when the gate was added. Nothing has adjudicated it.
+"@gaunt-sloth/core.core/GthLangChainAgent.createToolLoopGuardMiddleware" links to "@gaunt-sloth/core.core/GthLangChainAgent.createToolLoopGuardMiddleware.onWarn" with text "onWarn" which exists but does not have a link in the documentation, will link to "@gaunt-sloth/core.core/GthLangChainAgent.createToolLoopGuardMiddleware" instead.
+"@gaunt-sloth/core.core/shell/negotiation.renderNegotiationRows" links to "@gaunt-sloth/core.core/shell/negotiation.renderNegotiationRows.options.__type.agreed" with text "agreed" which exists but does not have a link in the documentation, will link to "@gaunt-sloth/core.core/shell/negotiation.renderNegotiationRows" instead.
+"@gaunt-sloth/core.core/types.AgentStreamEvent" links to "@gaunt-sloth/core.core/types.AgentStreamEvent.__type.isError" with text "isError" which exists but does not have a link in the documentation, will link to "@gaunt-sloth/core.core/types.AgentStreamEvent" instead.
+"gaunt-sloth.tui/components/LiveTurn.ReasoningPanel" links to "gaunt-sloth.tui/components/LiveTurn.ReasoningPanel.__namedParameters.__type.live" with text "live" which exists but does not have a link in the documentation, will link to "gaunt-sloth.tui/components/LiveTurn.ReasoningPanel" instead.
+"gaunt-sloth.tui/components/PromptEditor.PromptEditor" links to "gaunt-sloth.tui/components/PromptEditor.PromptEditor.__namedParameters.__type.menuActive" with text "menuActive" which exists but does not have a link in the documentation, will link to "gaunt-sloth.tui/components/PromptEditor.PromptEditor" instead.
+"gaunt-sloth.tui/components/PromptEditor.PromptEditor" links to "gaunt-sloth.tui/components/PromptEditor.PromptEditor.__namedParameters.__type.onChange" with text "onChange" which exists but does not have a link in the documentation, will link to "gaunt-sloth.tui/components/PromptEditor.PromptEditor" instead.
+"gaunt-sloth.tui/components/PromptEditor.PromptEditor" links to "gaunt-sloth.tui/components/PromptEditor.PromptEditor.__namedParameters.__type.onChange" with text "onChange" which exists but does not have a link in the documentation, will link to "gaunt-sloth.tui/components/PromptEditor.PromptEditor" instead.
+"gaunt-sloth.tui/components/PromptEditor.PromptEditor" links to "gaunt-sloth.tui/components/PromptEditor.PromptEditor.__namedParameters.__type.state" with text "state" which exists but does not have a link in the documentation, will link to "gaunt-sloth.tui/components/PromptEditor.PromptEditor" instead.
+AgUiWireMessage, defined in @gaunt-sloth/agent/src/modules/apiAgUiModule.ts, is referenced by modules/apiAgUiModule.js.convertMessage.msg but not included in the documentation
+AlignmentToolSet, defined in @gaunt-sloth/core/src/core/shell/alignment.ts, is referenced by core/shell/alignment.createAlignmentTools but not included in the documentation
+AskCommandOptions, defined in gaunt-sloth/src/commands/askCommand.ts, is referenced by commands/askCommand.applyAskWriteMode.options but not included in the documentation
+AskFn, defined in gaunt-sloth/src/commands/firstRunDialog.ts, is referenced by commands/firstRunDialog.FirstRunDialogDeps.ask but not included in the documentation
+CarveInputs, defined in @gaunt-sloth/core/src/core/shell/rater.ts, is referenced by core/shell/rater.effectivePreflightFloorFinding.carve but not included in the documentation
+Code block with language jsonc will not be highlighted in comment for @gaunt-sloth/eval-reporter-teamcity as it was not included in the highlightLanguages option
+Code block with language jsonc will not be highlighted in comment for @gaunt-sloth/eval-reporter-teamcity as it was not included in the highlightLanguages option
+Code block with language jsonc will not be highlighted in comment for docs/configuration/mcp as it was not included in the highlightLanguages option
+Code block with language jsonc will not be highlighted in comment for docs/configuration/mcp as it was not included in the highlightLanguages option
+Code block with language yaml will not be highlighted in comment for @gaunt-sloth/batch as it was not included in the highlightLanguages option
+Code block with language yaml will not be highlighted in comment for CONTRIBUTING as it was not included in the highlightLanguages option
+Code block with language yaml will not be highlighted in comment for docs/COMMANDS as it was not included in the highlightLanguages option
+Code block with language yaml will not be highlighted in comment for docs/COMMANDS as it was not included in the highlightLanguages option
+Code block with language yaml will not be highlighted in comment for docs/COMMANDS as it was not included in the highlightLanguages option
+Code block with language yaml will not be highlighted in comment for docs/COMMANDS as it was not included in the highlightLanguages option
+Code block with language yaml will not be highlighted in comment for docs/COMMANDS as it was not included in the highlightLanguages option
+Code block with language yaml will not be highlighted in comment for docs/COMMANDS as it was not included in the highlightLanguages option
+Code block with language yaml will not be highlighted in comment for docs/COMMANDS as it was not included in the highlightLanguages option
+Code block with language yaml will not be highlighted in comment for docs/COMMANDS as it was not included in the highlightLanguages option
+Code block with language yaml will not be highlighted in comment for docs/COMMANDS as it was not included in the highlightLanguages option
+Code block with language yaml will not be highlighted in comment for docs/COMMANDS as it was not included in the highlightLanguages option
+Code block with language yaml will not be highlighted in comment for docs/COMMANDS as it was not included in the highlightLanguages option
+Code block with language yaml will not be highlighted in comment for docs/COMMANDS as it was not included in the highlightLanguages option
+Code block with language yaml will not be highlighted in comment for docs/configuration/content-sources as it was not included in the highlightLanguages option
+Code block with language yaml will not be highlighted in comment for docs/guides/evals as it was not included in the highlightLanguages option
+Code block with language yaml will not be highlighted in comment for docs/guides/evals as it was not included in the highlightLanguages option
+Code block with language yaml will not be highlighted in comment for docs/guides/evals as it was not included in the highlightLanguages option
+Code block with language yaml will not be highlighted in comment for docs/guides/evals as it was not included in the highlightLanguages option
+Code block with language yaml will not be highlighted in comment for docs/guides/evals-for-mcp-servers as it was not included in the highlightLanguages option
+ConvertMessageOptions, defined in @gaunt-sloth/agent/src/modules/apiAgUiModule.ts, is referenced by modules/apiAgUiModule.js.convertMessage.options but not included in the documentation
+ExecCommandOptions, defined in gaunt-sloth/src/commands/execCommand.ts, is referenced by commands/execCommand.buildExecConfig.options but not included in the documentation
+Failed to resolve link to "#cleanup" in comment for @gaunt-sloth/core.core/GthAgentRunner.GthAgentRunner.init
+Failed to resolve link to "#getGslothConfigReadPath" in comment for @gaunt-sloth/core.utils/fileUtils.getGslothConfigWritePath
+Failed to resolve link to "#getGslothConfigReadPath" in comment for @gaunt-sloth/review.utils/fileUtils.getGslothConfigWritePath
+Failed to resolve link to "#stream" in comment for @gaunt-sloth/core.core/GthAbstractAgent.GthAbstractAgent.invoke
+Failed to resolve link to "#stream" in comment for @gaunt-sloth/core.core/GthLangChainAgent.GthLangChainAgent.invoke
+Failed to resolve link to "../evalRunner.js runEvalSuite" in comment for @gaunt-sloth/batch.evalTypes.js.EvalSuite.sweep
+Failed to resolve link to "../evalRunner.js" in comment for @gaunt-sloth/batch.classificationTypes.js.ClassifiedCell
+Failed to resolve link to "../evalRunner.js" in comment for @gaunt-sloth/batch.evalOutput.js.writeEvalOutput
+Failed to resolve link to "../evalRunner.js" in comment for @gaunt-sloth/batch.evalTypes.js.JudgeFn
+Failed to resolve link to "../evalRunner.js" in comment for @gaunt-sloth/batch.evalTypes.js.RunConversationFn
+Failed to resolve link to "../evalSuite.js" in comment for @gaunt-sloth/batch.evalTypes.js.EvalSuite
+Failed to resolve link to "../evalSuite.js" in comment for @gaunt-sloth/batch.evalTypes.js.GthAgentTarget.profile
+Failed to resolve link to "../evalSuite.js" in comment for @gaunt-sloth/batch.evalTypes.js.JsonPathCheck
+Failed to resolve link to "../evalSuite.js" in comment for @gaunt-sloth/batch.evalTypes.js.ToolResultJsonPathCheck
+Failed to resolve link to "../evalTypes.js HARDLINE_REFUSAL_MARKER" in comment for @gaunt-sloth/batch.raterTarget.js.HARDLINE_REFUSAL_MARKER
+Failed to resolve link to "../evalTypes.js PREFLIGHT_MECHANISMS" in comment for @gaunt-sloth/batch.raterTarget.js.MECHANISM_PROBES
+Failed to resolve link to "../evalTypes.js PreflightMechanism" in comment for @gaunt-sloth/batch.raterTarget.js.MECHANISM_PROBES
+Failed to resolve link to "../evalTypes.js RunClassifyFn" in comment for @gaunt-sloth/batch.raterTarget.js
+Failed to resolve link to "../judge.js" in comment for @gaunt-sloth/batch.evalTypes.js.JudgeVerdict
+Failed to resolve link to "../raterTarget.js" in comment for @gaunt-sloth/batch.evalTypes.js.ClassifyRequest
+Failed to resolve link to "../raterTarget.js" in comment for @gaunt-sloth/batch.evalTypes.js.ClassifyRound
+Failed to resolve link to "../raterTarget.js" in comment for @gaunt-sloth/batch.evalTypes.js.RaterTarget
+Failed to resolve link to "../raterTarget.js" in comment for @gaunt-sloth/batch.evalTypes.js.RaterTarget.rung
+Failed to resolve link to "../runtime/singleShot.js SingleShotResult" in comment for @gaunt-sloth/core.runtime/conversation.ConversationTurnResult
+Failed to resolve link to "../runtime/singleShot.js runSingleShot" in comment for @gaunt-sloth/core.runtime/conversation.runConversation
+Failed to resolve link to "../types.js CellRunOutcome" in comment for @gaunt-sloth/batch.evalTypes.js.TurnRunOutcome
+Failed to resolve link to "../types.js RunCellFn" in comment for @gaunt-sloth/batch.evalTypes.js.RunConversationFn
+Failed to resolve link to "../types.js" in comment for @gaunt-sloth/batch.evalTypes.js
+Failed to resolve link to "./classification.js" in comment for @gaunt-sloth/batch.classificationReport.js.buildClassificationReport
+Failed to resolve link to "./evalTypes.js EvalCaseResult" in comment for @gaunt-sloth/batch.classificationTypes.js.EvalCaseClassification
+Failed to resolve link to "./evalTypes.js EvalSuiteSummary" in comment for @gaunt-sloth/batch.classificationTypes.js.EvalClassificationReport
+Failed to resolve link to "./evalTypes.js" in comment for @gaunt-sloth/batch.classificationTypes.js
+Failed to resolve link to "./metrics.js" in comment for @gaunt-sloth/batch.classificationReport.js.buildClassificationReport
+Failed to resolve link to "./raterVocabulary.js" in comment for @gaunt-sloth/core.core/shell/rater.PREFLIGHT_FLOOR_KINDS
+Failed to resolve link to "./raterVocabulary.js" in comment for @gaunt-sloth/core.core/shell/rater.RATER_ACTIONS
+Failed to resolve link to "./raterVocabulary.js" in comment for @gaunt-sloth/core.core/shell/rater.RATER_OUTCOMES
+Failed to resolve link to "AgentApp" in comment for @gaunt-sloth/agent.modules/acp/acpAgentApp.js
+Failed to resolve link to "BuiltInToolConfig" in comment for @gaunt-sloth/core.config/types.GthConfig.builtInTools
+Failed to resolve link to "BuiltInToolConfig" in comment for @gaunt-sloth/core.config/types.RawGthConfig.builtInTools
+Failed to resolve link to "COMMAND_ANSWERS_APPROVALS" in comment for @gaunt-sloth/review.index.commandAnswersApprovals
+Failed to resolve link to "COMMAND_CARRIES_USER_PROVENANCE" in comment for @gaunt-sloth/review.index.commandCarriesUserProvenance
+Failed to resolve link to "ConfigScope" in comment for gaunt-sloth.commands/configSetup.CreateProjectConfigDest
+Failed to resolve link to "DEFAULT_COMMIT_CO_AUTHOR_EMAIL" in comment for @gaunt-sloth/core.config/types.GthConfig.commit
+Failed to resolve link to "DEFAULT_COMMIT_CO_AUTHOR_EMAIL" in comment for @gaunt-sloth/core.config/types.RawGthConfig.commit
+Failed to resolve link to "DEFAULT_COMMIT_CO_AUTHOR_EMAIL" in comment for @gaunt-sloth/review.index.GthConfig.commit
+Failed to resolve link to "DEFAULT_COMMIT_CO_AUTHOR_EMAIL" in comment for @gaunt-sloth/review.index.RawGthConfig.commit
+Failed to resolve link to "DEFAULT_COMMIT_CO_AUTHOR_NAME" in comment for @gaunt-sloth/core.config/types.GthConfig.commit
+Failed to resolve link to "DEFAULT_COMMIT_CO_AUTHOR_NAME" in comment for @gaunt-sloth/core.config/types.GthConfig.commit
+Failed to resolve link to "DEFAULT_COMMIT_CO_AUTHOR_NAME" in comment for @gaunt-sloth/core.config/types.RawGthConfig.commit
+Failed to resolve link to "DEFAULT_COMMIT_CO_AUTHOR_NAME" in comment for @gaunt-sloth/core.config/types.RawGthConfig.commit
+Failed to resolve link to "DEFAULT_COMMIT_CO_AUTHOR_NAME" in comment for @gaunt-sloth/review.index.GthConfig.commit
+Failed to resolve link to "DEFAULT_COMMIT_CO_AUTHOR_NAME" in comment for @gaunt-sloth/review.index.GthConfig.commit
+Failed to resolve link to "DEFAULT_COMMIT_CO_AUTHOR_NAME" in comment for @gaunt-sloth/review.index.RawGthConfig.commit
+Failed to resolve link to "DEFAULT_COMMIT_CO_AUTHOR_NAME" in comment for @gaunt-sloth/review.index.RawGthConfig.commit
+Failed to resolve link to "DEFAULT_CONFIG" in comment for @gaunt-sloth/agent.builtInToolsConfig.js.AVAILABLE_BUILT_IN_TOOLS.__type.gth_checklist
+Failed to resolve link to "DEFAULT_CONFIG" in comment for @gaunt-sloth/core.config/types.GthConfig
+Failed to resolve link to "DEFAULT_CONFIG" in comment for @gaunt-sloth/core.config/types.GthConfig.acp
+Failed to resolve link to "DEFAULT_CONFIG" in comment for @gaunt-sloth/core.config/types.GthConfig.debugDump
+Failed to resolve link to "DEFAULT_CONFIG" in comment for @gaunt-sloth/core.config/types.GthConfig.injectModelContext
+Failed to resolve link to "DEFAULT_CONFIG" in comment for @gaunt-sloth/core.config/types.GthConfig.output
+Failed to resolve link to "DEFAULT_CONFIG" in comment for @gaunt-sloth/core.config/types.GthConfig.toolLoopGuard
+Failed to resolve link to "DEFAULT_CONFIG" in comment for @gaunt-sloth/core.config/types.GthConfig.tui
+Failed to resolve link to "DEFAULT_CONFIG" in comment for @gaunt-sloth/core.config/types.RawGthConfig.acp
+Failed to resolve link to "DEFAULT_CONFIG" in comment for @gaunt-sloth/core.config/types.RawGthConfig.debugDump
+Failed to resolve link to "DEFAULT_CONFIG" in comment for @gaunt-sloth/core.config/types.RawGthConfig.injectModelContext
+Failed to resolve link to "DEFAULT_CONFIG" in comment for @gaunt-sloth/core.config/types.RawGthConfig.output
+Failed to resolve link to "DEFAULT_CONFIG" in comment for @gaunt-sloth/core.config/types.RawGthConfig.toolLoopGuard
+Failed to resolve link to "DEFAULT_CONFIG" in comment for @gaunt-sloth/core.config/types.RawGthConfig.tui
+Failed to resolve link to "DEFAULT_CONFIG#contentSource" in comment for @gaunt-sloth/core.config/types.GthConfig.contentSource
+Failed to resolve link to "DEFAULT_CONFIG#contentSource" in comment for @gaunt-sloth/core.config/types.RawGthConfig.contentSource
+Failed to resolve link to "DEFAULT_CONFIG#streamOutput" in comment for @gaunt-sloth/core.config/types.GthConfig.streamOutput
+Failed to resolve link to "DEFAULT_CONFIG#streamOutput" in comment for @gaunt-sloth/core.config/types.RawGthConfig.streamOutput
+Failed to resolve link to "DEFAULT_CONFIG.builtInTools" in comment for @gaunt-sloth/agent.builtInToolsConfig.js.AVAILABLE_BUILT_IN_TOOLS.__type.gth_grep
+Failed to resolve link to "DEFAULT_TOOL_LOOP_THRESHOLD" in comment for @gaunt-sloth/core.config/types.GthConfig.toolLoopGuard
+Failed to resolve link to "DEFAULT_TOOL_LOOP_THRESHOLD" in comment for @gaunt-sloth/core.config/types.RawGthConfig.toolLoopGuard
+Failed to resolve link to "DEFAULT_TOOL_LOOP_THRESHOLD" in comment for @gaunt-sloth/review.index.GthConfig.toolLoopGuard
+Failed to resolve link to "DEFAULT_TOOL_LOOP_THRESHOLD" in comment for @gaunt-sloth/review.index.RawGthConfig.toolLoopGuard
+Failed to resolve link to "EvalReporter" in comment for @gaunt-sloth/eval-reporter-junit.
+Failed to resolve link to "EvalReporter" in comment for @gaunt-sloth/eval-reporter-junit.index.js
+Failed to resolve link to "EvalReporter" in comment for @gaunt-sloth/eval-reporter-teamcity.
+Failed to resolve link to "EvalReporter" in comment for @gaunt-sloth/eval-reporter-teamcity.index.js
+Failed to resolve link to "GthAbstractAgent" in comment for @gaunt-sloth/core.core/types.GthCompiledGraph
+Failed to resolve link to "GthAbstractAgent" in comment for @gaunt-sloth/core.providers/geminiThinking.disableGeminiThoughtSummaries
+Failed to resolve link to "GthAgentRunner" in comment for @gaunt-sloth/agent.modules/acp/acpPermissions.js
+Failed to resolve link to "GthAgentRunner" in comment for @gaunt-sloth/core.core/gthLeanAgentFactory.gthLeanAgentFactory
+Failed to resolve link to "GthAgentRunner" in comment for @gaunt-sloth/core.core/types.ApprovalOutcomeCallback
+Failed to resolve link to "GthAgentRunner" in comment for @gaunt-sloth/core.core/types.AttackHaltCallback
+Failed to resolve link to "GthAgentRunner" in comment for @gaunt-sloth/core.core/types.GthAgentFactory
+Failed to resolve link to "GthAgentRunner" in comment for @gaunt-sloth/core.core/types.GthAgentInterface.getPendingToolInterrupts
+Failed to resolve link to "GthAgentRunner" in comment for @gaunt-sloth/core.core/types.GthAgentInterface.noteRaterClarification
+Failed to resolve link to "GthAgentRunner" in comment for @gaunt-sloth/core.core/types.GthAgentInterface.resetRunStats
+Failed to resolve link to "GthAgentRunner" in comment for @gaunt-sloth/core.core/types.ToolApprovalCallback
+Failed to resolve link to "GthConfig" in comment for @gaunt-sloth/core.config/schema
+Failed to resolve link to "GthDevToolkit" in comment for @gaunt-sloth/core.config/shell-policy
+Failed to resolve link to "GthDevToolkit" in comment for @gaunt-sloth/core.config/shell-policy.DEV_COMMAND_TOOL_NAMES
+Failed to resolve link to "GthDevToolkit" in comment for @gaunt-sloth/core.config/shell-policy.DEV_TOOL_NAMES
+Failed to resolve link to "GthDevToolkit" in comment for @gaunt-sloth/core.config/shell-policy.EXTERNALLY_EMITTED_BUILT_IN_TOOL_NAMES
+Failed to resolve link to "GthDevToolkit" in comment for @gaunt-sloth/core.config/shell-policy.GthDevToolsConfig
+Failed to resolve link to "GthDevToolkit" in comment for @gaunt-sloth/review.index.DEV_COMMAND_TOOL_NAMES
+Failed to resolve link to "GthDevToolkit" in comment for @gaunt-sloth/review.index.DEV_TOOL_NAMES
+Failed to resolve link to "GthDevToolkit" in comment for @gaunt-sloth/review.index.EXTERNALLY_EMITTED_BUILT_IN_TOOL_NAMES
+Failed to resolve link to "GthDevToolkit" in comment for @gaunt-sloth/review.index.GthDevToolsConfig
+Failed to resolve link to "GthLangChainAgent" in comment for @gaunt-sloth/core.config/types.GthConfig.agent
+Failed to resolve link to "GthLangChainAgent" in comment for @gaunt-sloth/core.config/types.RawGthConfig.agent
+Failed to resolve link to "GthLangChainAgent" in comment for @gaunt-sloth/core.core/GthAbstractAgent.GthAbstractAgent
+Failed to resolve link to "GthLangChainAgent" in comment for @gaunt-sloth/core.runtime/singleShot.runSingleShot.agentFactory
+Failed to resolve link to "GthLangChainAgent" in comment for @gaunt-sloth/review.index.GthConfig.agent
+Failed to resolve link to "GthLangChainAgent" in comment for @gaunt-sloth/review.index.RawGthConfig.agent
+Failed to resolve link to "HistoryStore" in comment for @gaunt-sloth/core.history/recordSession
+Failed to resolve link to "HistoryStore" in comment for gaunt-sloth.commands/historyCommand.historyCommand
+Failed to resolve link to "LLMConfig.type" in comment for @gaunt-sloth/core.providers/modelDiscovery
+Failed to resolve link to "LLMConfig.type" in comment for @gaunt-sloth/core.providers/modelDiscovery.ProviderId
+Failed to resolve link to "LLMConfig.type" in comment for gaunt-sloth.commands/modelsCommand.ProviderId
+Failed to resolve link to "MAX_EXTENDS_CHAIN_DEPTH" in comment for @gaunt-sloth/review.index.resolveConfigExtends
+Failed to resolve link to "MissingProviderKeyError" in comment for @gaunt-sloth/core.config/configDiscovery
+Failed to resolve link to "MissingProviderKeyError" in comment for @gaunt-sloth/core.config/configDiscovery
+Failed to resolve link to "ModelInfo" in comment for @gaunt-sloth/core.providers/modelCatalog.EnrichedModel
+Failed to resolve link to "RATER_DEFAULT_TIMEOUT_MS" in comment for @gaunt-sloth/core.config/shell-policy.ApprovalsObjectConfig.raterTimeoutMs
+Failed to resolve link to "RATER_DEFAULT_TIMEOUT_MS" in comment for @gaunt-sloth/review.index.ApprovalsObjectConfig.raterTimeoutMs
+Failed to resolve link to "RATER_NEGOTIATION_GUIDANCE" in comment for @gaunt-sloth/core.core/shell/rater.neutralizeClosingTag
+Failed to resolve link to "RawGthConfig" in comment for @gaunt-sloth/core.config/schema
+Failed to resolve link to "SelectFn" in comment for gaunt-sloth.tui/selectCancelled.SelectCancelledError
+Failed to resolve link to "SelectList" in comment for gaunt-sloth.tui/components/SlashCommandMenu.SlashCommandMenu
+Failed to resolve link to "ShellNegotiationState.contextFor" in comment for @gaunt-sloth/core.core/shell/negotiation.renderNegotiationRows
+Failed to resolve link to "ToolApprovalCallback" in comment for @gaunt-sloth/agent.modules/acp/acpPermissions.js.rememberedAnswerNote
+Failed to resolve link to "applyGeminiToolSchemaSanitizer" in comment for @gaunt-sloth/core.providers/geminiThinking
+Failed to resolve link to "applyGlobalConfigBase" in comment for @gaunt-sloth/review.index.resolveConfigExtends
+Failed to resolve link to "applyGlobalConfigBase" in comment for @gaunt-sloth/review.index.validateConfig
+Failed to resolve link to "bindCellContent" in comment for @gaunt-sloth/batch.parseOver.js.parseOverFile
+Failed to resolve link to "composeExtends" in comment for @gaunt-sloth/review.index.validateConfig
+Failed to resolve link to "contextFor" in comment for @gaunt-sloth/core.core/shell/negotiation.ShellNegotiationState.noteProgress
+Failed to resolve link to "contextFor" in comment for @gaunt-sloth/core.core/shell/negotiation.ShellNegotiationState.retainedUserMessages
+Failed to resolve link to "driveReporters" in comment for @gaunt-sloth/batch.reporters/registry.js.resolveReporters
+Failed to resolve link to "driveReporters" in comment for @gaunt-sloth/batch.reporters/reporterTypes.js.EvalReporter
+Failed to resolve link to "driveReporters" in comment for @gaunt-sloth/batch.reporters/reporterTypes.js.NamedReporter
+Failed to resolve link to "file://../GthCustomToolkit.ts" in comment for @gaunt-sloth/agent.tools/shell/workDir.js
+Failed to resolve link to "file://../GthDevToolkit.ts" in comment for @gaunt-sloth/agent.tools/shell/workDir.js
+Failed to resolve link to "file://../builtInToolsConfig.ts" in comment for @gaunt-sloth/agent.tools/gthGrepTool.js.resolveGrepFileSet
+Failed to resolve link to "file://./crashHandler.ts" in comment for @gaunt-sloth/core.utils/debugDump.writeCrashSnapshot
+Failed to resolve link to "file://./crashHandler.ts" in comment for @gaunt-sloth/core.utils/debugDump.writeCrashSnapshot
+Failed to resolve link to "file://./debugDump.ts" in comment for @gaunt-sloth/core.utils/redactSecrets
+Failed to resolve link to "file://./redactSecrets.ts" in comment for @gaunt-sloth/core.utils/debugDump.writeDebugDump
+Failed to resolve link to "flowSentence" in comment for @gaunt-sloth/core.core/shell/openWorld.ComposedFlow
+Failed to resolve link to "getProjectDir" in comment for @gaunt-sloth/review.index.resolveProfileConfigPath
+Failed to resolve link to "globalLayerProfile" in comment for @gaunt-sloth/review.index.loadGlobalRawConfig.options
+Failed to resolve link to "import('#src/config.js').isNegotiatingRung" in comment for @gaunt-sloth/core.core/shell/rater.RATER_NEGOTIABLE_REJECTION_GUIDANCE
+Failed to resolve link to "import('#src/config.js').isNegotiatingRung" in comment for @gaunt-sloth/core.core/shell/rater.buildRaterPrompt.options.__type.negotiable
+Failed to resolve link to "import('#src/config.js').isNegotiatingRung" in comment for @gaunt-sloth/core.core/shell/rater.buildRaterSystemPrompt.options
+Failed to resolve link to "import('#src/config/jsonc.js').parseJsonc" in comment for @gaunt-sloth/core.constants.USER_PROJECT_CONFIG_JSONC
+Failed to resolve link to "import('#src/config/types.js').GthConfig" in comment for @gaunt-sloth/core.utils/systemPromptNotes.appendCommitCoAuthorNote
+Failed to resolve link to "import('#src/config/types.js').GthConfig.acp" in comment for @gaunt-sloth/core.config/schema.ACP_SESSION_MODES
+Failed to resolve link to "import('#src/core/GthAbstractAgent.js').GthAbstractAgent" in comment for @gaunt-sloth/agent.core/debugCapture.js.DebugCapture
+Failed to resolve link to "import('#src/core/GthAbstractAgent.js').GthAbstractAgent" in comment for @gaunt-sloth/agent.core/debugCapture.js.LastModelRequest
+Failed to resolve link to "import('#src/core/GthAbstractAgent.js').GthAbstractAgent" in comment for @gaunt-sloth/core.core/debugCapture.DebugCapture
+Failed to resolve link to "import('#src/core/GthAbstractAgent.js').GthAbstractAgent" in comment for @gaunt-sloth/core.core/debugCapture.LastModelRequest
+Failed to resolve link to "import('#src/tui/components/Rule.js').Rule" in comment for gaunt-sloth.tui/components/LaunchBanner.LaunchBanner
+Failed to resolve link to "import('#src/tui/lineEditor.js').EditorState" in comment for gaunt-sloth.tui/components/PromptInput.PromptInput
+Failed to resolve link to "import('#src/tui/tuiSessionModule.js')" in comment for gaunt-sloth.tui/fixtureAgent.createFixtureTuiAgent
+Failed to resolve link to "import('#src/utils/redactSecrets.js').collectSecretValues" in comment for @gaunt-sloth/core.core/shell/rater.describeRaterCallFailure.options
+Failed to resolve link to "import('#src/utils/systemPromptNotes.js').appendCommitCoAuthorNote" in comment for @gaunt-sloth/core.constants.DEFAULT_COMMIT_CO_AUTHOR_NAME
+Failed to resolve link to "import('#src/utils/systemPromptNotes.js').resolveModelIdentity" in comment for @gaunt-sloth/core.config/types.GthConfig.modelProviderType
+Failed to resolve link to "import('#src/utils/systemPromptNotes.js').resolveModelIdentity" in comment for @gaunt-sloth/core.config/types.RawGthConfig.modelProviderType
+Failed to resolve link to "import('#src/utils/systemPromptNotes.js').resolveModelIdentity" in comment for @gaunt-sloth/review.index.GthConfig.modelProviderType
+Failed to resolve link to "import('#src/utils/systemPromptNotes.js').resolveModelIdentity" in comment for @gaunt-sloth/review.index.RawGthConfig.modelProviderType
+Failed to resolve link to "import('../../config/shell-policy.js').commandCarriesUserProvenance" in comment for @gaunt-sloth/core.core/shell/negotiation.ShellNegotiationState.admitUserProvenance
+Failed to resolve link to "import('../GthAgentRunner.js').GthAgentRunner" in comment for @gaunt-sloth/core.core/shell/negotiation.ShellNegotiationState
+Failed to resolve link to "import('../GthAgentRunner.js').GthAgentRunner.init" in comment for @gaunt-sloth/core.core/shell/negotiation.ShellNegotiationState.admitUserProvenance
+Failed to resolve link to "import('../config/shell-policy.js').commandCarriesUserProvenance" in comment for @gaunt-sloth/core.core/GthAgentRunner.GthAgentRunnerInitOptions.owningCommand
+Failed to resolve link to "import('../core/shell/provenance.js').carvedOpenWorldHosts" in comment for @gaunt-sloth/core.config/shell-policy.isUserProvenanceRung
+Failed to resolve link to "import('../core/shell/provenance.js').carvedOpenWorldHosts" in comment for @gaunt-sloth/review.index.isUserProvenanceRung
+Failed to resolve link to "import('../core/shell/rater.js').isNegotiableCall" in comment for @gaunt-sloth/core.config/shell-policy.isNegotiatingRung
+Failed to resolve link to "import('../core/shell/rater.js').isNegotiableCall" in comment for @gaunt-sloth/review.index.isNegotiatingRung
+Failed to resolve link to "import('../core/shell/rater.js').mapVerdictToAction" in comment for @gaunt-sloth/core.config/shell-policy.isNegotiatingRung
+Failed to resolve link to "import('../core/shell/rater.js').mapVerdictToAction" in comment for @gaunt-sloth/review.index.isNegotiatingRung
+Failed to resolve link to "import('./SelectList.js').InkRenderFn" in comment for gaunt-sloth.tui/components/FetchProgress.InkProgressRenderFn
+Failed to resolve link to "import('./abstention.js').buildParserPreflightNote" in comment for @gaunt-sloth/core.core/shell/raterVocabulary.RATER_ACTIONS
+Failed to resolve link to "import('./alignment.js').buildAlignmentMessages" in comment for @gaunt-sloth/core.core/shell/negotiation.ShellNegotiationState.alignmentRounds
+Failed to resolve link to "import('./alignment.js').buildAlignmentMessages" in comment for @gaunt-sloth/core.core/shell/rater.buildRaterSystemPrompt
+Failed to resolve link to "import('./alignment.js').renderAlignmentUserMessages" in comment for @gaunt-sloth/core.core/shell/rater.NEGOTIATION_MAX_USER_MESSAGES
+Failed to resolve link to "import('./arity.js').classifyCommand" in comment for @gaunt-sloth/core.core/shell/normalize.COMMAND_SEPARATOR_CLASS
+Failed to resolve link to "import('./hardline.js').buildHardlineRefusal" in comment for @gaunt-sloth/core.core/shell/approvalCapture.HardlineFloorCapture
+Failed to resolve link to "import('./negotiation.js').ShellNegotiationState.contextFor" in comment for @gaunt-sloth/core.core/shell/provenance.carvedOpenWorldHosts
+Failed to resolve link to "import('./negotiation.js').ShellNegotiationState.retainedUserMessages" in comment for @gaunt-sloth/core.core/shell/alignment.AlignmentContext.userMessages
+Failed to resolve link to "import('./negotiation.js').ShellNegotiationState.retainedUserMessages" in comment for @gaunt-sloth/core.core/shell/provenance.carvedOpenWorldHosts
+Failed to resolve link to "import('./provenance.js').carvedOpenWorldHosts" in comment for @gaunt-sloth/core.core/shell/openWorld.findOpenWorldHostLiterals
+Failed to resolve link to "import('./provenance.js').carvedOpenWorldHosts" in comment for @gaunt-sloth/core.core/shell/rater.RaterDecisionOptions.provenance
+Failed to resolve link to "import('./provenance.js').isOpenWorldCarved" in comment for @gaunt-sloth/core.core/shell/rater.buildRaterPrompt.options.__type.carved
+Failed to resolve link to "import('./provenance.js').isOpenWorldCarved" in comment for @gaunt-sloth/core.core/shell/rater.buildRaterSystemPrompt.options
+Failed to resolve link to "import('./rater.js').FENCE_RENDERING_NOTE" in comment for @gaunt-sloth/core.core/shell/openWorld.withheldHostsPointer
+Failed to resolve link to "import('./rater.js').buildRaterSystemPrompt" in comment for @gaunt-sloth/core.core/shell/raterVocabulary.RATER_OUTCOMES
+Failed to resolve link to "import('./rater.js').isNegotiableCall" in comment for @gaunt-sloth/core.core/shell/provenance.carvedOpenWorldHosts
+Failed to resolve link to "import('./rater.js').mapVerdictToAction" in comment for @gaunt-sloth/core.core/shell/provenance.carvedOpenWorldHosts
+Failed to resolve link to "import('./rater.js').mapVerdictToAction" in comment for @gaunt-sloth/core.core/shell/raterVocabulary.RATER_ACTIONS
+Failed to resolve link to "import('./rater.js').mapVerdictToAction" in comment for @gaunt-sloth/core.core/shell/raterVocabulary.RATER_OUTCOMES
+Failed to resolve link to "import('./rater.js').preflightFloorFinding" in comment for @gaunt-sloth/core.core/shell/raterVocabulary.PREFLIGHT_FLOOR_KINDS
+Failed to resolve link to "import('@gaunt-sloth/core/core/GthLangChainAgent.js').GthLangChainAgent" in comment for @gaunt-sloth/agent.core/debugCapture.js
+Failed to resolve link to "import('@gaunt-sloth/core/core/shell/negotiation.js') ShellNegotiationState" in comment for @gaunt-sloth/batch.raterTarget.js
+Failed to resolve link to "import('@gaunt-sloth/core/core/shell/negotiation.js').ShellNegotiationState" in comment for @gaunt-sloth/batch.evalTypes.js.EvalTurn.justification
+Failed to resolve link to "import('@gaunt-sloth/core/core/types.js').AgentStreamEvent" in comment for gaunt-sloth.tui/tuiSessionModule.createTuiSession
+Failed to resolve link to "interpreterRunsStdin" in comment for @gaunt-sloth/core.core/shell/openWorld.ComposedFlow
+Failed to resolve link to "isAdditiveArrayField" in comment for @gaunt-sloth/review.index.resolveConfigExtends
+Failed to resolve link to "loadGlobalRawConfigUnvalidated" in comment for @gaunt-sloth/core.config/loader.validateConfig
+Failed to resolve link to "loadGlobalRawConfigUnvalidated" in comment for @gaunt-sloth/review.index.validateConfig
+Failed to resolve link to "mergeConfig" in comment for @gaunt-sloth/review.index.resolveConfig
+Failed to resolve link to "normalizeCommand" in comment for @gaunt-sloth/core.core/shell/openWorld.ComposedFlow
+Failed to resolve link to "parseChecklistArgs" in comment for gaunt-sloth.tui/components/LiveTurn.ChecklistPanel
+Failed to resolve link to "pickReasoningDelta" in comment for @gaunt-sloth/core.core/reasoningBlocks
+Failed to resolve link to "recordSessionSafe" in comment for @gaunt-sloth/core.core/types.GthRunStats
+Failed to resolve link to "recordSessionSafe" in comment for @gaunt-sloth/core.history/historyStore
+Failed to resolve link to "resolveAgentFactory" in comment for @gaunt-sloth/core.core/gthLeanAgentFactory.gthLeanAgentFactory
+Failed to resolve link to "resolveConfigPath" in comment for @gaunt-sloth/review.index.findProjectConfigPath
+Failed to resolve link to "resolveExtendsChain" in comment for @gaunt-sloth/review.index.validateConfig
+Failed to resolve link to "resolveReporters" in comment for @gaunt-sloth/batch.reporters/reporterTypes.js.NamedReporter
+Failed to resolve link to "resolveUseColour" in comment for @gaunt-sloth/review.index.resolveConfig
+Failed to resolve link to "runBatchMatrix" in comment for @gaunt-sloth/batch.output.js.writeBatchOutput
+Failed to resolve link to "runBatchMatrix" in comment for @gaunt-sloth/batch.types.js.BatchRunnerOptions
+Failed to resolve link to "runBatchMatrix" in comment for @gaunt-sloth/batch.types.js.RunCellFn
+Failed to resolve link to "runStats.js TOOL_RESULT_CONTENT_CAP" in comment for @gaunt-sloth/core.core/types.GthToolResult
+Failed to resolve link to "runStats.js finalizeRunStats" in comment for @gaunt-sloth/core.core/types.GthRunStats.toolResults
+Failed to resolve link to "runStats.js finalizeRunStats" in comment for @gaunt-sloth/core.runtime/conversation.ConversationTurnResult.toolResults
+Failed to resolve link to "runStats.js finalizeRunStats" in comment for @gaunt-sloth/core.runtime/singleShot.SingleShotResult.toolResults
+Failed to resolve link to "src/sources/ghPrDiffSource.ts!" in comment for @gaunt-sloth/core.config/defaults.DEFAULT_CONFIG.__type.commands
+Failed to resolve link to "src/sources/ghPrDiffSource.ts!" in comment for @gaunt-sloth/review.index.DEFAULT_CONFIG.__type.commands
+Failed to resolve link to "tokenize" in comment for @gaunt-sloth/core.core/shell/openWorld.ComposedFlow
+Failed to resolve link to "tryJsonConfig" in comment for @gaunt-sloth/core.config/types.CommandLineConfigOverrides.model
+Failed to resolve link to "validateRawGthConfig" in comment for @gaunt-sloth/review.index.ConfigLayerValidationReport
+Failed to resolve link to "validateRawGthConfig" in comment for @gaunt-sloth/review.index.validateConfig
+InlineBinaryBlock, defined in @gaunt-sloth/core/src/utils/binaryOutputUtils.ts, is referenced by utils/binaryOutputUtils.extractInlineBinaryBlocks but not included in the documentation
+NativeToolCall, defined in @gaunt-sloth/core/src/core/toolCallRepair/promote.ts, is referenced by core/toolCallRepair/promote.textToNativeToolCalls but not included in the documentation
+NormalizedRatingConfig, defined in @gaunt-sloth/review/src/middleware/reviewRateMiddleware.ts, is referenced by middleware/reviewRateMiddleware.normalizeRatingConfig but not included in the documentation
+OAuthClientProviderConfig, defined in @gaunt-sloth/agent/src/mcp/OAuthClientProviderImpl.ts, is referenced by mcp/OAuthClientProviderImpl.js.OAuthClientProviderImpl.constructor.config but not included in the documentation
+PREFLIGHT_MECHANISM_OF, defined in @gaunt-sloth/batch/src/evalTypes.ts, is referenced by evalTypes.js.PreflightMechanism but not included in the documentation
+PromptReadConfig, defined in @gaunt-sloth/core/src/utils/llmUtils.ts, is referenced by utils/llmUtils.readBackstory.config but not included in the documentation
+RegionState, defined in gaunt-sloth/src/tui/useTranscriptScroll.ts, is referenced by tui/useTranscriptScroll.TranscriptGeometry.commit.input.__type.region but not included in the documentation
+The comment for @gaunt-sloth/agent.builtInToolsConfig.js.AVAILABLE_BUILT_IN_TOOLS links to "GthConfig" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "GthConfig": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/agent.builtInToolsConfig.js.AVAILABLE_BUILT_IN_TOOLS links to "GthConfig" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "GthConfig": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/agent.core/resolveAgentFactory.js.resolveAgentFactory links to "gthLeanAgentFactory" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "gthLeanAgentFactory": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/agent.mcp/OAuthClientProviderImpl.js.OAuthClientProviderImpl links to "OAuthClientProvider" which was resolved but is not included in the documentation. To fix this warning export it or add { "@modelcontextprotocol/sdk": { "OAuthClientProvider": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/agent.modules/acp/acpAgentApp.js links to "GthAgentRunner" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "GthAgentRunner": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/agent.modules/acp/acpCommon.js.resolveAcpSessionCommand links to "GthCommand" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "GthCommand": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/agent.modules/acp/acpRouter.js links to "acp.agentProtocolRouter" which was resolved but is not included in the documentation. To fix this warning export it or add { "@agentclientprotocol/sdk": { "agentProtocolRouter": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/agent.modules/acp/acpToolCalls.js.AcpToolCallTracker.claimToolCallId links to "parseToolArgs" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/agent": { "parseToolArgs": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/agent.modules/acp/acpUpdates.js links to "AgentStreamEvent" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "AgentStreamEvent": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/agent.modules/acp/acpUpdates.js.AcpUpdateMapper.claimToolCallId links to "parseToolArgs" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/agent": { "parseToolArgs": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/agent.modules/acp/acpUpdatesV1.js links to "AgentStreamEvent" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "AgentStreamEvent": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/agent.modules/acp/acpUpdatesV1.js.AcpV1UpdateMapper.claimToolCallId links to "parseToolArgs" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/agent": { "parseToolArgs": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/agent.modules/apiAgUiModule.js.convertMessage links to "parseToolArguments" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/agent": { "parseToolArguments": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/agent.modules/slashCommands.js.ApprovalPostureChoice.description links to "APPROVAL_RUNG_DESCRIPTIONS" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "APPROVAL_RUNG_DESCRIPTIONS": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/agent.modules/slashCommands.js.ApprovalPostureChoice.label links to "APPROVAL_RUNG_LABELS" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "APPROVAL_RUNG_LABELS": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/agent.modules/slashCommands.js.approvalPostureChoices links to "APPROVAL_RUNG_DESCRIPTIONS" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "APPROVAL_RUNG_DESCRIPTIONS": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/agent.tools/gthGrepTool.js.GrepFileSet links to "IGNORED_DIRS" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/agent": { "IGNORED_DIRS": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/batch.evalRunner.js.runEvalSuite links to "EvalUnit" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/batch": { "EvalUnit": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/batch.evalRunner.js.runEvalSuite links to "gradeConversationUnit" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/batch": { "gradeConversationUnit": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/batch.evalRunner.js.runEvalSuite links to "gradeUnit" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/batch": { "gradeUnit": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/batch.evalSuite.js.parseEvalSuite links to "RawSuiteSchema" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/batch": { "RawSuiteSchema": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/batch.evalTypes.js.FORCED_BY_MECHANISMS links to "PREFLIGHT_MECHANISM_OF" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/batch": { "PREFLIGHT_MECHANISM_OF": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/batch.evalTypes.js.preflightMechanismFor links to "PREFLIGHT_MECHANISM_OF" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/batch": { "PREFLIGHT_MECHANISM_OF": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/batch.raterTarget.js links to "classifyOneRound" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/batch": { "classifyOneRound": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/batch.raterTarget.js.MECHANISM_PROBES links to "forcedMechanism" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/batch": { "forcedMechanism": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/batch.raterTarget.js.buildRaterClassifier.target links to "resolveRung" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/batch": { "resolveRung": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/batch.raterTarget.js.calibrateMechanisms links to "forcedMechanism" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/batch": { "forcedMechanism": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/batch.raterTarget.js.calibratePermissiveRating links to "calibrateGate" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/batch": { "calibrateGate": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/batch.workflow/runWorkflow.js.WorkflowAgentOptions.schema links to "askStructured" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "askStructured": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.config/loader.findProjectConfigPath links to "resolveConfigPath" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "resolveConfigPath": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.config/loader.loadGlobalRawConfig.options links to "globalLayerProfile" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "globalLayerProfile": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.config/loader.resolveConfig links to "mergeConfig" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "mergeConfig": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.config/loader.resolveConfigExtends links to "MAX_EXTENDS_CHAIN_DEPTH" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "MAX_EXTENDS_CHAIN_DEPTH": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.config/loader.resolveConfigExtends links to "applyGlobalConfigBase" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "applyGlobalConfigBase": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.config/loader.resolveConfigExtends links to "isAdditiveArrayField" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "isAdditiveArrayField": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.config/loader.validateConfig links to "applyGlobalConfigBase" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "applyGlobalConfigBase": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.config/loader.validateConfig links to "composeExtends" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "composeExtends": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.config/loader.validateConfig links to "resolveExtendsChain" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "resolveExtendsChain": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.config/schema links to "z.looseObject" which was resolved but is not included in the documentation. To fix this warning export it or add { "zod": { "looseObject": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.config/schema.APPROVAL_ENTRY_MATCHERS links to "shellEntrySchema" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "shellEntrySchema": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.config/schema.findApprovalsGrammarIssues links to "RESERVED_MCP_SERVER_NAME" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "RESERVED_MCP_SERVER_NAME": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.config/schema.findApprovalsGrammarIssues links to "UNNAMEABLE_MCP_SERVER_NAME" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "UNNAMEABLE_MCP_SERVER_NAME": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.config/schema.findApprovalsGrammarIssues links to "collectApprovalEntryIssues" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "collectApprovalEntryIssues": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.config/schema.findApprovalsGrammarIssues links to "collectMcpApprovalsIssues" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "collectMcpApprovalsIssues": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.config/schema.findDeprecatedConfigIssues links to "COMMAND_KEYS" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "COMMAND_KEYS": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.config/schema.findDeprecatedConfigIssues links to "DEPRECATED_COMMAND_PAIRS" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "DEPRECATED_COMMAND_PAIRS": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.config/schema.findDeprecatedConfigIssues links to "DEPRECATED_ROOT_PAIRS" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "DEPRECATED_ROOT_PAIRS": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.config/schema.findDeprecatedConfigIssues links to "REMOVED_COMMAND_KEYS" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "REMOVED_COMMAND_KEYS": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.config/schema.findDeprecatedConfigIssues links to "RETIRED_AGENT_BACKENDS" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "RETIRED_AGENT_BACKENDS": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.config/schema.findDeprecatedConfigIssues links to "RETIRED_APPROVALS_KEYS" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "RETIRED_APPROVALS_KEYS": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.config/schema.findDeprecatedConfigIssues links to "RETIRED_APPROVAL_MODES" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "RETIRED_APPROVAL_MODES": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.config/schema.findDeprecatedConfigIssues links to "RETIRED_SHELL_TOOL_PAIRS" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "RETIRED_SHELL_TOOL_PAIRS": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.config/shell-policy.commandAnswersApprovals links to "COMMAND_ANSWERS_APPROVALS" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "COMMAND_ANSWERS_APPROVALS": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.config/shell-policy.commandCarriesUserProvenance links to "COMMAND_CARRIES_USER_PROVENANCE" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "COMMAND_CARRIES_USER_PROVENANCE": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/GthAbstractAgent.GthAbstractAgent.surfaceRefusal links to "streamFromInput" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "GthAbstractAgent.streamFromInput": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/GthAgentRunner.GthAgentRunner.processMessagesWithEvents links to "decideToolApproval" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "GthAgentRunner.decideToolApproval": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/GthAgentRunner.GthAgentRunner.processMessagesWithEvents links to "resolveToolInterrupts" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "GthAgentRunner.resolveToolInterrupts": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/GthAgentRunner.GthAgentRunner.setAttackHaltCallback links to "attackHaltCallback" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "GthAgentRunner.attackHaltCallback": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/GthAgentRunner.GthAgentRunner.setNegotiationDisplay links to "negotiationDisplay" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "GthAgentRunner.negotiationDisplay": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/GthAgentRunner.GthAgentRunner.setToolApprovalCallback links to "toolApprovalCallback" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "GthAgentRunner.toolApprovalCallback": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/GthLangChainAgent.GthLangChainAgent.surfaceRefusal links to "streamFromInput" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "GthAbstractAgent.streamFromInput": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/approvals/grants.PersistedApprovalGrantsOptions.holds links to "savedNoun" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "savedNoun": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/approvals/grants.PersistedApprovalGrantsOptions.holds links to "skippedEntriesNotice" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "skippedEntriesNotice": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/approvals/grants.PersistedApprovalGrantsOptions.holds links to "unreadableFileNotice" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "unreadableFileNotice": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/approvals/grants.trustWithdrawalWeakens links to "WEAKENING_MOVES" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "WEAKENING_MOVES": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/launchBanner.LaunchBannerInput.columns links to "DEFAULT_COLUMNS" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "DEFAULT_COLUMNS": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/approvalStop.ApprovalStopError.command links to "subjectParts" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "subjectParts": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/approvalStop.AttackHaltError.command links to "subjectParts" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "subjectParts": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/approvalStop.NonInteractiveEscalationError.command links to "subjectParts" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "subjectParts": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/arity.meaningfulPrefixTokens links to "ARITY" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "ARITY": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/framing.STICKY_PREVIEW_MAX_ROWS links to "clampRows" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "clampRows": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/framing.wrapToWidth links to "frame" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "frame": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/hardline.HARDLINE_PATTERNS links to "CMD_POS" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "CMD_POS": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/hardline.HARDLINE_PATTERNS links to "CMD_POS" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "CMD_POS": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/hardline.HARDLINE_PATTERNS links to "CMD_POS" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "CMD_POS": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/hardline.HARDLINE_PATTERNS links to "OUTSIDE_SINGLE_QUOTES" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "OUTSIDE_SINGLE_QUOTES": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/hardline.HARDLINE_PATTERN_SURFACE links to "CMD_POS" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "CMD_POS": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/hardline.HARDLINE_PATTERN_SURFACE links to "ROOT_TARGET" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "ROOT_TARGET": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/hardline.HARDLINE_PATTERN_SURFACE links to "WRAPPER_ARMS" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "WRAPPER_ARMS": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/hardline.HardlineMatch.pattern links to "CMD_POS" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "CMD_POS": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/hardline.HardlineOptions.platform links to "WINDOWS_HARDLINE_PATTERNS" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "WINDOWS_HARDLINE_PATTERNS": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/openWorld.ComposedOpenWorldFinding.unsupportedHosts links to "hostSurvivesAsPassed" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "hostSurvivesAsPassed": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/openWorld.buildComposedOpenWorldNote links to "flowlessSentence" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "flowlessSentence": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/openWorld.buildComposedOpenWorldNote links to "residualSentence" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "residualSentence": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/openWorld.buildComposedOpenWorldNote links to "undeterminedHostsSentence" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "undeterminedHostsSentence": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/openWorld.buildComposedOpenWorldNote links to "withheldHostsSentence" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "withheldHostsSentence": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/openWorld.withheldHostsPointer links to "quotable" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "quotable": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/openWorld.withheldHostsPointer links to "withheldHostsSentence" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "withheldHostsSentence": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/rater.applyDestructiveFloor links to "preflightFloorReason" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "preflightFloorReason": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/rater.applyDestructiveFloor links to "preflightFloorReason" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "preflightFloorReason": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/rater.isBelowDestructiveFloor links to "BELOW_DESTRUCTIVE_FLOOR" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "BELOW_DESTRUCTIVE_FLOOR": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/rater.mapAllowMatchedVerdictToAction links to "preflightFloorReason" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "preflightFloorReason": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/rater.mapVerdictToAction links to "preflightFloorReason" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "preflightFloorReason": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/rater.neutralizeClosingTag links to "INVISIBLE_FORMAT_CHARS" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "INVISIBLE_FORMAT_CHARS": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/rater.neutralizeClosingTag links to "INVISIBLE_FORMAT_CHARS" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "INVISIBLE_FORMAT_CHARS": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/rater.openWorldToolFloorReason links to "preflightFloorReason" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "preflightFloorReason": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/shell/rater.preflightFloorFinding links to "preflightFloorReason" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "preflightFloorReason": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/toolCallRepair/promote.promoteTextEmittedToolCallMessage links to "AIMessage" which was resolved but is not included in the documentation. To fix this warning export it or add { "@langchain/core": { "AIMessage": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/toolDisplay.setToolDisplayConfig links to "getDefaultSecrets" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "getDefaultSecrets": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.core/toolDisplay.summariseToolCall links to "formatParamValue" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "formatParamValue": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.providers/geminiSchemaSanitizer.GEMINI_SUPPORTED_SCHEMA_KEYWORDS links to "sanitizeNode" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "sanitizeNode": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.providers/geminiSchemaSanitizer.sanitizeGeminiToolSchema links to "resolveComposition" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "resolveComposition": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.providers/geminiSchemaSanitizer.sanitizeGeminiToolSchema links to "resolveComposition" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "resolveComposition": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.providers/modelDiscovery.INTERACTIVE_MODEL_FETCH_TIMEOUT_MS links to "DISCOVERY_TIMEOUT_MS" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "DISCOVERY_TIMEOUT_MS": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.providers/modelDiscovery.ModelDiscoveryOptions.timeoutMs links to "DISCOVERY_TIMEOUT_MS" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "DISCOVERY_TIMEOUT_MS": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.utils/consoleUtils.ANSI_COLORS links to "colorText" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "colorText": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.utils/consoleUtils.displayLaunchBanner links to "writeToSessionLog" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "writeToSessionLog": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.utils/consoleUtils.displayToolIndication links to "writeToSessionLog" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "writeToSessionLog": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.utils/crashHandler.InstallCrashHandlerOptions.exit links to "process.exit" which was resolved but is not included in the documentation. To fix this warning export it or add { "@types/node": { "__global.NodeJS.Process.exit": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.utils/crashHandler.handleCrash.exit links to "process.exit" which was resolved but is not included in the documentation. To fix this warning export it or add { "@types/node": { "__global.NodeJS.Process.exit": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.utils/debugDump.WriteDebugDumpInput.approvals links to "renderStructured" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "renderStructured": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.utils/debugDump.writeCrashSnapshot links to "CRASH_DEBUG_LOG_TAIL_LINES" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "CRASH_DEBUG_LOG_TAIL_LINES": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.utils/llmUtils.readPromptSegment links to "PROMPT_SEGMENT_FILES" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "PROMPT_SEGMENT_FILES": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.utils/redactSecrets.collectSecretValues links to "MIN_SECRET_LITERAL_LENGTH" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "MIN_SECRET_LITERAL_LENGTH": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.utils/redactSecrets.collectSecretValues links to "SECRET_ENV_NAME_RE" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "SECRET_ENV_NAME_RE": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.commands/adkEvalRunner.buildAdkRunCell links to "RunCellFn" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/batch": { "RunCellFn": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.commands/adkEvalRunner.buildAdkRunConversation links to "RunConversationFn" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/batch": { "RunConversationFn": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.commands/adkEvalRunner.buildAdkRunConversation links to "TurnRunOutcome" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/batch": { "TurnRunOutcome": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.commands/agUiEvalRunner.buildAgUiRunCell links to "RunCellFn" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/batch": { "RunCellFn": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.commands/agUiEvalRunner.buildAgUiRunConversation links to "RunConversationFn" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/batch": { "RunConversationFn": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.commands/agUiEvalRunner.buildAgUiRunConversation links to "TurnRunOutcome" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/batch": { "TurnRunOutcome": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.commands/agUiEvalRunner.createAgUiClient links to "decodeAgUiStream" which was resolved but is not included in the documentation. To fix this warning export it or add { "gaunt-sloth": { "decodeAgUiStream": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.commands/batchCommand.buildProductionRunCell links to "RunCellFn" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/batch": { "RunCellFn": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.commands/batchCommand.buildProductionRunConversation links to "RunConversationFn" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/batch": { "RunConversationFn": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.commands/configCommand.redactConfigForPrint links to "GthConfig" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "GthConfig": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.commands/evalCommand.resolveReporterModule links to "importExternalFile" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "importExternalFile": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.commands/execCommand.buildExecConfig links to "ExecCommandOptions" which was resolved but is not included in the documentation. To fix this warning export it or add { "gaunt-sloth": { "ExecCommandOptions": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.commands/firstRunDialog.FirstRunDialogDeps.fetchModels links to "ModelDiscoveryResult" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "ModelDiscoveryResult": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.commands/firstRunDialog.buildConfigContent links to "buildInitConfigContent" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "buildInitConfigContent": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.commands/firstRunDialog.makeDefaultProgress links to "displayInfo" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "displayInfo": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.commands/firstRunDialog.makeDefaultProgress links to "makeDefaultSelect" which was resolved but is not included in the documentation. To fix this warning export it or add { "gaunt-sloth": { "makeDefaultSelect": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.commands/prDiscovery.PrDiscoveryConfig.allowedTools links to "GthConfig.allowedTools" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "GthConfig.allowedTools": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.tui/components/LiveTurn.ChecklistPanel links to "ToolCallPanel" which was resolved but is not included in the documentation. To fix this warning export it or add { "gaunt-sloth": { "ToolCallPanel": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.tui/components/LiveTurn.ReasoningPanel links to "ToolCallPanel" which was resolved but is not included in the documentation. To fix this warning export it or add { "gaunt-sloth": { "ToolCallPanel": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.tui/components/PromptInput.PromptInput links to "CommandMenu" which was resolved but is not included in the documentation. To fix this warning export it or add { "gaunt-sloth": { "CommandMenu": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.tui/components/SelectList.windowSize links to "DEFAULT_WINDOW" which was resolved but is not included in the documentation. To fix this warning export it or add { "gaunt-sloth": { "DEFAULT_WINDOW": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.tui/debugRender.collectMcpOverview links to "AgentResolvers.getMcpServerInstructions" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "AgentResolvers.getMcpServerInstructions": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.tui/debugRender.renderMcpDetails links to "MCP_TOOL_NAME_PREFIX" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "MCP_TOOL_NAME_PREFIX": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.tui/fixtureAgent.createFixtureTuiAgent links to "AgentStreamEvent" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "AgentStreamEvent": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.tui/keyGuards.opensCommandMenu links to "CTRL_SLASH" which was resolved but is not included in the documentation. To fix this warning export it or add { "gaunt-sloth": { "CTRL_SLASH": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.tui/ruleWidth.ruleWidth links to "DEFAULT_COLUMNS" which was resolved but is not included in the documentation. To fix this warning export it or add { "gaunt-sloth": { "DEFAULT_COLUMNS": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.tui/ruleWidth.ruleWidth links to "MIN_WIDTH" which was resolved but is not included in the documentation. To fix this warning export it or add { "gaunt-sloth": { "MIN_WIDTH": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.tui/types.PendingApproval links to "ApprovalOutcome" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "ApprovalOutcome": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.tui/types.PendingApproval links to "PendingToolInterrupt" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "PendingToolInterrupt": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.tui/types.PendingApproval links to "ToolApprovalDecision" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "ToolApprovalDecision": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.tui/types.PendingAttackBanner links to "AttackHaltAnswer" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "AttackHaltAnswer": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.tui/types.PendingAttackBanner links to "PendingAttackHalt" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "PendingAttackHalt": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.tui/types.TuiAgent links to "AgentStreamEvent" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "AgentStreamEvent": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.tui/types.TuiAgent.setApprovalRung links to "ResolvedApprovals" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "ResolvedApprovals": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.tui/useMouse.MouseProvider links to "FRAME_ORIGIN_ROW" which was resolved but is not included in the documentation. To fix this warning export it or add { "gaunt-sloth": { "FRAME_ORIGIN_ROW": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.tui/useSlothAnimation.SlothAnimationPlayback.face links to "RESTING_FACE" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "RESTING_FACE": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.tui/viewModel.foldEvents links to "AgentStreamEvent" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "AgentStreamEvent": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.tui/viewModel.foldSubagentEvents links to "AgentStreamEvent" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "AgentStreamEvent": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.tui/viewModel.parseChecklistArgs links to "parseTaskArgs" which was resolved but is not included in the documentation. To fix this warning export it or add { "gaunt-sloth": { "parseTaskArgs": "#" }} to the externalSymbolLinkMappings option
+The comment for gaunt-sloth.utils/configErrorGuard.guardProgramConfigErrors links to "ProgramLike" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "ProgramLike": "#" }} to the externalSymbolLinkMappings option
+The signature core/shell/alignment.alignmentApprovalNotice has an @param with name "carvedHosts", which was not used
+The signature core/shell/alignment.alignmentApprovalNotice has an @param with name "rungLabel", which was not used
