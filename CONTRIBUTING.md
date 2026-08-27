@@ -35,6 +35,19 @@ pnpm run lint-n-fix
 pnpm run format
 ```
 
+### Line endings
+
+`.gitattributes` stores every text file with LF and checks it out with LF on every platform, Windows included. Nothing tracked here needs CRLF in the working tree, and shell scripts cannot tolerate it: a carriage return on a shebang line stops the script from running and produces an error naming neither the file nor the cause.
+
+A clone made before that policy landed keeps whatever endings it was given, and a checkout is not re-converted on its own. Refresh such a clone once rather than committing the difference — **commit or stash your work first, because the second command discards anything uncommitted**:
+
+```bash
+git rm --cached -r .
+git reset --hard
+```
+
+`packages/core/spec/lineEndingPolicy.spec.ts` fails if the policy is narrowed, or if a tracked script reaches the working tree with a carriage return in its shebang line.
+
 ## Local Development Registry (optional)
 
 The publishable packages — the `@gaunt-sloth/{agent,core,review}` libraries plus

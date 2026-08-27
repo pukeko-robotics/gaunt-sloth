@@ -1,0 +1,22 @@
+# Line-ending policy for this repository.
+#
+# Text is stored LF in the repository and checked out LF on every platform, Windows included.
+#
+# `eol=lf` is the load-bearing half. A bare `text=auto` would normalise only what is stored, and a
+# Windows checkout would still be handed CRLF — where a bash script whose shebang line ends in a
+# carriage return fails with an error that names neither the file nor the cause, and a parser that
+# splits on a bare newline reads every value as absent rather than crashing.
+#
+# It is stated once for every path rather than per extension so that it still holds for the next
+# script somebody adds, whatever it is named or wherever it lives. Nothing tracked here needs CRLF
+# in the working tree: there are no Windows batch or PowerShell scripts in this repository.
+#
+# packages/core/spec/lineEndingPolicy.spec.ts pins this policy on every platform, and pins its
+# result — no carriage return in a shebang line — only where a checkout could produce one.
+* text=auto eol=lf
+
+# Genuinely binary content, marked so that no conversion or diff heuristic can reach it. These are
+# the binary types actually tracked here; `text=auto` above still detects anything else.
+*.jpg binary
+*.pdf binary
+*.png binary

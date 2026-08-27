@@ -54,9 +54,11 @@ function bedDirectories(): string[] {
  */
 function parseBedSettings(text: string): Map<string, string> {
   const settings = new Map<string, string>();
-  // Split on both endings. A Windows checkout has no `.gitattributes` telling it otherwise, so it
-  // gets CRLF — and splitting on "\n" alone would leave a "\r" that `.` cannot match and `$`
-  // cannot follow, so the line would not match AT ALL and the setting would read as absent.
+  // Split on both endings. Splitting on "\n" alone leaves a "\r" that `.` cannot match and `$`
+  // cannot follow, so the line would not match AT ALL and every setting would read as absent
+  // rather than fail. The repository's `.gitattributes` checks tracked files out as LF on every
+  // platform, so this is defence in depth: a `bed.conf` can also be hand-written, generated, or
+  // read from a clone made before that policy existed.
   for (const line of text.split(/\r?\n/)) {
     const match = /^(BED_[A-Z0-9_]+)=(.*)$/.exec(line);
     if (!match) continue;
