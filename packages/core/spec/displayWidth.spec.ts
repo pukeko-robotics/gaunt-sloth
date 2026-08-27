@@ -1,4 +1,5 @@
 import stringWidth from 'string-width';
+import stripAnsi from 'strip-ansi';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -25,6 +26,30 @@ const E_ACUTE = 'é';
  * exotic input.
  */
 const AWKWARD = [FAMILY, FLAG, E_ACUTE, '한글', '/home/mari/開発/深層', 'gth-🚀', 'ascii', ''];
+
+/**
+ * The node's witness: a colour-wrapped ten-character string. It MEASURES ten columns, and its raw
+ * grapheme clusters — nineteen of them — sum to seventeen, because four of the five characters in
+ * each escape are printable. That gap is what a byte-counting walk spends its budget on.
+ */
+const WITNESS = '\x1b[35mabcdefghij\x1b[0m';
+
+/**
+ * Escape-bearing strings of the shapes that actually reach the tool-output preview: a wrapped run,
+ * colour that is never closed, several styles in one line, colour around wide glyphs, a one-byte
+ * C1 introducer, an OSC hyperlink, and escapes with no text at all. Every sequence here is
+ * WELL-FORMED — half-written ones are a separate case, and would defeat the partial-cut oracle.
+ */
+const COLOURED = [
+  WITNESS,
+  '\x1b[31mred and never closed',
+  '\x1b[1m\x1b[4mbold underlined\x1b[0m plain \x1b[32mgreen\x1b[0m',
+  'plain then \x1b[36m開発\x1b[0m then plain',
+  '\x9b31mone-byte CSI\x9b0m',
+  '\x1b]8;;https://example.com\x07link text\x1b]8;;\x07',
+  '\x1b[35m\x1b[0m',
+  '\x1b[35m',
+];
 
 /** A preview line of the shape the per-line cap exists for: long, and mixed-script throughout. */
 const LONG_MIXED = `ascii-段落-${FAMILY}-🚀-${E_ACUTE}-한글-${'x'.repeat(20)}-`.repeat(200);
@@ -124,8 +149,9 @@ describe('utils/displayWidth', () => {
     for (const text of [...AWKWARD, LONG_MIXED]) {
       expect(sumOfClusters(text)).toBe(stringWidth(text));
     }
-    // Escapes are exactly where that stops holding, and the reason the slices ask for plain text:
-    // the measurement drops the sequence, the clusters keep its printable bytes.
+    // Escapes are where a RAW cluster walk stops holding — the measurement drops the sequence, the
+    // clusters keep its printable bytes — which is why the slices walk whole sequences rather than
+    // the clusters they segment into. The gap this records is the one they close.
     const coloured = '\x1b[35mabcdefghij\x1b[0m';
     expect(stringWidth(coloured)).toBe(10);
     expect(sumOfClusters(coloured)).toBe(17);
@@ -169,26 +195,114 @@ describe('utils/displayWidth', () => {
     }
   });
 
-  it('does NOT understand ANSI when slicing, which is why callers must pass plain text', async () => {
-    const { displayWidth, sliceEndToWidth, sliceToWidth } =
-      await import('#src/utils/displayWidth.js');
-    const coloured = '\x1b[35mabcdefghij\x1b[0m';
+  it('never cuts INSIDE an escape sequence, at any budget', async () => {
+    const { sliceEndToWidth, sliceToWidth } = await import('#src/utils/displayWidth.js');
 
-    // The two disagree on escape-bearing input, on purpose and by contract: the measurement
-    // strips escapes, the slice sees their bytes as ordinary printable characters.
-    expect(displayWidth(coloured)).toBe(10);
-    expect(sliceToWidth(coloured, 5)).toBe('\x1b[35ma');
-    // Between the two rulers' answers — 10 visible columns, 17 columns of clusters — the
-    // MEASUREMENT decides, so a coloured string that visibly fits comes back whole instead of
-    // being cut short by the bytes of its own escapes.
-    expect(sliceToWidth(coloured, 12)).toBe(coloured);
-    expect(sliceEndToWidth(coloured, 12)).toBe(coloured);
-    // At a budget narrower than the escape itself the cut lands INSIDE the sequence. This case
-    // exists to make that visible rather than surprising: if a caller ever needs coloured input
-    // sliced, the fix is a deliberate change here with this assertion updated, not a caller
-    // quietly discovering mojibake.
-    expect(sliceToWidth(coloured, 2)).toBe('\x1b[3');
+    // A cut landing inside a sequence leaves an introducer with no terminator behind it. Asking
+    // whether any ESC in the result still begins a whole sequence catches that directly: strip
+    // every complete sequence and no introducer may survive.
+    const hasPartialSequence = (text: string): boolean => stripAnsi(text).includes('\x1b');
+
+    for (const text of COLOURED) {
+      for (let budget = -1; budget <= stringWidth(text) + 1; budget++) {
+        expect(hasPartialSequence(sliceToWidth(text, budget))).toBe(false);
+        expect(hasPartialSequence(sliceEndToWidth(text, budget))).toBe(false);
+      }
+    }
+    // The witness from the node, at the budget that used to bisect it: two columns is narrower
+    // than the escape's own printable bytes, which is exactly where a byte-counting walk cut.
+    expect(hasPartialSequence(sliceToWidth(WITNESS, 2))).toBe(false);
+    expect(sliceToWidth(WITNESS, 2)).toBe('\x1b[35mab');
   });
+
+  it('agrees with the measurement on escape-bearing text, which is what makes the walk sound', async () => {
+    const { displayWidth, sliceToWidth } = await import('#src/utils/displayWidth.js');
+
+    // The witness: ten visible columns, but nineteen raw clusters summing to seventeen columns.
+    // The walk has to answer 10, or every budget it spends is measured in the wrong unit.
+    expect(displayWidth(WITNESS)).toBe(10);
+    expect(clustersOf(WITNESS).length).toBe(19);
+
+    // The total the WALK attributes to a string is not a number it exposes, but it is exactly the
+    // budget the string needs to come back whole — so asserting that this budget is
+    // `displayWidth(text)`, and that one column less is not enough, pins the sum of the walked
+    // cluster widths to the whole-string measurement. Under an ANSI-blind walk the witness needs
+    // seventeen columns to survive while it measures ten, and this is what says so.
+    for (const text of COLOURED) {
+      const width = stringWidth(text);
+      // A string of escapes alone measures zero, where the budget it needs is decided by the
+      // documented `maxWidth <= 0` rule rather than by anything the walk added up.
+      if (width === 0) continue;
+      expect(sliceToWidth(text, width)).toBe(text);
+      expect(sliceToWidth(text, width - 1)).not.toBe(text);
+    }
+    // The same statement on the witness alone, with the two numbers written out.
+    expect(sliceToWidth(WITNESS, 10)).toBe(WITNESS);
+    expect(sliceToWidth(WITNESS, 9)).not.toBe(WITNESS);
+
+    for (const text of COLOURED) {
+      // Sum of the widths of what the walk KEEPS, taken one budget at a time, equals the
+      // whole-string measurement once the budget covers it all.
+      expect(displayWidth(sliceToWidth(text, stringWidth(text)))).toBe(stringWidth(text));
+      // …and the string comes back byte-identical, which is what `truncate` in toolDisplay uses
+      // to decide a line needs no ellipsis. Budget at least 1: a non-positive budget is the
+      // documented total-function case and yields `''` whatever the input, including a string
+      // made only of escapes, whose width is zero.
+      expect(sliceToWidth(text, Math.max(1, stringWidth(text)))).toBe(text);
+
+      // At every budget, the VISIBLE content kept is exactly the longest fitting run of visible
+      // clusters. `strip-ansi` is the authority `string-width` itself measures through, so this
+      // pins the walk's sequence boundaries against the ones the ruler uses — not against the
+      // module's own idea of where a sequence ends.
+      for (let budget = 0; budget <= stringWidth(text) + 1; budget++) {
+        expect(stripAnsi(sliceToWidth(text, budget))).toBe(longestHead(stripAnsi(text), budget));
+      }
+    }
+  });
+
+  it('carries a kept sequence along, and never appends a reset of its own', async () => {
+    const { sliceEndToWidth, sliceToWidth } = await import('#src/utils/displayWidth.js');
+
+    // Truncated coloured text stays coloured: the opening sequence is carried with the text it
+    // introduces rather than dropped, so a cut preview line does not render as plain.
+    expect(sliceToWidth(WITNESS, 4)).toBe('\x1b[35mabcd');
+
+    // The result is a genuine PREFIX / SUFFIX — no reset is added. Both surfaces wrap and close
+    // their own styling per line, and an inner reset would close that wrapper early.
+    for (const text of COLOURED) {
+      for (let budget = 0; budget <= stringWidth(text) + 1; budget++) {
+        expect(text.startsWith(sliceToWidth(text, budget))).toBe(true);
+        expect(text.endsWith(sliceEndToWidth(text, budget))).toBe(true);
+      }
+    }
+
+    // A sequence whose text is entirely cut away goes with it, rather than trailing the result
+    // and colouring whatever the caller appends next (an ellipsis, the next parameter).
+    expect(sliceToWidth('abc\x1b[31mdef', 3)).toBe('abc');
+    // Keeping the END discards the head, so the sequence that opened the colour goes with it.
+    expect(sliceEndToWidth('\x1b[31mabcdef', 3)).toBe('def');
+  });
+
+  it('terminates on a degenerate line of half-written escapes rather than rescanning it', async () => {
+    const { displayWidth, sliceToWidth } = await import('#src/utils/displayWidth.js');
+
+    // An unterminated OSC introducer must not scan ahead for a terminator that never comes: that
+    // is what would turn one long line into a quadratic walk. The elapsed-time bound is what makes
+    // a rescan-per-introducer regression FAIL rather than merely run slowly — a plain timeout
+    // cannot interrupt a synchronous walk, so it would hang the suite instead of reddening it.
+    const unterminated = '\x1b]8;;'.repeat(20_000) + 'x'.repeat(20_000);
+    const started = Date.now();
+    expect(displayWidth(sliceToWidth(unterminated, 50))).toBeLessThanOrEqual(50);
+    expect(Date.now() - started).toBeLessThan(2_000);
+
+    // An introducer that never becomes a sequence is not a sequence at all — it is an ordinary
+    // zero-width control character, so the budget is spent on the printable bytes around it and
+    // the walk stops after ten of them. The trailing introducer is kept for the same reason any
+    // zero-width cluster is: it costs nothing, so it cannot overspend.
+    const partials = '\x1b['.repeat(20_000);
+    expect(sliceToWidth(partials, 10)).toBe('\x1b['.repeat(10) + '\x1b');
+    expect(displayWidth(sliceToWidth(partials, 10))).toBe(10);
+  }, 10_000);
 
   it('drops a wide cluster whole rather than half-spending its columns', async () => {
     const { sliceEndToWidth, sliceToWidth } = await import('#src/utils/displayWidth.js');

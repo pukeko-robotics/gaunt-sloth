@@ -88,15 +88,29 @@ function ToolCallPanel({
   const summary = summariseToolCall(tc.name, tc.argsText);
   const caret = expanded ? '▾' : '▸';
   const hasDetail = !!tc.argsText || !!tc.result || !!tc.output || !!tc.notice;
-  const displayInput = {
-    name: tc.name,
-    argsText: tc.argsText,
-    result: tc.result,
-    output: tc.output,
-    isError: tc.isError,
-  };
   // Collapsed: the canonical 10-line capped preview. Expanded: the full uncapped body.
-  const body = expanded ? buildToolBodyLines(displayInput) : buildToolPreviewLines(displayInput);
+  //
+  // MEMOISED, because this is a render body and the work is not small: building a preview
+  // width-slices every line of a tool's output, and a tool's output is unbounded. Unmemoised it is
+  // redone on every frame — a streaming turn repaints many times a second while this call's own
+  // inputs have not changed since the result landed — so the cost is paid per FRAME rather than
+  // per tool call.
+  //
+  // The key is every input the lines depend on: the five fields the formatters read, and
+  // `expanded`, which selects between two different formatters. The redaction secret set is the
+  // remaining input and is deliberately not keyed — core caches it, and the only thing that
+  // recomputes it registers the live config when the agent runner starts, which is before any
+  // tool call exists to render.
+  const body = React.useMemo(() => {
+    const displayInput = {
+      name: tc.name,
+      argsText: tc.argsText,
+      result: tc.result,
+      output: tc.output,
+      isError: tc.isError,
+    };
+    return expanded ? buildToolBodyLines(displayInput) : buildToolPreviewLines(displayInput);
+  }, [tc.name, tc.argsText, tc.result, tc.output, tc.isError, expanded]);
   return (
     <Box flexDirection="column">
       <Text color={color}>
