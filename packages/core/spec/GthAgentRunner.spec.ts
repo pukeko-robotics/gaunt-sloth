@@ -2441,10 +2441,13 @@ describe('GthAgentRunner', () => {
 
       it('raises the signal exactly once on a run of rejected ratings, naming model and cause', async () => {
         const error = rejection('tool_choice is not supported by this model');
-        const { config } = scriptedRater(error, error, error, error, error, error);
+        const { config, invoke } = scriptedRater(error, error, error, error, error, error);
         await driveRun(config, ...commands(6));
 
         const raised = signals();
+        // Assert the run HAPPENED before asserting what it produced: a "one notice" count is also
+        // what a run of one rating produces, and a "no notice" count is what a run of none does.
+        expect(invoke, 'six commands were really rated').toHaveBeenCalledTimes(6);
         expect(raised, 'six rejections, one notice').toHaveLength(1);
         expect(raised[0], 'the notice names the rater that is not answering').toContain(
           'ext82-provider/ext82-scripted-rater'
@@ -2509,10 +2512,43 @@ describe('GthAgentRunner', () => {
        */
       it('a single interleaved success resets the run, so no signal is raised', async () => {
         const error = rejection('tool_choice is not supported by this model');
-        const { config } = scriptedRater(error, error, SAFE, error, error);
+        const { config, invoke } = scriptedRater(error, error, SAFE, error, error);
         await driveRun(config, ...commands(5));
 
+        // Without this, an empty signal list is satisfied by a run that never reached five
+        // ratings at all — which is what a broken fixture, not a working reset, looks like.
+        expect(
+          invoke,
+          'five commands were really rated, four of them rejected'
+        ).toHaveBeenCalledTimes(5);
         expect(signals()).toEqual([]);
+      });
+
+      /**
+       * §3.2 — on an `approvals.allow` glob the rating is a TRIPWIRE: the command runs on the
+       * human's standing grant whatever the rater says, so a rejected tripwire rating left no
+       * verdict defaulting and must not count toward the rate. Driven through the real allow-match
+       * path, because the exclusion lives in the runner and a tracker-level fixture cannot see it.
+       */
+      it('a run of rejected TRIPWIRE ratings raises no signal', async () => {
+        const error = rejection('tool_choice is not supported by this model');
+        const { config, invoke } = scriptedRater(error, error, error, error);
+        await driveRun(
+          {
+            ...config,
+            approvals: {
+              mode: 'assisted',
+              allow: [{ type: 'shell', matcher: 'glob', pattern: 'npm test*' }],
+            },
+          },
+          'npm test --one',
+          'npm test --two',
+          'npm test --three',
+          'npm test --four'
+        );
+
+        expect(invoke, 'the tripwire really fired on every one of them').toHaveBeenCalledTimes(4);
+        expect(signals(), 'a tripwire that failed gated nothing').toEqual([]);
       });
     });
   });

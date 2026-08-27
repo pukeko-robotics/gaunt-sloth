@@ -2410,10 +2410,12 @@ describe('[[EXT-82]] a provider-rejected rating call says WHY it failed', () => 
     it('does not let a two-character command withhold every message that contains it', () => {
       // A degenerate command must not make the exclusion fire on ordinary prose — that would
       // withhold every diagnostic and make the negative assertions above vacuous everywhere.
-      const failure = describeRaterCallFailure(providerRejection('model is unavailable'), {
-        command: 'ls',
-      });
-      expect(failure?.message).toBe('model is unavailable');
+      // The message deliberately CONTAINS the two-character command as a substring (in "tools"),
+      // because a fixture that does not contain it passes whether the floor exists or not.
+      const message = 'the requested tools are unavailable';
+      expect(message, 'the fixture really exercises the floor').toContain('ls');
+      const failure = describeRaterCallFailure(providerRejection(message), { command: 'ls' });
+      expect(failure?.message).toBe(message);
     });
   });
 
@@ -2446,6 +2448,30 @@ describe('[[EXT-82]] a provider-rejected rating call says WHY it failed', () => 
       expect(result.reason).toContain('HTTP 400');
       expect(result.reason).toContain('withheld');
       expect(result.reason).not.toContain(inline);
+    });
+
+    /**
+     * Describing the failure is new work inside the arm whose whole job is that a throw becomes a
+     * verdict, and it touches attacker-shaped data. An error object can make reading it throw, and
+     * if that escaped, a broken rater would take the whole run down instead of failing closed —
+     * strictly worse than the silence this node exists to fix.
+     */
+    it('still fails closed when the error object cannot even be described', async () => {
+      const hostile = new Error('unused');
+      Object.defineProperty(hostile, 'message', {
+        get() {
+          throw new Error('this getter is the attack');
+        },
+      });
+      const { model } = fakeModel(() => {
+        throw hostile;
+      });
+
+      const result = await rateShellCommand('ls -la', CONFIG, { model });
+      expect(result.outcome, 'the gate is unmoved').toBe('destructive');
+      expect(result, 'and degrades to the detail-less spelling').toEqual(
+        failClosedVerdict('threw')
+      );
     });
   });
 });

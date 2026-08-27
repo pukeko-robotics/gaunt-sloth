@@ -1583,7 +1583,6 @@ export async function rateShellCommand(
     }
     return settle(validateSuggestedTool(parsed.data, options?.grantedTools));
   } catch (error) {
-    debugLogError('rateShellCommand', error);
     // [[EXT-82]] — the provider's own account, sanitised here at the point the error is caught.
     //
     // **There is no retry, and its absence is the design.** A provider rejection is a fact about
@@ -1591,11 +1590,25 @@ export async function rateShellCommand(
     // model's provider refuses the shape the rater must send. Retrying that turns one broken call
     // into a spend leak, so the single `invoke` above is the whole of the attempt. (A 429 is a
     // different case and is not this node's.)
-    const failure = describeRaterCallFailure(error, {
-      command,
-      home: options?.home,
-      secrets: collectSecretValues(config, env),
-    });
+    //
+    // Everything that READS the thrown value is guarded, because it all sits inside the arm whose
+    // whole job is that a throw becomes a verdict. Logging it and describing it both touch the
+    // error object's own properties (and the config's secret values), and a thrown value can make
+    // any of those throw in turn — a getter on `message`, a proxy on `config`. Failing to EXPLAIN
+    // the failure must never become failing to fail CLOSED, which would be strictly worse than the
+    // silence this node exists to fix: the diagnostic degrades to the detail-less spelling instead
+    // and the gate is unmoved.
+    let failure: RaterCallFailure | undefined;
+    try {
+      debugLogError('rateShellCommand', error);
+      failure = describeRaterCallFailure(error, {
+        command,
+        home: options?.home,
+        secrets: collectSecretValues(config, env),
+      });
+    } catch (describeError) {
+      debugLogError('rateShellCommand: could not describe the failure', describeError);
+    }
     if (capture && failure) capture.providerError = failure;
     return settle(failClosedVerdict('threw', undefined, failure), 'threw');
   } finally {

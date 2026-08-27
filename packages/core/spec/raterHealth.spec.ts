@@ -35,6 +35,18 @@ describe('[[EXT-82]] RaterHealth — the signal is the RATE, raised once', () =>
       .filter((s): s is string => s !== undefined);
   }
 
+  /**
+   * The one place the literal is pinned rather than read. Everything else measures the mechanism,
+   * which means a threshold of 1 would satisfy every other case here — and 1 is exactly the value
+   * the node forbids, because a per-call warning is the banner nobody reads. The number is also
+   * quoted in `docs/guides/shell-tool-and-approvals.md` ("three rating calls in a row"), so a
+   * change made here has a doc to update.
+   */
+  it('one failure is a blip, not a rate', () => {
+    expect(RATER_FAILURE_SIGNAL_THRESHOLD).toBe(3);
+    expect(new RaterHealth().record(rejected)).toBeUndefined();
+  });
+
   it('says nothing until the threshold is reached, then says it once', () => {
     const health = new RaterHealth();
     const belowThreshold = run(health, ...Array<RaterCallReport>(N - 1).fill(rejected));
