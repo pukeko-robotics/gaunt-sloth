@@ -833,7 +833,9 @@ describe('tui <App>', () => {
 
     stdin.write(TAB); // focus (starts on the subagents section)
     await vi.waitFor(() => expect(lastFrame()).toContain('Tab: section'));
-    await vi.waitFor(() => expect(lastFrame()).toContain('(no subagents spawned yet)'));
+    await vi.waitFor(() =>
+      expect(lastFrame()).toContain('(subagent dispatch is not available in this release)')
+    );
 
     // Shift+Tab from the first section (subagents) wraps backward to the last (response).
     stdin.write(SHIFT_TAB);
