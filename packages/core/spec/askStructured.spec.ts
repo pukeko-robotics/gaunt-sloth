@@ -5,7 +5,9 @@ import {
   askStructured,
   ASK_STRUCTURED_DEFAULT_TIMEOUT_MS,
   classifyStructuredFailure,
+  describeStructuredFailure,
 } from '#src/runtime/askStructured.js';
+import type { StructuredFailureKind } from '#src/runtime/askStructured.js';
 
 /**
  * Build a fake {@link GthConfig} whose `llm.withStructuredOutput(schema).invoke()` returns (or
@@ -143,5 +145,73 @@ describe('askStructured', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(classifyStructuredFailure(result.error, 5)).toBe('call-failed');
+  });
+});
+
+/**
+ * QA-24 — the classifier above is pinned; these pin the SENTENCES it selects.
+ *
+ * A kind-to-sentence map no test can reach is one whose bodies can be exchanged with the whole suite
+ * still green, and the result is a stall announcing itself as a rejection — the exact confusion the
+ * sentences exist to end. So each kind is checked BOTH ways: its own marker present AND the other
+ * two absent. Presence alone is not enough, because two of the three sentences open with the same
+ * word: a check for `REJECTED` survives exchanging them.
+ *
+ * Each case drives a real `askStructured` failure path and describes the error that path actually
+ * produced, so the sentence is pinned to the emitter rather than to a literal the test and the code
+ * happen to share.
+ */
+const FAILURE_MARKERS: Record<StructuredFailureKind, string> = {
+  timeout: 'STALLED:',
+  unparseable: 'REJECTED BY OUR OWN SCHEMA:',
+  'call-failed': 'REJECTED BEFORE ANY ANSWER:',
+};
+
+function expectNamesOnly(sentence: string, kind: StructuredFailureKind): void {
+  expect(sentence).toContain(FAILURE_MARKERS[kind]);
+  for (const other of Object.keys(FAILURE_MARKERS) as StructuredFailureKind[]) {
+    if (other === kind) continue;
+    expect(sentence).not.toContain(FAILURE_MARKERS[other]);
+  }
+}
+
+describe('describeStructuredFailure', () => {
+  it('names a call that never answered as a stall, and quotes the budget it blew', async () => {
+    const { config } = fakeConfig(() => new Promise(() => {})); // never resolves
+
+    const result = await askStructured(Schema, { config, system: 's', user: 'u', timeoutMs: 5 });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    const sentence = describeStructuredFailure(result.error, 5);
+    expectNamesOnly(sentence, 'timeout');
+    expect(sentence).toContain('5ms call budget');
+    expect(sentence).toContain(result.error);
+  });
+
+  it('names an answer that fails the schema as our own schema rejecting it', async () => {
+    const { config } = fakeConfig(() => ({ wrong: 'shape' }));
+
+    const result = await askStructured(Schema, { config, system: 's', user: 'u', timeoutMs: 5 });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    const sentence = describeStructuredFailure(result.error, 5);
+    expectNamesOnly(sentence, 'unparseable');
+    expect(sentence).toContain(result.error);
+  });
+
+  it('names a call that failed outright as a rejection before any answer', async () => {
+    const { config } = fakeConfig(() => {
+      throw new Error('401 Incorrect API key provided.');
+    });
+
+    const result = await askStructured(Schema, { config, system: 's', user: 'u', timeoutMs: 5 });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    const sentence = describeStructuredFailure(result.error, 5);
+    expectNamesOnly(sentence, 'call-failed');
+    expect(sentence).toContain(result.error);
   });
 });
