@@ -326,27 +326,61 @@ describe('GthFileSystemToolkit - one .aiignore line hides a directory name and c
       expect(out).toContain('nearmiss.txt'); // control: a visible directory is still walked
     });
 
-    // The case the recursion guard cannot cover: the hidden directory is handed to the tool as its
-    // own path argument, so nothing walked into it and only the matcher can withhold the entries.
-    it('list_directory ON the hidden directory returns none of its entries', async () => {
+    /**
+     * The case the recursion guard cannot cover: the hidden directory is handed to the tool as its
+     * own path argument, so nothing walked into it and only the matcher can withhold the entries.
+     *
+     * Each of these also asserts the REFUSAL, not merely the absence of the names. `.aiignore` is a
+     * may-not-touch boundary (GS2-84), so a directly-named hidden path is denied at `validatePath`
+     * rather than listed-and-filtered — and an assertion that only checks for absent names would go
+     * on passing if the refusal were removed and the empty-listing shape came back.
+     */
+    const DENIED = 'blocked by .aiignore';
+
+    it('list_directory ON the hidden directory is refused', async () => {
       const out = await invoke('list_directory', { path: path.join(root, 'secretdir') });
+      expect(out).toContain(DENIED);
       expect(out).not.toContain('inside.txt');
       expect(out).not.toContain('nested');
     });
 
-    it('list_directory_with_sizes ON the hidden directory returns none of its entries', async () => {
+    it('list_directory_with_sizes ON the hidden directory is refused', async () => {
       const out = await invoke('list_directory_with_sizes', {
         path: path.join(root, 'secretdir'),
       });
+      expect(out).toContain(DENIED);
       expect(out).not.toContain('inside.txt');
       expect(out).not.toContain('nested');
     });
 
-    it('directory_tree ON the hidden directory returns no entries', async () => {
+    it('directory_tree ON the hidden directory is refused', async () => {
       const out = await invoke('directory_tree', { path: path.join(root, 'secretdir') });
+      expect(out).toContain(DENIED);
       expect(out).not.toContain('inside.txt');
       expect(out).not.toContain('deeper.txt');
-      expect(JSON.parse(out)).toEqual([]);
+    });
+
+    /**
+     * The subtree rule itself, asked of the matcher with nothing else able to answer for it.
+     *
+     * The three refusals above are produced by the bare line matching `secretdir` — the directory's
+     * own name — so they would hold even if a pattern did NOT reach the subtree beneath it. This
+     * case names a file two levels down, where only "whatever a pattern hides, it hides the subtree
+     * beneath it" can produce a refusal. It is what keeps GS2-83's claim pinned now that the
+     * listing tools stop at the directory.
+     */
+    it('a path INSIDE the hidden directory is refused on the strength of the same one line', async () => {
+      const deep = await invoke('get_file_info', {
+        path: path.join(root, 'secretdir', 'nested', 'deeper.txt'),
+      });
+      expect(deep).toContain(DENIED);
+
+      // Control: the same depth under the prefix near-miss directory is readable, so the refusal
+      // above cannot be satisfied by a toolkit that refuses everything nested.
+      const control = await invoke('get_file_info', {
+        path: path.join(root, 'secretdir-public', 'nearmiss.txt'),
+      });
+      expect(control).toContain('permissions');
     });
 
     it('search_files finds nothing inside it, while the near-miss control is found', async () => {
