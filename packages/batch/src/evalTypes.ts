@@ -606,8 +606,39 @@ export interface ClassifyOutcome {
    * of model-free cases. (The confusion matrix puts them in a visible `(none)`/`(none)` bucket, and
    * `computeMetric`'s absent-field warning names them.) A suite whose corpus mixes rated and
    * model-free cases must narrow the denominator itself: `over: ["expected.label != none"]`.
+   *
+   * **This is the DECISION's label, which on some commands is not the model's.** A deterministic
+   * step may raise it after the model answered; {@link modelLabel} is what the model itself said.
    */
   label?: string;
+  /**
+   * BATCH-26 — **the judgement the MODEL rendered, before any deterministic step overrode it.**
+   *
+   * {@link label} is what the target's decision settled on, and on a command a preflight floors the
+   * two differ: the rater answers `safe`, the preflight raises the outcome to `destructive`, and
+   * `label` reports the raised one. That is correct for grading the GATE — `expect_label` grades
+   * this field and a user experiences the floored outcome — but it means the rater's own answer on
+   * exactly those commands reached no metric at all, so a rater-accuracy figure could not include
+   * them. Reporting both is what gives those cases a datapoint. Read it as `model.label` in a
+   * metric predicate.
+   *
+   * **Total, never conditional.** It is populated whenever a judgement was rendered, including
+   * where it equals {@link label} — which is most cells. A field set only where the two DIFFER
+   * would make `over: ["model.label != none"]` select exactly the overridden cases, a silent
+   * narrowing of the denominator this exists to widen.
+   *
+   * **Absent wherever no model rendered a judgement**, because reporting anything there would write
+   * one nobody made. Two cases:
+   *
+   * - a decision that rang no model at all — where {@link label} is absent too. That includes a
+   *   round driven with the derived permissive rating a `forced_by: <preflight>` case needs: that
+   *   rating is a lever this package supplies, not an answer a model gave;
+   * - a rating call the gate could not obtain — a timeout, a throw, an unparseable answer. Here
+   *   {@link label} is present and is core's fail-closed `destructive`, which is the right report
+   *   for the DECISION and a false one for the model: it looks identical to a rater that judged the
+   *   command harmful. Counting those as agreement is a measured failure, not a hypothetical one.
+   */
+  modelLabel?: string;
   /** The action the target's decision mapping produced. */
   action?: string;
   /** The target's own explanation, carried into the per-cell JSON for diagnosis. */

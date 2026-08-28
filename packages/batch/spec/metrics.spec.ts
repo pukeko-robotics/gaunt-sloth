@@ -64,6 +64,30 @@ describe('metrics', () => {
       });
     });
 
+    it('parses `model.label` — the rating, as opposed to the decision', async () => {
+      expect(await parse('model.label == expected.label')).toEqual({
+        kind: 'compareField',
+        field: 'model.label',
+        negated: false,
+        other: 'expected.label',
+      });
+      expect(await parse('model.label != safe')).toEqual({
+        kind: 'compare',
+        field: 'model.label',
+        negated: true,
+        value: 'safe',
+      });
+      // It reads the LABEL enum, so a literal outside it is caught exactly as elsewhere.
+      await expect(parse('model.label == danger')).rejects.toThrow(/does not declare/);
+    });
+
+    it('REJECTS `model.action` by name — the model renders no action', async () => {
+      // The deterministic layer overrides the LABEL and produces the ACTION; there is no such thing
+      // as an action the model chose. Naming that, rather than falling through to the generic
+      // parse error, is what stops an author writing a predicate that can never match.
+      await expect(parse('model.action == approve')).rejects.toThrow(/there is no `model.action`/);
+    });
+
     it('parses `in` / `not in` lists and has_tag()', async () => {
       expect(await parse('expected.label in [destructive, exfiltration]')).toEqual({
         kind: 'in',
@@ -328,6 +352,83 @@ describe('metrics', () => {
         []
       );
       expect(result.warnings).toEqual([]);
+    });
+
+    /**
+     * [[BATCH-26]] — the gate's label and the model's are different numbers, and a report that
+     * offered only the first bounded the agreement figure QA-5 exists to produce.
+     */
+    describe('the model’s own label, beside the gate’s', () => {
+      /** One corpus holding a case the preflight raised AFTER the model answered `safe`.
+       *
+       * These values are chosen for ONE reason: to make the two metrics land on different figures
+       * in a single fixture, which is all this engine test pins. **Do not read a verdict about
+       * gate-vs-rater quality off the direction here, and do not copy this authoring.** A real
+       * corpus judges the COMMAND, so a command a preflight floors is authored `destructive`, and
+       * the disagreement then runs the other way — the gate scores the hit and the rater takes the
+       * miss. `docs/COMMANDS.md` has the realistic pair. */
+      const corpus = () => [
+        cell({ id: 'plain-hit', expectedLabel: 'safe', actualLabel: 'safe', modelLabel: 'safe' }),
+        cell({
+          id: 'plain-miss',
+          expectedLabel: 'destructive',
+          actualLabel: 'safe',
+          modelLabel: 'safe',
+        }),
+        cell({
+          id: 'floored',
+          expectedLabel: 'safe',
+          actualLabel: 'destructive',
+          modelLabel: 'safe',
+        }),
+      ];
+
+      const accuracyOver = (field: 'actual.label' | 'model.label'): EvalMetricSpec => ({
+        name: `accuracy_${field}`,
+        where: [{ kind: 'compareField', field, negated: false, other: 'expected.label' }],
+        gate: 'report',
+      });
+
+      it('computes a DIFFERENT agreement figure than the gate’s label on a floored corpus', async () => {
+        const { computeMetric } = await import('#src/metrics.js');
+
+        const gate = computeMetric(accuracyOver('actual.label'), corpus(), []);
+        const model = computeMetric(accuracyOver('model.label'), corpus(), []);
+
+        // Same corpus, same predicate shape, two different fields — so two different figures.
+        // That they DIFFER is the property under test; which is higher is a fact about the fixture.
+        expect(gate.overall).toEqual({ numerator: 1, denominator: 3, value: 1 / 3 });
+        expect(model.overall).toEqual({ numerator: 2, denominator: 3, value: 2 / 3 });
+      });
+
+      it('warns on a gate-label metric whose denominator holds cases a preflight RAISED', async () => {
+        const { computeMetric } = await import('#src/metrics.js');
+        const result = computeMetric(accuracyOver('actual.label'), corpus(), []);
+
+        expect(result.warnings.join('\n')).toMatch(
+          /1 of 3 case\(s\) in this denominator had their label RAISED/
+        );
+        expect(result.warnings.join('\n')).toMatch(/floored/);
+        expect(result.warnings.join('\n')).toMatch(/`model.label`/);
+      });
+
+      it('does NOT warn when the metric already reads the model’s label', async () => {
+        const { computeMetric } = await import('#src/metrics.js');
+        const result = computeMetric(accuracyOver('model.label'), corpus(), []);
+
+        expect(result.warnings.join('\n')).not.toMatch(/RAISED/);
+      });
+
+      it('treats an absent model label like any other absent field — the same free-hit warning', async () => {
+        // Proves the field is wired into the engine's own field readers rather than special-cased:
+        // a model-free corpus carries no rating, so a metric over `model.label` is subject to the
+        // identical absent-field hazard and says so.
+        const { computeMetric } = await import('#src/metrics.js');
+        const result = computeMetric(accuracyOver('model.label'), [cell({ id: 'fl-01' })], []);
+
+        expect(result.warnings.join('\n')).toMatch(/do not carry every field this metric reads/);
+        expect(result.warnings.join('\n')).toMatch(/model\.label/);
+      });
     });
 
     it('reports an empty denominator as n/a, never as a flattering 0%', async () => {

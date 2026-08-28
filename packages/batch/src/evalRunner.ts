@@ -402,6 +402,7 @@ export function toClassifiedCells(results: EvalCaseResult[]): ClassifiedCell[] {
     expectedAction: result.classification?.expectedAction,
     actualLabel: result.classification?.actualLabel,
     actualAction: result.classification?.actualAction,
+    modelLabel: result.classification?.modelLabel,
     scored: result.sutOk && result.classification !== undefined,
   }));
 }
@@ -440,6 +441,7 @@ function buildActualClassifications(
 
     let actualLabel: string | undefined;
     let actualAction: string | undefined;
+    let modelLabel: string | undefined;
     let raw: string | undefined;
 
     if (outcome) {
@@ -451,9 +453,18 @@ function buildActualClassifications(
         outcome.ok && spec.actions.length > 0
           ? normalizeAgainstEnum(outcome.action, spec.actions)
           : undefined;
+      // BATCH-26 — the model's own judgement, held to the same enum for the same reason. Absent
+      // when the target rendered none, which is how a model-free cell stays out of a rater-accuracy
+      // denominator narrowed with `over: ["model.label != none"]`.
+      modelLabel = outcome.ok ? normalizeAgainstEnum(outcome.modelLabel, spec.labels) : undefined;
       raw = outcome.rationale;
     } else if (answer !== undefined) {
       actualLabel = extractClassificationValue(answer, spec.labelFrom, spec.labels);
+      // BATCH-26 — on THIS path the two are the same value, and saying so is what keeps the field
+      // total. Nothing stands between the model's answer and the label here: the extractor reads
+      // what the model said. Leaving it absent would make `over: ["model.label != none"]` silently
+      // exclude every suite that classifies by extraction.
+      modelLabel = actualLabel;
       if (spec.actionFrom) {
         actualAction = extractClassificationValue(answer, spec.actionFrom, spec.actions);
       }
@@ -468,6 +479,7 @@ function buildActualClassifications(
       expectedAction,
       actualLabel,
       actualAction,
+      modelLabel,
       raw,
       modelCalls: outcome?.modelCalls,
     };

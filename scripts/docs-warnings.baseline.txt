@@ -44,6 +44,7 @@ Code block with language yaml will not be highlighted in comment for docs/COMMAN
 Code block with language yaml will not be highlighted in comment for docs/COMMANDS as it was not included in the highlightLanguages option
 Code block with language yaml will not be highlighted in comment for docs/COMMANDS as it was not included in the highlightLanguages option
 Code block with language yaml will not be highlighted in comment for docs/COMMANDS as it was not included in the highlightLanguages option
+Code block with language yaml will not be highlighted in comment for docs/COMMANDS as it was not included in the highlightLanguages option
 Code block with language yaml will not be highlighted in comment for docs/configuration/content-sources as it was not included in the highlightLanguages option
 Code block with language yaml will not be highlighted in comment for docs/guides/evals as it was not included in the highlightLanguages option
 Code block with language yaml will not be highlighted in comment for docs/guides/evals as it was not included in the highlightLanguages option
@@ -81,9 +82,12 @@ Failed to resolve link to "../types.js CellRunOutcome" in comment for @gaunt-slo
 Failed to resolve link to "../types.js RunCellFn" in comment for @gaunt-sloth/batch.evalTypes.js.RunConversationFn
 Failed to resolve link to "../types.js" in comment for @gaunt-sloth/batch.evalTypes.js
 Failed to resolve link to "./classification.js" in comment for @gaunt-sloth/batch.classificationReport.js.buildClassificationReport
+Failed to resolve link to "./evalTypes.js ClassifyOutcome.modelLabel" in comment for @gaunt-sloth/batch.classificationTypes.js.ClassifiedCell.modelLabel
+Failed to resolve link to "./evalTypes.js ClassifyOutcome.modelLabel" in comment for @gaunt-sloth/batch.classificationTypes.js.EvalCaseClassification.modelLabel
 Failed to resolve link to "./evalTypes.js EvalCaseResult" in comment for @gaunt-sloth/batch.classificationTypes.js.EvalCaseClassification
 Failed to resolve link to "./evalTypes.js EvalSuiteSummary" in comment for @gaunt-sloth/batch.classificationTypes.js.EvalClassificationReport
 Failed to resolve link to "./evalTypes.js" in comment for @gaunt-sloth/batch.classificationTypes.js
+Failed to resolve link to "./metrics.js parseMetricPredicate" in comment for @gaunt-sloth/batch.classificationTypes.js.MetricField
 Failed to resolve link to "./metrics.js" in comment for @gaunt-sloth/batch.classificationReport.js.buildClassificationReport
 Failed to resolve link to "./raterVocabulary.js" in comment for @gaunt-sloth/core.core/shell/rater.PREFLIGHT_FLOOR_KINDS
 Failed to resolve link to "./raterVocabulary.js" in comment for @gaunt-sloth/core.core/shell/rater.RATER_ACTIONS
