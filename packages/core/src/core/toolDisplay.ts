@@ -23,10 +23,18 @@
  *  - **Secret redaction reuses the GS2-47 `redactSecrets` lineage** (literal env/config secrets +
  *    provider key patterns) — no new redactor. Applied to the params summary and every
  *    preview/body line, fail-safe (redact MORE on any error, never leak).
+ *  - **Untrusted text is NEUTRALISED before it can reach a terminal** ([[TUI-C102]]). A tool
+ *    result is a file's bytes, a fetched page, an MCP server's response or a command's stdout,
+ *    and a string is not inert on a terminal: SGR colour plus cursor positioning lets it paint
+ *    something shaped like gsloth's own approval prompt a few rows from the real one. Every
+ *    rendered line AND the params summary go through {@link neutralizeUntrustedText} — the same
+ *    neutraliser `core/shell/framing` gives the approval dialog and the attack banner, reused
+ *    rather than reimplemented so the two paths cannot come to disagree about what is inert.
  *  - **`write_file`/`edit_file` render the change as a diff derived from the tool's ARGS**
  *    (added = `added` style/green, removed = `removed` style/red); monochrome keeps the `+`/`-`
  *    prefixes so the diff still reads without colour (DL-7 graceful degradation).
  */
+import { neutralizeToOneLine, neutralizeUntrustedText } from '#src/core/shell/framing.js';
 import { displayWidth, sliceToWidth } from '#src/utils/displayWidth.js';
 import { collectSecretValues, redactText } from '#src/utils/redactSecrets.js';
 import { env } from '#src/utils/systemUtils.js';
@@ -246,11 +254,6 @@ export function resetToolDisplaySecretsCacheForTests(): void {
   displayConfig = undefined;
 }
 
-/** Collapse whitespace runs (incl. newlines) so a value stays a one-line token. */
-function inline(value: string): string {
-  return value.replace(/\s+/g, ' ').trim();
-}
-
 /**
  * Truncate to `max` terminal COLUMNS with the {@link ELLIPSIS} marker, reserving the marker's own
  * width out of the budget. Slicing goes through the shared width primitive: a code-point count
@@ -269,14 +272,22 @@ function truncate(value: string, max: number): string {
 }
 
 /**
- * Render one arg value for the summary: strings inline+truncated, the rest JSON-ish.
+ * Render one arg value for the summary: strings neutralised onto one line + truncated, the rest
+ * JSON-ish.
  *
- * ORDER MATTERS (fix-cycle-1 finding): redaction runs BEFORE any transformation. Truncating
- * first would bisect a literal secret longer than the value cap so it no longer
- * literal-matches — its head would render in the call summary on both surfaces (a partial
- * leak); whitespace-collapsing first could likewise alter a literal out of matching. So:
- * redact the RAW text, then inline, then truncate (`<redacted>` contains no whitespace and is
- * shorter than the cap, so the later steps can never damage the marker).
+ * ORDER MATTERS (fix-cycle-1 finding, extended by [[TUI-C102]]): **redaction runs BEFORE any
+ * transformation.** Truncating first would bisect a literal secret longer than the value cap so it
+ * no longer literal-matches — its head would render in the call summary on both surfaces (a
+ * partial leak); whitespace-collapsing first could likewise alter a literal out of matching; and
+ * **neutralising first breaks the same match**, since a secret whose literal carries a control
+ * character stops matching the moment that character is rewritten to `\x0b`. So: redact the RAW
+ * text, then neutralise onto one line, then truncate (`<redacted>` contains no whitespace, no
+ * control characters and is shorter than the cap, so the later steps can never damage the marker).
+ *
+ * {@link neutralizeToOneLine} is the approval dialog's own helper and does the whitespace collapse
+ * this used to do locally — deliberately reused, because a private collapse was exactly how this
+ * path came to look tidy while an ESC walked through it: JavaScript's `\s` covers LF, CR and TAB
+ * but not ESC, BEL, the C1 range or the bidi overrides.
  */
 function formatParamValue(value: unknown, secrets: readonly string[]): string {
   let text: string;
@@ -291,7 +302,7 @@ function formatParamValue(value: unknown, secrets: readonly string[]): string {
       text = String(value);
     }
   }
-  return truncate(inline(redactText(text, secrets)), TOOL_PARAM_VALUE_MAX_CHARS);
+  return truncate(neutralizeToOneLine(redactText(text, secrets)), TOOL_PARAM_VALUE_MAX_CHARS);
 }
 
 /** Split into lines, dropping a single trailing newline's phantom empty last element. */
@@ -534,7 +545,13 @@ export function summariseToolCall(
   // Redact before the whole-summary cap too, so this truncation can no more bisect a secret
   // out of literal-matching than the per-value one can.
   const inner = truncate(redactText(parts.join(', '), secrets), TOOL_SUMMARY_MAX_CHARS);
-  return redactText(`${label}(${inner})`, secrets);
+  // [[TUI-C102]] — the values were neutralised one by one above (each needed it before its own
+  // width budget could mean anything); this last pass covers the two strings that never went
+  // through {@link formatParamValue}: the tool NAME and the arg KEYS. Neither is ours — an MCP
+  // server names its own tools, and an unregistered tool's keys are whatever the model streamed.
+  // Idempotent over the values, whose escape alphabet (`\`, `x`, `u`, `{`, `}`, hex) holds nothing
+  // for it to rewrite.
+  return neutralizeUntrustedText(redactText(`${label}(${inner})`, secrets));
 }
 
 /* ------------------------------------------------------------------------- *
@@ -544,8 +561,8 @@ export function summariseToolCall(
 /**
  * The FULL (uncapped) body lines for a call: the registry formatter when one applies, else the
  * shape-based shell formatter, else the generic fallback (live output lines, then the final
- * result — both dim). Every line is secret-redacted. Used by the TUI's EXPANDED panel; cap it
- * with {@link capToolDisplayLines} for the collapsed preview.
+ * result — both dim). Every line is secret-redacted and then neutralised. Used by the TUI's
+ * EXPANDED panel; cap it with {@link capToolDisplayLines} for the collapsed preview.
  */
 export function buildToolBodyLines(
   input: ToolCallDisplayInput,
@@ -567,7 +584,35 @@ export function buildToolBodyLines(
       lines.push(...styled(toLines(input.result), 'dim'));
     }
   }
-  return lines.map((l) => ({ ...l, text: redactText(l.text, secrets) }));
+  // [[TUI-C102]] — THE ORDER OF THESE TWO STEPS, AND OF THE CAP THAT FOLLOWS THEM, IS LOAD-BEARING.
+  //
+  //  1. REDACT the raw text. A secret literal that carries a control character stops matching the
+  //     moment that character is rewritten to `\x0b`, so neutralising first would leave the secret
+  //     on the screen — the same argument {@link formatParamValue} makes about truncating first.
+  //  2. NEUTRALISE what redaction returns, so nothing downstream ever holds an escape.
+  //  3. CAP last ({@link capToolDisplayLines}, via {@link buildToolPreviewLines}). A neutralised
+  //     line is WIDER than the raw one — `\x1b[2J` is 8 printable columns where the sequence was 0
+  //     — and the cap measures a line by what it RENDERS as. Because the escapes are already gone
+  //     when it looks, the width it measures and the text it slices are the same string. Capping
+  //     first would measure the raw line, discount escapes that the neutralised text no longer
+  //     has, and hand back a row that over-runs the terminal it is drawn on.
+  //
+  // INVARIANT this step relies on: **a line arriving here holds no `\n`.** Neutralisation would
+  // rewrite one to a literal `\x0a` and silently collapse multi-line output onto a single row.
+  // Every producer was checked: the generic fallback, {@link formatShellBody},
+  // {@link formatWriteFileBody} and {@link formatEditFileBody} all split through {@link toLines},
+  // and {@link TOOL_DISPLAY_REGISTRY} is module-private, so there is no third-party `formatBody`.
+  // A new formatter must split its own output rather than return an embedded newline.
+  //
+  // OUT OF SCOPE, deliberately: `/debug-dump` (GS2-46) stays an UNSANITIZED archive. Neutralising
+  // is about what a TERMINAL does with a string; a dump is written to a file, is read with tools
+  // that render bytes as bytes, and exists to reproduce a failure — escaping its contents would
+  // destroy the evidence it is collected for. It is redacted for secrets, which is the property
+  // that actually travels with a file someone may attach to an issue.
+  return lines.map((l) => ({
+    ...l,
+    text: neutralizeUntrustedText(redactText(l.text, secrets)),
+  }));
 }
 
 /**
@@ -575,6 +620,12 @@ export function buildToolBodyLines(
  * {@link TOOL_PREVIEW_LINE_MAX_CHARS} with `…`), plus a dim `… (+N more lines)` overflow
  * marker when anything was cut. The marker line is IN ADDITION to the cap so exactly how much
  * was hidden is always stated (DL-4 transparency).
+ *
+ * This stays a GENERIC width utility and does not neutralise: it measures a line by what it
+ * RENDERS as, so a caller passing genuinely styled text (the renderer's own SGR) gets a cap that
+ * counts the columns the user sees rather than the escapes' own bytes. Lines that arrive from
+ * {@link buildToolBodyLines} have already been neutralised, so for the tool path there is simply
+ * nothing left to discount — the discount survives for the callers it was written for.
  */
 export function capToolDisplayLines(
   lines: ToolDisplayLine[],

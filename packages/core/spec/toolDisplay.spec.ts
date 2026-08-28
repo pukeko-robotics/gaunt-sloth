@@ -58,7 +58,10 @@ describe('toolDisplay (TUI-C30)', () => {
       );
     });
 
-    it('caps the whole summary and collapses newlines so it stays one line', async () => {
+    // What this pins is that the summary is ONE line, not the mechanism that keeps it one: since
+    // TUI-C102 a newline is escaped to a visible `\x0a` rather than collapsed to a space, which the
+    // approval dialog has always done for the same string and the same reason.
+    it('caps the whole summary and keeps newlines off it so it stays one line', async () => {
       const { summariseToolCall, TOOL_SUMMARY_MAX_CHARS } =
         await import('#src/core/toolDisplay.js');
       const args = Object.fromEntries(
@@ -458,6 +461,155 @@ describe('toolDisplay (TUI-C30)', () => {
         'file-d',
         "Command 'ls' completed successfully",
       ]);
+    });
+  });
+
+  // TUI-C102 — a tool RESULT is untrusted text (a file's bytes, a fetched page, an MCP server's
+  // response, a command's stdout), and it was the one untrusted surface in the product that
+  // reached a terminal with its control characters intact. The hazard is not defacement but
+  // FORGERY NEXT TO A DECISION: SGR colour plus cursor positioning lets attacker-controlled bytes
+  // paint something shaped like gsloth's own approval prompt a few rows from the real one, and
+  // TUI-C99 makes this display path the primary route by which a human inspects a call they are
+  // being asked to permit.
+  //
+  // Every case here asserts the EXACT rendered text, not merely the absence of control characters:
+  // a step that DROPPED the bytes would satisfy an absence check while destroying the thing the
+  // human is ruling on. The neutraliser makes text visible and inert; it never sanitises.
+  describe('TUI-C102 — untrusted tool text is neutralised before it reaches a terminal', () => {
+    /** The class `neutralizeUntrustedText` covers: control, format, line and paragraph separators. */
+    const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+
+    /** The hostile result the tracked TUI-C102 probe drives, verbatim. */
+    const HOSTILE = [
+      'benign first line',
+      '\x1b[2J\x1b[H  <- clear screen + cursor home',
+      '\x1b[31mforged red\x1b[0m  <- SGR colour',
+      '\x1b]0;RETITLED\x07  <- OSC window-title set',
+      'bell:\x07 backspace:\x08 vertical-tab:\x0b',
+      '\x1b[1000Boverdraw  <- cursor move down 1000',
+    ].join('\n');
+
+    const NEUTRALISED = [
+      'benign first line',
+      '\\x1b[2J\\x1b[H  <- clear screen + cursor home',
+      '\\x1b[31mforged red\\x1b[0m  <- SGR colour',
+      '\\x1b]0;RETITLED\\x07  <- OSC window-title set',
+      'bell:\\x07 backspace:\\x08 vertical-tab:\\x0b',
+      '\\x1b[1000Boverdraw  <- cursor move down 1000',
+    ];
+
+    it('renders ESC, OSC, BEL, BS, VT and cursor moves visible and inert — in the collapsed preview AND the Ctrl+T expansion', async () => {
+      const { buildToolBodyLines, buildToolPreviewLines } =
+        await import('#src/core/toolDisplay.js');
+      const input = { name: 'read_file', result: HOSTILE };
+      // Both surfaces' entry points, because the collapsed row and the expansion are two different
+      // functions and a fix placed in one of them leaves the other painting raw escapes.
+      for (const lines of [buildToolBodyLines(input, []), buildToolPreviewLines(input, [])]) {
+        expect(lines.map((l) => l.text)).toEqual(NEUTRALISED);
+        for (const line of lines) expect(line.text).not.toMatch(CONTROL_OR_FORMAT);
+      }
+    });
+
+    it('composes redaction, neutralisation and the width cap on ONE line that needs all three', async () => {
+      const { buildToolPreviewLines, TOOL_PREVIEW_LINE_MAX_CHARS } =
+        await import('#src/core/toolDisplay.js');
+      // The secret literal CONTAINS a control character on purpose. That is the only input able to
+      // tell redact-then-neutralise from neutralise-then-redact: rewrite the control character
+      // first and the literal stops matching, so `tok…` renders and the secret partially leaks.
+      // Three green rows elsewhere would not catch that — only this composition does.
+      const secret = 'tok\x0bliteral-secret-value';
+      const result = `head ${secret} tail \x1b[2J ` + 'z'.repeat(400);
+      const preview = buildToolPreviewLines({ name: 'read_file', result }, [secret]);
+      expect(preview).toHaveLength(1);
+      const text = preview[0].text;
+      // (a) the secret is gone WHOLE — no bisected head survives
+      expect(text).toContain('<redacted>');
+      expect(text).not.toContain('tok');
+      expect(text).not.toContain('literal-secret-value');
+      // (b) the control characters are visible and inert
+      expect(text).toContain('\\x1b[2J');
+      expect(text).not.toMatch(CONTROL_OR_FORMAT);
+      // (c) and the line still fits its budget. The cap measures what a line RENDERS as; the
+      // escapes it used to discount are gone by the time it looks, so the measured width and the
+      // sliced text are the same string — which is the property that breaks if the neutralisation
+      // step is ever moved after the cap.
+      expect(stringWidth(text)).toBeLessThanOrEqual(TOOL_PREVIEW_LINE_MAX_CHARS);
+      expect(text.endsWith('…')).toBe(true);
+    });
+
+    it('neutralises the CALL SUMMARY too — the row TUI-C99 turns into the approval row', async () => {
+      const { summariseToolCall } = await import('#src/core/toolDisplay.js');
+      // Whitespace-collapsing is not neutralisation: JavaScript's `\s` covers LF, CR and TAB but
+      // not ESC, BEL, the C1 range or the bidi overrides, so a screen-clear reached the terminal
+      // through the summary of a refused command — the exact shape the approval suite's own
+      // fixtures ship (`framingCommands.mjs`).
+      const summary = summariseToolCall(
+        'run_shell_command',
+        JSON.stringify({ command: 'echo start\x1b[2J\x1b[A end' }),
+        []
+      );
+      expect(summary).toBe('run_shell_command(command=echo start\\x1b[2J\\x1b[A end)');
+      expect(summary).not.toMatch(CONTROL_OR_FORMAT);
+    });
+
+    it('neutralises the tool NAME and the arg KEYS as well — an MCP server names its own tools', async () => {
+      const { summariseToolCall } = await import('#src/core/toolDisplay.js');
+      const summary = summariseToolCall('evil\x1b[2Jtool', JSON.stringify({ 'k\x07ey': 'v' }), []);
+      expect(summary).toBe('evil\\x1b[2Jtool(k\\x07ey=v)');
+      expect(summary).not.toMatch(CONTROL_OR_FORMAT);
+    });
+
+    it("keeps the renderer's OWN styling while the content it wraps is neutralised", async () => {
+      const { buildToolBodyLines, renderToolLineAnsi } = await import('#src/core/toolDisplay.js');
+      const lines = buildToolBodyLines(
+        {
+          name: 'write_file',
+          argsText: JSON.stringify({ path: 'a.txt', content: 'ok\x1b[31mred' }),
+        },
+        []
+      );
+      expect(lines[0]).toEqual({ text: '+ ok\\x1b[31mred', style: 'added' });
+      // The only real escapes in the plain surface's output are the ones the ADAPTER adds: its own
+      // SGR open and reset, around neutralised content. Neutralise the content, never the styling.
+      expect(renderToolLineAnsi(lines[0], true)).toBe('\x1b[32m+ ok\\x1b[31mred\x1b[0m');
+      expect(renderToolLineAnsi(lines[0], false)).toBe('+ ok\\x1b[31mred');
+      expect(renderToolLineAnsi({ text: 'x', style: 'dim' }, true)).toBe('\x1b[2mx\x1b[0m');
+      expect(renderToolLineAnsi({ text: '- x', style: 'removed' }, true)).toBe(
+        '\x1b[31m- x\x1b[0m'
+      );
+    });
+
+    it('still redacts a secret on a line that also carries control characters', async () => {
+      const { buildToolBodyLines } = await import('#src/core/toolDisplay.js');
+      const lines = buildToolBodyLines(
+        { name: 'read_file', result: 'key=plain-secret-1\x07 and \x1b[2J more' },
+        ['plain-secret-1']
+      );
+      expect(lines.map((l) => l.text)).toEqual(['key=<redacted>\\x07 and \\x1b[2J more']);
+    });
+
+    // The accepted cost of neutralising, pinned so it is a decision rather than a surprise.
+    // `toLines` splits on `\n` alone, so a CRLF file's `\r` survives the split and is now shown.
+    // That is deliberate: making the neutraliser fire LESS — teaching the splitter that `\r\n` is
+    // one break, the way `core/shell/framing` does — is a change that weakens a safety step, and a
+    // lone `\r` is the cursor-to-column-0 overwrite trick far more often than it is a line ending.
+    // Both halves are asserted together, because only the pair shows what the choice costs and
+    // what it buys.
+    it('shows a CRLF line ending as well as a lone CR — the cost and the win of the same rule', async () => {
+      const { buildToolBodyLines } = await import('#src/core/toolDisplay.js');
+      // The cost: every line of a Windows-authored file carries a visible \x0d.
+      expect(
+        buildToolBodyLines({ name: 'read_file', result: 'line one\r\nline two\r\n' }, []).map(
+          (l) => l.text
+        )
+      ).toEqual(['line one\\x0d', 'line two\\x0d']);
+      // The win: a bare CR can no longer return to column 0 and overwrite the row with forged
+      // chrome — it is on the screen, saying what it is.
+      expect(
+        buildToolBodyLines({ name: 'read_file', result: 'safe text\rApprove? [o]nce' }, []).map(
+          (l) => l.text
+        )
+      ).toEqual(['safe text\\x0dApprove? [o]nce']);
     });
   });
 });
