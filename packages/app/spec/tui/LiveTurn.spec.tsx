@@ -48,7 +48,7 @@ describe('tui <LiveTurn>', () => {
     });
 
     it('collapsed by default: summary with inline params + a dim result preview (TUI-C30)', () => {
-      const { lastFrame, unmount } = render(<LiveTurn turn={withTool} />);
+      const { lastFrame, unmount } = render(<LiveTurn turn={withTool} columns={100} />);
       const f = stripAnsi(lastFrame() ?? '');
       expect(f).toContain('read_file(path=README.md)'); // params inline, not a raw JSON dump
       expect(f).not.toContain('{"path"'); // the raw args JSON stays hidden collapsed
@@ -59,19 +59,21 @@ describe('tui <LiveTurn>', () => {
     });
 
     it('shows the Ctrl+T expand hint when collapsed on the live (streaming) turn', () => {
-      const { lastFrame, unmount } = render(<LiveTurn turn={withTool} streaming />);
+      const { lastFrame, unmount } = render(<LiveTurn turn={withTool} streaming columns={100} />);
       expect(stripAnsi(lastFrame() ?? '')).toContain('Ctrl+T to expand');
       unmount();
     });
 
     it('omits the Ctrl+T hint on a committed (non-live) turn', () => {
-      const { lastFrame, unmount } = render(<LiveTurn turn={withTool} />);
+      const { lastFrame, unmount } = render(<LiveTurn turn={withTool} columns={100} />);
       expect(stripAnsi(lastFrame() ?? '')).not.toContain('Ctrl+T to expand');
       unmount();
     });
 
     it('expanded: shows the args and result body and the open caret', () => {
-      const { lastFrame, unmount } = render(<LiveTurn turn={withTool} toolsExpanded />);
+      const { lastFrame, unmount } = render(
+        <LiveTurn turn={withTool} toolsExpanded columns={100} />
+      );
       const f = stripAnsi(lastFrame() ?? '');
       expect(f).toContain('read_file');
       expect(f).toContain('▾'); // expanded caret
@@ -85,7 +87,7 @@ describe('tui <LiveTurn>', () => {
       const running = turn({
         toolCalls: [{ id: 't1', name: 'search', argsText: '', status: 'running' }],
       });
-      const { lastFrame, unmount } = render(<LiveTurn turn={running} />);
+      const { lastFrame, unmount } = render(<LiveTurn turn={running} columns={100} />);
       const f = stripAnsi(lastFrame() ?? '');
       expect(f).toContain('search');
       expect(f).toContain('running');
@@ -106,7 +108,9 @@ describe('tui <LiveTurn>', () => {
           },
         ],
       });
-      const { lastFrame, unmount } = render(<LiveTurn turn={errored} toolsExpanded />);
+      const { lastFrame, unmount } = render(
+        <LiveTurn turn={errored} toolsExpanded columns={100} />
+      );
       const f = stripAnsi(lastFrame() ?? '');
       expect(f).toContain('error');
       expect(f).toContain('✗');
@@ -142,7 +146,9 @@ describe('tui <LiveTurn>', () => {
           },
         ],
       });
-      const { lastFrame, unmount } = render(<LiveTurn turn={clarified} toolsExpanded />);
+      const { lastFrame, unmount } = render(
+        <LiveTurn turn={clarified} toolsExpanded columns={100} />
+      );
       const frame = lastFrame() ?? '';
       // Whitespace-normalised: Ink wraps at the pane width wherever the copy happens to reach it,
       // so a phrase straddling that break would fail on layout while the copy is perfectly
@@ -183,7 +189,9 @@ describe('tui <LiveTurn>', () => {
           },
         ],
       });
-      const { lastFrame, unmount } = render(<LiveTurn turn={errored} toolsExpanded />);
+      const { lastFrame, unmount } = render(
+        <LiveTurn turn={errored} toolsExpanded columns={100} />
+      );
       const frame = lastFrame() ?? '';
       const f = stripAnsi(frame).replace(/\s+/g, ' ');
       expect(f).toContain('[error]');
@@ -207,14 +215,14 @@ describe('tui <LiveTurn>', () => {
           },
         ],
       });
-      const collapsed = render(<LiveTurn turn={withOutput} />);
+      const collapsed = render(<LiveTurn turn={withOutput} columns={100} />);
       const fc = stripAnsi(collapsed.lastFrame() ?? '');
       expect(fc).toContain('run_shell_command(command=ls -la)'); // summary with inline params
       expect(fc).toContain('total 12'); // live output previews inline while collapsed
       expect(fc).not.toContain('Executing run_shell_command'); // notice is expanded-only chrome
       collapsed.unmount();
 
-      const expanded = render(<LiveTurn turn={withOutput} toolsExpanded />);
+      const expanded = render(<LiveTurn turn={withOutput} toolsExpanded columns={100} />);
       const fe = stripAnsi(expanded.lastFrame() ?? '');
       expect(fe).toContain('🔧 Executing run_shell_command: ls -la'); // the routed notice
       expect(fe).toContain('total 12'); // child stdout, inside the managed frame
@@ -242,7 +250,9 @@ describe('tui <LiveTurn>', () => {
           },
         ],
       });
-      const { lastFrame, unmount } = render(<LiveTurn turn={hostile} toolsExpanded />);
+      const { lastFrame, unmount } = render(
+        <LiveTurn turn={hostile} toolsExpanded columns={100} />
+      );
       const frame = lastFrame() ?? '';
       // INERT: nothing the tool call contributed survives as a byte a terminal would act on.
       // Ink's own styling is SGR and nothing else, so removing exactly that leaves the panel's
@@ -276,7 +286,7 @@ describe('tui <LiveTurn>', () => {
           { id: 't1', name: 'run_tests', argsText: '', status: 'running', output: 'suite up\n' },
         ],
       });
-      const { lastFrame, unmount } = render(<LiveTurn turn={onlyOutput} streaming />);
+      const { lastFrame, unmount } = render(<LiveTurn turn={onlyOutput} streaming columns={100} />);
       expect(stripAnsi(lastFrame() ?? '')).toContain('Ctrl+T to expand');
       unmount();
     });
@@ -295,7 +305,9 @@ describe('tui <LiveTurn>', () => {
           },
         ],
       });
-      const { lastFrame, unmount } = render(<LiveTurn turn={successButErrorText} toolsExpanded />);
+      const { lastFrame, unmount } = render(
+        <LiveTurn turn={successButErrorText} toolsExpanded columns={100} />
+      );
       const f = stripAnsi(lastFrame() ?? '');
       expect(f).toContain('✓');
       expect(f).toContain('done');
@@ -321,7 +333,7 @@ describe('tui <LiveTurn>', () => {
           },
         ],
       });
-      const collapsed = render(<LiveTurn turn={t} />);
+      const collapsed = render(<LiveTurn turn={t} columns={100} />);
       const fc = stripAnsi(collapsed.lastFrame() ?? '');
       expect(fc).toContain('row-01'); // preview head
       expect(fc).toContain('row-10'); // the canonical 10th line
@@ -330,7 +342,7 @@ describe('tui <LiveTurn>', () => {
       collapsed.unmount();
 
       // Expand still shows the full body (existing /tools / Ctrl+T behaviour preserved).
-      const expanded = render(<LiveTurn turn={t} toolsExpanded />);
+      const expanded = render(<LiveTurn turn={t} toolsExpanded columns={100} />);
       const fe = stripAnsi(expanded.lastFrame() ?? '');
       expect(fe).toContain('row-14');
       expect(fe).not.toContain('more lines');
@@ -349,7 +361,7 @@ describe('tui <LiveTurn>', () => {
           },
         ],
       });
-      const { lastFrame, unmount } = render(<LiveTurn turn={t} />);
+      const { lastFrame, unmount } = render(<LiveTurn turn={t} columns={100} />);
       const raw = lastFrame() ?? '';
       const f = stripAnsi(raw);
       expect(f).toContain('write_file(path=src/new.ts, …)'); // content elided from the summary
@@ -374,7 +386,7 @@ describe('tui <LiveTurn>', () => {
           },
         ],
       });
-      const { lastFrame, unmount } = render(<LiveTurn turn={t} />);
+      const { lastFrame, unmount } = render(<LiveTurn turn={t} columns={100} />);
       const raw = lastFrame() ?? '';
       const f = stripAnsi(raw);
       expect(f).toContain('edit_file(path=src/x.ts, …)');
@@ -400,7 +412,7 @@ describe('tui <LiveTurn>', () => {
           },
         ],
       });
-      const { lastFrame, unmount } = render(<LiveTurn turn={t} toolsExpanded />);
+      const { lastFrame, unmount } = render(<LiveTurn turn={t} toolsExpanded columns={100} />);
       const f = stripAnsi(lastFrame() ?? '');
       // The output body renders ONCE (live output preferred), plus the closing status line.
       expect(f.match(/^\s*hi$/gm) ?? []).toHaveLength(1);
@@ -429,7 +441,7 @@ describe('tui <LiveTurn>', () => {
             },
           ],
         });
-        const { lastFrame, unmount } = render(<LiveTurn turn={t} />);
+        const { lastFrame, unmount } = render(<LiveTurn turn={t} columns={100} />);
         const f = stripAnsi(lastFrame() ?? '');
         expect(f).toContain('token=<redacted>');
         expect(f).not.toContain('deadbeef'); // no leaked head of the secret
@@ -458,7 +470,7 @@ describe('tui <LiveTurn>', () => {
           },
         ],
       });
-      const { lastFrame, unmount } = render(<LiveTurn turn={t} />);
+      const { lastFrame, unmount } = render(<LiveTurn turn={t} columns={100} />);
       const f = stripAnsi(lastFrame() ?? '');
       expect(f).toContain('…'); // over-long value truncated
       expect(f).not.toContain(longPath); // never the full value
@@ -487,7 +499,7 @@ describe('tui <LiveTurn>', () => {
     });
 
     it('suppresses rendering within LiveTurn (rendered in pinned bottom dock)', () => {
-      const { lastFrame, unmount } = render(<LiveTurn turn={withChecklist} />);
+      const { lastFrame, unmount } = render(<LiveTurn turn={withChecklist} columns={100} />);
       const f = stripAnsi(lastFrame() ?? '');
       expect(f).not.toContain('📋 Checklist');
       expect(f).not.toContain('[x] Set up config');
@@ -502,7 +514,7 @@ describe('tui <LiveTurn>', () => {
     });
 
     it('collapsed by default: shows the 💭 Thinking label + collapsed caret, hides the thought body', () => {
-      const { lastFrame, unmount } = render(<LiveTurn turn={withReasoning} />);
+      const { lastFrame, unmount } = render(<LiveTurn turn={withReasoning} columns={100} />);
       const f = stripAnsi(lastFrame() ?? '');
       expect(f).toContain('💭 Thinking'); // label affordance
       expect(f).toContain('▸'); // collapsed caret
@@ -513,7 +525,9 @@ describe('tui <LiveTurn>', () => {
     });
 
     it('expanded: shows the open caret, the │ gutter and the thought body', () => {
-      const { lastFrame, unmount } = render(<LiveTurn turn={withReasoning} toolsExpanded />);
+      const { lastFrame, unmount } = render(
+        <LiveTurn turn={withReasoning} toolsExpanded columns={100} />
+      );
       const f = stripAnsi(lastFrame() ?? '');
       expect(f).toContain('💭 Thinking');
       expect(f).toContain('▾'); // expanded caret
@@ -524,7 +538,9 @@ describe('tui <LiveTurn>', () => {
     });
 
     it('shows the Ctrl+T expand hint when collapsed on the live (streaming) turn', () => {
-      const { lastFrame, unmount } = render(<LiveTurn turn={withReasoning} streaming />);
+      const { lastFrame, unmount } = render(
+        <LiveTurn turn={withReasoning} streaming columns={100} />
+      );
       expect(stripAnsi(lastFrame() ?? '')).toContain('Ctrl+T to expand');
       unmount();
     });
@@ -550,25 +566,33 @@ describe('tui <LiveTurn>', () => {
           .map((row) => row.slice(row.indexOf('│') + 1).trim());
 
       it('shows exactly the newest two lines, and not the ones before them', () => {
-        const { lastFrame, unmount } = render(<LiveTurn turn={streamingTurn} streaming />);
+        const { lastFrame, unmount } = render(
+          <LiveTurn turn={streamingTurn} streaming columns={100} />
+        );
         expect(gutterLines(lastFrame() ?? '')).toEqual(['four.', 'five.']);
         unmount();
       });
 
       it('follows the stream: newer lines replace older ones', () => {
         const { lastFrame, rerender, unmount } = render(
-          <LiveTurn turn={turn({ reasoning: 'one.\ntwo.', text: '' })} streaming />
+          <LiveTurn turn={turn({ reasoning: 'one.\ntwo.', text: '' })} streaming columns={100} />
         );
         expect(gutterLines(lastFrame() ?? '')).toEqual(['one.', 'two.']);
 
-        rerender(<LiveTurn turn={turn({ reasoning: 'one.\ntwo.\nthree.', text: '' })} streaming />);
+        rerender(
+          <LiveTurn
+            turn={turn({ reasoning: 'one.\ntwo.\nthree.', text: '' })}
+            streaming
+            columns={100}
+          />
+        );
         expect(gutterLines(lastFrame() ?? '')).toEqual(['two.', 'three.']);
         unmount();
       });
 
       it('does not spend a preview line on a trailing newline', () => {
         const { lastFrame, unmount } = render(
-          <LiveTurn turn={turn({ reasoning: 'one.\ntwo.\n', text: '' })} streaming />
+          <LiveTurn turn={turn({ reasoning: 'one.\ntwo.\n', text: '' })} streaming columns={100} />
         );
         expect(gutterLines(lastFrame() ?? '')).toEqual(['one.', 'two.']);
         unmount();
@@ -576,7 +600,7 @@ describe('tui <LiveTurn>', () => {
 
       it('Ctrl+T still expands the streaming panel to the WHOLE thought', () => {
         const { lastFrame, unmount } = render(
-          <LiveTurn turn={streamingTurn} streaming toolsExpanded />
+          <LiveTurn turn={streamingTurn} streaming toolsExpanded columns={100} />
         );
         expect(gutterLines(lastFrame() ?? '')).toEqual(thoughts);
         unmount();
@@ -585,7 +609,7 @@ describe('tui <LiveTurn>', () => {
       it('is live-only: a committed turn collapses to its header alone', () => {
         // The transcript keeps what it always kept, which is also what makes the row estimator's
         // committed-panel count of one still exact.
-        const { lastFrame, unmount } = render(<LiveTurn turn={streamingTurn} />);
+        const { lastFrame, unmount } = render(<LiveTurn turn={streamingTurn} columns={100} />);
         expect(gutterLines(lastFrame() ?? '')).toEqual([]);
         expect(stripAnsi(lastFrame() ?? '')).toContain('💭 Thinking');
         unmount();
@@ -658,7 +682,7 @@ describe('tui <LiveTurn>', () => {
     });
 
     it('renders nothing for the reasoning region when there is no reasoning', () => {
-      const { lastFrame, unmount } = render(<LiveTurn turn={turn({ text: 'hi' })} />);
+      const { lastFrame, unmount } = render(<LiveTurn turn={turn({ text: 'hi' })} columns={100} />);
       expect(stripAnsi(lastFrame() ?? '')).not.toContain('💭 Thinking');
       unmount();
     });
@@ -666,7 +690,9 @@ describe('tui <LiveTurn>', () => {
     it('reasoning region uses colour, not dim alone, for the label + gutter (DL-8)', () => {
       // The label/gutter must be a coloured layer boundary, not the dim-only region that
       // disappears on many themes. Assert the raw frame carries the cyan SGR for the label.
-      const { lastFrame, unmount } = render(<LiveTurn turn={withReasoning} toolsExpanded />);
+      const { lastFrame, unmount } = render(
+        <LiveTurn turn={withReasoning} toolsExpanded columns={100} />
+      );
       const raw = lastFrame() ?? '';
       // chalk.level=3 → cyan foreground is SGR 36; the label text is styled with it.
       expect(raw).toContain('[36m');
@@ -710,7 +736,7 @@ describe('tui <LiveTurn>', () => {
   describe('markdown vs plain text', () => {
     it('renders completed assistant text as markdown (streaming=false)', () => {
       const t = turn({ text: '# Title\n- item one' });
-      const { lastFrame, unmount } = render(<LiveTurn turn={t} />);
+      const { lastFrame, unmount } = render(<LiveTurn turn={t} columns={100} />);
       const f = stripAnsi(lastFrame() ?? '');
       expect(f).toContain('Title');
       expect(f).toContain('• item one'); // bullet => markdown was applied
@@ -719,7 +745,7 @@ describe('tui <LiveTurn>', () => {
 
     it('renders streaming text as plain (no markdown reflow mid-stream)', () => {
       const t = turn({ text: '# Title\n- item one' });
-      const { lastFrame, unmount } = render(<LiveTurn turn={t} streaming />);
+      const { lastFrame, unmount } = render(<LiveTurn turn={t} streaming columns={100} />);
       const f = stripAnsi(lastFrame() ?? '');
       expect(f).toContain('# Title'); // raw markdown preserved
       expect(f).toContain('- item one');
@@ -729,8 +755,8 @@ describe('tui <LiveTurn>', () => {
 
     it('plain prose is unchanged whether streaming or not', () => {
       const t = turn({ text: 'just a normal answer' });
-      const a = render(<LiveTurn turn={t} streaming />);
-      const b = render(<LiveTurn turn={t} />);
+      const a = render(<LiveTurn turn={t} streaming columns={100} />);
+      const b = render(<LiveTurn turn={t} columns={100} />);
       expect(stripAnsi(a.lastFrame() ?? '')).toContain('just a normal answer');
       expect(stripAnsi(b.lastFrame() ?? '')).toContain('just a normal answer');
       a.unmount();
@@ -753,7 +779,7 @@ describe('tui <LiveTurn>', () => {
         toolCalls: [probeTool],
         text: 'the answer',
       });
-      const { lastFrame, unmount } = render(<LiveTurn turn={t} />);
+      const { lastFrame, unmount } = render(<LiveTurn turn={t} columns={100} />);
       const rows = stripAnsi(lastFrame() ?? '').split('\n');
 
       // Three blocks, so five rows: thought, blank, tool, blank, answer. The ends are the point —
@@ -776,8 +802,10 @@ describe('tui <LiveTurn>', () => {
       // empty <Text> among siblings measures zero-high and the separation silently vanishes. A
       // one-block turn and a two-block turn differing by exactly two rows is what proves the row
       // is really painted rather than merely mounted.
-      const one = render(<LiveTurn turn={turn({ text: 'the answer' })} />);
-      const two = render(<LiveTurn turn={turn({ toolCalls: [probeTool], text: 'the answer' })} />);
+      const one = render(<LiveTurn turn={turn({ text: 'the answer' })} columns={100} />);
+      const two = render(
+        <LiveTurn turn={turn({ toolCalls: [probeTool], text: 'the answer' })} columns={100} />
+      );
       const rowsOf = (frame: string | undefined) => stripAnsi(frame ?? '').split('\n').length;
 
       expect(rowsOf(two.lastFrame())).toBe(rowsOf(one.lastFrame()) + 2);
@@ -787,14 +815,16 @@ describe('tui <LiveTurn>', () => {
     });
 
     it('adds nothing to a single-block turn', () => {
-      const { lastFrame, unmount } = render(<LiveTurn turn={turn({ text: 'the answer' })} />);
+      const { lastFrame, unmount } = render(
+        <LiveTurn turn={turn({ text: 'the answer' })} columns={100} />
+      );
       expect(stripAnsi(lastFrame() ?? '').split('\n')).toHaveLength(1);
       unmount();
     });
 
     it('separates the blocks of a STREAMING turn too, so nothing shifts when it commits', () => {
       const t = turn({ toolCalls: [probeTool], text: 'the answer' });
-      const live = render(<LiveTurn turn={t} streaming />);
+      const live = render(<LiveTurn turn={t} streaming columns={100} />);
       const rows = stripAnsi(live.lastFrame() ?? '').split('\n');
       expect(rows[1]).toBe('');
       live.unmount();

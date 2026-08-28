@@ -681,8 +681,17 @@ export function App(props: TuiAppProps): React.ReactElement {
      * It can fail, and the failure is not hypothetical: `PendingToolInterrupt.id` is recovered
      * defensively from the suspended graph's own messages and is documented as absent-able, so a
      * decision may have no call to attach to. The answer is that the caller keeps the notice in
-     * that case — a decision the human made is never simply dropped because it could not be drawn
-     * beside its command.
+     * that case, and what that buys is precise: **the RECORD survives, and the on-screen
+     * attribution waits for the turn.** The kept notice goes through `pushDecisionNotice` like
+     * every other one, so mid-turn it is held until `runTurn`'s `finally` commits the turn it
+     * belonged to. Between the keystroke and that moment the call's own row says what became of the
+     * call — a refusal renders as `✗ … [error]` carrying the message the model was given — and
+     * nothing on screen says a person is who decided it.
+     *
+     * That gap is the cost of committing behind the turn rather than ahead of it, and it is the
+     * trade this node made deliberately: a notice pushed on the keystroke lands above the whole
+     * turn it was part of, which is the inversion the node exists to remove. Read it as a known
+     * consequence, not as an oversight to quietly fix by pushing early.
      */
     const showOutcomeOnRow = (decision: ApprovalDecisionKind): boolean => {
       const vm = liveVmRef.current;

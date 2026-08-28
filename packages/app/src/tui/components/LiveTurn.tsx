@@ -90,8 +90,13 @@ function ToolCallPanel({
    * one. Threaded rather than read from the terminal-size context because `transcriptWindow`'s row
    * oracle takes it as an argument: the two count the same block only if they are handed the same
    * width, and a component measuring for itself is free to be handed a different one.
+   *
+   * **Required, all the way up the chain**, for the reason `ApprovalRequestPanel` states on its own
+   * prop: a missing width is not an absent frame but an 80-column one, which on a narrower terminal
+   * puts untrusted bytes back at column 0. A call carrying no approval never reads it, and that is
+   * not a reason to let it be forgotten by the one that does.
    */
-  columns?: number;
+  columns: number;
 }): React.ReactElement {
   const { glyph, label, color } = toolStatus(tc);
   // Inline shortened params (summariseToolCall handles the empty/unparsable-args fallbacks).
@@ -355,10 +360,14 @@ export function LiveTurn({
   streaming?: boolean;
   /**
    * [[TUI-C99]] — the frame width an answered call's approval request block is framed at. Only that
-   * block reads it; every other part of a turn is laid out by Ink itself. Absent falls back to
-   * core's own `frameWidthFor` default, which is what the row oracle resolves too.
+   * block reads it; every other part of a turn is laid out by Ink itself.
+   *
+   * **Required**, because the omission it would otherwise permit is silent: it reaches
+   * `ApprovalRequestPanel` as the 80-column default and re-wraps untrusted rows on a narrower
+   * terminal. Both production callers hold the terminal width already; a test rendering a turn with
+   * no approval in it passes any number.
    */
-  columns?: number;
+  columns: number;
 }): React.ReactElement {
   // `displaySegments` decides what is drawn — it drops the segments that paint nothing (the
   // checklist tool, which is the pinned dock panel) and re-joins the runs around them, so a call

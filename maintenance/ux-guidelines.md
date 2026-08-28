@@ -113,14 +113,21 @@ unambiguous meaning — and there is no per-prompt "turn the gate down from here
   for the session. That copy has to say so; *this session only* would replace one false claim with
   another.
 - **A decision notice earns its place by saying what the tool row cannot, and it waits for the
-  turn (DL-4).** The row plus its outcome line already say a call was refused and who refused it, so
-  the bare *the command was not run* notice is not written at all. What is written is a **persistent
-  policy change**: the scope an approval took effect at — which is not the key that was pressed, since
-  a `catastrophic` verdict clamps *[s]*/*[a]* to once — and whether a sticky refusal reached the
-  project file, with the control that lifts it. Those notices are committed **after the turn's own
-  item**, not on the keystroke: the turn is committed when it ends, so a notice pushed the moment a
-  key is pressed lands above the whole turn it was part of and reads as though the decision preceded
-  the work.
+  turn (DL-4) — in the Ink TUI.** Unlike the bullet above, this one is scoped, and the scope is the
+  rule rather than an exemption from it: it rests on two things only the Ink TUI has, a tool row
+  carrying its own outcome line and a turn committed as a single item. The row plus its outcome line
+  already say a call was refused and who refused it, so the bare *the command was not run* notice is
+  not written at all. What is written is a **persistent policy change**: the scope an approval took
+  effect at — which is not the key that was pressed, since a `catastrophic` verdict clamps
+  *[s]*/*[a]* to once — and whether a sticky refusal reached the project file, with the control that
+  lifts it. Those notices are committed **after the turn's own item**, not on the keystroke: the turn
+  is committed when it ends, so a notice pushed the moment a key is pressed lands above the whole
+  turn it was part of and reads as though the decision preceded the work.
+  **The readline surface keeps its own split and its own refusal notice.** It has neither of those
+  two things — it writes chronologically to stdout, so it never had the inversion this rule fixes —
+  and it still prints `Command rejected.` on an ordinary refusal, which is where that surface says a
+  human answered at all. That divergence is deliberate: deleting the notice there would take the
+  only trace with it. Read this bullet as the TUI's, and leave the plain surface alone.
 - **Invokable during inference (DL-9).** The prompt stays mounted while a turn streams, so
   `/approvals` (and the other read-only / toggle commands marked `availableDuringRun`) can be run
   mid-turn to change how the run's remaining tool calls are handled; idle-only commands (`/clear`,

@@ -24,9 +24,13 @@ import { ApprovalRequestPanel } from '#src/tui/components/ApprovalRequestPanel.j
  *
  * The dialog is no longer one component. The half a human answers without scrolling — the pinned
  * `<ApprovalPrompt>` — carries only text we wrote, and everything the model, a third-party server
- * or a hostile URL contributed is committed into the conversation above it as an `approval`
- * transcript item drawn by `<ApprovalRequestPanel>`. `<App>` renders exactly this pair, in exactly
- * this order.
+ * or a hostile URL contributed is drawn above it by `<ApprovalRequestPanel>`, in the scrolling
+ * conversation rather than the dock. `<App>` renders exactly this pair, in exactly this order.
+ *
+ * [[TUI-C99]] — while the question is open that block is a CHILD of the viewport, drawn under the
+ * live turn; it is not committed as an `approval` transcript item on the ask, and once the question
+ * is answered the call's own row carries the outcome and Ctrl+T reopens the block there. The pair
+ * this helper renders is the open-question shape, which is what every case below asks about.
  *
  * Every case below that asks *"was the human shown X"* renders this rather than either half, which
  * is what keeps those assertions asking the question they were written to ask. The cases that ask
@@ -506,6 +510,21 @@ describe('tui approval flow through <App>', () => {
     unmount();
   });
 
+  /**
+   * [[TUI-C99]] — **these three cases answer with NO TURN RUNNING, so they take the unattributable
+   * fallback, and that is deliberate.**
+   *
+   * Nothing here submits a prompt, so `runTurn` is never entered and the scripted agent's events
+   * are never consumed: `liveVmRef.current` is null when the key is pressed, `showOutcomeOnRow`
+   * returns false, and there is no tool row anywhere on screen for an outcome line to sit on. What
+   * remains after the answer is the `{ kind: 'approval' }` block the fallback commits — not the
+   * ordinary path, whose App-level behaviour is pinned by `approvalOutcomeOrdering.spec.tsx`.
+   *
+   * They are also the ONLY coverage of that fallback in the suite: deleting the fallback push from
+   * `resolveApproval` reds these three cases and nothing else. Which is why the surviving record is
+   * asserted on a FRAMED row below — a bare `echo hi` matches a tool call's inline arguments just as
+   * readily as the block, so it would keep passing with the fallback deleted.
+   */
   it.each([
     ['o', 'once'],
     ['s', 'session'],
@@ -542,17 +561,22 @@ describe('tui approval flow through <App>', () => {
     // The committed notice reads in the transcript, and the question is no longer being asked.
     //
     // [[EXT-137]] — **asserted on the fixed block's own lines, not on the command.** The command is
-    // in the CONVERSATION now and stays there after the answer: the request and the decision notice
-    // under it are the record of what was asked and what was answered, so "the command is gone"
-    // would be asserting the opposite of the design. What must go is the block that owns the
-    // keyboard — its ask line and its menu.
+    // in the CONVERSATION now and stays there after the answer, so "the command is gone" would be
+    // asserting the opposite of the design. What must go is the block that owns the keyboard — its
+    // ask line and its menu.
     await vi.waitFor(() => {
       expect(frames.join('\n')).toContain(`Command approved (${scope})`);
       expect(lastFrame()).not.toContain('Approve?');
       expect(lastFrame()).not.toContain('⚠ Gaunt Sloth is asking you to approve a call.');
       // ...and the record of the request is still there, which is what makes the absence above a
       // dismissal rather than the whole dialog having failed to render.
-      expect(lastFrame()).toContain('echo hi');
+      //
+      // [[TUI-C99]] — **asserted on the FRAMED row, which only the request block draws.** The
+      // dialog is dismissed by now, so this row can come from one place: the `{ kind: 'approval' }`
+      // block the fallback committed. The gutter is the discriminator — a tool call's inline
+      // arguments carry the same command text and no frame, so matching on the bare command would
+      // pass with the fallback removed and this case would stop covering the only thing it covers.
+      expect(lastFrame()).toContain('1 │ echo hi');
     });
     unmount();
   });

@@ -67,8 +67,16 @@ export function ApprovalRequestPanel({
   columns,
 }: {
   pending: PendingToolInterrupt;
-  /** Absent resolves through core's own `frameWidthFor` default, as the row oracle does. */
-  columns?: number;
+  /**
+   * The width these rows are framed at — **required, and the requirement IS the guard.**
+   *
+   * Left out, `frameWidthFor(undefined)` resolves to the 80-column default: on any narrower
+   * terminal the rows are wider than the screen, Ink wraps them a second time, and the untrusted
+   * text lands back at column 0 — precisely what the gutter above exists to prevent, reached by
+   * forgetting a prop. Every caller has a width to hand it, so an optional one buys nothing and
+   * costs the compile error that says so.
+   */
+  columns: number;
 }): React.ReactElement {
   const rows = approvalRequestRows(pending, { columns });
   return (

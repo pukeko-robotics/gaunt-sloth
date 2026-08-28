@@ -8,6 +8,7 @@ import type {
   PendingToolInterrupt,
   ToolApprovalDecision,
 } from '@gaunt-sloth/core/core/types.js';
+import { maxDisplayWidth } from '@gaunt-sloth/core/utils/displayWidth.js';
 import { LiveTurn } from '#src/tui/components/LiveTurn.js';
 import { App } from '#src/tui/components/App.js';
 import {
@@ -150,11 +151,11 @@ describe('[[TUI-C99]] the outcome line sits below the call it is about', () => {
       request: PENDING_T2,
     });
     expect(
-      rowOf(frameRows(<LiveTurn turn={answered} streaming />), 'approved by you')
+      rowOf(frameRows(<LiveTurn turn={answered} streaming columns={100} />), 'approved by you')
     ).toBeGreaterThanOrEqual(0);
     const grown = foldEventSequence(AFTER_THE_ANSWER, answered);
     expect(
-      rowOf(frameRows(<LiveTurn turn={grown} streaming />), 'approved by you')
+      rowOf(frameRows(<LiveTurn turn={grown} streaming columns={100} />), 'approved by you')
     ).toBeGreaterThanOrEqual(0);
   });
 
@@ -243,6 +244,36 @@ describe('[[TUI-C99]] Ctrl+T carries the request the answer was about', () => {
   it('is reachable on a committed turn, not only a live one', () => {
     const rows = frameRows(<LiveTurn turn={answered()} toolsExpanded columns={100} />).join('\n');
     expect(rows).toContain('Gaunt Sloth is asking about this call');
+  });
+
+  /**
+   * [[TUI-C99]] — **the expansion is framed at the width it was TOLD, and this is what says so.**
+   *
+   * The type makes `columns` required all the way down; this holds the property the type only
+   * guards against a compiler. Threading it wrongly is not an absent frame but an 80-column one:
+   * `frameWidthFor(undefined)` is `DEFAULT_FRAME_WIDTH`, so every gutter row comes out ~79 wide, a
+   * narrower terminal wraps them a second time, and the untrusted half of the row restarts at
+   * column 0 — the [[TUI-C26]] guarantee, lost to a prop nobody passed.
+   *
+   * **The harness reports 100 columns on purpose, and this pins told-width rather than terminal
+   * width.** At a real 60-column stdout Ink would wrap the over-wide rows down to 60 and the
+   * measurement could not see the fault it exists to catch — the re-wrap IS the fault. Told 60
+   * inside a 100-column frame leaves a mis-framed row visibly over-wide instead.
+   *
+   * Scoped to the rows carrying the frame's gutter, which is not a loosened bound: those are the
+   * rows holding text the model, the rater or a hostile URL wrote, and they are the only ones core
+   * wraps to the frame width at all. The block's own label sentences are ours, and a terminal
+   * re-wrapping one of those puts our words at column 0, which forges nothing.
+   */
+  it('frames the expansion to the width it was told, not to the 80-column default', () => {
+    const TOLD = 60;
+    const rows = frameRows(<LiveTurn turn={answered()} toolsExpanded columns={TOLD} />);
+    const framed = rows.filter((row) => row.includes('│') || row.includes('┊'));
+    // The block drew, and drew the quoted material — without this the bound below could hold by
+    // measuring nothing at all.
+    expect(framed.length).toBeGreaterThan(0);
+    expect(framed.join('\n')).toContain('Deletes a build directory');
+    for (const row of framed) expect(maxDisplayWidth(row)).toBeLessThanOrEqual(TOLD);
   });
 });
 
