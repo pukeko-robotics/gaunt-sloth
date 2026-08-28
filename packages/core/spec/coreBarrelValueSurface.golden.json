@@ -1,0 +1,493 @@
+{
+  "$comment": "GENERATED — do not hand-edit. The public runtime (value) surface of the core barrel, read from packages/core/dist/index.js by scripts/value-surface.mjs and compared against this file by spec/coreBarrelValueSurface.spec.ts. Regenerate with: pnpm --filter @gaunt-sloth/core run build && pnpm --filter @gaunt-sloth/core run value-surface:generate",
+  "exports": [
+    {
+      "name": "AIIGNORE_FILE",
+      "kind": "string"
+    },
+    {
+      "name": "APPROVAL_POSTURES",
+      "kind": "array"
+    },
+    {
+      "name": "APPROVAL_PROTECTION_DOCS_LINES",
+      "kind": "array"
+    },
+    {
+      "name": "APPROVAL_PROTECTION_DOCS_URL",
+      "kind": "string"
+    },
+    {
+      "name": "APPROVAL_RUNGS",
+      "kind": "array"
+    },
+    {
+      "name": "APPROVAL_RUNG_DESCRIPTIONS",
+      "kind": "object"
+    },
+    {
+      "name": "APPROVAL_RUNG_LABELS",
+      "kind": "object"
+    },
+    {
+      "name": "APPROVAL_WRITE_MODIFIER_HINT",
+      "kind": "string"
+    },
+    {
+      "name": "BUILT_IN_TOOL_ACCESS",
+      "kind": "object"
+    },
+    {
+      "name": "BUILT_IN_TOOL_SUMMARIES",
+      "kind": "object"
+    },
+    {
+      "name": "CONFIG_SCHEMA_POINTER",
+      "kind": "string"
+    },
+    {
+      "name": "CONFLICTING_CONFIG_SOURCES_MESSAGE",
+      "kind": "string"
+    },
+    {
+      "name": "ConfigDiscoveryError",
+      "kind": "class"
+    },
+    {
+      "name": "DEFAULT_APPROVAL_RUNG",
+      "kind": "string"
+    },
+    {
+      "name": "DEFAULT_COMMIT_CO_AUTHOR_EMAIL",
+      "kind": "string"
+    },
+    {
+      "name": "DEFAULT_COMMIT_CO_AUTHOR_NAME",
+      "kind": "string"
+    },
+    {
+      "name": "DEFAULT_CONFIG",
+      "kind": "object"
+    },
+    {
+      "name": "DEFAULT_OLLAMA_HOST",
+      "kind": "string"
+    },
+    {
+      "name": "DEFAULT_SCAFFOLD_MODEL",
+      "kind": "string"
+    },
+    {
+      "name": "DEFAULT_SCAFFOLD_PROVIDER",
+      "kind": "string"
+    },
+    {
+      "name": "DEV_COMMAND_TOOL_NAMES",
+      "kind": "array"
+    },
+    {
+      "name": "DEV_TOOL_NAMES",
+      "kind": "array"
+    },
+    {
+      "name": "EXTERNALLY_EMITTED_BUILT_IN_TOOL_NAMES",
+      "kind": "array"
+    },
+    {
+      "name": "GH_READ_FILE_DEFAULT_MAX_BYTES",
+      "kind": "number"
+    },
+    {
+      "name": "GH_READ_FILE_TOOL_NAME",
+      "kind": "string"
+    },
+    {
+      "name": "GSLOTH_AUTH",
+      "kind": "string"
+    },
+    {
+      "name": "GSLOTH_BACKSTORY",
+      "kind": "string"
+    },
+    {
+      "name": "GSLOTH_CHAT_PROMPT",
+      "kind": "string"
+    },
+    {
+      "name": "GSLOTH_CODE_PROMPT",
+      "kind": "string"
+    },
+    {
+      "name": "GSLOTH_DIR",
+      "kind": "string"
+    },
+    {
+      "name": "GSLOTH_EXEC_PROMPT",
+      "kind": "string"
+    },
+    {
+      "name": "GSLOTH_SETTINGS_DIR",
+      "kind": "string"
+    },
+    {
+      "name": "GSLOTH_SYSTEM_PROMPT",
+      "kind": "string"
+    },
+    {
+      "name": "HISTORY_DB_FILENAME",
+      "kind": "string"
+    },
+    {
+      "name": "HistoryStore",
+      "kind": "class"
+    },
+    {
+      "name": "INTERACTIVE_MODEL_FETCH_TIMEOUT_MS",
+      "kind": "number"
+    },
+    {
+      "name": "MCP_TOOL_NAME_PREFIX",
+      "kind": "string"
+    },
+    {
+      "name": "MissingProviderKeyError",
+      "kind": "class"
+    },
+    {
+      "name": "PROFILE_NAME_RE",
+      "kind": "regexp"
+    },
+    {
+      "name": "PROJECT_GUIDELINES",
+      "kind": "string"
+    },
+    {
+      "name": "PROJECT_REVIEW_INSTRUCTIONS",
+      "kind": "string"
+    },
+    {
+      "name": "PROVIDER_DESCRIPTORS",
+      "kind": "array"
+    },
+    {
+      "name": "RUNG_TOOL_DESCRIPTION_SUFFIXES",
+      "kind": "object"
+    },
+    {
+      "name": "SHELL_ALLOWLIST_FILE",
+      "kind": "string"
+    },
+    {
+      "name": "SHELL_DEFAULT_MAX_OUTPUT_BYTES",
+      "kind": "number"
+    },
+    {
+      "name": "SHELL_DEFAULT_TIMEOUT_MS",
+      "kind": "number"
+    },
+    {
+      "name": "SHELL_DENYLIST_FILE",
+      "kind": "string"
+    },
+    {
+      "name": "SHELL_TOOL_NAME",
+      "kind": "string"
+    },
+    {
+      "name": "StatusLevel",
+      "kind": "object"
+    },
+    {
+      "name": "TOOL_ANNOTATION_HINTS",
+      "kind": "array"
+    },
+    {
+      "name": "USER_PROJECT_CONFIG_JS",
+      "kind": "string"
+    },
+    {
+      "name": "USER_PROJECT_CONFIG_JSON",
+      "kind": "string"
+    },
+    {
+      "name": "USER_PROJECT_CONFIG_JSONC",
+      "kind": "string"
+    },
+    {
+      "name": "USER_PROJECT_CONFIG_MJS",
+      "kind": "string"
+    },
+    {
+      "name": "USER_PROJECT_CONFIG_TS",
+      "kind": "string"
+    },
+    {
+      "name": "WRITE_FILE_TOOL_NAME",
+      "kind": "string"
+    },
+    {
+      "name": "applyRungAwareToolDescriptions",
+      "kind": "function"
+    },
+    {
+      "name": "availableDefaultConfigs",
+      "kind": "array"
+    },
+    {
+      "name": "buildInitConfigContent",
+      "kind": "function"
+    },
+    {
+      "name": "buildModelList",
+      "kind": "function"
+    },
+    {
+      "name": "buildProfileScaffold",
+      "kind": "function"
+    },
+    {
+      "name": "commandAnswersApprovals",
+      "kind": "function"
+    },
+    {
+      "name": "commandCarriesUserProvenance",
+      "kind": "function"
+    },
+    {
+      "name": "createNamedProfile",
+      "kind": "function"
+    },
+    {
+      "name": "describeGrantedBuiltInTools",
+      "kind": "function"
+    },
+    {
+      "name": "detectProviders",
+      "kind": "function"
+    },
+    {
+      "name": "discoverModels",
+      "kind": "function"
+    },
+    {
+      "name": "discoverModelsWithProvenance",
+      "kind": "function"
+    },
+    {
+      "name": "findApiKeyEnvVar",
+      "kind": "function"
+    },
+    {
+      "name": "findMissingProviderKey",
+      "kind": "function"
+    },
+    {
+      "name": "findProjectConfigPath",
+      "kind": "function"
+    },
+    {
+      "name": "formatConversationList",
+      "kind": "function"
+    },
+    {
+      "name": "formatConversationThread",
+      "kind": "function"
+    },
+    {
+      "name": "formatInsightsSummary",
+      "kind": "function"
+    },
+    {
+      "name": "formatSearchResults",
+      "kind": "function"
+    },
+    {
+      "name": "getCuratedFallbackModel",
+      "kind": "function"
+    },
+    {
+      "name": "getEffectiveDevToolsConfig",
+      "kind": "function"
+    },
+    {
+      "name": "getGhReadFileMaxBytes",
+      "kind": "function"
+    },
+    {
+      "name": "getRungToolDescriptionSuffix",
+      "kind": "function"
+    },
+    {
+      "name": "getShellMaxOutputBytes",
+      "kind": "function"
+    },
+    {
+      "name": "getShellTimeoutMs",
+      "kind": "function"
+    },
+    {
+      "name": "gthLeanAgentFactory",
+      "kind": "function"
+    },
+    {
+      "name": "hasAnyConfig",
+      "kind": "function"
+    },
+    {
+      "name": "hasProjectConfig",
+      "kind": "function"
+    },
+    {
+      "name": "initConfig",
+      "kind": "function"
+    },
+    {
+      "name": "isAccessClassGrantedAtRung",
+      "kind": "function"
+    },
+    {
+      "name": "isApprovalRung",
+      "kind": "function"
+    },
+    {
+      "name": "isBuiltInToolEntryEnabled",
+      "kind": "function"
+    },
+    {
+      "name": "isConfigDiscoveryError",
+      "kind": "function"
+    },
+    {
+      "name": "isDeterministicRung",
+      "kind": "function"
+    },
+    {
+      "name": "isFilesystemToolRegistered",
+      "kind": "function"
+    },
+    {
+      "name": "isGhReadFileToolEnabled",
+      "kind": "function"
+    },
+    {
+      "name": "isGrantedAtRung",
+      "kind": "function"
+    },
+    {
+      "name": "isMissingProviderKeyError",
+      "kind": "function"
+    },
+    {
+      "name": "isNegotiatingRung",
+      "kind": "function"
+    },
+    {
+      "name": "isRatedRung",
+      "kind": "function"
+    },
+    {
+      "name": "isShellToolEnabled",
+      "kind": "function"
+    },
+    {
+      "name": "isToolGatedAtRung",
+      "kind": "function"
+    },
+    {
+      "name": "isUserProvenanceRung",
+      "kind": "function"
+    },
+    {
+      "name": "isWriteFileToolRegistered",
+      "kind": "function"
+    },
+    {
+      "name": "listModels",
+      "kind": "function"
+    },
+    {
+      "name": "loadConfiguredTui",
+      "kind": "function"
+    },
+    {
+      "name": "loadGlobalRawConfig",
+      "kind": "function"
+    },
+    {
+      "name": "normalizeBuiltInTools",
+      "kind": "function"
+    },
+    {
+      "name": "openConversationSafe",
+      "kind": "function"
+    },
+    {
+      "name": "openHistoryStore",
+      "kind": "function"
+    },
+    {
+      "name": "recordSessionSafe",
+      "kind": "function"
+    },
+    {
+      "name": "resolveApprovals",
+      "kind": "function"
+    },
+    {
+      "name": "resolveConfig",
+      "kind": "function"
+    },
+    {
+      "name": "resolveConfigExtends",
+      "kind": "function"
+    },
+    {
+      "name": "resolveGatedToolNames",
+      "kind": "function"
+    },
+    {
+      "name": "resolveHistoryDbPath",
+      "kind": "function"
+    },
+    {
+      "name": "resolveIdentityProfileConfigPath",
+      "kind": "function"
+    },
+    {
+      "name": "resolveInitModel",
+      "kind": "function"
+    },
+    {
+      "name": "resolveInterruptToolNames",
+      "kind": "function"
+    },
+    {
+      "name": "resolveProfileConfigPath",
+      "kind": "function"
+    },
+    {
+      "name": "resolveShellApprovalGate",
+      "kind": "function"
+    },
+    {
+      "name": "stripRungToolDescriptionSuffix",
+      "kind": "function"
+    },
+    {
+      "name": "toFtsMatchQuery",
+      "kind": "function"
+    },
+    {
+      "name": "tryJsonConfig",
+      "kind": "function"
+    },
+    {
+      "name": "validateConfig",
+      "kind": "function"
+    },
+    {
+      "name": "validateProfileName",
+      "kind": "function"
+    }
+  ]
+}
