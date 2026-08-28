@@ -13,8 +13,10 @@ import { AcpV1UpdateMapper } from '#src/modules/acp/acpUpdatesV1.js';
  * waiting for the human, and the arguments are exactly what the human is being asked to rule on,
  * so they are sent as soon as they are complete instead.
  *
- * The status story is unchanged and now happens to be truer: a gated call sits at `pending` (what
- * its creating update said) rather than being moved to `in_progress` before anything ran.
+ * The status mapping itself is untouched, and what it now says is truer: a gated call sits at
+ * `pending` (what its creating update said) rather than being moved to `in_progress` before
+ * anything ran, and a call that never produces a result settles at `failed` rather than at
+ * `in_progress` — a terminal status, which every call a client was shown is owed.
  *
  * Both dialects are covered because they are two hand-written mappers over one event stream, and a
  * fix applied to one of them is the shape of divergence this pairing exists to prevent.
@@ -97,6 +99,24 @@ describe.each(mappers)('[[TUI-C100]] ACP %s tool-call updates', (_dialect, makeM
     ]);
 
     expect(updates.at(-1)).toMatchObject({ toolCallId: 'call-gate', status: 'failed' });
+  });
+
+  /**
+   * **A call that never ran ends at a terminal status that is not a success.** The turn-level drain
+   * closes such a call with an error result and no `tool_end` before it, so what a client is left
+   * holding is `failed` — the only non-success terminal status v1's closed union offers, and a
+   * status this mapper already knew how to produce. The check that matters is the one below it:
+   * nothing after that update walks the call back to `in_progress`.
+   */
+  it('closes a call that produced no result as failed, not as running or completed', async () => {
+    const updates = mapAll(makeMapper(), [
+      ...gatedAnnouncement,
+      { type: 'tool_result', id: 'call-gate', content: 'This call did not run.', isError: true },
+    ]);
+
+    expect(updates.at(-1)).toMatchObject({ toolCallId: 'call-gate', status: 'failed' });
+    expect(updates.filter((u) => u.status === 'in_progress')).toEqual([]);
+    expect(updates.filter((u) => u.status === 'completed')).toEqual([]);
   });
 
   /**

@@ -120,6 +120,16 @@ test.describe('gth code TUI — [[TUI-C100]] a gated call with a returning sibli
     await expect(
       terminal.getByText('approval-sibling-out-marker', { strict: false })
     ).not.toBeVisible();
+
+    // **And the sibling the refusal took down with it.** Rejecting any call in a round makes the
+    // HITL middleware jump straight back to the model, so the tool node is skipped entirely and the
+    // granted listing is never dispatched either — it produces no output and no result. A row that
+    // ticks it *done* tells the human a directory was read because they refused a clone, which is
+    // the same false claim the refused row is no longer allowed to make.
+    const settledReadRows = toolRowsFor(terminal, 'list_directory');
+    expect(settledReadRows.length).toBeGreaterThan(0);
+    expect(settledReadRows.filter((row) => row.includes('[done]'))).toEqual([]);
+    expect(settledReadRows.filter((row) => row.includes('✓'))).toEqual([]);
   });
 });
 

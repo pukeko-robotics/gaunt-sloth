@@ -154,11 +154,16 @@ describe('GthAgentRunner', () => {
    * stream a call suspended at the approval gate and a genuinely terminal one look identical: both
    * leave the stream outstanding. They part company one level up. This generator yields the first
    * stream to completion, THEN resolves interrupts — which is where the human is asked — so by the
-   * time it returns, a gated call has been decided and has produced its result, and whatever is
-   * still owed an end is a call that will never get one.
+   * time it returns, a call that was going to produce a result has produced it.
    *
-   * Both halves are asserted here because either alone passes on a broken build: end everything and
-   * the gated row lies; end nothing and a terminal row hangs at *running* for the session.
+   * **What is left over produced none, and is closed as that rather than as a success.** The
+   * leftovers arrive by several routes — the turn was abandoned, a refusal made the middleware skip
+   * the whole round's tool node, the call was terminal — and the surface cannot tell most of them
+   * apart. It does not need to: none of them ran, so none of them may carry the tick.
+   *
+   * Both halves are asserted here because either alone passes on a broken build: close everything
+   * as done and the gated row lies; close nothing and a terminal row hangs at *running* for the
+   * session.
    */
   describe('[[TUI-C100]] closing tool calls at the end of a turn', () => {
     /** An event stream over a fixed list — the shape `streamWithEvents` returns. */
@@ -199,12 +204,205 @@ describe('GthAgentRunner', () => {
 
       const events = await collect(runner.processMessagesWithEvents([new HumanMessage('go')]));
 
-      expect(events.at(-1)).toEqual({ type: 'tool_end', id: 'call-term' });
-      // And exactly once — the call that already ended is not ended a second time.
+      expect(events.at(-1)).toEqual({
+        type: 'tool_result',
+        id: 'call-term',
+        content: 'This call did not run.',
+        isError: true,
+      });
+      // And exactly once — the call that already settled is not closed a second time.
       expect(events.filter((e) => e.type === 'tool_end')).toEqual([
         { type: 'tool_end', id: 'call-read' },
-        { type: 'tool_end', id: 'call-term' },
       ]);
+      expect(events.filter((e) => e.type === 'tool_result' && e.id === 'call-term')).toHaveLength(
+        1
+      );
+    });
+
+    /**
+     * **A call the drain closes never produced a result, so it may not report a success.**
+     *
+     * Membership in the drain's set IS "produced no result": the tracker forgets a call on its
+     * `tool_end` or its `tool_result`, and a call that actually ran always yields the latter from
+     * its `ToolMessage`. So there is no arm of this loop where the tick would be true, and the
+     * three ways a call gets here — abandoned, skipped, terminal — do not differ in the one thing
+     * the row reports.
+     */
+    it('closes a call that produced no result as an error, never as done', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.streamWithEvents.mockReturnValue(
+        eventStreamOf([
+          ...announced('call-read', 'list_directory', '{"path":"/tmp"}'),
+          ...announced('call-term', 'run_shell_command', '{"command":"ls"}'),
+          { type: 'tool_end', id: 'call-read' },
+          { type: 'tool_result', id: 'call-read', content: '[FILE] x' },
+        ])
+      );
+      await runner.init(undefined, { ...mockConfig, approvals: 'write' } as any);
+
+      const events = await collect(runner.processMessagesWithEvents([new HumanMessage('go')]));
+
+      const closing = events.filter(
+        (e) => e.type === 'tool_result' && e.id === 'call-term'
+      ) as Array<Extract<AgentStreamEvent, { type: 'tool_result' }>>;
+      expect(closing).toHaveLength(1);
+      expect(closing[0].isError).toBe(true);
+      // The call that DID return keeps its own result, unflagged — the drain touches nothing else.
+      expect(events).toContainEqual({
+        type: 'tool_result',
+        id: 'call-read',
+        content: '[FILE] x',
+      });
+    });
+
+    /**
+     * **F1 — the turn the human abandoned.** Esc does not break out of the consumer's loop; it
+     * aborts the signal (`App.tsx` → `abortRef.current.abort()`). `streamWithEvents` catches the
+     * `AbortError` and returns cleanly, and `resolveToolInterruptsWithEvents` returns at its
+     * `signal?.aborted` guard — so both stages complete normally and the drain runs, on a call that
+     * was never dispatched, never decided, and never put to anyone.
+     *
+     * `approvalAsked` is asserted false because that is what makes a tick unconscionable here
+     * rather than merely imprecise: nobody was ever asked whether the command may run.
+     */
+    it('does not report a call as done when the turn was abandoned before the human was asked', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      const ac = new AbortController();
+      mockAgent.streamWithEvents.mockImplementation(() =>
+        (async function* () {
+          yield { type: 'tool_start', id: 'call-gate', name: 'run_shell_command' };
+          yield {
+            type: 'tool_args',
+            id: 'call-gate',
+            delta: '{"command":"git clone https://x /home/parents"}',
+          };
+          // Esc. The real stream swallows the AbortError and RETURNS; it does not throw.
+          ac.abort();
+        })()
+      );
+      (mockAgent as any).getPendingToolInterrupts = vi.fn().mockResolvedValue([
+        {
+          name: 'run_shell_command',
+          args: { command: 'git clone https://x /home/parents' },
+          id: 'call-gate',
+        },
+      ]);
+      (mockAgent as any).streamWithEventsResume = vi
+        .fn()
+        .mockImplementation(() => eventStreamOf([]));
+      await runner.init(undefined, { ...mockConfig, approvals: 'write' } as any);
+
+      let approvalAsked = false;
+      runner.setToolApprovalCallback(async () => {
+        approvalAsked = true;
+        return { type: 'approve' };
+      });
+
+      const events = await collect(
+        runner.processMessagesWithEvents([new HumanMessage('go')], ac.signal)
+      );
+
+      expect(approvalAsked).toBe(false);
+      expect(events).not.toContainEqual({ type: 'tool_end', id: 'call-gate' });
+      expect(events.at(-1)).toEqual({
+        type: 'tool_result',
+        id: 'call-gate',
+        content: 'Cancelled before this call produced a result.',
+        isError: true,
+      });
+    });
+
+    /**
+     * **F2 — the sibling a refusal takes down with it, and the node's own headline scenario.**
+     *
+     * langchain's `humanInTheLoopMiddleware` sets `jumpTo: 'model'` whenever ANY call in the round
+     * was rejected, so the tool node is skipped entirely: the resume stream carries only the
+     * rejection's own `ToolMessage`, and the auto-approved sibling never runs. Reject one call and
+     * a command that never executed reported success.
+     */
+    it('does not report a never-dispatched sibling as done when its gated sibling is refused', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.streamWithEvents.mockReturnValue(
+        eventStreamOf([
+          ...announced('call-read', 'list_directory', '{"path":"."}'),
+          ...announced('call-gate', 'run_shell_command', '{"command":"git clone https://x"}'),
+        ])
+      );
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([
+          { name: 'run_shell_command', args: { command: 'git clone https://x' }, id: 'call-gate' },
+        ])
+        .mockResolvedValue([]);
+      (mockAgent as any).streamWithEventsResume = vi.fn().mockImplementation(() =>
+        eventStreamOf([
+          { type: 'tool_end', id: 'call-gate' },
+          {
+            type: 'tool_result',
+            id: 'call-gate',
+            content: 'Tool call rejected by user',
+            isError: true,
+          },
+          { type: 'text', delta: 'Understood, I will not clone.' },
+        ])
+      );
+      await runner.init(undefined, { ...mockConfig, approvals: 'write' } as any);
+      runner.setToolApprovalCallback(async () => ({ type: 'reject' }));
+
+      const events = await collect(runner.processMessagesWithEvents([new HumanMessage('go')]));
+
+      expect(events).not.toContainEqual({ type: 'tool_end', id: 'call-read' });
+      expect(events.at(-1)).toEqual({
+        type: 'tool_result',
+        id: 'call-read',
+        content: 'This call did not run.',
+        isError: true,
+      });
+      // The refused call still says what it said: its own rejection, from the graph, untouched.
+      expect(events).toContainEqual({
+        type: 'tool_result',
+        id: 'call-gate',
+        content: 'Tool call rejected by user',
+        isError: true,
+      });
+    });
+
+    /**
+     * **F4 — a gated call settles by its `tool_result` and receives no `tool_end` at all**, because
+     * `pendingEnds` is local to each `processEventStream` invocation and a gated call spans two:
+     * announced in the first stream, resolved in the resume. The `tool_result` arm of the tracker's
+     * key set is therefore the only thing that stops the drain closing a call that has already
+     * finished — and closing it now means contradicting a real result with a fabricated failure.
+     */
+    it('leaves a call that settled by its result alone, even though it never got a tool_end', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.streamWithEvents.mockReturnValue(
+        eventStreamOf(
+          announced('call-gate', 'run_shell_command', '{"command":"git clone https://x"}')
+        )
+      );
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([
+          { name: 'run_shell_command', args: { command: 'git clone https://x' }, id: 'call-gate' },
+        ])
+        .mockResolvedValue([]);
+      // The shape the real resume stream produces, measured: a result with no end before it.
+      (mockAgent as any).streamWithEventsResume = vi
+        .fn()
+        .mockImplementation(() =>
+          eventStreamOf([{ type: 'tool_result', id: 'call-gate', content: 'cloned' }])
+        );
+      await runner.init(undefined, { ...mockConfig, approvals: 'write' } as any);
+      runner.setToolApprovalCallback(async () => ({ type: 'approve' }));
+
+      const events = await collect(runner.processMessagesWithEvents([new HumanMessage('go')]));
+
+      expect(events.filter((e) => e.type === 'tool_end')).toEqual([]);
+      expect(events.filter((e) => e.type === 'tool_result')).toEqual([
+        { type: 'tool_result', id: 'call-gate', content: 'cloned' },
+      ]);
+      expect(events.at(-1)).toEqual({ type: 'tool_result', id: 'call-gate', content: 'cloned' });
     });
 
     /**

@@ -3007,10 +3007,15 @@ export class GthAgentRunner {
       // finished — so closing anything before that point would tell the surface a call had
       // finished while the human was still being asked whether it may run at all.
       //
-      // By the time both stages are done, a gated call has been decided and has produced its
-      // result, and what is still owed an end is a call that will never get one. Ending those is
-      // not cosmetic: the AG-UI protocol requires every announced tool call to be closed before a
-      // run finishes, and an unclosed row on the TUI sits at `running` for the rest of the session.
+      // **Membership in this set at the drain IS "produced no result".** A call is forgotten on its
+      // own `tool_end` or its own `tool_result`, and a call that actually ran always yields the
+      // latter from its `ToolMessage` — so nothing that survives to the loop below has a result,
+      // whatever the reason. The reasons are several and the surface cannot tell most of them
+      // apart: the turn was abandoned; a refusal made the middleware jump back to the model and the
+      // whole round's tool node was skipped; the call was terminal. They do not differ in the one
+      // thing a row reports, so they are closed alike — as a call with no result, which is what an
+      // error result says, and never with the tick and the word `done`, which no arm of this loop
+      // could make true.
       const unendedToolCalls = new Set<string>();
       const tracking = async function* (
         source: AsyncGenerator<AgentStreamEvent>
@@ -3024,11 +3029,27 @@ export class GthAgentRunner {
       };
       yield* tracking(this.agent.streamWithEvents(messages, this.runConfig, signal));
       yield* tracking(this.resolveToolInterruptsWithEvents(signal));
-      // Deliberately at the end of the `try` rather than in the `finally`: a consumer that breaks
-      // out of the loop (the TUI's Esc) closes this generator, and yielding during a return
-      // completion suspends it again instead of finishing. An abandoned turn leaves its rows
-      // as they stood, which is what an abandoned turn looks like.
-      for (const id of unendedToolCalls) yield { type: 'tool_end', id };
+      // The abort is the one case that IS distinguishable here, and it buys the wording rather than
+      // a different outcome: a turn stopped part-way may have had a call in flight, so this says
+      // what is certain — no result arrived — without claiming the command never started.
+      const noResult = signal?.aborted
+        ? 'Cancelled before this call produced a result.'
+        : 'This call did not run.';
+      // Deliberately at the end of the `try` rather than in the `finally`. Esc does NOT break out
+      // of the consumer's loop — it aborts the signal, `streamWithEvents` catches the `AbortError`
+      // and returns cleanly, and `resolveToolInterruptsWithEvents` returns at its own aborted
+      // guard, so an abandoned turn reaches this line like any other and its rows are closed here
+      // too. The case the placement is actually for is a consumer that stops consuming: breaking
+      // out of a `for await`, or calling `return()` on this generator, closes it, and yielding
+      // during that forced return suspends the generator again instead of finishing it — which
+      // would leave `clearNegotiationDisplay()` below unreached. Rows abandoned that way keep
+      // whatever they last said, which is the price of the `finally` still running.
+      //
+      // A close is not cosmetic either way: an unclosed row on the TUI sits at `running` for the
+      // rest of the session, and a client is owed a terminal state for every call it was shown.
+      for (const id of unendedToolCalls) {
+        yield { type: 'tool_result', id, content: noResult, isError: true };
+      }
     } finally {
       // [[TUI-C69]] §5.4 — **the turn is over, so the argument is over.** Until this existed the
       // panel was cleared only by the NEXT turn's `endNegotiation`, so a negotiation that CONVERGED

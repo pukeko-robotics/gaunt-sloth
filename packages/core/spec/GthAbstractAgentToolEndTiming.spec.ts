@@ -175,6 +175,27 @@ describe('[[TUI-C100]] tool_end timing in processEventStream', () => {
   });
 
   /**
+   * **A stream ends only what it announced.** This is the gated call's *other* half, and it is the
+   * shape the resume stream actually has: the call was announced in the stream that suspended, and
+   * the one that resumes carries its `ToolMessage` and nothing else. `flushAggregated` has no
+   * aggregate to speak for, so nothing here ever said `tool_start` for this id — and a `tool_end`
+   * for a call this stream never opened is a claim it has no standing to make. The result alone is
+   * what it knows, and the result alone is what it emits.
+   *
+   * Consequence worth stating where someone will read it: **a gated call receives no `tool_end` at
+   * all.** Every consumer treats `tool_result` as terminal on its own, so nothing is missing — but a
+   * reader reasoning from "an end always precedes a result" would be reasoning from a sequence that
+   * does not occur on this node's central flow.
+   */
+  it('does not end a call it never announced, so a resumed result stands alone', async () => {
+    const events = await eventsOf([
+      new ToolMessage({ content: 'cloned', tool_call_id: 'call-gate' }),
+    ]);
+
+    expect(toolTrace(events)).toEqual([['tool_result', 'call-gate']]);
+  });
+
+  /**
    * A whole round that completes is unchanged, end to end: both calls end, each before its own
    * result, and the two never cross.
    */

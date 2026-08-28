@@ -201,4 +201,50 @@ describe('[[TUI-C100]] a call held at the approval gate does not render as done'
       tone: 'warn',
     });
   });
+
+  /**
+   * **And the row a turn ends on when the call never ran.** The runner closes such a call with an
+   * error result, which is the last word the surface gets about it; folded and read, it must be the
+   * ✗ and the word *error*, and the reason must be legible under the row rather than left as a bare
+   * status. This is where an abandoned turn lands — the one path with no PTY cell of its own,
+   * because a human pressing Esc mid-prompt is not a thing a scripted terminal can stage.
+   */
+  it('renders a call that produced no result as an error, with a reason, never as done', async () => {
+    const { foldEventSequence } = await import('#src/tui/viewModel.js');
+    const announced = await eventsOf([
+      new AIMessageChunk({
+        content: '',
+        tool_call_chunks: [
+          {
+            id: 'call-gate',
+            name: 'run_shell_command',
+            args: '{"command":"git clone https://example.invalid/x"}',
+            index: 0,
+          },
+        ],
+      }),
+    ]);
+    // What the turn-level drain appends for a call it finds still without a result.
+    const events: AgentStreamEvent[] = [
+      ...announced,
+      {
+        type: 'tool_result',
+        id: 'call-gate',
+        content: 'Cancelled before this call produced a result.',
+        isError: true,
+      },
+    ];
+    const vm = foldEventSequence(events);
+    const gated = vm.segments
+      .filter((s) => s.kind === 'tool')
+      .map((s) => (s as { tool: any }).tool)
+      .find((t) => t.id === 'call-gate');
+
+    expect(toolStatusDisplay({ isError: gated.isError })).toEqual({
+      glyph: '✗',
+      label: 'error',
+      tone: 'error',
+    });
+    expect(gated.result).toBe('Cancelled before this call produced a result.');
+  });
 });
