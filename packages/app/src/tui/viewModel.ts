@@ -1,4 +1,5 @@
 import type { AgentStreamEvent, PendingToolInterrupt } from '@gaunt-sloth/core/core/types.js';
+import { neutralizeUntrustedText } from '@gaunt-sloth/core/core/shell/framing.js';
 import type { TranscriptItem } from '#src/tui/types.js';
 
 /**
@@ -602,6 +603,19 @@ export type ChecklistItemStatus = 'pending' | 'in_progress' | 'completed';
 
 /** One checklist row parsed from a `gth_checklist` tool call's args. */
 export interface ChecklistItemViewModel {
+  /**
+   * The row's text, **already neutralised and safe to paint verbatim**.
+   *
+   * This is a model-written string — under prompt injection, attacker-chosen — and the panel it
+   * feeds is pinned directly above the input dock, closer to the prompt than anything else on the
+   * screen. Painted raw, SGR plus cursor positioning forges something shaped like gsloth's own
+   * output right beside a decision the user is about to make, on a panel that is by design glanced
+   * at rather than read.
+   *
+   * The invariant is stated **here, on the type**, and not only inside the parser that establishes
+   * it: whoever builds these rows next owes the same treatment, and a renderer is entitled to trust
+   * it without repeating the guard.
+   */
   content: string;
   status: ChecklistItemStatus;
 }
@@ -610,6 +624,14 @@ export interface ChecklistItemViewModel {
  * Best-effort parse of a (possibly partial) streamed `gth_checklist` args JSON into rows. Mirrors
  * {@link parseTaskArgs}: a half-streamed or malformed buffer never throws — it returns `null` so
  * the renderer keeps showing the last good state (or falls back to the generic tool panel).
+ *
+ * **Every row's text is neutralised here**, with the same shared helper the tool-display and
+ * approval paths use, so control characters and ANSI reach the screen as printable escapes instead
+ * of as instructions to the terminal. It sits on the producer rather than at the panel because this
+ * is the only place checklist rows are made: a renderer rewritten around a different layout inherits
+ * the guard, and there is no second call site for someone to forget. `status` needs no treatment —
+ * it is accepted only when it matches one of three literals — and the glyphs and header the panel
+ * draws around the text are the renderer's own constants.
  */
 export function parseChecklistArgs(argsText: string): ChecklistItemViewModel[] | null {
   if (!argsText.trim()) return null;
@@ -630,7 +652,7 @@ export function parseChecklistArgs(argsText: string): ChecklistItemViewModel[] |
       typeof content === 'string' &&
       (status === 'pending' || status === 'in_progress' || status === 'completed')
     ) {
-      rows.push({ content, status });
+      rows.push({ content: neutralizeUntrustedText(content), status });
     }
   }
   return rows.length ? rows : null;
