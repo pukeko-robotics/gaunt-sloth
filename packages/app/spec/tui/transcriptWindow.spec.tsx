@@ -444,6 +444,45 @@ describe('transcriptWindow — the estimate is a LOWER bound on the rendered row
     expect(grewOnScreen).toBeGreaterThan(0);
     expect(grewInTheEstimate).toBe(grewOnScreen);
   });
+
+  // The SAME property for the other half of `buildToolExpansionText`, and it needs its own case:
+  // the notice case above passes unchanged while the args side of the oracle measures the raw
+  // string, so one case covering both strings would leave whichever it did not vary unpinned.
+  // Deliberately two cases rather than one varying both at once, which could also let the two
+  // halves cancel each other out.
+  //
+  // `argsText` is the string that matters most here: it is unbounded, model-streamed and
+  // attacker-influenceable, and for a shell call it IS the command.
+  it('[[TUI-C102]] — counts the ARGS the expansion PAINTS, not the raw string', () => {
+    const columns = 40;
+    const withArgs = (argsText: string): TranscriptItem => ({
+      kind: 'assistant',
+      id: 1,
+      turn: turn({
+        toolCalls: [toolCall({ name: 'run_shell_command', argsText, result: 'ok' })],
+      }),
+    });
+    // BOTH buffers are deliberately unparsable JSON — a half-streamed args buffer, which is the
+    // normal state of this field while a call is still arriving. That is what makes the twins
+    // subtractable: `summariseToolCall` falls back to the same `run_shell_command(…)` for both, so
+    // the summary row (which the two sides measure differently, by design) cancels exactly and the
+    // delta is the args row alone.
+    const benign = withArgs('{"command":"ls"');
+    // Space-free, so Ink hard-wraps at the column edge and the row count is `ceil(width / columns)`
+    // exactly. Raw this is 12 columns on one row — the escapes carry no width; neutralised it is
+    // 89, which is three rows at this width whether Ink wraps the args text alone or the whole
+    // `args: ` row with it. The estimator under-counts the 10-column prefix on purpose, so the
+    // width is chosen to sit where that under-count cannot change the row count either way.
+    const hostile = withArgs('{"command":"' + '\x1b[2J'.repeat(11));
+    const estimate = (item: TranscriptItem): number =>
+      estimateItemRows(item, { columns, toolsExpanded: true, separator: false });
+    const rendered = (item: TranscriptItem): number => actualRows(item, columns, true);
+
+    const grewOnScreen = rendered(hostile) - rendered(benign);
+    const grewInTheEstimate = estimate(hostile) - estimate(benign);
+    expect(grewOnScreen).toBeGreaterThan(0);
+    expect(grewInTheEstimate).toBe(grewOnScreen);
+  });
 });
 
 describe('transcriptWindowStart', () => {
