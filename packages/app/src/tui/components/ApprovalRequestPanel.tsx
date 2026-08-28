@@ -56,15 +56,19 @@ const rowStyle = (tone: ApprovalRowTone): { color?: string; dimColor?: boolean }
  * column 0. `columns` is threaded in for the same reason the estimator takes it: the block is
  * budgeted against the very width it is framed at.
  *
- * It stays in the transcript after the answer, followed by the decision notice `<App>` commits — so
- * the pair reads as a record of what was asked and what was answered.
+ * **It is drawn while the question is open, and again inside the answered call's Ctrl+T expansion**
+ * ([[TUI-C99]]) — never as a standing transcript item. While open it is the last thing in the
+ * conversation, which is chronologically true and stays true, because the graph is suspended and
+ * the turn cannot grow past it. Once answered the call's own row carries a one-line outcome and
+ * this block is what Ctrl+T opens, so the audit route survives the block ceasing to stand there.
  */
 export function ApprovalRequestPanel({
   pending,
   columns,
 }: {
   pending: PendingToolInterrupt;
-  columns: number;
+  /** Absent resolves through core's own `frameWidthFor` default, as the row oracle does. */
+  columns?: number;
 }): React.ReactElement {
   const rows = approvalRequestRows(pending, { columns });
   return (

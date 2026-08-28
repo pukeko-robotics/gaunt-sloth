@@ -125,12 +125,21 @@ function fakeInterruptingAgent(opts: {
     async *streamWithEvents(): AsyncGenerator<AgentStreamEvent> {
       suspended = true;
       yield { type: 'text', delta: 'Running the command…' };
+      // [[TUI-C100]] — the real stream ANNOUNCES a gated call before it suspends: `tool_start` and
+      // `tool_args` are true the moment the model has finished writing the arguments, and only
+      // `tool_end` waits for a result the gated call never produces in this stream. So the call is
+      // on screen, with the arguments the human is about to rule on, while the dialog is up.
+      // [[TUI-C99]] — and it is that row the decision's one-line outcome attaches to, by the
+      // interrupt's `id` below. A fixture that suspends without announcing the call describes a
+      // shape production stopped having.
+      yield { type: 'tool_start', id: 't1', name: 'run_shell_command' };
+      yield { type: 'tool_args', id: 't1', delta: JSON.stringify({ command: opts.command }) };
       // Graph "suspends" here on the pending tool call; the generator ends cleanly.
     },
     async getPendingToolInterrupts(): Promise<PendingToolInterrupt[]> {
       if (!suspended) return [];
       suspended = false; // one pending call, cleared once decided + resumed
-      return [{ name: 'run_shell_command', args: { command: opts.command } }];
+      return [{ name: 'run_shell_command', args: { command: opts.command }, id: 't1' }];
     },
     async *streamWithEventsResume(resumeValue: unknown): AsyncGenerator<AgentStreamEvent> {
       const decisions = (resumeValue as { decisions?: ToolApprovalDecision[] })?.decisions ?? [];
@@ -270,11 +279,18 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
       async *streamWithEvents(): AsyncGenerator<AgentStreamEvent> {
         suspended = true;
         yield { type: 'text', delta: 'Writing the file…' };
+        // [[TUI-C100]]/[[TUI-C99]] — announced before the suspend, as production does.
+        yield { type: 'tool_start', id: 't1', name: 'write_file' };
+        yield {
+          type: 'tool_args',
+          id: 't1',
+          delta: JSON.stringify({ path: 'notes.md', content: 'hello' }),
+        };
       },
       async getPendingToolInterrupts(): Promise<PendingToolInterrupt[]> {
         if (!suspended) return [];
         suspended = false;
-        return [{ name: 'write_file', args: { path: 'notes.md', content: 'hello' } }];
+        return [{ name: 'write_file', args: { path: 'notes.md', content: 'hello' }, id: 't1' }];
       },
       async *streamWithEventsResume(resumeValue: unknown): AsyncGenerator<AgentStreamEvent> {
         const decisions = (resumeValue as { decisions?: ToolApprovalDecision[] })?.decisions ?? [];
@@ -451,11 +467,20 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
       async *streamWithEvents(): AsyncGenerator<AgentStreamEvent> {
         suspended = true;
         yield { type: 'text', delta: 'Rewriting the file…' };
+        // [[TUI-C100]]/[[TUI-C99]] — announced before the suspend, as production does.
+        yield { type: 'tool_start', id: 't1', name: 'run_shell_command' };
+        yield {
+          type: 'tool_args',
+          id: 't1',
+          delta: JSON.stringify({ command: "sed -i 's/a/b/' src/a.ts" }),
+        };
       },
       async getPendingToolInterrupts(): Promise<PendingToolInterrupt[]> {
         if (!suspended) return [];
         suspended = false;
-        return [{ name: 'run_shell_command', args: { command: "sed -i 's/a/b/' src/a.ts" } }];
+        return [
+          { name: 'run_shell_command', args: { command: "sed -i 's/a/b/' src/a.ts" }, id: 't1' },
+        ];
       },
       // EXT-58 §4.4 — what the runner intersects with core's summaries table to tell the rater
       // which built-ins are already granted.

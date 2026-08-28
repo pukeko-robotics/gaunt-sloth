@@ -34,7 +34,12 @@ import { approvalStopRows } from '@gaunt-sloth/core/core/shell/approvalStop.js';
 import { approvalRequestRows } from '@gaunt-sloth/core/core/approvals/approvalRequest.js';
 import { displayWidth } from '@gaunt-sloth/core/utils/displayWidth.js';
 import { renderMarkdown } from '#src/tui/markdown.js';
-import { displaySegments, type ToolCallViewModel, type TurnViewModel } from '#src/tui/viewModel.js';
+import {
+  approvalOutcomeLine,
+  displaySegments,
+  type ToolCallViewModel,
+  type TurnViewModel,
+} from '#src/tui/viewModel.js';
 import type { TranscriptItem } from '#src/tui/types.js';
 
 /**
@@ -84,6 +89,20 @@ function toolCallRows(tc: ToolCallViewModel, expanded: boolean, columns: number)
   // (`\x1b[2J` is eight columns where the sequence was none), so counting the raw strings beside a
   // renderer that draws the neutralised ones would put the oracle and the panel out of lockstep on
   // exactly the input this treatment exists for.
+  // [[TUI-C99]] — the answered call's outcome line, and the request block Ctrl+T opens under it.
+  // The line's own text comes from `approvalOutcomeLine`, which the panel PAINTS from, because it
+  // is a different width in the two fold states (the collapsed one carries the Ctrl+T hint); the
+  // request rows come from core's own renderer at the same width the panel frames at. Counting
+  // either from a second model of what is drawn is how this oracle and the renderer drift, and the
+  // drift shows as conversation quietly going missing rather than as an error.
+  if (tc.approval) {
+    rows += lineRows(`    ${approvalOutcomeLine(tc.approval, expanded)}`, columns);
+    if (expanded) {
+      for (const row of approvalRequestRows(tc.approval.request, { columns })) {
+        rows += siblingRows(row.text, columns);
+      }
+    }
+  }
   const expansion = expanded ? buildToolExpansionText(tc) : null;
   if (expansion?.args) rows += textRows(expansion.args, columns);
   // Each body and notice line is drawn behind a four-space indent, so none of them can collapse.
@@ -189,7 +208,8 @@ export function estimateItemRows(
     case 'approval':
       // [[EXT-137]] <ApprovalRequestPanel>: one sibling <Text> per row, and the rows are built by
       // core's own renderer at the same width the component frames at — the estimator counting a
-      // second model of a framed block is exactly how the two would drift apart.
+      // second model of a framed block is exactly how the two would drift apart. [[TUI-C99]] — this
+      // item is now the unattributable fallback; the ordinary copy is counted in `toolCallRows`.
       for (const row of approvalRequestRows(item.pending, { columns })) {
         rows += siblingRows(row.text, columns);
       }

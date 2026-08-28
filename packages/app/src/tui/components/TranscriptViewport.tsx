@@ -273,7 +273,10 @@ function renderItem(
       // Committed turns are complete, so they render markdown (streaming=false default).
       return (
         <Box flexDirection="column">
-          <LiveTurn turn={item.turn} toolsExpanded={toolsExpanded} />
+          {/* [[TUI-C99]] — `columns` is threaded because a committed turn can carry an answered
+              approval, whose request block is framed against the terminal width exactly as a
+              `stop` item's is, and is counted at that width by the row estimator. */}
+          <LiveTurn turn={item.turn} toolsExpanded={toolsExpanded} columns={columns} />
         </Box>
       );
     case 'system':
@@ -295,7 +298,8 @@ function renderItem(
     case 'approval':
       // [[EXT-137]] — the scrollable half of an approval request. Like a `stop` it is not a
       // `system` item: its untrusted halves have to reach the screen inside the [[TUI-C26]] gutter
-      // rather than in one <Text> Ink is free to re-wrap.
+      // rather than in one <Text> Ink is free to re-wrap. [[TUI-C99]] — reached only where the
+      // answer could not be attributed to a tool row; the ordinary route is the row's expansion.
       return <ApprovalRequestPanel pending={item.pending} columns={columns} />;
     case 'reasoning':
       // TUI-C18 — `/reasoning` reprint: a dim Rule brackets it like a notice, then the shared
