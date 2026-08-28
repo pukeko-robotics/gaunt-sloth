@@ -5,8 +5,10 @@ import {
   foldSubagentEvents,
   initialSubagentTree,
   initialTurnViewModel,
+  recordApprovalDecision,
   turnReasoning,
   turnText,
+  type ApprovalDecisionKind,
   type SubagentTreeViewModel,
   type TurnViewModel,
 } from '#src/tui/viewModel.js';
@@ -31,6 +33,7 @@ import {
 } from '@gaunt-sloth/core/core/shell/escalationSeverity.js';
 import { TranscriptViewport } from '#src/tui/components/TranscriptViewport.js';
 import { ApprovalPrompt } from '#src/tui/components/ApprovalPrompt.js';
+import { ApprovalRequestPanel } from '#src/tui/components/ApprovalRequestPanel.js';
 import { AttackBanner } from '#src/tui/components/AttackBanner.js';
 import { LiveTurn, ChecklistPanel } from '#src/tui/components/LiveTurn.js';
 import { NegotiationPanel } from '#src/tui/components/NegotiationPanel.js';
@@ -177,9 +180,20 @@ export function App(props: TuiAppProps): React.ReactElement {
   // The head is the approval on screen AND the one that owns the keyboard. Deriving both from this
   // single expression is what keeps those two facts from drifting apart.
   const pendingApproval = approvalQueue[0] ?? null;
-  // [[EXT-137]] — the queue records whose scrollable half has already been committed to the
-  // transcript, so a re-render cannot commit a second copy. See the effect that fills it.
-  const announcedApprovals = useRef(new Set<PendingApproval>());
+  // [[TUI-C99]] — the live turn's view model, held BESIDE the state that renders it.
+  //
+  // The fold loop keeps the turn in a local while it iterates, so anything written to `live` from
+  // outside the loop is overwritten by the next event. An approval is answered from a keystroke,
+  // which is exactly outside it — so the loop folds from this ref instead, and the keystroke writes
+  // here as well. One value, two writers, no window in which one of them is stale.
+  const liveVmRef = useRef<TurnViewModel | null>(null);
+  // [[TUI-C99]] — decision notices raised while a turn is in flight, waiting for it to commit.
+  //
+  // `runTurn` pushes the finished turn in its `finally`, so a notice pushed the moment a key is
+  // pressed lands in the transcript BEFORE the turn it was part of and reads as though the decision
+  // preceded the work. Held here until the turn's own item is in, they read in the order they
+  // happened. Nothing is lost if a turn ends badly: the flush is in the same `finally`.
+  const deferredNotices = useRef<DistributiveOmitId<TranscriptItem>[]>([]);
   // [[TUI-C68]] §6.1 — attack halts, queued exactly as approvals are, and for the same reason: the
   // head is what is on screen AND what owns the keyboard, from one expression.
   const [attackQueue, setAttackQueue] = useState<PendingAttackBanner[]>([]);
@@ -336,6 +350,38 @@ export function App(props: TuiAppProps): React.ReactElement {
   const push = (item: DistributiveOmitId<TranscriptItem>) =>
     setTranscript((t) => [...t, { ...item, id: nextId() } as TranscriptItem]);
 
+  /**
+   * [[TUI-C99]] — commit a decision notice where it belongs relative to the turn it was part of.
+   *
+   * While a turn is in flight that is *after* the turn's own item, which does not exist yet, so the
+   * notice waits in {@link deferredNotices}; `runTurn`'s `finally` flushes the queue immediately
+   * after pushing the turn. Outside a turn — a sticky answer whose write landed after the turn
+   * ended — there is nothing to wait for and it goes straight in, which is already after it.
+   *
+   * The two branches cannot interleave: both the enqueue and the flush are synchronous, and the
+   * flush runs in the same block that clears `runningRef`.
+   */
+  const pushDecisionNotice = (item: DistributiveOmitId<TranscriptItem>) => {
+    if (runningRef.current) deferredNotices.current.push(item);
+    else push(item);
+  };
+
+  /** Commit every deferred decision notice, oldest first, and empty the queue. */
+  const flushDecisionNotices = () => {
+    const queued = deferredNotices.current;
+    deferredNotices.current = [];
+    for (const item of queued) push(item);
+  };
+
+  /**
+   * [[TUI-C99]] — set the live turn through the ref that {@link liveVmRef} documents, so the fold
+   * loop and the approval keystroke are writing to one value rather than two.
+   */
+  const setLiveTurn = (next: TurnViewModel | null) => {
+    liveVmRef.current = next;
+    setLive(next);
+  };
+
   const runTurn = useCallback(
     async (userInput: string) => {
       // A new exchange supersedes the post-/clear banner; drop it so it doesn't sit above
@@ -350,14 +396,15 @@ export function App(props: TuiAppProps): React.ReactElement {
       abortRef.current = ac;
       runningRef.current = true;
       setRunning(true);
-      let vm = initialTurnViewModel();
-      setLive(vm);
+      setLiveTurn(initialTurnViewModel());
       // Fresh args-buffer map per turn so partial `task` JSON from a prior turn never bleeds in.
       subagentBuffersRef.current = new Map();
       try {
         for await (const event of agent.runTurn(userInput, ac.signal)) {
-          vm = foldEvents(vm, event);
-          setLive(vm);
+          // [[TUI-C99]] — folded from the REF, not from a local: an approval answered mid-turn
+          // writes the outcome onto its tool call from a keystroke, and a local carried across the
+          // loop would overwrite it on the very next event the resumed run produces.
+          setLiveTurn(foldEvents(liveVmRef.current ?? initialTurnViewModel(), event));
           // Fold subagent (`task`) tool calls into the tree for the debug panel.
           setSubagents((tree) => foldSubagentEvents(tree, event, subagentBuffersRef.current));
         }
@@ -378,15 +425,22 @@ export function App(props: TuiAppProps): React.ReactElement {
           });
         }
       } finally {
+        const vm = liveVmRef.current ?? initialTurnViewModel();
         push({ kind: 'assistant', turn: vm });
-        setLive(null);
+        // [[TUI-C99]] — the decisions taken during the turn, committed straight after it so the
+        // record reads in the order it happened. Before `runningRef` is cleared is fine and after
+        // would be too: both are in this synchronous block, and nothing between them enqueues.
+        flushDecisionNotices();
+        setLiveTurn(null);
         setRunning(false);
         runningRef.current = false;
         abortRef.current = null;
         turnCountRef.current += 1;
         setTurnCount(turnCountRef.current);
         // The turn's prose, re-joined exactly as the deltas built it: segments changed where the
-        // text is drawn, never what the assistant said, so history keeps the same string.
+        // text is drawn, never what the assistant said, so history keeps the same string. An
+        // approval outcome hangs off a TOOL call, and `turnText` reads `text` segments alone, so
+        // nothing this node added can reach the model's history.
         props.onTurnComplete?.(userInput, turnText(vm));
       }
     },
@@ -620,12 +674,49 @@ export function App(props: TuiAppProps): React.ReactElement {
   ): void => {
     const head = pendingApproval;
     if (!head) return;
+    /**
+     * [[TUI-C99]] — put the one-line outcome on the row of the call it is about, and say whether
+     * that worked.
+     *
+     * It can fail, and the failure is not hypothetical: `PendingToolInterrupt.id` is recovered
+     * defensively from the suspended graph's own messages and is documented as absent-able, so a
+     * decision may have no call to attach to. The answer is that the caller keeps the notice in
+     * that case, and what that buys is precise: **the RECORD survives, and the on-screen
+     * attribution waits for the turn.** The kept notice goes through `pushDecisionNotice` like
+     * every other one, so mid-turn it is held until `runTurn`'s `finally` commits the turn it
+     * belonged to. Between the keystroke and that moment the call's own row says what became of the
+     * call — a refusal renders as `✗ … [error]` carrying the message the model was given — and
+     * nothing on screen says a person is who decided it.
+     *
+     * That gap is the cost of committing behind the turn rather than ahead of it, and it is the
+     * trade this node made deliberately: a notice pushed on the keystroke lands above the whole
+     * turn it was part of, which is the inversion the node exists to remove. Read it as a known
+     * consequence, not as an oversight to quietly fix by pushing early.
+     */
+    const showOutcomeOnRow = (decision: ApprovalDecisionKind): boolean => {
+      const vm = liveVmRef.current;
+      if (!vm) return false;
+      const next = recordApprovalDecision(vm, head.pending.id, {
+        decision,
+        request: head.pending,
+      });
+      if (next === vm) return false;
+      setLiveTurn(next);
+      return true;
+    };
     // [[EXT-150]] — **dequeue on the keystroke, ahead of any wait.** The dialog leaving the screen
     // is what makes the answer feel taken, and the next queued approval must surface at once. A
     // dequeue moved below the wait would hold the interface for as long as a write takes, and hold
     // it forever if the outcome never came — trading a false sentence for a wedged prompt.
     setApprovalQueue((q) => q.slice(1));
-    if (decision === 'reject' || decision === 'reject-always') {
+    const rejecting = decision === 'reject' || decision === 'reject-always';
+    const onRow = showOutcomeOnRow(rejecting ? 'rejected' : 'approved');
+    // [[TUI-C99]] — the fallback [[EXT-137]]'s audit record falls back TO. An interrupt with no
+    // usable `id` has no row to carry an outcome line, and therefore nothing that Ctrl+T could
+    // open; without this the request a human answered would leave no trace of what it said. It is
+    // committed behind the turn rather than ahead of it, so it does not reintroduce the inversion.
+    if (!onRow) pushDecisionNotice({ kind: 'approval', pending: head.pending });
+    if (rejecting) {
       // [[TUI-C26]] §6 — *always reject* is a rejection that is also REMEMBERED: the runner records
       // a deny entry for this call, and the matcher consults it before anything else, so the next
       // identical call never reaches a person. `once` is the ordinary refusal and the fallthrough
@@ -651,12 +742,22 @@ export function App(props: TuiAppProps): React.ReactElement {
       if (!sticky) {
         // The ordinary refusal records nothing at all, so there is no outcome to wait for and
         // nothing here that core could fail to keep.
-        push({
-          kind: 'notice',
-          title: 'Command rejected',
-          lines: ['The shell command was not run; the agent was told you declined.'],
-          tone: 'warn',
-        });
+        //
+        // [[TUI-C99]] — **and it is the one notice the outcome line replaces.** It said only that
+        // the command did not run and that the agent was told, and the call's own row already says
+        // both: [[TUI-C100]] renders a refused call as `✗ … [error]` with the refusal text beneath
+        // it, and the outcome line beside it now names who decided. A second block saying that a
+        // screen away from the command it is about is what this node removes. It survives only
+        // where the outcome could not be attributed to a row, because then nothing else records
+        // that the human answered at all.
+        if (!onRow) {
+          pushDecisionNotice({
+            kind: 'notice',
+            title: 'Command rejected',
+            lines: ['The shell command was not run; the agent was told you declined.'],
+            tone: 'warn',
+          });
+        }
         return;
       }
       // [[EXT-150]] — the refusal IS in force either way (core holds it in memory whatever the file
@@ -665,7 +766,13 @@ export function App(props: TuiAppProps): React.ReactElement {
       // for a claim.
       void outcome.then((landed) => {
         const savedToProject = landed?.lifetime === 'always';
-        push({
+        // [[TUI-C99]] — this one SURVIVES, and it is the notice the per-notice test exists for: it
+        // reports a persistent policy change — whether the refusal reached the project file or
+        // holds for the session — and names `/approvals undeny` as the control that lifts it.
+        // Nothing about that is derivable from the tool row, so a one-line outcome cannot stand in
+        // for it. Committed with the turn rather than the moment it lands, so it reads after the
+        // work it followed.
+        pushDecisionNotice({
           kind: 'notice',
           // Exactly what it does, and no more — which [[EXT-107]] makes a project file, so it also
           // says how to undo it. A saved refusal the user cannot find is the one failure mode
@@ -717,8 +824,15 @@ export function App(props: TuiAppProps): React.ReactElement {
         return 'Approved — this exact command will not ask again this session.';
       return 'Approved this single invocation only.';
     };
+    // [[TUI-C99]] — **every approve notice survives, including `once`, and CFG-28 is why.** The
+    // title names the scope that TOOK EFFECT rather than the key that was pressed: §4.2 forbids a
+    // sticky grant on a `catastrophic` verdict, so `(once)` is also what [s] and [a] render there.
+    // A user who asked to be stopped being asked and was quietly given a single-shot grant learns
+    // it here and nowhere else — the tool row cannot say it, and the outcome line deliberately
+    // carries no scope at all ([[EXT-150]]: a scope is not known at the keystroke). Only their
+    // POSITION changes: they wait for the turn they were part of.
     if (scope !== 'always') {
-      push({
+      pushDecisionNotice({
         kind: 'notice',
         title: `Command approved (${scope})`,
         lines: [describe(scope)],
@@ -728,7 +842,7 @@ export function App(props: TuiAppProps): React.ReactElement {
     }
     void outcome.then((landed) => {
       const savedToProject = landed?.lifetime === 'always';
-      push({
+      pushDecisionNotice({
         kind: 'notice',
         // The title carries a lifetime too, so it is written from the landed one for the same
         // reason the body is — a heading saying `always` over a body saying *this session only*
@@ -1341,26 +1455,6 @@ export function App(props: TuiAppProps): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // [[EXT-137]] — commit the request's scrollable half into the transcript, once, at the moment it
-  // becomes the one being ASKED.
-  //
-  // On the head rather than on arrival, and the difference shows only when a second call queues
-  // behind the first: printing both blocks up front would leave the dock's "the call is shown
-  // above" pointing at whichever of them the reader happened to look at, which is the one thing
-  // this split must not get wrong. It stays in the transcript afterwards, followed by the decision
-  // notice `resolveApproval` commits, so the pair reads as a record of what was asked and answered.
-  //
-  // The set is what makes it once-only. A re-render with the same head — a keystroke, a status
-  // update, a terminal resize — must not append the block again, and identity of the queue RECORD
-  // is the right key: two identical calls in a row are two records and are two questions.
-  useEffect(() => {
-    if (!pendingApproval) return;
-    if (announcedApprovals.current.has(pendingApproval)) return;
-    announcedApprovals.current.add(pendingApproval);
-    push({ kind: 'approval', pending: pendingApproval.pending });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingApproval]);
-
   // [[TUI-C68]] §6.1 — attack halts bridged from the runner. Each one mounts the <AttackBanner>,
   // which owns the keyboard until it is answered. Absent on the fixture path, where the runner
   // halts on its own — an unsubscribed surface keeps the halt, which is what makes forgetting to
@@ -1438,7 +1532,27 @@ export function App(props: TuiAppProps): React.ReactElement {
               moment the turn becomes a committed item, and the whole conversation jumps up by one
               — including a view the reader has deliberately parked above the edge. */}
             {live && transcript.length > 0 ? <BlankRow /> : null}
-            {live ? <LiveTurn turn={live} toolsExpanded={toolsExpanded} streaming /> : null}
+            {live ? (
+              <LiveTurn
+                turn={live}
+                toolsExpanded={toolsExpanded}
+                streaming
+                columns={terminalColumns}
+              />
+            ) : null}
+            {/* [[TUI-C99]] / [[EXT-137]] — the scrollable half of the question currently being
+              asked, drawn as the LAST thing in the conversation and never committed.
+              Chronologically that is exactly where it belongs and it stays there: the graph is
+              suspended while a request is open, so the turn cannot grow past it. On the answer it
+              is replaced by a one-line outcome on the row of the call it was about, which is what
+              stops it becoming a block later work has to appear above. The dock's "the call is
+              shown above, in the conversation" points here. */}
+            {pendingApproval ? (
+              <>
+                {live || transcript.length > 0 ? <BlankRow /> : null}
+                <ApprovalRequestPanel pending={pendingApproval.pending} columns={terminalColumns} />
+              </>
+            ) : null}
           </TranscriptViewport>
           {/* The dock: everything from here down is pinned to the terminal floor and never scrolls.
             `flexShrink: 0` is what makes the conversation region — not the controls — give up the

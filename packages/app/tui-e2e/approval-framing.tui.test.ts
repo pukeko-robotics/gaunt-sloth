@@ -175,7 +175,7 @@ test.describe('approval framing — a substitution fifteen lines in is SHOWN, an
     expect(noticeRow).toBeLessThan(bodyRow);
 
     terminal.write('n');
-    await expect(terminal.getByText('Command rejected')).toBeVisible();
+    await expect(terminal.getByText('rejected by you', { strict: false })).toBeVisible();
   });
 });
 
@@ -213,7 +213,7 @@ test.describe('approval framing — forged chrome stays inside the gutter', () =
     atColumnZero(terminal, 'Approve?  [o]nce   [N]o');
 
     terminal.write('n');
-    await expect(terminal.getByText('Command rejected')).toBeVisible();
+    await expect(terminal.getByText('rejected by you', { strict: false })).toBeVisible();
   });
 });
 
@@ -250,7 +250,7 @@ test.describe('approval framing — control characters in the COMMAND are neutra
     notAtColumnZero(terminal, 'Approve? [o]nce\\x1b[2J');
 
     terminal.write('n');
-    await expect(terminal.getByText('Command rejected')).toBeVisible();
+    await expect(terminal.getByText('rejected by you', { strict: false })).toBeVisible();
   });
 });
 
@@ -292,7 +292,7 @@ test.describe('approval framing — the elision keeps the flagged site, not the 
     expect(body.map(([number]) => number)).toEqual([43, 44, 45, 46, 47]);
 
     terminal.write('n');
-    await expect(terminal.getByText('Command rejected')).toBeVisible();
+    await expect(terminal.getByText('rejected by you', { strict: false })).toBeVisible();
   });
 });
 
@@ -342,7 +342,7 @@ test.describe('approval framing — the sticky-choice lines obey all of it', () 
     atColumnZero(terminal, 'Approve?  [o]nce   [s]ession   [a]lways   [N]o');
 
     terminal.write('n');
-    await expect(terminal.getByText('Command rejected')).toBeVisible();
+    await expect(terminal.getByText('rejected by you', { strict: false })).toBeVisible();
   });
 });
 
@@ -392,6 +392,6 @@ test.describe("approval framing — the RATER'S REASON is framed too", () => {
     atColumnZero(terminal, 'Approve?  [o]nce   [s]ession   [a]lways   [N]o');
 
     terminal.write('n');
-    await expect(terminal.getByText('Command rejected')).toBeVisible();
+    await expect(terminal.getByText('rejected by you', { strict: false })).toBeVisible();
   });
 });

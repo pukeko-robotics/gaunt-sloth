@@ -156,7 +156,7 @@ describe('TUI-C52 — foldEvents records arrival order as an ordered segment lis
     const tool = vm.segments[1];
     expect(tool.kind === 'tool' ? tool.tool : null).toMatchObject({ id: 'ghost', name: '' });
     // …and it renders rather than throwing (an unnamed panel is ugly, a crash is fatal).
-    expect(frameRows(<LiveTurn turn={vm} />).join('\n')).toContain('hi');
+    expect(frameRows(<LiveTurn turn={vm} columns={100} />).join('\n')).toContain('hi');
   });
 
   it('a tool_output-before-tool_start stream produces the SAME segment order as the tidy one', () => {
@@ -197,7 +197,7 @@ describe('TUI-C52 — <LiveTurn> paints the segments in the order they arrived',
   });
 
   it('paints the second text run BELOW the first tool panel', () => {
-    const rows = frameRows(<LiveTurn turn={foldEventSequence(INTERLEAVED)} />);
+    const rows = frameRows(<LiveTurn turn={foldEventSequence(INTERLEAVED)} columns={100} />);
     const alpha = rowOf(rows, 'alpha-run');
     const alphaTool = rowOf(rows, 'alpha_tool');
     const beta = rowOf(rows, 'beta-run');
@@ -212,7 +212,7 @@ describe('TUI-C52 — <LiveTurn> paints the segments in the order they arrived',
   it('keeps that order while STREAMING as well as once committed', () => {
     const vm = foldEventSequence(INTERLEAVED);
     for (const streaming of [true, false]) {
-      const rows = frameRows(<LiveTurn turn={vm} streaming={streaming} />);
+      const rows = frameRows(<LiveTurn turn={vm} streaming={streaming} columns={100} />);
       expect(rowOf(rows, 'alpha-run'), `streaming=${streaming}`).toBeLessThan(
         rowOf(rows, 'alpha_tool')
       );
@@ -229,7 +229,7 @@ describe('TUI-C52 — <LiveTurn> paints the segments in the order they arrived',
       text('after-tool '),
       { type: 'tool_result', id: 't1', content: 'late-result-body' },
     ]);
-    const rows = frameRows(<LiveTurn turn={vm} />);
+    const rows = frameRows(<LiveTurn turn={vm} columns={100} />);
     expect(rowOf(rows, 'before-tool')).toBeLessThan(rowOf(rows, 'slow_tool'));
     expect(rowOf(rows, 'slow_tool')).toBeLessThan(rowOf(rows, 'after-tool'));
     // The patch landed on the existing panel rather than opening a second one.
@@ -247,7 +247,7 @@ describe('TUI-C52 — <LiveTurn> paints the segments in the order they arrived',
       ...toolCall('t1', 'alpha_tool'),
       text('\n```\nDone.'),
     ]);
-    const rows = frameRows(<LiveTurn turn={vm} />);
+    const rows = frameRows(<LiveTurn turn={vm} columns={100} />);
     const code = rowOf(rows, 'const a = 1;');
     const tool = rowOf(rows, 'alpha_tool');
     const done = rowOf(rows, 'Done.');
@@ -267,7 +267,7 @@ describe('TUI-C52 — <LiveTurn> paints the segments in the order they arrived',
 
   it('TUI-C43 non-regression: a fence WITHIN one text run still renders as one block', () => {
     const vm = foldEventSequence([text('Before\n```js\nconst a = 1;\n```\nAfter')]);
-    const rows = frameRows(<LiveTurn turn={vm} />);
+    const rows = frameRows(<LiveTurn turn={vm} columns={100} />);
     expect(rowOf(rows, 'Before')).toBeLessThan(rowOf(rows, 'const a = 1;'));
     expect(rowOf(rows, 'const a = 1;')).toBeLessThan(rowOf(rows, 'After'));
     expect(rows.join('\n')).not.toContain('```');
@@ -285,7 +285,7 @@ describe('TUI-C52 — <LiveTurn> paints the segments in the order they arrived',
       { type: 'tool_end', id: 'c1' },
       text('acting-run '),
     ]);
-    const rows = frameRows(<LiveTurn turn={vm} />);
+    const rows = frameRows(<LiveTurn turn={vm} columns={100} />);
     const frame = rows.join('\n');
     expect(frame).not.toContain(CHECKLIST_TOOL_NAME);
     expect(frame).not.toContain('step one');
@@ -309,7 +309,7 @@ describe('TUI-C52 — <LiveTurn> paints the segments in the order they arrived',
       { type: 'tool_start', id: 'c1', name: CHECKLIST_TOOL_NAME },
     ] satisfies AgentStreamEvent[]) {
       vm = foldEvents(vm, event);
-      const frame = frameRows(<LiveTurn turn={vm} streaming />).join('\n');
+      const frame = frameRows(<LiveTurn turn={vm} streaming columns={100} />).join('\n');
       expect(frame, `after ${event.type}`).not.toContain(CHECKLIST_TOOL_NAME);
       // No panel of ANY name: an unnamed placeholder would slip past a name-only check while still
       // drawing a caret and a status word where the turn should show nothing at all.
@@ -523,7 +523,7 @@ describe('TUI-C52 — a segment that draws nothing does not break a text run', (
 
   /** The painted frame, split into the prose rows and the count of tool panels. */
   const painted = (turn: TurnViewModel): { prose: string[]; panels: number } => {
-    const rows = frameRows(<LiveTurn turn={turn} />)
+    const rows = frameRows(<LiveTurn turn={turn} columns={100} />)
       .map((row) => row.trim())
       .filter((row) => row !== '');
     return {
@@ -592,9 +592,11 @@ describe('TUI-C52 — a segment that draws nothing does not break a text run', (
       text('\n```\nDone.'),
     ]);
     const whole = foldEventSequence([text('```js\nconst a = 1;\n```\nDone.')]);
-    expect(frameRows(<LiveTurn turn={split} />)).toEqual(frameRows(<LiveTurn turn={whole} />));
+    expect(frameRows(<LiveTurn turn={split} columns={100} />)).toEqual(
+      frameRows(<LiveTurn turn={whole} columns={100} />)
+    );
     // …and that frame is a real closed fence, not two identically-broken ones.
-    const rows = frameRows(<LiveTurn turn={split} />);
+    const rows = frameRows(<LiveTurn turn={split} columns={100} />);
     expect(rows.join('\n')).not.toContain('```');
     expect(rowOf(rows, '── js ')).toBeLessThan(rowOf(rows, 'const a = 1;'));
     expect(rowOf(rows, 'const a = 1;')).toBeLessThan(rowOf(rows, 'Done.'));
@@ -727,7 +729,9 @@ describe('TUI-C81 — reasoning is a segment, so a turn paints its thoughts wher
   });
 
   it('paints the SECOND thinking panel below the tool call, not above the first', () => {
-    const rows = frameRows(<LiveTurn turn={foldEventSequence(THINKS_TWICE)} toolsExpanded />);
+    const rows = frameRows(
+      <LiveTurn turn={foldEventSequence(THINKS_TWICE)} toolsExpanded columns={100} />
+    );
     const first = rowOf(rows, 'THOUGHT-A');
     const tool = rowOf(rows, 'alpha_tool');
     const second = rowOf(rows, 'THOUGHT-B');
@@ -745,7 +749,9 @@ describe('TUI-C81 — reasoning is a segment, so a turn paints its thoughts wher
   it('keeps that order while STREAMING as well as once committed', () => {
     const vm = foldEventSequence(THINKS_TWICE);
     for (const streaming of [true, false]) {
-      const rows = frameRows(<LiveTurn turn={vm} streaming={streaming} toolsExpanded />);
+      const rows = frameRows(
+        <LiveTurn turn={vm} streaming={streaming} toolsExpanded columns={100} />
+      );
       expect(rowOf(rows, 'alpha_tool'), `streaming=${streaming}`).toBeLessThan(
         rowOf(rows, 'THOUGHT-B')
       );
@@ -754,7 +760,7 @@ describe('TUI-C81 — reasoning is a segment, so a turn paints its thoughts wher
 
   it('a turn that ONLY thought renders its panel and nothing else', () => {
     const vm = foldEventSequence(think('a thought and no answer yet'));
-    const rows = frameRows(<LiveTurn turn={vm} streaming toolsExpanded />);
+    const rows = frameRows(<LiveTurn turn={vm} streaming toolsExpanded columns={100} />);
     expect(rowOf(rows, '💭 Thinking')).toBe(0);
     expect(rowOf(rows, 'a thought and no answer yet')).toBeGreaterThan(0);
   });
@@ -767,15 +773,15 @@ describe('TUI-C81 — reasoning is a segment, so a turn paints its thoughts wher
       ...toolCall('t1', 'alpha_tool'),
       { type: 'reasoning_delta', delta: 'newer thought' },
     ]);
-    const rows = frameRows(<LiveTurn turn={writing} streaming />);
+    const rows = frameRows(<LiveTurn turn={writing} streaming columns={100} />);
     expect(rows.join('\n')).toContain('newer thought');
     expect(rows.join('\n')).not.toContain('older thought');
 
     // …and once the model moves on from it, the tail stops being previewed.
     const finished = foldEvents(writing, { type: 'text', delta: 'done thinking' });
-    expect(frameRows(<LiveTurn turn={finished} streaming />).join('\n')).not.toContain(
-      'newer thought'
-    );
+    expect(
+      frameRows(<LiveTurn turn={finished} streaming columns={100} />).join('\n')
+    ).not.toContain('newer thought');
   });
 
   it('turnReasoning gives /reasoning the whole turn’s thinking, both blocks', () => {

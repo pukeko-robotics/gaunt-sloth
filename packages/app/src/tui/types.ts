@@ -165,9 +165,18 @@ export type TranscriptItem =
   // [[EXT-137]] — the scrollable half of a tool-approval request, rendered via
   // <ApprovalRequestPanel>. The dock's <ApprovalPrompt> carries only text we wrote, so everything
   // the model, a third-party server or a hostile URL contributed — the rating, the negotiation,
-  // the command and the hosts — is committed here instead, where the conversation scrolls and
+  // the command and the hosts — reaches the screen here instead, where the conversation scrolls and
   // nothing needs a cap. The whole pending call travels rather than pre-rendered lines: core's
   // renderer needs the terminal width, which is not known when the request arrives.
+  //
+  // [[TUI-C99]] — **it is a FALLBACK now, not the ordinary path, and never committed on the ask.**
+  // Committed when the question was asked it landed above every tool row of the turn it
+  // interrupted, because the viewport draws the whole committed list before its children and the
+  // in-flight turn is a child. An open request is drawn under the live turn instead, and an
+  // answered one is what Ctrl+T opens on the call's own row. This kind survives for the one case
+  // that leaves: an interrupt carrying no `id`, or one naming a call this turn has no segment for,
+  // has no row to hang an outcome on — so the block is committed after the turn, where EXT-137's
+  // audit record is preserved without inverting.
   | { kind: 'approval'; id: number; pending: PendingToolInterrupt }
   // TUI-C18 — a committed turn's thinking reprinted by `/reasoning`. Rendered via the shared
   // TUI-C15 <ReasoningPanel> (expanded) so a recalled block matches the original 💭/gutter styling;

@@ -134,7 +134,7 @@ test.describe('gth code TUI — EXT-52 reject keeps the command from running', (
 
     // Anything but o/s/a/y is a fail-closed reject.
     terminal.write('n');
-    await expect(terminal.getByText('Command rejected')).toBeVisible();
+    await expect(terminal.getByText('rejected by you', { strict: false })).toBeVisible();
 
     // The model observed the rejection ToolMessage and concluded; the command NEVER ran.
     await expect(
@@ -215,7 +215,7 @@ test.describe('gth code TUI — EXT-52/CFG-27 rung switching restores prompting 
       terminal.getByText('The agent wants to run a shell command via run_shell_command')
     ).toBeVisible();
     terminal.write('n');
-    await expect(terminal.getByText('Command rejected')).toBeVisible();
+    await expect(terminal.getByText('rejected by you', { strict: false })).toBeVisible();
     await expect(terminal.getByText('turns: 2  ·  ready', { strict: false })).toBeVisible();
   });
 });
@@ -271,7 +271,7 @@ test.describe('gth code TUI — EXT-70 §6 the menu names what it will store, an
     await expect(terminal.getByText('[a]lways', { strict: false })).toBeVisible();
 
     terminal.write('n');
-    await expect(terminal.getByText('Command rejected')).toBeVisible();
+    await expect(terminal.getByText('rejected by you', { strict: false })).toBeVisible();
   });
 
   test('a command that does not statically resolve offers no sticky control at all', async ({
@@ -295,7 +295,7 @@ test.describe('gth code TUI — EXT-70 §6 the menu names what it will store, an
     await expect(terminal.getByText('will remember', { strict: false })).not.toBeVisible();
 
     terminal.write('n');
-    await expect(terminal.getByText('Command rejected')).toBeVisible();
+    await expect(terminal.getByText('rejected by you', { strict: false })).toBeVisible();
   });
 });
 

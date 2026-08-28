@@ -57,15 +57,17 @@ describe('tui <LiveTurn> — tool body memoisation (TUI-C46)', () => {
     const { LiveTurn } = await import('#src/tui/components/LiveTurn.js');
     const tc = toolCall();
 
-    const { rerender, unmount } = render(<LiveTurn turn={turnWith(tc)} streaming={true} />);
+    const { rerender, unmount } = render(
+      <LiveTurn turn={turnWith(tc)} streaming={true} columns={100} />
+    );
     expect(buildToolPreviewLinesMock).toHaveBeenCalledTimes(1);
 
     // Repaint with the panel's own inputs untouched. `streaming` reaches the panel — it decides
     // the "(Ctrl+T to expand)" hint — so the component genuinely re-renders; the body does not
     // depend on it, so the lines must not be rebuilt. This is the per-frame cost, isolated.
-    rerender(<LiveTurn turn={turnWith(tc)} streaming={false} />);
-    rerender(<LiveTurn turn={turnWith(tc)} streaming={true} />);
-    rerender(<LiveTurn turn={turnWith(tc)} streaming={false} />);
+    rerender(<LiveTurn turn={turnWith(tc)} streaming={false} columns={100} />);
+    rerender(<LiveTurn turn={turnWith(tc)} streaming={true} columns={100} />);
+    rerender(<LiveTurn turn={turnWith(tc)} streaming={false} columns={100} />);
     expect(buildToolPreviewLinesMock).toHaveBeenCalledTimes(1);
 
     unmount();
@@ -75,7 +77,11 @@ describe('tui <LiveTurn> — tool body memoisation (TUI-C46)', () => {
     const { LiveTurn } = await import('#src/tui/components/LiveTurn.js');
 
     const { lastFrame, rerender, unmount } = render(
-      <LiveTurn turn={turnWith(toolCall({ result: 'first result' }))} streaming={true} />
+      <LiveTurn
+        turn={turnWith(toolCall({ result: 'first result' }))}
+        streaming={true}
+        columns={100}
+      />
     );
     expect(buildToolPreviewLinesMock).toHaveBeenCalledTimes(1);
     expect(lastFrame()).toContain('first result');
@@ -83,7 +89,13 @@ describe('tui <LiveTurn> — tool body memoisation (TUI-C46)', () => {
     // A streamed result growing is the case a memo keyed on too little would break: the panel
     // would keep drawing the first chunk forever. Counting the call is not enough on its own —
     // what is on screen has to move too.
-    rerender(<LiveTurn turn={turnWith(toolCall({ result: 'second result' }))} streaming={true} />);
+    rerender(
+      <LiveTurn
+        turn={turnWith(toolCall({ result: 'second result' }))}
+        streaming={true}
+        columns={100}
+      />
+    );
     expect(buildToolPreviewLinesMock).toHaveBeenCalledTimes(2);
     expect(lastFrame()).toContain('second result');
 
@@ -95,16 +107,16 @@ describe('tui <LiveTurn> — tool body memoisation (TUI-C46)', () => {
     const tc = toolCall();
 
     const { rerender, unmount } = render(
-      <LiveTurn turn={turnWith(tc)} toolsExpanded={false} streaming={true} />
+      <LiveTurn turn={turnWith(tc)} toolsExpanded={false} streaming={true} columns={100} />
     );
     expect(buildToolPreviewLinesMock).toHaveBeenCalledTimes(1);
     expect(buildToolBodyLinesMock).not.toHaveBeenCalled();
 
     // Expanding selects a different formatter, so it is part of the key rather than a repaint.
-    rerender(<LiveTurn turn={turnWith(tc)} toolsExpanded={true} streaming={true} />);
+    rerender(<LiveTurn turn={turnWith(tc)} toolsExpanded={true} streaming={true} columns={100} />);
     expect(buildToolBodyLinesMock).toHaveBeenCalledTimes(1);
     // …and expanded repaints are memoised in their turn.
-    rerender(<LiveTurn turn={turnWith(tc)} toolsExpanded={true} streaming={false} />);
+    rerender(<LiveTurn turn={turnWith(tc)} toolsExpanded={true} streaming={false} columns={100} />);
     expect(buildToolBodyLinesMock).toHaveBeenCalledTimes(1);
     expect(buildToolPreviewLinesMock).toHaveBeenCalledTimes(1);
 

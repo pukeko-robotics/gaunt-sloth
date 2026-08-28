@@ -56,14 +56,26 @@ const rowStyle = (tone: ApprovalRowTone): { color?: string; dimColor?: boolean }
  * column 0. `columns` is threaded in for the same reason the estimator takes it: the block is
  * budgeted against the very width it is framed at.
  *
- * It stays in the transcript after the answer, followed by the decision notice `<App>` commits — so
- * the pair reads as a record of what was asked and what was answered.
+ * **It is drawn while the question is open, and again inside the answered call's Ctrl+T expansion**
+ * ([[TUI-C99]]) — never as a standing transcript item. While open it is the last thing in the
+ * conversation, which is chronologically true and stays true, because the graph is suspended and
+ * the turn cannot grow past it. Once answered the call's own row carries a one-line outcome and
+ * this block is what Ctrl+T opens, so the audit route survives the block ceasing to stand there.
  */
 export function ApprovalRequestPanel({
   pending,
   columns,
 }: {
   pending: PendingToolInterrupt;
+  /**
+   * The width these rows are framed at — **required, and the requirement IS the guard.**
+   *
+   * Left out, `frameWidthFor(undefined)` resolves to the 80-column default: on any narrower
+   * terminal the rows are wider than the screen, Ink wraps them a second time, and the untrusted
+   * text lands back at column 0 — precisely what the gutter above exists to prevent, reached by
+   * forgetting a prop. Every caller has a width to hand it, so an optional one buys nothing and
+   * costs the compile error that says so.
+   */
   columns: number;
 }): React.ReactElement {
   const rows = approvalRequestRows(pending, { columns });

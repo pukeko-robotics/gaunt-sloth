@@ -56,6 +56,10 @@ const screenRows = (terminal: { getBuffer(): string[][] }): string[] =>
 const toolRowsFor = (terminal: { getBuffer(): string[][] }, name: string): string[] =>
   screenRows(terminal).filter((row) => row.includes(`${name}(`));
 
+/** Screen row index of the first line containing `needle`, or -1. Top of the terminal is 0. */
+const rowIndexOf = (terminal: { getBuffer(): string[][] }, needle: string): number =>
+  screenRows(terminal).findIndex((row) => row.includes(needle));
+
 test.describe('gth code TUI — [[TUI-C100]] a gated call with a returning sibling', () => {
   const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'gth-e2e-approval-sibling-home-'));
 
@@ -109,7 +113,7 @@ test.describe('gth code TUI — [[TUI-C100]] a gated call with a returning sibli
     // Refuse it. The refused call is already distinct today (✗ / error, with the refusal text), and
     // that must stay true — the fix is about the window BEFORE a result, not about the result.
     terminal.write('n');
-    await expect(terminal.getByText('Command rejected')).toBeVisible();
+    await expect(terminal.getByText('rejected by you', { strict: false })).toBeVisible();
     await expect(
       terminal.getByText('approval-sibling-final-answer-marker', { strict: false })
     ).toBeVisible();
@@ -180,5 +184,78 @@ test.describe('gth code TUI — [[TUI-C100]] the approved gated call still reach
     // And the granted sibling, which the same resume dispatched, settles too.
     const readRows = toolRowsFor(terminal, 'list_directory');
     expect(readRows.filter((row) => row.includes('[done]')).length).toBeGreaterThan(0);
+  });
+});
+
+test.describe('gth code TUI — [[TUI-C99]] a mid-turn gate reads in the order it happened', () => {
+  const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'gth-e2e-approval-sibling-home-'));
+
+  test.use({
+    program: { file: 'node', args: [cli, 'code', '--tui', '-c', siblingConfig] },
+    env: realAgentEnv(tmpHome),
+    columns: 120,
+    rows: 40,
+  });
+
+  test.afterAll(() => {
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  /**
+   * Read off the real terminal, because placement is the whole claim and a unit render cannot see
+   * the frame the human is looking at.
+   *
+   * The round already did work before the question — the listing is on screen — so a request drawn
+   * above it says the question preceded work that in fact preceded the question. Afterwards the
+   * command runs, and the row order has to survive that too: its output belongs under the decision
+   * about it, not above.
+   */
+  test('the request sits below the work that preceded it, and the outcome sits on the call', async ({
+    terminal,
+  }) => {
+    await expect(terminal.getByText('ready to code')).toBeVisible();
+
+    terminal.write('list and run');
+    await expect(terminal.getByText('> list and run')).toBeVisible();
+    terminal.submit();
+
+    await expect(
+      terminal.getByText('The agent wants to run a shell command via run_shell_command')
+    ).toBeVisible();
+    await expect(terminal.getByText('[o]nce', { strict: false })).toBeVisible();
+
+    // While the question is open the request block is BELOW both rows of the turn it interrupted.
+    const listingRow = rowIndexOf(terminal, 'list_directory(');
+    const gatedRow = rowIndexOf(terminal, 'run_shell_command(');
+    const requestRow = rowIndexOf(terminal, 'Gaunt Sloth is asking about this call');
+    expect(listingRow).toBeGreaterThanOrEqual(0);
+    expect(gatedRow).toBeGreaterThan(listingRow);
+    expect(requestRow).toBeGreaterThan(gatedRow);
+
+    terminal.write('o');
+    await expect(
+      terminal.getByText('approval-sibling-final-answer-marker', { strict: false })
+    ).toBeVisible();
+    await expect(
+      terminal.getByText('approval-sibling-out-marker', { strict: false })
+    ).toBeVisible();
+
+    // The decision is one line on the gated call's own row, under it — and the command's own
+    // output, produced after the answer, is under that rather than over it.
+    const settledGatedRow = rowIndexOf(terminal, 'run_shell_command(');
+    const outcomeRow = rowIndexOf(terminal, 'approved by you');
+    const outputRow = rowIndexOf(terminal, 'approval-sibling-out-marker');
+    const answerRow = rowIndexOf(terminal, 'approval-sibling-final-answer-marker');
+    expect(settledGatedRow).toBeGreaterThanOrEqual(0);
+    expect(outcomeRow).toBeGreaterThan(settledGatedRow);
+    expect(outputRow).toBeGreaterThan(outcomeRow);
+    expect(answerRow).toBeGreaterThan(outcomeRow);
+
+    // And the request block no longer stands in the conversation: what is left is the one line,
+    // with the detail behind Ctrl+T.
+    await expect(
+      terminal.getByText('Gaunt Sloth is asking about this call', { strict: false })
+    ).not.toBeVisible();
+    await expect(terminal.getByText('Ctrl+T for the request', { strict: false })).toBeVisible();
   });
 });

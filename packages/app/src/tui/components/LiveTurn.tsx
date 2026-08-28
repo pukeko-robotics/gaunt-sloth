@@ -14,9 +14,10 @@ import type {
   ToolCallViewModel,
   ChecklistItemViewModel,
 } from '#src/tui/viewModel.js';
-import { displaySegments } from '#src/tui/viewModel.js';
+import { approvalOutcomeLine, displaySegments } from '#src/tui/viewModel.js';
 import { renderMarkdown } from '#src/tui/markdown.js';
 import { BlankRow } from '#src/tui/components/BlankRow.js';
+import { ApprovalRequestPanel } from '#src/tui/components/ApprovalRequestPanel.js';
 
 /**
  * Status glyph + word + colour for a tool call's compact summary line.
@@ -78,11 +79,24 @@ function ToolCallPanel({
   tc,
   expanded,
   live,
+  columns,
 }: {
   tc: ToolCallViewModel;
   expanded: boolean;
   /** True for the in-progress turn, where Ctrl+T can toggle the detail in place. */
   live: boolean;
+  /**
+   * [[TUI-C99]] — the frame width the approval request block is framed at, when this call carries
+   * one. Threaded rather than read from the terminal-size context because `transcriptWindow`'s row
+   * oracle takes it as an argument: the two count the same block only if they are handed the same
+   * width, and a component measuring for itself is free to be handed a different one.
+   *
+   * **Required, all the way up the chain**, for the reason `ApprovalRequestPanel` states on its own
+   * prop: a missing width is not an absent frame but an 80-column one, which on a narrower terminal
+   * puts untrusted bytes back at column 0. A call carrying no approval never reads it, and that is
+   * not a reason to let it be forgotten by the one that does.
+   */
+  columns: number;
 }): React.ReactElement {
   const { glyph, label, color } = toolStatus(tc);
   // Inline shortened params (summariseToolCall handles the empty/unparsable-args fallbacks).
@@ -128,6 +142,19 @@ function ToolCallPanel({
         <Text dimColor>{`  [${label}]`}</Text>
         {live && !expanded && hasDetail ? <Text dimColor>{'  (Ctrl+T to expand)'}</Text> : null}
       </Text>
+      {/* [[TUI-C99]] — the answer this call got at the approval gate, BELOW the call it was about
+          and carrying the decision alone. Its whole text comes from `approvalOutcomeLine`, which
+          `transcriptWindow` counts through as well. */}
+      {tc.approval ? (
+        <Text dimColor>{`    ${approvalOutcomeLine(tc.approval, expanded)}`}</Text>
+      ) : null}
+      {/* The detail Ctrl+T promises: the very rows the dialog showed, from core's own renderer, so
+          the audit [[EXT-137]] put in the conversation survives the block ceasing to stand there.
+          Un-indented, because each row already carries the [[TUI-C26]] gutter that holds column 0
+          and is framed to `columns` — indenting them would re-wrap what must never be re-wrapped. */}
+      {tc.approval && expanded ? (
+        <ApprovalRequestPanel pending={tc.approval.request} columns={columns} />
+      ) : null}
       {/* [[TUI-C102]] — both of these are painted from `buildToolExpansionText`, never from the
           raw view-model fields: the args text is whatever the model streamed and the notice quotes
           the command back, so both are untrusted, and `transcriptWindow`'s row oracle counts the
@@ -324,12 +351,23 @@ export function LiveTurn({
   turn,
   toolsExpanded = false,
   streaming = false,
+  columns,
 }: {
   turn: TurnViewModel;
   /** Whether tool-call panels show their args/result body (App-level Ctrl+T toggle). */
   toolsExpanded?: boolean;
   /** True while the turn is still streaming; suppresses markdown reflow until complete. */
   streaming?: boolean;
+  /**
+   * [[TUI-C99]] — the frame width an answered call's approval request block is framed at. Only that
+   * block reads it; every other part of a turn is laid out by Ink itself.
+   *
+   * **Required**, because the omission it would otherwise permit is silent: it reaches
+   * `ApprovalRequestPanel` as the 80-column default and re-wraps untrusted rows on a narrower
+   * terminal. Both production callers hold the terminal width already; a test rendering a turn with
+   * no approval in it passes any number.
+   */
+  columns: number;
 }): React.ReactElement {
   // `displaySegments` decides what is drawn — it drops the segments that paint nothing (the
   // checklist tool, which is the pinned dock panel) and re-joins the runs around them, so a call
@@ -356,7 +394,12 @@ export function LiveTurn({
               previewTail={streaming && i === drawn.length - 1}
             />
           ) : (
-            <ToolCallPanel tc={segment.tool} expanded={toolsExpanded} live={streaming} />
+            <ToolCallPanel
+              tc={segment.tool}
+              expanded={toolsExpanded}
+              live={streaming}
+              columns={columns}
+            />
           );
         // TUI-C90 — one blank row BETWEEN blocks, never around them. A leading row would push a
         // turn off its own separator, and a trailing one would make a streaming turn jump the

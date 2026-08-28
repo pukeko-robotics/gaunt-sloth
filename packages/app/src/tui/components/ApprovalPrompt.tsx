@@ -42,8 +42,14 @@ import type { PendingToolInterrupt } from '@gaunt-sloth/core/core/types.js';
  * keystroke rather than a missing hostname.
  *
  * Everything else — the rating, the `approvals.escalate` entry, the §5 negotiation, what a sticky
- * answer would store, the command and the hosts — is committed into the transcript as an `approval`
- * item and painted by `<ApprovalRequestPanel>`, where the conversation scrolls.
+ * answer would store, the command and the hosts — is painted by `<ApprovalRequestPanel>`, where the
+ * conversation scrolls. [[TUI-C99]] — while the question is open that block is a child of the
+ * viewport, drawn under the live turn; once it is answered the call's own row carries a one-line
+ * outcome and Ctrl+T reopens the block there. It is not committed as an `approval` transcript item
+ * on the ask: that item kind is the FALLBACK for an answer that could not be attributed to a row,
+ * and `types.ts` says when it is reached. **That block is the destination wherever it is drawn, and
+ * the prohibition above holds whichever of the two it is** — nothing call-derived is interpolated
+ * into these four lines.
  *
  * ## The keyboard model, which this component does not own
  *

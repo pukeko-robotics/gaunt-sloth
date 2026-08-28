@@ -239,6 +239,6 @@ test.describe('approval menu — a catastrophic escalation', () => {
     expect(rows.join('\n')).not.toContain('argued with the auto-rater');
 
     terminal.write('n');
-    await expect(terminal.getByText('Command rejected')).toBeVisible();
+    await expect(terminal.getByText('rejected by you', { strict: false })).toBeVisible();
   });
 });

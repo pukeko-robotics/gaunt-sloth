@@ -1,4 +1,4 @@
-import type { AgentStreamEvent } from '@gaunt-sloth/core/core/types.js';
+import type { AgentStreamEvent, PendingToolInterrupt } from '@gaunt-sloth/core/core/types.js';
 import type { TranscriptItem } from '#src/tui/types.js';
 
 /**
@@ -50,6 +50,98 @@ export interface ToolCallViewModel {
    * Additive to {@link isError}, which stays true beside it and still says the call did not run.
    */
   raterClarification?: boolean;
+  /**
+   * [[TUI-C99]] — the human's answer at the approval gate, held ON the call it was about.
+   *
+   * A decision belongs to a call, not to a turn, and that is what this field is for. Held instead
+   * as a transcript item pushed when the question is asked — the shape this replaces — it landed
+   * above every tool row of the turn it interrupted, because the viewport draws the whole committed
+   * list before the in-flight turn; and it could not be moved, because the two live in different
+   * regions of the tree and one region is unconditionally above the other. Attached here it has no
+   * wall to sit above, and it cannot drift as the turn grows.
+   *
+   * **It never reaches the model.** {@link turnText} concatenates `text` segments alone, so nothing
+   * hung off a tool call can enter the conversation history — which is the property that made this
+   * shape available at all.
+   */
+  approval?: ToolApprovalViewModel;
+}
+
+/** [[TUI-C99]] — which way a human answered at the approval gate. */
+export type ApprovalDecisionKind = 'approved' | 'rejected';
+
+/**
+ * [[TUI-C99]] — one answered approval, as the tool row draws it.
+ *
+ * **The decision and nothing else, deliberately: no lifetime, no scope.** [[EXT-150]]'s rule is
+ * *one notice, once, when it is known*, and a scope is not known at the keystroke — `always`
+ * degrades to `session` whenever the write did not reach disk, and the runner decides that after
+ * the answer has been handed back. A line written from the key pressed would therefore be a claim
+ * that is sometimes corrected afterwards, which is the defect EXT-150 exists to prevent. The
+ * lifetimes stay in the decision notices, which are committed from what LANDED.
+ *
+ * The `request` is the whole interrupt, so the Ctrl+T expansion can paint the same rows the dialog
+ * showed rather than a summary of them — [[EXT-137]] put the untrusted halves in the conversation
+ * so a reader could audit what a model or a third-party server claimed, and Ctrl+T is now the route
+ * to that.
+ */
+export interface ToolApprovalViewModel {
+  decision: ApprovalDecisionKind;
+  /** The interrupt the human was answering, kept whole for the Ctrl+T expansion. */
+  request: PendingToolInterrupt;
+}
+
+/** The hint the collapsed outcome line carries, naming the affordance that opens the detail. */
+export const APPROVAL_OUTCOME_EXPAND_HINT = '  (Ctrl+T for the request)';
+
+/**
+ * [[TUI-C99]] — the one line a tool row draws under itself once its approval has been answered.
+ *
+ * Lives here, beside {@link displaySegments}, and for the same reason: `<LiveTurn>` paints it and
+ * `transcriptWindow`'s row oracle counts it, and an oracle holding its own copy of a rendered
+ * string drifts from the renderer silently — an under-count shows as conversation quietly going
+ * missing rather than as an error. One builder is what makes that impossible rather than unlikely.
+ *
+ * The hint is on the COLLAPSED line only, because expanded is where the request already is. That
+ * asymmetry changes the line's width between fold states, which is precisely why both sides ask
+ * this function instead of measuring a string they wrote themselves.
+ *
+ * Note it does NOT also gate on the turn still being live, though the `(Ctrl+T to expand)` hints on
+ * the tool row above it do. Those advertise a detail that is interesting while a call is running;
+ * this one advertises the only route to what the human was actually shown when they approved. A
+ * reader auditing a decision is by definition doing it afterwards, on a committed turn, so hiding
+ * the affordance once the turn ends would retire it exactly when it starts being needed.
+ */
+export function approvalOutcomeLine(approval: ToolApprovalViewModel, expanded: boolean): string {
+  const decision = approval.decision === 'approved' ? 'approved by you' : 'rejected by you';
+  return `↳ ${decision}${expanded ? '' : APPROVAL_OUTCOME_EXPAND_HINT}`;
+}
+
+/**
+ * [[TUI-C99]] — attach a human's answer to the tool call it was about.
+ *
+ * Returns the turn **unchanged, by reference**, when the answer cannot be attributed: an interrupt
+ * with no `id` (the recovery in `getPendingToolInterrupts` is defensive at every step and yields
+ * one) or an id no segment in this turn carries. `PendingToolInterrupt.id` is a display attribution
+ * and is documented as absent-able, so the caller has to have somewhere else to put the decision —
+ * and an identity comparison is how it finds out, rather than by guessing at which call was meant.
+ * Pinning an unattributable answer to "the last running call" is the mis-attribution `foldEvents`
+ * already refuses for id-less tool output, and it would be worse here: it would report a human's
+ * decision against a command they were not asked about.
+ */
+export function recordApprovalDecision(
+  turn: TurnViewModel,
+  toolCallId: string | undefined,
+  approval: ToolApprovalViewModel
+): TurnViewModel {
+  if (!toolCallId) return turn;
+  const idx = turn.segments.findIndex(
+    (segment) => segment.kind === 'tool' && segment.tool.id === toolCallId
+  );
+  if (idx === -1) return turn;
+  const segments = turn.segments.slice();
+  segments[idx] = { kind: 'tool', tool: { ...(segments[idx] as ToolSegment).tool, approval } };
+  return { ...turn, segments };
 }
 
 /** One run of assistant text, uninterrupted by a tool call or a run of reasoning. */
