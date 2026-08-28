@@ -216,6 +216,28 @@ const CASES: Array<{ name: string; item: TranscriptItem }> = [
     },
   },
   {
+    // [[TUI-C102]] — the expanded panel's OWN untrusted strings: the raw streamed args text and
+    // the routed notice, neither of which passes through the body formatters. Neutralised text is
+    // wider than the escapes it replaces, so this is the shape that breaks the bound if the
+    // estimator ever measures the raw string beside a renderer drawing the neutralised one.
+    name: 'assistant (hostile args + notice in the expansion)',
+    item: {
+      kind: 'assistant',
+      id: 20,
+      turn: turn({
+        toolCalls: [
+          toolCall({
+            name: 'run_shell_command',
+            argsText: '{"command":"echo start\x1b[2J\x1b[1000B end"}',
+            notice:
+              '🔧 Executing\x07 run_shell_command: echo\x1b]0;RETITLED\x07 start\r\nend\rgone',
+            result: 'ok',
+          }),
+        ],
+      }),
+    },
+  },
+  {
     name: 'assistant (empty turn)',
     item: { kind: 'assistant', id: 17, turn: turn() },
   },
@@ -379,6 +401,87 @@ describe('transcriptWindow — the estimate is a LOWER bound on the rendered row
     });
     const expanded = estimateItemRows(item, { columns: 80, toolsExpanded: true, separator: false });
     expect(expanded).toBeGreaterThan(collapsed);
+  });
+
+  // [[TUI-C102]] — the estimator and the renderer must resolve the expansion's untrusted strings
+  // the SAME way. Neutralising is not width-neutral: `\x1b[2J` is eight printable columns where
+  // the raw sequence was none, so a renderer that neutralises beside an oracle that measures the
+  // raw string disagree about the height of the panel by however much escaping added.
+  //
+  // Asserted as a DELTA rather than as raw equality, because the estimator deliberately
+  // under-counts elsewhere in the same panel (the `args: ` prefix, and the caret/status/tool
+  // glyphs left off the summary). Subtracting a benign twin cancels every one of those without a
+  // tuned slack constant, and leaves exactly the rows the hostile notice added.
+  it('[[TUI-C102]] — counts the notice the expansion PAINTS, not the raw string', () => {
+    const columns = 40;
+    const withNotice = (notice: string): TranscriptItem => ({
+      kind: 'assistant',
+      id: 1,
+      turn: turn({
+        toolCalls: [
+          toolCall({
+            name: 'run_shell_command',
+            argsText: '{"command":"ls"}',
+            notice,
+            result: 'ok',
+          }),
+        ],
+      }),
+    });
+    const benign = withNotice('running');
+    // Deliberately space-free, so Ink hard-wraps at the column edge and the row count is
+    // `ceil(width / columns)` exactly — derived arithmetic rather than an observed number. Raw,
+    // this is zero-width ANSI on a single row; neutralised it is 160 columns of visible text.
+    const hostile = withNotice('\x1b[2J'.repeat(20));
+    const estimate = (item: TranscriptItem): number =>
+      estimateItemRows(item, { columns, toolsExpanded: true, separator: false });
+    const rendered = (item: TranscriptItem): number => actualRows(item, columns, true);
+
+    const grewOnScreen = rendered(hostile) - rendered(benign);
+    const grewInTheEstimate = estimate(hostile) - estimate(benign);
+    // A guard on the case itself: with both sides raw, or both sides neutralised-but-narrow, the
+    // delta would be 0 and the equality below would hold while proving nothing.
+    expect(grewOnScreen).toBeGreaterThan(0);
+    expect(grewInTheEstimate).toBe(grewOnScreen);
+  });
+
+  // The SAME property for the other half of `buildToolExpansionText`, and it needs its own case:
+  // the notice case above passes unchanged while the args side of the oracle measures the raw
+  // string, so one case covering both strings would leave whichever it did not vary unpinned.
+  // Deliberately two cases rather than one varying both at once, which could also let the two
+  // halves cancel each other out.
+  //
+  // `argsText` is the string that matters most here: it is unbounded, model-streamed and
+  // attacker-influenceable, and for a shell call it IS the command.
+  it('[[TUI-C102]] — counts the ARGS the expansion PAINTS, not the raw string', () => {
+    const columns = 40;
+    const withArgs = (argsText: string): TranscriptItem => ({
+      kind: 'assistant',
+      id: 1,
+      turn: turn({
+        toolCalls: [toolCall({ name: 'run_shell_command', argsText, result: 'ok' })],
+      }),
+    });
+    // BOTH buffers are deliberately unparsable JSON — a half-streamed args buffer, which is the
+    // normal state of this field while a call is still arriving. That is what makes the twins
+    // subtractable: `summariseToolCall` falls back to the same `run_shell_command(…)` for both, so
+    // the summary row (which the two sides measure differently, by design) cancels exactly and the
+    // delta is the args row alone.
+    const benign = withArgs('{"command":"ls"');
+    // Space-free, so Ink hard-wraps at the column edge and the row count is `ceil(width / columns)`
+    // exactly. Raw this is 12 columns on one row — the escapes carry no width; neutralised it is
+    // 89, which is three rows at this width whether Ink wraps the args text alone or the whole
+    // `args: ` row with it. The estimator under-counts the 10-column prefix on purpose, so the
+    // width is chosen to sit where that under-count cannot change the row count either way.
+    const hostile = withArgs('{"command":"' + '\x1b[2J'.repeat(11));
+    const estimate = (item: TranscriptItem): number =>
+      estimateItemRows(item, { columns, toolsExpanded: true, separator: false });
+    const rendered = (item: TranscriptItem): number => actualRows(item, columns, true);
+
+    const grewOnScreen = rendered(hostile) - rendered(benign);
+    const grewInTheEstimate = estimate(hostile) - estimate(benign);
+    expect(grewOnScreen).toBeGreaterThan(0);
+    expect(grewInTheEstimate).toBe(grewOnScreen);
   });
 });
 

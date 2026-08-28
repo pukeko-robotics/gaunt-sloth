@@ -26,6 +26,7 @@
 
 import {
   buildToolBodyLines,
+  buildToolExpansionText,
   buildToolPreviewLines,
   summariseToolCall,
 } from '@gaunt-sloth/core/core/toolDisplay.js';
@@ -78,11 +79,15 @@ function toolCallRows(tc: ToolCallViewModel, expanded: boolean, columns: number)
   // The summary is measured without the caret/status/tool glyphs that precede it and without the
   // trailing status word, so the count stays under what the line really occupies.
   let rows = textRows(summariseToolCall(tc.name, tc.argsText), columns);
-  if (expanded && tc.argsText) rows += textRows(tc.argsText, columns);
+  // [[TUI-C102]] — the args text and the notice are measured from `buildToolExpansionText`, which
+  // is the function the panel PAINTS from. Neutralised text is wider than the raw text it replaces
+  // (`\x1b[2J` is eight columns where the sequence was none), so counting the raw strings beside a
+  // renderer that draws the neutralised ones would put the oracle and the panel out of lockstep on
+  // exactly the input this treatment exists for.
+  const expansion = expanded ? buildToolExpansionText(tc) : null;
+  if (expansion?.args) rows += textRows(expansion.args, columns);
   // Each body and notice line is drawn behind a four-space indent, so none of them can collapse.
-  if (expanded && tc.notice) {
-    for (const line of tc.notice.split('\n')) rows += lineRows(`    ${line}`, columns);
-  }
+  for (const line of expansion?.noticeLines ?? []) rows += lineRows(`    ${line}`, columns);
   for (const line of expanded ? buildToolBodyLines(display) : buildToolPreviewLines(display)) {
     rows += lineRows(`    ${line.text}`, columns);
   }

@@ -222,6 +222,53 @@ describe('tui <LiveTurn>', () => {
       expanded.unmount();
     });
 
+    // [[TUI-C102]] — the expansion paints two strings that never pass through the body formatters:
+    // the raw streamed args text and the routed notice. `argsText` is not ours — it is whatever the
+    // model streamed, which under prompt injection is attacker-chosen and for a shell call is the
+    // command itself — and under [[TUI-C99]] this panel is how a human inspects a call they are
+    // being asked to permit. A screen-clear plus a cursor move painted here can forge gsloth's own
+    // chrome a few rows from the real approval prompt.
+    it('neutralises the raw args and the notice in the expanded panel (TUI-C102)', () => {
+      const hostile = turn({
+        toolCalls: [
+          {
+            id: 't1',
+            name: 'run_shell_command',
+            // Raw streamed bytes, not `JSON.stringify` output: well-formed JSON would escape a
+            // control character itself, and nothing guarantees the buffer is well-formed.
+            argsText: '{"command":"echo hi\x1b[2J\x1b[1000B"}',
+            status: 'running',
+            notice: '🔧 Executing\x07 run_shell_command: echo\x1b]0;RETITLED\x07 hi',
+          },
+        ],
+      });
+      const { lastFrame, unmount } = render(<LiveTurn turn={hostile} toolsExpanded />);
+      const frame = lastFrame() ?? '';
+      // INERT: nothing the tool call contributed survives as a byte a terminal would act on.
+      // Ink's own styling is SGR and nothing else, so removing exactly that leaves the panel's
+      // content; the check runs per row so the frame's own line breaks are not counted.
+      //
+      // ONE assertion over the whole class rather than several naming individual sequences, and
+      // that is deliberate: measured against the unfixed renderer, a frame carrying the raw args
+      // did NOT come back holding `\x1b[2J`, `\x1b[1000B` or `\x1b]0;`, so negatives naming those
+      // would have passed either way and read as proof while proving nothing. The BEL DID survive
+      // raw, and this catches it — along with everything else in the class the neutraliser covers.
+      // It is asserted FIRST so that it, rather than a positive below it, is what a regression
+      // reds on.
+      const withoutInkStyling = frame.replace(/\x1b\[[0-9;]*m/g, '');
+      for (const row of withoutInkStyling.split('\n')) {
+        expect(row).not.toMatch(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
+      }
+      // And VISIBLE, asserted on the RAW frame: `stripAnsi` would remove the attack along with
+      // Ink's own styling, and the case would then pass whatever the panel painted. A step that
+      // DROPPED the bytes would satisfy the inertness check above while destroying the thing the
+      // human is ruling on — which is exactly what the unfixed renderer did to the args row.
+      expect(frame).toContain('\\x1b[2J\\x1b[1000B');
+      expect(frame).toContain('\\x1b]0;RETITLED\\x07');
+      expect(frame).toContain('Executing\\x07 run_shell_command');
+      unmount();
+    });
+
     it('the output body alone makes the panel expandable (Ctrl+T hint on the live turn)', () => {
       // A tool that has streamed output but no args/result yet must still advertise detail.
       const onlyOutput = turn({
