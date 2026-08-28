@@ -545,7 +545,18 @@ export function summariseToolCall(
   const args = parseToolArgsSafe(argsText);
   if (args === null) {
     const hasRawArgs = !!argsText && argsText.trim().length > 0 && argsText.trim() !== '{}';
-    return hasRawArgs ? `${label}(${ELLIPSIS})` : `${label}()`;
+    // [[TUI-C102]] — THIS RETURN RUNS THE SAME PASS AS THE ONE AT THE END, and it is the branch
+    // taken most often: a partially streamed args buffer does not parse, so every frame between
+    // `tool_start` (which supplies the name) and the final `tool_args` delta renders here, and a
+    // call whose args never become valid JSON renders here permanently. What it paints is the
+    // tool NAME, which is not ours — an MCP server names its own tools, and under prompt
+    // injection the model chooses what to stream. Returning it untreated put raw ANSI on the row
+    // [[TUI-C99]] turns into the approval row. Redact first, then neutralise, for the reason
+    // spelled out at the main return below; the ellipsis and the `(tool)` fallback are module
+    // constants and hold nothing either step can act on.
+    return neutralizeUntrustedText(
+      redactText(hasRawArgs ? `${label}(${ELLIPSIS})` : `${label}()`, secrets)
+    );
   }
   const entry = TOOL_DISPLAY_REGISTRY[name];
   const keys =
@@ -660,9 +671,9 @@ export interface ToolExpansionText {
  * redacts, and an expansion that did not would print, under `/verbose`, the secret the row above
  * it hid.
  *
- * The notice splits through {@link toLines}, so a `\r\n` inside a quoted command is one break
- * there too; the args text is a single value and keeps its own newlines as visible `\x0a`, which
- * is what a streamed JSON buffer carrying a real newline actually contains.
+ * The notice splits through the module's own `toLines`, so a `\r\n` inside a quoted command is one
+ * break there too; the args text is a single value and keeps its own newlines as visible `\x0a`,
+ * which is what a streamed JSON buffer carrying a real newline actually contains.
  */
 export function buildToolExpansionText(
   input: { argsText?: string; notice?: string },
@@ -683,9 +694,14 @@ export function buildToolExpansionText(
  *
  * This stays a GENERIC width utility and does not neutralise: it measures a line by what it
  * RENDERS as, so a caller passing genuinely styled text (the renderer's own SGR) gets a cap that
- * counts the columns the user sees rather than the escapes' own bytes. Lines that arrive from
- * {@link buildToolBodyLines} have already been neutralised, so for the tool path there is simply
- * nothing left to discount — the discount survives for the callers it was written for.
+ * counts the columns the user sees rather than the escapes' own bytes.
+ *
+ * **No production caller passes styled text today.** {@link buildToolPreviewLines} is the only
+ * one, and its lines arrive already neutralised from {@link buildToolBodyLines}, so on the tool
+ * path there is nothing left to discount. The discount is kept because this is public API — core
+ * exports every module — and a width utility that mismeasured styled text would be wrong for any
+ * caller that did pass some. It is a property of the utility, not a live requirement of the tool
+ * path, and the spec covering it says the same.
  */
 export function capToolDisplayLines(
   lines: ToolDisplayLine[],

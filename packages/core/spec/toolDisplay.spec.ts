@@ -194,12 +194,19 @@ describe('toolDisplay (TUI-C30)', () => {
       expect(wide[0].text.endsWith('…')).toBe(true);
     });
 
+    // KEPT DELIBERATELY, and what it pins is a property of the UTILITY rather than of the tool
+    // path. No production caller reaches this any more: `buildToolPreviewLines` is the only one,
+    // and its lines are neutralised before the cap sees them, so there are no escapes left to
+    // discount. It stays because `capToolDisplayLines` is public API — core exports every module —
+    // and a width utility that measured styled text by its bytes would be wrong for any caller
+    // that did pass some. Read it as "this utility measures what a line RENDERS as", not as
+    // evidence that some caller depends on the discount today.
     it('leaves a COLOURED line that visibly fits the cap alone, and still caps one that does not', async () => {
       const { capToolDisplayLines, TOOL_PREVIEW_LINE_MAX_CHARS } =
         await import('#src/core/toolDisplay.js');
-      // Shell output arrives coloured. 180 visible columns under the 200-column cap, but 380
-      // once the escapes' own printable bytes are counted — so whether this line fits has to be
-      // decided by what it RENDERS as, or a fitting line comes back cut by its own escapes.
+      // 180 visible columns under the 200-column cap, but 380 once the escapes' own printable
+      // bytes are counted — so whether this line fits has to be decided by what it RENDERS as, or
+      // a fitting line comes back cut by its own escapes.
       const coloured = '\x1b[32m'.repeat(50) + 'a'.repeat(180);
       expect(stringWidth(coloured)).toBeLessThan(TOOL_PREVIEW_LINE_MAX_CHARS);
       expect(capToolDisplayLines([{ text: coloured, style: 'dim' }])[0].text).toBe(coloured);
@@ -559,6 +566,47 @@ describe('toolDisplay (TUI-C30)', () => {
       expect(summary).not.toMatch(CONTROL_OR_FORMAT);
     });
 
+    // THE SAME PROPERTY ON THE OTHER BRANCH — and it is the branch that runs far more often.
+    //
+    // `summariseToolCall` returns early whenever the args do not parse, and a partially streamed
+    // JSON buffer never parses: this is the shape rendered on EVERY FRAME between `tool_start`
+    // (which supplies the name) and the last `tool_args` delta, and permanently for a call whose
+    // args never become valid JSON. The name is not ours — an MCP server names its own tools, and
+    // under prompt injection the model chooses what to stream — so a screen-clear plus a
+    // 1000-row cursor move can paint forged chrome beside the real approval row.
+    //
+    // The case directly above builds its args with `JSON.stringify`, so they ALWAYS parse: it
+    // names the property while exercising only the branch that was already safe. That is why both
+    // early-return shapes are pinned here by their exact rendered text.
+    it('neutralises the tool NAME on BOTH early returns — the frames while args are still streaming', async () => {
+      const { summariseToolCall } = await import('#src/core/toolDisplay.js');
+      // (a) unparsable args — the ordinary mid-stream frame, a half-arrived JSON buffer.
+      const streaming = summariseToolCall('evil\x1b[2Jtool', '{"cmd":"ls', []);
+      expect(streaming).toBe('evil\\x1b[2Jtool(…)');
+      expect(streaming).not.toMatch(CONTROL_OR_FORMAT);
+      // (b) no args at all — an OSC sequence, which retitles the user's terminal window.
+      const noArgs = summariseToolCall('x\x1b]0;RETITLED\x07y', undefined, []);
+      expect(noArgs).toBe('x\\x1b]0;RETITLED\\x07y()');
+      expect(noArgs).not.toMatch(CONTROL_OR_FORMAT);
+      // The ellipsis marker and the `(tool)` fallback are OURS — module constants, no untrusted
+      // input — so they need no treatment; asserted here only so a change to either is noticed.
+      expect(summariseToolCall('', '{"cmd":"ls', [])).toBe('(tool)(…)');
+      expect(summariseToolCall('', undefined, [])).toBe('(tool)()');
+    });
+
+    // Redaction is the OTHER half of the pass this branch was skipping, and it is pinned
+    // separately so the two halves cannot drift apart. The label is the only untrusted string
+    // this branch paints today, so redacting it is defense in depth rather than a live leak —
+    // but the early return must run the SAME redact-then-neutralise pass as the main return, and
+    // an unpinned half is how one of them quietly goes away.
+    it('redacts as well as neutralises on the early return — the same pass the main return runs', async () => {
+      const { summariseToolCall } = await import('#src/core/toolDisplay.js');
+      const secret = 'literal-secret-value';
+      const summary = summariseToolCall(`tool-${secret}`, '{"cmd":"ls', [secret]);
+      expect(summary).toBe('tool-<redacted>(…)');
+      expect(summary).not.toContain(secret);
+    });
+
     it("keeps the renderer's OWN styling while the content it wraps is neutralised", async () => {
       const { buildToolBodyLines, renderToolLineAnsi } = await import('#src/core/toolDisplay.js');
       const lines = buildToolBodyLines(
@@ -655,6 +703,106 @@ describe('toolDisplay (TUI-C30)', () => {
         args: null,
         noticeLines: [],
       });
+    });
+
+    // ORDER PIN 1 of 2 — `buildToolExpansionText`'s `clean`.
+    //
+    // THE PRODUCTION ORDER IS CORRECT. Redaction runs BEFORE neutralisation everywhere on this
+    // path, and this cell exists to PIN that, not to report a defect. If it fails, the fix is to
+    // restore the order in the source — never to reorder the calls until the assertion passes.
+    //
+    // Only a secret literal that itself CARRIES a control character can tell the two orders
+    // apart. Neutralise first and the `\x0b` inside the literal becomes the four characters
+    // `\x0b`, the literal stops matching what redaction is looking for, and the whole secret
+    // prints under `/verbose` — on the panel a human reads while deciding whether to permit the
+    // call. The case above uses a plain-ASCII secret, which matches under EITHER order, so it
+    // stays green when the two calls are swapped; that is the gap this closes.
+    it('redacts BEFORE it neutralises in the expansion — pinned with a control-carrying secret', async () => {
+      const { buildToolExpansionText } = await import('#src/core/toolDisplay.js');
+      const secret = 'tok\x0bliteral-secret-value';
+      const expansion = buildToolExpansionText(
+        { argsText: `{"v":"${secret}"}`, notice: `🔧 Executing: use ${secret} now` },
+        [secret]
+      );
+      expect(expansion.args).toBe('{"v":"<redacted>"}');
+      expect(expansion.args).not.toContain('literal-secret-value');
+      expect(expansion.noticeLines).toEqual(['🔧 Executing: use <redacted> now']);
+      expect(expansion.noticeLines[0]).not.toContain('literal-secret-value');
+    });
+
+    // ORDER PIN 2 of 2 — `formatParamValue`, the call summary's per-value formatter.
+    //
+    // THE PRODUCTION ORDER IS CORRECT here too: redact the raw value, then neutralise it onto one
+    // line, then truncate. Same rule, same reason, same instruction — restore the order rather
+    // than rewrite this assertion. The existing summary cases pass no secret at all, so every one
+    // of them stays green under the swap.
+    it('redacts BEFORE it neutralises in a summary arg VALUE — pinned with a control-carrying secret', async () => {
+      const { summariseToolCall } = await import('#src/core/toolDisplay.js');
+      const secret = 'tok\x0bliteral-secret-value';
+      const summary = summariseToolCall(
+        'run_shell_command',
+        JSON.stringify({ command: `echo ${secret}` }),
+        [secret]
+      );
+      expect(summary).toBe('run_shell_command(command=echo <redacted>)');
+      expect(summary).not.toContain('literal-secret-value');
+      expect(summary).not.toMatch(CONTROL_OR_FORMAT);
+    });
+
+    // The NO-EMBEDDED-NEWLINE invariant that `buildToolBodyLines`' comment relies on, which until
+    // now was enforced by that comment alone. Every body-line producer splits through `toLines`
+    // before the neutralise step, so no line arriving there holds a `\n`. A producer that ever
+    // returned one would have it rewritten to the literal four characters `\x0a`, silently
+    // collapsing rows that should have been separate onto a single line — obvious to a reader of
+    // the screen, invisible to every other assertion in this file.
+    //
+    // THE ASSERTION IS ON THE ESCAPED FORM ON PURPOSE. Checking `not.toContain('\n')` CANNOT
+    // FAIL: the neutraliser strips every raw newline whatever the producer did, so that check
+    // stays green precisely when the rows have been collapsed. `\\x0a` is the form that can fail.
+    it('no body-line producer emits an embedded newline — asserted on the escaped form, which can fail', async () => {
+      const { buildToolBodyLines } = await import('#src/core/toolDisplay.js');
+      const multi = 'row one\nrow two\nrow three';
+      const cases: Array<[string, Parameters<typeof buildToolBodyLines>[0], number]> = [
+        ['generic fallback — result', { name: 'my_tool', result: multi }, 3],
+        ['generic fallback — live output', { name: 'my_tool', output: multi }, 3],
+        [
+          'formatShellBody',
+          {
+            name: 'run_shell_command',
+            result: `<COMMAND_OUTPUT>\n${multi}\n</COMMAND_OUTPUT>\ndone`,
+          },
+          4,
+        ],
+        [
+          'formatWriteFileBody',
+          { name: 'write_file', argsText: JSON.stringify({ path: 'a.txt', content: multi }) },
+          3,
+        ],
+        [
+          'formatEditFileBody',
+          {
+            name: 'edit_file',
+            argsText: JSON.stringify({
+              path: 'a.txt',
+              edits: [{ oldText: multi, newText: multi }],
+            }),
+          },
+          6,
+        ],
+      ];
+      for (const [label, input, expectedRows] of cases) {
+        const lines = buildToolBodyLines(input, []);
+        // The ESCAPED-FORM check runs FIRST, because it is the discriminating one: a producer
+        // that returned an embedded newline is visible here and nowhere else. The row count
+        // follows as corroboration — a collapsed body is also fewer rows than it should be — but
+        // it must not be what fails first, or this cell would be pinning the count rather than
+        // the invariant it is named for.
+        for (const line of lines) {
+          expect(line.text, label).not.toContain('\\x0a');
+          expect(line.text, label).not.toMatch(CONTROL_OR_FORMAT);
+        }
+        expect(lines.length, label).toBe(expectedRows);
+      }
     });
   });
 });
