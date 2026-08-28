@@ -40,17 +40,22 @@ import {
  *    parseMetricPredicate} rejects any literal outside the suite's declared enum.
  */
 
-/** The four readable fields. `expected.*` is what the corpus declares, `actual.*` is what the SUT
- * produced — spelled out because a corpus plan's prose says "label" for one and "action" for the
- * other, and that ambiguity is what produces a silently-wrong metric. */
+/** The five readable fields. `expected.*` is what the corpus declares, `actual.*` is what the SUT
+ * produced, `model.label` is what the model itself judged before any deterministic step overrode it
+ * — spelled out because a corpus plan's prose says "label" for one and "action" for the other, and
+ * that ambiguity is what produces a silently-wrong metric. */
 const METRIC_FIELDS: MetricField[] = [
   'expected.label',
   'expected.action',
   'actual.label',
   'actual.action',
+  'model.label',
 ];
 
-const FIELD_PATTERN = '(expected|actual)\\.(label|action)';
+/** Matches the SHAPE of a field reference as one group; whether that shape is a field this engine
+ * has is decided by {@link assertKnownField}, so `model.action` is refused by name rather than
+ * falling through to the generic parse error. */
+const FIELD_PATTERN = '((?:expected|actual|model)\\.(?:label|action))';
 const TAG_RE = new RegExp(`^(not\\s+)?has_tag\\(\\s*([^)]*?)\\s*\\)$`);
 const IN_RE = new RegExp(`^${FIELD_PATTERN}\\s+(not\\s+in|in)\\s*\\[([^\\]]*)\\]$`);
 const COMPARE_RE = new RegExp(`^${FIELD_PATTERN}\\s*(==|!=)\\s*(.+)$`);
@@ -111,9 +116,9 @@ export function parseMetricPredicate(
 
   const inMatch = IN_RE.exec(text);
   if (inMatch) {
-    const field = `${inMatch[1]}.${inMatch[2]}` as MetricField;
-    const negated = inMatch[3].startsWith('not');
-    const values = inMatch[4]
+    const field = assertKnownField(inMatch[1], where, text);
+    const negated = inMatch[2].startsWith('not');
+    const values = inMatch[3]
       .split(',')
       .map((value) => unquote(value))
       .filter((value) => value.length > 0);
@@ -129,11 +134,11 @@ export function parseMetricPredicate(
 
   const compareMatch = COMPARE_RE.exec(text);
   if (compareMatch) {
-    const field = `${compareMatch[1]}.${compareMatch[2]}` as MetricField;
-    const negated = compareMatch[3] === '!=';
-    const rhs = unquote(compareMatch[4]);
-    if ((METRIC_FIELDS as string[]).includes(rhs)) {
-      const other = rhs as MetricField;
+    const field = assertKnownField(compareMatch[1], where, text);
+    const negated = compareMatch[2] === '!=';
+    const rhs = unquote(compareMatch[3]);
+    if (/^(?:expected|actual|model)\.(?:label|action)$/.test(rhs)) {
+      const other = assertKnownField(rhs, where, text);
       if (field.endsWith('.label') !== other.endsWith('.label')) {
         throw new Error(
           `${where}: "${text}" compares a label field to an action field — they are different ` +
@@ -151,6 +156,32 @@ export function parseMetricPredicate(
       'are ANDed): `<field> == <value>`, `<field> != <value>`, `<field> in [a, b]`, ' +
       '`<field> not in [a, b]`, or `has_tag(x)` / `not has_tag(x)`. Fields: ' +
       `${METRIC_FIELDS.join(', ')}. There is no \`or\` and no nesting.`
+  );
+}
+
+/**
+ * Reject a field reference whose SHAPE parsed but which this engine does not have.
+ *
+ * Today that is exactly `model.action`, and it is refused with its own sentence rather than by
+ * falling through to the generic "could not parse predicate" error. The generic message would list
+ * the legal fields and leave an author to notice the absence; the specific one says WHY there is no
+ * such field, which is the difference between a typo and a misconception about the gate. A
+ * predicate on a field that does not exist can never match — the permanent, trusted zero this file
+ * exists to prevent.
+ */
+function assertKnownField(raw: string, where: string, text: string): MetricField {
+  if ((METRIC_FIELDS as string[]).includes(raw)) return raw as MetricField;
+  if (raw === 'model.action') {
+    throw new Error(
+      `${where}: "${text}" reads \`model.action\`, and there is no \`model.action\`. The model ` +
+        'renders a JUDGEMENT, not an action: the deterministic layer decides what is done about ' +
+        'it. Read `actual.action` for what the system did, or `model.label` for what the model ' +
+        'judged.'
+    );
+  }
+  throw new Error(
+    `${where}: "${text}" reads "${raw}", which is not a field this engine has. Fields: ` +
+      `${METRIC_FIELDS.join(', ')}.`
   );
 }
 
@@ -202,6 +233,8 @@ function fieldValue(cell: ClassifiedCell, field: MetricField): string | undefine
       return cell.actualLabel;
     case 'actual.action':
       return cell.actualAction;
+    case 'model.label':
+      return cell.modelLabel;
   }
 }
 
@@ -269,7 +302,10 @@ function formatPercent(value: number): string {
  *   and cells lost to SUT failures;
  * - **excluded cells** — cells that never produced a classification at all;
  * - **empty denominator** — the metric measured nothing, so its value is `null` rather than a
- *   flattering zero.
+ *   flattering zero;
+ * - **a raised label** (BATCH-26) — cells whose `actual.label` a deterministic step raised after the
+ *   model answered, so a metric on that field is scoring the gate rather than the model. The two
+ *   questions are written identically and only one of them is being answered.
  *
  * @param cells Every cell in the suite, scored and unscored alike (the unscored ones are what make
  *   the coverage numbers honest).
@@ -386,6 +422,36 @@ export function computeMetric(
         'which is how a corpus of deterministic, unlabelled cases scores 100% on label accuracy. ' +
         'Narrow `over:` to the cases the metric is about (e.g. `over: ["expected.label != none"]`).'
     );
+  }
+
+  // BATCH-26 — **this metric is about the GATE, and part of its denominator is a case where the
+  // gate and the model disagreed.** `actual.label` is the outcome the decision settled on, which a
+  // deterministic step may have RAISED after the model answered. That is the right field for
+  // measuring what a user experiences and the wrong one for measuring the rater — and the two
+  // questions are written identically, which is why the number has to say which one it answered.
+  // Fired only when the metric actually reads `actual.label`: a metric already on `model.label` is
+  // asking the other question and needs no note.
+  if (fields.includes('actual.label')) {
+    const raised = denominatorCells.filter(
+      (cell) =>
+        cell.modelLabel !== undefined &&
+        cell.actualLabel !== undefined &&
+        cell.modelLabel !== cell.actualLabel
+    );
+    if (raised.length > 0) {
+      warnings.push(
+        `${raised.length} of ${denominatorCells.length} case(s) in this denominator had their ` +
+          `label RAISED by a deterministic step after the model answered (e.g. ${raised
+            .slice(0, 3)
+            .map((cell) => cell.id)
+            .join(
+              ', '
+            )}). On those, \`actual.label\` is the decision the GATE reached and not the ` +
+          "judgement the model rendered, so this metric scores the gate — the model's own answer " +
+          'is excluded from it by construction. Read `model.label` for a metric about the model ' +
+          'itself; it is recorded per cell in results.json as `modelLabel` wherever a model judged.'
+      );
+    }
   }
 
   const byTag: Record<string, EvalMetricTally> = {};

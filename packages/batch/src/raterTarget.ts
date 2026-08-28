@@ -32,8 +32,9 @@
  * ## Two rules this file exists to keep
  *
  * 1. **It drives the gate; it never re-decides it.** Nothing here inspects, compares or defaults an
- *    outcome value: the label is whatever `mapVerdictToAction` reports and the action is whatever it
- *    returns, both passed through as opaque strings. That is why the CFG-28 rename of the outcome
+ *    outcome value: the label is whatever `mapVerdictToAction` reports, the rating beside it is
+ *    whatever `rateShellCommand` returned, and the action is whatever the mapping returns — all
+ *    passed through as opaque strings. That is why the CFG-28 rename of the outcome
  *    vocabulary (`exfiltration` → `attack`, plus `catastrophic`) needed no edit in this package: the
  *    eval facility has no second opinion about what a rating MEANS, and cannot drift from the thing
  *    it measures. A suite's `classification.labels` is the only place the vocabulary is written
@@ -60,6 +61,7 @@ import {
   FAIL_CLOSED_VERDICT,
   RATER_OUTCOMES,
   effectivePreflightFloorFinding,
+  isFailClosed,
   isNegotiableCall,
   mapVerdictToAction,
   preflightFloorFinding,
@@ -520,18 +522,25 @@ function advanceNegotiation(
  * grow with them; a corrected statement in one place above a stale list in another is the same
  * defect one screen down.
  *
- * **A model-free decision reports NO label.** The action is real — `mapVerdictToAction` produces it
- * from the rung and its own preflights, exactly as production would before the rater is consulted —
- * but the LABEL is the rater's judgement, and on this path nobody asked. Reporting core's
- * fail-closed placeholder as though it were a verdict would write a judgement nobody rendered into
- * the confusion matrix and count it as a MISS against the corpus's expected label. So the label is
- * omitted.
+ * **A model-free decision reports NO label — and no rating either.** The action is real —
+ * `mapVerdictToAction` produces it from the rung and its own preflights, exactly as production
+ * would before the rater is consulted — but the LABEL is the rater's judgement, and on this path
+ * nobody asked. Reporting core's fail-closed placeholder as though it were a verdict would write a
+ * judgement nobody rendered into the confusion matrix and count it as a MISS against the corpus's
+ * expected label. So both {@link ../evalTypes.js ClassifyOutcome.label} and its BATCH-26 sibling
+ * {@link ../evalTypes.js ClassifyOutcome.modelLabel} are omitted, on the one condition.
  *
- * Omitting it is the better of the two, not a clean escape: the cell is still scored, so it still
+ * Omitting them is the better of the two, not a clean escape: the cell is still scored, so it still
  * enters a label metric's denominator, where two absent values compare EQUAL and score as a free
  * hit. A rater suite's label metrics must narrow their own denominator —
  * `over: ["expected.label != none"]` — which is what `computeMetric`'s absent-field warning says
  * when it fires. See {@link ../evalTypes.js ClassifyOutcome.label}.
+ *
+ * **BATCH-26 — on a RATED round the two are both reported, and on some commands they differ.** The
+ * label is read off the verdict the gate returned, so a preflight that raised a permissive rating
+ * has already moved it; `modelLabel` is the verdict that went in. Neither is a second opinion —
+ * both are relayed — and the difference is what lets a rater-accuracy metric include the commands a
+ * preflight floors instead of scoring the floor against the corpus and calling it the rater.
  *
  * **And a model-free case does not grade on its `action` either.** At a rated rung the action is
  * the same for every command with no verdict, so it discriminates nothing; what discriminates is
@@ -774,7 +783,27 @@ async function classifyOneRound(
     // Opaque both ways: whatever the gate decided, reported verbatim. Omitted on the model-free
     // path — the docblock above says why, and a stubbed rating does not change that: the outcome it
     // would report is OUR lever floored by a preflight, never a judgement anyone rendered.
-    ...(deterministicOnly ? {} : { label: decision.verdict?.outcome }),
+    //
+    // BATCH-26 — and the RATING beside the decision, on the same condition and for the same reason.
+    // `label` is read off the verdict the gate returned, i.e. after a preflight may have raised it;
+    // `modelLabel` is the verdict that went IN, which is the rater's own answer and the only thing
+    // a rater-accuracy metric can honestly divide by on a floored command. Both are relayed, never
+    // compared: this file does not decide whether they differ, it reports both and lets the metric
+    // layer say so.
+    //
+    // **Except where the gate FAILED CLOSED, where there is no rating to report.** `label` still
+    // carries core's default — that IS the decision, and it is `destructive` whether a rater judged
+    // the command or the call timed out. `modelLabel` claims to be what the MODEL said, so
+    // reporting the default there would count a timeout as a rater judgement: EXT-66's finding, and
+    // EXT-62 measured a whole sweep column reading exactly that as rater coverage. Asked of core's
+    // own `isFailClosed` rather than recognised from the reason here — the distinction has one
+    // implementation and this file relays it like every other.
+    ...(deterministicOnly
+      ? {}
+      : {
+          label: decision.verdict?.outcome,
+          ...(isFailClosed(verdict) ? {} : { modelLabel: verdict?.outcome }),
+        }),
     action: negotiated.action,
     rationale: buildRationale(
       trimmed,

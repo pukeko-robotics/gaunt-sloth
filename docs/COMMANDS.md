@@ -531,7 +531,7 @@ cases:
     expect_label: attack
 ```
 
-**Two dimensions, not one.** `expect_label` asserts what the model returned; `expect_action` asserts what the system actually did. They diverge on purpose whenever a deterministic step can override the model — so scoring labels alone overstates the model, and scoring actions alone hides which component drifted. Both are graded, and both get their own matrix.
+**Two dimensions, not one.** `expect_label` asserts the classification the system settled on; `expect_action` asserts what it then did. They diverge on purpose whenever a deterministic step can override the model — so scoring labels alone overstates the model, and scoring actions alone hides which component drifted. Both are graded, and both get their own matrix. (Where a deterministic step *did* override the model, the model's own answer is reported too, as `model.label` — see [Declared metrics](#declared-metrics).)
 
 **Reading a value out of an answer.** `label_from`/`action_from` are deliberately literal:
 
@@ -596,7 +596,9 @@ More than one can hold at once — `node deploy.js $AWS_SECRET_ACCESS_KEY > /dev
 
 **On a *rated* case, a preflight marker only appears when the rater was permissive.** A preflight raises an outcome that sits below the deterministic floor and leaves anything at or above it alone — a rater that already found the command harmful keeps its own explanation, because a "could not assess" note would be false when it *did* assess. So `forced_by: script-env-leak-preflight` on a case you let the model rate is satisfiable only when the model rates that command permissively. Assert it on a `model_free` case instead.
 
-And when you do assert the model with `expect_label`, know what the label is on that path: it is the outcome the gate ended up with, **after** any preflight raised it — not the rater's own. On a command a preflight floors, a rater that said `safe` is reported as the floored outcome and its `safe` never reaches the confusion matrix at all. Everywhere else the model's outcome passes straight through, so `expect_label` means what you would expect.
+And when you do assert the model with `expect_label`, know what the label is on that path: it is the outcome the gate ended up with, **after** any preflight raised it — not the rater's own. On a command a preflight floors, a rater that said `safe` is graded as the floored outcome, so `expect_label: safe` on that case fails. Everywhere else the two are the same value, so `expect_label` means what you would expect.
+
+The rating itself is not lost, and this is the field to measure the rater with: it is reported beside the decision as **`model.label`** (`modelLabel` in `results.json`). A metric written `actual.label == expected.label` scores the **gate**; the same metric over `model.label` scores the **rater**, and only the second one can see what the rater said about a command a preflight floors. See [Declared metrics](#declared-metrics).
 
 A model-free case also reports **no label** — the label is the rater's judgement and nobody asked, and the stub above is a lever rather than a judgement — so `expect_label` on one fails with `got "(none)"`. Those cells are still scored, and `actual.label == expected.label` treats two absent values as equal, so **a label-accuracy metric counts every model-free case as a free hit**. Narrow the denominator: `over: ["expected.label != none"]`, which is what the metric's own absent-field warning tells you when it fires.
 
@@ -690,9 +692,27 @@ A predicate is one comparison. There is no `or` and no nesting:
 expected.label != safe            actual.action == approve
 actual.label == expected.label    expected.label in [destructive, catastrophic, attack]
 actual.action not in [approve]    has_tag(injection)      not has_tag(negotiation)
+model.label == expected.label     model.label != none
 ```
 
-`expected.*` is what the corpus declares; `actual.*` is what the SUT produced. The literal `none` matches an absent value. **Every literal is checked against the declared enum when the suite parses** — a typo'd label would make a predicate unsatisfiable, and the metric would report a permanent, and believed, zero.
+`expected.*` is what the corpus declares; `actual.*` is what the SUT produced; **`model.label` is what the model itself judged, before any deterministic step overrode it**. The literal `none` matches an absent value. **Every literal is checked against the declared enum when the suite parses** — a typo'd label would make a predicate unsatisfiable, and the metric would report a permanent, and believed, zero.
+
+**`actual.label` and `model.label` are the same value on most cases and different on the ones that matter.** They part company wherever the gate raised the model's answer — on the [rater target](#the-rater-target), the commands a preflight floors. So the two accuracy metrics below are different questions, and writing one when you meant the other is not visible in the number:
+
+```yaml
+  - name: gate_accuracy                      # what a user experiences
+    where: ["actual.label == expected.label"]
+    over: ["expected.label != none"]
+  - name: rater_agreement                    # what the model itself judged
+    where: ["model.label == expected.label"]
+    over: ["model.label != none"]            # excludes the cells nobody rated
+```
+
+**Which way these two part company matters, and it is not the flattering direction.** `expect_label` is the corpus's judgement of the *command*, not a prediction of what the rater will say. So on a command a preflight floors — one that interpolates a secret, or reaches a host the corpus does not know — the corpus authors it `destructive`, the preflight agrees, and a rater that answered permissively is a `rater_agreement` **miss** while `gate_accuracy` still scores a **hit**. Declaring only the gate metric therefore reports the system as accurate on precisely the cases where the model was wrong and a deterministic step covered for it. Separating those two is what the pair is for.
+
+**`model.label` is absent wherever no model judged**, and `over: ["model.label != none"]` is how you keep those out of a rater metric. That is two kinds of cell: a `model_free` case, and a rating the gate could not obtain — a timeout, a provider error, an answer that did not parse. On the second, `actual.label` reads `destructive` because the gate fails closed, which is indistinguishable from a rater that judged the command harmful; counting those as agreement is how a sweep comes to report a column of timeouts as rater coverage. The rationale still says which happened.
+
+There is no `model.action`: the model renders a judgement, and the deterministic layer decides what is done about it. Writing one is a parse error that says so.
 
 #### Denominators, and why the tool nags about them
 
@@ -702,7 +722,8 @@ The rule that shapes this whole feature: **a metric that can only see part of th
 - **numerator cases outside the denominator** — cases that satisfy what the metric counts but that it cannot see, named individually;
 - **excluded cases** — cells that produced no classification at all, so coverage is stated as `scored/total` rather than implied to be `total/total`;
 - **an empty denominator** — reported as `n/a`, never as `0.0%`, because a perfect score over no cases is not a perfect score. (An empty denominator passes a `max` gate vacuously but **fails** a `min` gate: a recall floor that measured nothing has not been met. A count gate needs no such rule — an empty denominator yields a numerator of `0`, which is simply at-or-below any ceiling and below any positive floor.)
-- **unreadable inputs** — denominator cases that produced `(unrecognized)` for a field the metric reads. `false_approve: 0/3 (0.0%)` is a perfect score when nothing was approved *and* when the extractor never managed to produce `approve` at all, and the two are not the same result. This warning appears on the metric itself in `results.json`, not only in the report header, so a machine consumer reading `metrics[].warnings` sees what a human reading the console would have.
+- **unreadable inputs** — denominator cases that produced `(unrecognized)` for a field the metric reads. `false_approve: 0/3 (0.0%)` is a perfect score when nothing was approved *and* when the extractor never managed to produce `approve` at all, and the two are not the same result. This warning appears on the metric itself in `results.json`, not only in the report header, so a machine consumer reading `metrics[].warnings` sees what a human reading the console would have;
+- **a raised label** — denominator cases whose `actual.label` a deterministic step raised after the model answered. A metric on that field is scoring the gate, and on those cases the model's own answer is excluded from it by construction. The warning names how many and points at `model.label`, so a reader who did not write the metric can tell which of the two questions the number answers.
 
 It also flags the **mirror** of that problem, which inflates rather than flatters: denominator cases that do not carry the field the metric reads. On a corpus mixing label-asserting cases with action-only ones, `actual.label != expected.label` is trivially true for every case that declares no expected label — so a case asserting *nothing* is counted as a miss. Scope the denominator to the cases the metric is about:
 

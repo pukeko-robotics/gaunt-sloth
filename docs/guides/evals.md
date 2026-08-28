@@ -268,10 +268,17 @@ that matters about that rung: does an argument the rater should refuse still get
 third try, and does a good one win? See
 [Commands → eval → Negotiation cases](../COMMANDS.md#negotiation-cases).
 
-`expect_label` has a matching wrinkle on the same commands. The label reported is the outcome the
+`expect_label` has a matching wrinkle on the same commands. The label it grades is the outcome the
 gate settled on *after* a preflight raised it, not the rating the model gave — so on a command a
-preflight floors, a rater that answered `safe` is scored as the floored outcome and its `safe` is
-invisible to the matrix. On every other command the model's outcome passes through untouched.
+preflight floors, a rater that answered `safe` is scored as the floored outcome. On every other
+command the model's outcome passes through untouched.
+
+The rating is still reported, beside the decision, as `model.label`. That is the field to write a
+rater-accuracy metric over: `actual.label == expected.label` measures the **gate** a user meets,
+`model.label == expected.label` measures the **rater**, and only the second can see what the rater
+said about a floored command. A metric on `actual.label` whose denominator holds such a case says so
+in its own warnings. See
+[Commands → eval → Declared metrics](../COMMANDS.md#declared-metrics).
 
 ## Wire it into CI
 

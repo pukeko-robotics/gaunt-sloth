@@ -283,11 +283,16 @@ describe('buildRaterClassifier (BATCH-25 Half B — the `rater` target)', () => 
       expect(outcome.rationale).toContain(failClosedVerdict('timeout', 5).reason);
       expect(outcome.modelCalls).toBe(1);
       // EXT-66 — a suite reading this column has to be able to tell a rating from a default. The
-      // label is `destructive` either way (fail-closed is correct), so the RATIONALE is the only
-      // place the distinction can live, and an eval that reports the escalation as coverage
-      // without reading it is measuring the timeout. The EXT-62 sweep did exactly that.
+      // label is `destructive` either way (fail-closed is correct), so the rationale carries the
+      // distinction in prose, and an eval that reports the escalation as coverage without reading
+      // it is measuring the timeout. The EXT-62 sweep did exactly that.
       expect(outcome.rationale).toContain('did not answer within');
       expect(outcome.rationale).toContain('approvals.raterTimeoutMs');
+      // [[BATCH-26]] — and the same distinction, now as a FIELD rather than only as prose. The
+      // gate defaulted, so no model rendered a judgement and there is no rating to report. Without
+      // this a rater-agreement metric would count a timeout as the rater having said
+      // `destructive` — the EXT-62 miss above, reproduced in the field built to measure the rater.
+      expect(outcome.modelLabel).toBeUndefined();
     });
   });
 
@@ -541,11 +546,12 @@ describe('buildRaterClassifier (BATCH-25 Half B — the `rater` target)', () => 
     });
 
     it('reports the FLOORED label on a rated preflight case — not the rating the model gave', async () => {
-      // What the docs now warn about, pinned. `label` is `decision.verdict.outcome`, i.e. the
-      // outcome AFTER a preflight raised it — so on a command a preflight floors, a rater that
-      // answered permissively is scored as the floored outcome and its own answer never reaches the
-      // confusion matrix. That is the one place `expect_label` does not mean "what the model said",
-      // and QA-5's rater-accuracy metric is built on exactly this field.
+      // What the docs warn about, pinned. `label` is `decision.verdict.outcome`, i.e. the outcome
+      // AFTER a preflight raised it — so on a command a preflight floors, a rater that answered
+      // permissively is scored as the floored outcome. That is the one place `expect_label` does
+      // not mean "what the model said", and it must stay pinned: [[BATCH-26]] reports the rating
+      // BESIDE this field (see the test below) rather than changing it, because this one is what a
+      // user experiences and what the corpus grades.
       const { buildRaterClassifier, calibratePermissiveRating } =
         await import('#src/raterTarget.js');
       const permissive = calibratePermissiveRating()!;
@@ -566,6 +572,73 @@ describe('buildRaterClassifier (BATCH-25 Half B — the `rater` target)', () => 
       );
       // Everywhere else it passes straight through — which is why the caveat is scoped, not general.
       expect(onBenign.label).toBe(permissive);
+    });
+
+    /**
+     * [[BATCH-26]] — the floored label above is only HALF the report now. The rating the model
+     * itself returned rides beside it, so the commands a preflight raises can contribute a
+     * rater-accuracy datapoint after all: `label` stays the gate's outcome (what `expect_label`
+     * grades, unchanged) and `modelLabel` is what the rater actually said.
+     *
+     * Both preflight arms are exercised, because the node names only the env-leak one and the
+     * open-world arm has the identical shape — a test that covered one would leave the commoner
+     * case on a real corpus unproven.
+     */
+    it('carries the RATING the model gave beside the floored label, on both preflight arms', async () => {
+      const { buildRaterClassifier, calibratePermissiveRating } =
+        await import('#src/raterTarget.js');
+      const permissive = calibratePermissiveRating()!;
+
+      for (const command of [ENV_LEAK, OPEN_WORLD]) {
+        const { model, invoke } = fakeModel([
+          { outcome: permissive, reason: 'the rater says fine' },
+        ]);
+        const classify = await buildRaterClassifier(
+          { type: 'rater', rung: 'assisted' },
+          configOf(),
+          { model }
+        );
+        const [outcome] = await classify(requestOf({ rounds: [command] }));
+
+        expect(invoke).toHaveBeenCalledTimes(1);
+        // The DECISION's label is unchanged: still the outcome the preflight raised it to.
+        expect(outcome.label).not.toBe(permissive);
+        expect(outcome.label).toBe(
+          mapVerdictToAction(command, { outcome: permissive, reason: 'x' }, { rung: 'assisted' })
+            .verdict?.outcome
+        );
+        // ...and the rater's own answer is reported too, which is the datapoint QA-5 needs.
+        expect(outcome.modelLabel).toBe(permissive);
+      }
+    });
+
+    it('reports the same value for both where NO preflight raised the rating', async () => {
+      const { buildRaterClassifier, calibratePermissiveRating } =
+        await import('#src/raterTarget.js');
+      const permissive = calibratePermissiveRating()!;
+      const { model } = fakeModel([{ outcome: permissive, reason: 'the rater says fine' }]);
+
+      const classify = await buildRaterClassifier({ type: 'rater', rung: 'assisted' }, configOf(), {
+        model,
+      });
+      const [outcome] = await classify(requestOf({ rounds: [BENIGN] }));
+
+      // Total, never conditional: a field populated only where the two differ would make
+      // `over: ["model.label != none"]` select exactly the floored cases — a silent narrowing of
+      // the very denominator this reports on.
+      expect(outcome.modelLabel).toBe(permissive);
+      expect(outcome.modelLabel).toBe(outcome.label);
+    });
+
+    it('reports NO rating on a model-free round — the stub is a lever, not a judgement', async () => {
+      // A round claiming a preflight is driven with a stubbed permissive rating for that preflight
+      // to override. Reporting the stub as the model's answer would write a judgement nobody
+      // rendered into a rater-accuracy metric — the same hazard the absent `label` avoids, arriving
+      // through a new door.
+      const outcome = await classifyModelFree(ENV_LEAK, 'script-env-leak-preflight');
+
+      expect(outcome.label).toBeUndefined();
+      expect(outcome.modelLabel).toBeUndefined();
     });
 
     /**

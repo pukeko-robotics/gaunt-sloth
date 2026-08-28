@@ -76,11 +76,25 @@ export interface EvalClassificationSpec {
   actionFrom?: ClassificationExtractor;
 }
 
-/** One field a metric predicate can read. `expected.*` is what the CORPUS declares; `actual.*` is
+/**
+ * One field a metric predicate can read. `expected.*` is what the CORPUS declares; `actual.*` is
  * what the SUT produced. The prose in a corpus plan says "label" for the corpus label and "action"
  * for the actual action taken, and that ambiguity is exactly what produces a silently-wrong metric —
- * so the surface forces the distinction to be written down. */
-export type MetricField = 'expected.label' | 'expected.action' | 'actual.label' | 'actual.action';
+ * so the surface forces the distinction to be written down.
+ *
+ * **BATCH-26 — `model.label` is the third one, and it is not a synonym for `actual.label`.** The
+ * SUT's decision and the model's judgement are the same value on most cells and different on the
+ * ones where a deterministic step raised the model's answer. A metric over `actual.label` measures
+ * the GATE (which is what a user experiences); one over `model.label` measures the RATER. Scoring
+ * the second question with the first field is what bounded the agreement figure the approvals
+ * corpus exists to produce, so both are readable and the engine says which one a metric is on.
+ *
+ * There is deliberately **no `model.action`**: the deterministic layer overrides the label and
+ * produces the action, so an "action the model chose" does not exist and a predicate on it could
+ * never match. {@link ./metrics.js parseMetricPredicate} rejects it by name.
+ */
+export type MetricField =
+  'expected.label' | 'expected.action' | 'actual.label' | 'actual.action' | 'model.label';
 
 /** The literal `none` in a predicate — matches a cell where that field is absent. */
 export const METRIC_NONE_LITERAL = 'none';
@@ -278,6 +292,10 @@ export interface ClassifiedCell {
   expectedAction?: string;
   actualLabel?: string;
   actualAction?: string;
+  /** BATCH-26 — the judgement the MODEL rendered, read by `model.label`. Equal to
+   * {@link actualLabel} except where a deterministic step raised it; absent when nobody judged. See
+   * {@link ./evalTypes.js ClassifyOutcome.modelLabel}. */
+  modelLabel?: string;
   /** `false` = the SUT did not run / the classifier failed, so this cell has no place in any matrix
    * or denominator. It is counted as `excluded` and reported, never as a wrong answer. */
   scored: boolean;
@@ -289,6 +307,11 @@ export interface EvalCaseClassification {
   expectedAction?: string;
   actualLabel?: string;
   actualAction?: string;
+  /** BATCH-26 — the judgement the MODEL rendered, before any deterministic step overrode it. Equal
+   * to {@link actualLabel} except where one did; absent when nobody judged. Written to the cell's
+   * `results.json` so a floored case is diagnosable without re-running, and read by a `model.label`
+   * metric. See {@link ./evalTypes.js ClassifyOutcome.modelLabel}. */
+  modelLabel?: string;
   /** The raw text the extractors read, kept so an `(unrecognized)` result is diagnosable without
    * re-running. Omitted when it is identical to the cell's `answer`. */
   raw?: string;
