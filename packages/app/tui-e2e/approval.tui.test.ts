@@ -72,6 +72,18 @@ test.describe('gth code TUI — EXT-52 lean shell approval prompt (real agent, s
     await expect(terminal.getByText('[o]nce', { strict: false })).toBeVisible();
     // ...and the graph is SUSPENDED: the command has not produced its output marker yet.
     await expect(terminal.getByText('approval-out-marker', { strict: false })).not.toBeVisible();
+    // [[TUI-C100]] — and the row for the call being asked about does not say it finished. This is
+    // the LONE-call shape, which is the one the reported screenshot actually shows: the stream ends
+    // when the graph suspends, and what used to end the call was that stream's closing flush, with
+    // no sibling involved. The row is read from the terminal's own cells so the assertion is about
+    // the line the human is looking at, not about a string somewhere on the screen.
+    const gatedRows = terminal
+      .getBuffer()
+      .map((row) => row.join(''))
+      .filter((row) => row.includes('run_shell_command('));
+    expect(gatedRows.length).toBeGreaterThan(0);
+    expect(gatedRows.filter((row) => row.includes('[done]'))).toEqual([]);
+    expect(gatedRows.filter((row) => row.includes('✓'))).toEqual([]);
 
     // Grant once.
     terminal.write('o');

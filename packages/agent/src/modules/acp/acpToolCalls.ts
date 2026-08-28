@@ -96,14 +96,40 @@ export abstract class AcpToolCallTracker {
     this.toolArgs.set(id, (this.toolArgs.get(id) ?? '') + delta);
   }
 
+  /**
+   * What has already been sent as `rawInput` for a call, canonicalised, so the same value is not
+   * sent twice and a later, fuller one still is.
+   */
+  private readonly sentRawInput = new Map<string, string>();
+
   /** The reassembled arguments for a call, as a value for `rawInput`. */
   protected rawInputFor(id: string): unknown {
     return parseToolArgs(this.toolArgs.get(id));
   }
 
+  /**
+   * [[TUI-C100]] — the `rawInput` a call still owes the client, or `undefined` when it owes none.
+   *
+   * `rawInput` is a whole value with no delta form, so it can only be sent once the arguments have
+   * stopped arriving — but **it must not wait for the call to finish.** A call held at the approval
+   * gate has its arguments long since complete and is precisely the one whose arguments matter
+   * most: they are what the human is being asked to rule on, and they are all a client has to draw
+   * the row the permission request points at. Sent when the arguments are known, and not resent
+   * unchanged, so a client's rendering never flickers back to a bare id.
+   */
+  protected takeRawInputUpdate(id: string): unknown {
+    const value = this.rawInputFor(id);
+    if (value === undefined) return undefined;
+    const canonical = canonicalJson(value);
+    if (this.sentRawInput.get(id) === canonical) return undefined;
+    this.sentRawInput.set(id, canonical);
+    return value;
+  }
+
   /** Forgets a call that has produced its result. */
   protected trackToolSettled(id: string): void {
     this.toolArgs.delete(id);
+    this.sentRawInput.delete(id);
     // A call a permission request already claimed is no longer in the queue; that is expected,
     // not a miss.
     const open = this.openToolCalls.findIndex(([openId]) => openId === id);

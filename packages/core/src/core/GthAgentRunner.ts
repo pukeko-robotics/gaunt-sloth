@@ -2998,8 +2998,58 @@ export class GthAgentRunner {
     debugLog('Processing messages (event stream)...');
     debugLogObject('Input Messages', messages);
     try {
-      yield* this.agent.streamWithEvents(messages, this.runConfig, signal);
-      yield* this.resolveToolInterruptsWithEvents(signal);
+      // [[TUI-C100]] — **a tool call that never produced a result is closed here, and nowhere
+      // earlier.** `processEventStream` ends a call when its own result arrives and otherwise
+      // leaves it open, because from inside a stream a call suspended at the approval gate looks
+      // exactly like a terminal one: the graph interrupts, the stream returns, and the calls it
+      // announced are still outstanding either way. The two only part company at THIS level — the
+      // prompt is opened by `resolveToolInterruptsWithEvents` below, after the first stream has
+      // finished — so closing anything before that point would tell the surface a call had
+      // finished while the human was still being asked whether it may run at all.
+      //
+      // **Membership in this set at the drain IS "produced no result".** A call is forgotten on its
+      // own `tool_end` or its own `tool_result`, and a call that actually ran always yields the
+      // latter from its `ToolMessage` — so nothing that survives to the loop below has a result,
+      // whatever the reason. The reasons are several and the surface cannot tell most of them
+      // apart: the turn was abandoned; a refusal made the middleware jump back to the model and the
+      // whole round's tool node was skipped; the call was terminal. They do not differ in the one
+      // thing a row reports, so they are closed alike — as a call with no result, which is what an
+      // error result says, and never with the tick and the word `done`, which no arm of this loop
+      // could make true.
+      const unendedToolCalls = new Set<string>();
+      const tracking = async function* (
+        source: AsyncGenerator<AgentStreamEvent>
+      ): AsyncGenerator<AgentStreamEvent> {
+        for await (const event of source) {
+          if (event.type === 'tool_start') unendedToolCalls.add(event.id);
+          else if (event.type === 'tool_end' || event.type === 'tool_result')
+            unendedToolCalls.delete(event.id);
+          yield event;
+        }
+      };
+      yield* tracking(this.agent.streamWithEvents(messages, this.runConfig, signal));
+      yield* tracking(this.resolveToolInterruptsWithEvents(signal));
+      // The abort is the one case that IS distinguishable here, and it buys the wording rather than
+      // a different outcome: a turn stopped part-way may have had a call in flight, so this says
+      // what is certain — no result arrived — without claiming the command never started.
+      const noResult = signal?.aborted
+        ? 'Cancelled before this call produced a result.'
+        : 'This call did not run.';
+      // Deliberately at the end of the `try` rather than in the `finally`. Esc does NOT break out
+      // of the consumer's loop — it aborts the signal, `streamWithEvents` catches the `AbortError`
+      // and returns cleanly, and `resolveToolInterruptsWithEvents` returns at its own aborted
+      // guard, so an abandoned turn reaches this line like any other and its rows are closed here
+      // too. The case the placement is actually for is a consumer that stops consuming: breaking
+      // out of a `for await`, or calling `return()` on this generator, closes it, and yielding
+      // during that forced return suspends the generator again instead of finishing it — which
+      // would leave `clearNegotiationDisplay()` below unreached. Rows abandoned that way keep
+      // whatever they last said, which is the price of the `finally` still running.
+      //
+      // A close is not cosmetic either way: an unclosed row on the TUI sits at `running` for the
+      // rest of the session, and a client is owed a terminal state for every call it was shown.
+      for (const id of unendedToolCalls) {
+        yield { type: 'tool_result', id, content: noResult, isError: true };
+      }
     } finally {
       // [[TUI-C69]] §5.4 — **the turn is over, so the argument is over.** Until this existed the
       // panel was cleared only by the NEXT turn's `endNegotiation`, so a negotiation that CONVERGED

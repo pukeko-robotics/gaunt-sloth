@@ -124,12 +124,17 @@ export class AcpV1UpdateMapper extends AcpToolCallTracker {
       }
       case 'tool_args': {
         this.appendToolArgs(event.id, event.delta);
-        return [];
+        // [[TUI-C100]] — send the arguments as soon as they are whole, rather than waiting for the
+        // call to end. A call stopped at the approval gate does not end until a human has ruled on
+        // it, and the arguments are what they are ruling on.
+        const rawInput = this.takeRawInputUpdate(event.id);
+        if (rawInput === undefined) return [];
+        return [{ sessionUpdate: 'tool_call_update', toolCallId: event.id, rawInput }];
       }
       case 'tool_end': {
-        const rawInput = this.rawInputFor(event.id);
-        // Status only (plus the arguments, once they are complete). No title, no kind, no name —
-        // the client keeps the ones the creating update set.
+        const rawInput = this.takeRawInputUpdate(event.id);
+        // Status only (plus the arguments, if they have not already been sent). No title, no kind,
+        // no name — the client keeps the ones the creating update set.
         return [
           {
             sessionUpdate: 'tool_call_update',
