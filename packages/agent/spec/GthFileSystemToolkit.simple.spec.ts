@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import os from 'os';
 import path from 'node:path';
 
@@ -1100,23 +1100,60 @@ describe('GthFileSystemToolkit - Basic Tests', () => {
         await expect(toolkit['validatePath'](testPath)).rejects.toThrow('Permission denied');
       });
 
-      it('should treat bare and dot-relative file paths the same', async () => {
-        const absolutePath = path.join(process.cwd(), 'it.js');
-        fsMock.realpath.mockResolvedValue(absolutePath);
+      /**
+       * These two are the only specs in this file that hand `validatePath` a RELATIVE path, so
+       * they are the only ones whose outcome depends on the *resolution base*: a relative request
+       * is resolved against `getCurrentWorkDir()`, which prefers `INIT_CWD` and only falls back to
+       * `process.cwd()`. Taking the allowed root from `process.cwd()` while letting the base be
+       * inherited put the two ends in different trees whenever the runner was started elsewhere,
+       * and the spec then failed as `Access denied - path outside allowed directories` thrown from
+       * production code — which reads as an access-control regression and sends the reader
+       * somewhere the change never was (OPS-90).
+       *
+       * Both ends are pinned to one sentinel root here, so what is asserted is path validation and
+       * not where the runner was started. The sentinel is built through `path.resolve`, exactly as
+       * the constructor and `validatePath` build theirs, so it is drive-qualified on win32 instead
+       * of a POSIX literal compared by equality — the failure OPS-27 and EXT-38 dealt with.
+       *
+       * `realpath` is deliberately left as the file-level identity mock. Overriding it with the
+       * expected value returns that value for ANY request that clears the access check, which
+       * leaves both assertions unable to fail: measured on this file, deleting quote-unwrapping
+       * from production left the quoted case green.
+       */
+      describe('relative paths resolve against an explicit root', () => {
+        const WORK_DIR = path.resolve(path.sep, 'gth-ops90-workdir');
+        const EXPECTED = path.join(WORK_DIR, 'it.js');
+        let originalInitCwd: string | undefined;
 
-        const barePathResult = await toolkit['validatePath']('it.js');
-        const dotRelativePathResult = await toolkit['validatePath']('./it.js');
+        // Captured exactly once, BEFORE anything overwrites it: spec files share a worker process,
+        // so a capture that ran per-test would re-read the value this describe itself set and
+        // "restore" the sentinel into the environment of every file that runs after it.
+        beforeAll(() => {
+          originalInitCwd = process.env.INIT_CWD;
+        });
 
-        expect(barePathResult).toBe(absolutePath);
-        expect(dotRelativePathResult).toBe(absolutePath);
-      });
+        afterAll(() => {
+          if (originalInitCwd === undefined) delete process.env.INIT_CWD;
+          else process.env.INIT_CWD = originalInitCwd;
+        });
 
-      it('should accept quoted path arguments by unwrapping quotes', async () => {
-        const absolutePath = path.join(process.cwd(), 'it.js');
-        fsMock.realpath.mockResolvedValue(absolutePath);
+        beforeEach(() => {
+          process.env.INIT_CWD = WORK_DIR;
+          toolkit = new GthFileSystemToolkit({ allowedDirectories: [WORK_DIR] });
+        });
 
-        const result = await toolkit['validatePath']('"./it.js"');
-        expect(result).toBe(absolutePath);
+        it('should treat bare and dot-relative file paths the same', async () => {
+          const barePathResult = await toolkit['validatePath']('it.js');
+          const dotRelativePathResult = await toolkit['validatePath']('./it.js');
+
+          expect(barePathResult).toBe(EXPECTED);
+          expect(dotRelativePathResult).toBe(EXPECTED);
+        });
+
+        it('should accept quoted path arguments by unwrapping quotes', async () => {
+          const result = await toolkit['validatePath']('"./it.js"');
+          expect(result).toBe(EXPECTED);
+        });
       });
     });
   });
