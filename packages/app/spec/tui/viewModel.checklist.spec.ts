@@ -48,6 +48,23 @@ describe('viewModel — checklist parsing', () => {
     ]);
   });
 
+  /**
+   * REL-18 — the row text is neutralised by the PARSER, so every consumer of a
+   * `ChecklistItemViewModel` inherits it and no renderer has to remember. The dock-level proof that
+   * this reaches the screen is `checklistDockNeutralisation.spec.tsx`; this pins the function the
+   * guard actually sits on, which is the thing a rewrite of the panel would leave standing.
+   */
+  it('neutralises the model-written row text', () => {
+    const ESC = String.fromCharCode(27);
+    const BEL = String.fromCharCode(7);
+    const args = JSON.stringify({
+      items: [{ content: `a${ESC}[31mb${ESC}]0;t${BEL}c${ESC}[2Ad`, status: 'pending' }],
+    });
+    expect(parseChecklistArgs(args)).toEqual([
+      { content: 'a\\x1b[31mb\\x1b]0;t\\x07c\\x1b[2Ad', status: 'pending' },
+    ]);
+  });
+
   it('returns null when items is missing or not an array', () => {
     expect(parseChecklistArgs('{"items":"x"}')).toBeNull();
     expect(parseChecklistArgs('{}')).toBeNull();

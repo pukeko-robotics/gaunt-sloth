@@ -299,6 +299,9 @@ function checklistRow(status: ChecklistItemViewModel['status']): { glyph: string
  * the plan is meant to be seen — it is the lean agent's answer to deepagents' `write_todos`. The
  * caller only routes here once {@link parseChecklistArgs} yields rows; a still-streaming/partial
  * args buffer falls back to the generic {@link ToolCallPanel}.
+ *
+ * Row text arrives already neutralised — the parser owns that, and `ChecklistItemViewModel.content`
+ * states it — so it is painted verbatim here and needs no second treatment.
  */
 export function ChecklistPanel({ items }: { items: ChecklistItemViewModel[] }): React.ReactElement {
   const done = items.filter((i) => i.status === 'completed').length;
