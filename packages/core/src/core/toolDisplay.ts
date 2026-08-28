@@ -305,9 +305,25 @@ function formatParamValue(value: unknown, secrets: readonly string[]): string {
   return truncate(neutralizeToOneLine(redactText(text, secrets)), TOOL_PARAM_VALUE_MAX_CHARS);
 }
 
-/** Split into lines, dropping a single trailing newline's phantom empty last element. */
+/**
+ * Split untrusted text into the lines the body renders, dropping a single trailing newline's
+ * phantom empty last element.
+ *
+ * `\r\n` is ONE break, because that is what a Windows-authored file means by it. A **lone** `\r`
+ * is deliberately NOT a break: it is left for {@link neutralizeUntrustedText} to make visible as
+ * `\x0d`, since a bare carriage return is the cursor-to-column-0 overwrite trick far more often
+ * than it is a line ending, and turning it into a break would hide that it was ever there.
+ *
+ * That rule is `splitLogicalLines` in `core/shell/framing`, matched deliberately rather than
+ * re-decided here. The approval dialog splits the command it frames exactly this way, and this
+ * node exists because the tool path and the approval path had come to disagree about what is
+ * inert; a splitter that differed would re-open that divergence one layer down. It weakens
+ * nothing — the attack is the lone `\r`, which still reaches the neutraliser — while the pair
+ * every terminal already draws as one break stops putting a visible `\x0d` on the end of every
+ * line of every CRLF-authored file, which is one of the commonest things this product reads.
+ */
 function toLines(text: string): string[] {
-  const lines = text.split('\n');
+  const lines = text.replace(/\r\n/gu, '\n').split('\n');
   if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
   return lines;
 }
@@ -613,6 +629,50 @@ export function buildToolBodyLines(
     ...l,
     text: neutralizeUntrustedText(redactText(l.text, secrets)),
   }));
+}
+
+/** The strings the expanded panel paints beside the body, ready to draw. */
+export interface ToolExpansionText {
+  /** The streamed args text as one row's content, or `null` when the call carries no args. */
+  args: string | null;
+  /** The routed notice, one element per row the expansion draws. */
+  noticeLines: string[];
+}
+
+/**
+ * [[TUI-C102]] — the two untrusted strings the EXPANDED tool panel paints OUTSIDE the body: the
+ * raw streamed args text and the routed "🔧 Executing …" notice. Neither passes through
+ * {@link buildToolBodyLines}, and neither is ours: `argsText` is whatever the model streamed —
+ * under prompt injection, attacker-chosen, and for a shell call it is the command itself — and a
+ * notice quotes that same command back. Under [[TUI-C99]] this expansion is the route by which a
+ * human inspects a call they are being asked to permit, so it gets the treatment the rest of the
+ * display path already has.
+ *
+ * **Both the renderer and the row-count oracle must call this, on the same input.** Neutralised
+ * text is WIDER than the raw text it replaces, so a renderer that neutralises beside an estimator
+ * that measures the raw string disagree about how many rows the panel occupies — and a row
+ * miscount shows as content in the wrong place on screen rather than as an error anywhere. One
+ * helper for both sides is what stops them drifting apart again.
+ *
+ * Same order as everywhere else on this path: **redact the raw text, then neutralise.** A secret
+ * literal that carries a control character stops literal-matching the moment that character is
+ * rewritten. Redaction is here at all because the collapsed summary above this row already
+ * redacts, and an expansion that did not would print, under `/verbose`, the secret the row above
+ * it hid.
+ *
+ * The notice splits through {@link toLines}, so a `\r\n` inside a quoted command is one break
+ * there too; the args text is a single value and keeps its own newlines as visible `\x0a`, which
+ * is what a streamed JSON buffer carrying a real newline actually contains.
+ */
+export function buildToolExpansionText(
+  input: { argsText?: string; notice?: string },
+  secrets: readonly string[] = getDefaultSecrets()
+): ToolExpansionText {
+  const clean = (text: string): string => neutralizeUntrustedText(redactText(text, secrets));
+  return {
+    args: input.argsText ? clean(input.argsText) : null,
+    noticeLines: input.notice ? toLines(input.notice).map(clean) : [],
+  };
 }
 
 /**

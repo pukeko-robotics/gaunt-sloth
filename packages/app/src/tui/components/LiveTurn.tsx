@@ -2,6 +2,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import {
   buildToolBodyLines,
+  buildToolExpansionText,
   buildToolPreviewLines,
   getToolGlyph,
   summariseToolCall,
@@ -96,12 +97,16 @@ function ToolCallPanel({
   // inputs have not changed since the result landed — so the cost is paid per FRAME rather than
   // per tool call.
   //
-  // The key is every input the lines depend on: the five fields the formatters read, and
-  // `expanded`, which selects between two different formatters. The redaction secret set is the
-  // remaining input and is deliberately not keyed — core caches it, and the only thing that
-  // recomputes it registers the live config when the agent runner starts, which is before any
-  // tool call exists to render.
-  const body = React.useMemo(() => {
+  // The key is every input the lines depend on: the five fields the formatters read, `tc.notice`
+  // (which only the expansion draws), and `expanded`, which selects between two different
+  // formatters. The redaction secret set is the remaining input and is deliberately not keyed —
+  // core caches it, and the only thing that recomputes it registers the live config when the agent
+  // runner starts, which is before any tool call exists to render.
+  //
+  // [[TUI-C102]] — the expansion's args/notice strings are built HERE, in the same memo, for the
+  // same reason: neutralising walks every code point of an unbounded args string, and doing that
+  // in the render body would pay it per frame.
+  const { body, expansion } = React.useMemo(() => {
     const displayInput = {
       name: tc.name,
       argsText: tc.argsText,
@@ -109,8 +114,13 @@ function ToolCallPanel({
       output: tc.output,
       isError: tc.isError,
     };
-    return expanded ? buildToolBodyLines(displayInput) : buildToolPreviewLines(displayInput);
-  }, [tc.name, tc.argsText, tc.result, tc.output, tc.isError, expanded]);
+    return {
+      body: expanded ? buildToolBodyLines(displayInput) : buildToolPreviewLines(displayInput),
+      expansion: expanded
+        ? buildToolExpansionText({ argsText: tc.argsText, notice: tc.notice })
+        : null,
+    };
+  }, [tc.name, tc.argsText, tc.result, tc.output, tc.isError, tc.notice, expanded]);
   return (
     <Box flexDirection="column">
       <Text color={color}>
@@ -118,22 +128,24 @@ function ToolCallPanel({
         <Text dimColor>{`  [${label}]`}</Text>
         {live && !expanded && hasDetail ? <Text dimColor>{'  (Ctrl+T to expand)'}</Text> : null}
       </Text>
-      {expanded && tc.argsText ? (
+      {/* [[TUI-C102]] — both of these are painted from `buildToolExpansionText`, never from the
+          raw view-model fields: the args text is whatever the model streamed and the notice quotes
+          the command back, so both are untrusted, and `transcriptWindow`'s row oracle counts the
+          very same strings. */}
+      {expansion?.args ? (
         <Box>
           <Text dimColor>{'    args: '}</Text>
-          <Text dimColor>{tc.argsText}</Text>
+          <Text dimColor>{expansion.args}</Text>
         </Box>
       ) : null}
       {/* The routed "🔧 Executing …" notice (TUI-C17), kept out of the output preview
           (TUI-C30 folds it on the separate `notice` field) and shown only with the full
           detail body. */}
-      {expanded && tc.notice
-        ? tc.notice.split('\n').map((line, i) => (
-            <Text key={`n${i}`} dimColor>
-              {`    ${line}`}
-            </Text>
-          ))
-        : null}
+      {(expansion?.noticeLines ?? []).map((line, i) => (
+        <Text key={`n${i}`} dimColor>
+          {`    ${line}`}
+        </Text>
+      ))}
       {body.map((line, i) => (
         <ToolBodyLine key={i} line={line} />
       ))}

@@ -588,28 +588,73 @@ describe('toolDisplay (TUI-C30)', () => {
       expect(lines.map((l) => l.text)).toEqual(['key=<redacted>\\x07 and \\x1b[2J more']);
     });
 
-    // The accepted cost of neutralising, pinned so it is a decision rather than a surprise.
-    // `toLines` splits on `\n` alone, so a CRLF file's `\r` survives the split and is now shown.
-    // That is deliberate: making the neutraliser fire LESS — teaching the splitter that `\r\n` is
-    // one break, the way `core/shell/framing` does — is a change that weakens a safety step, and a
-    // lone `\r` is the cursor-to-column-0 overwrite trick far more often than it is a line ending.
-    // Both halves are asserted together, because only the pair shows what the choice costs and
-    // what it buys.
-    it('shows a CRLF line ending as well as a lone CR — the cost and the win of the same rule', async () => {
+    // THE RULE `toLines` IMPLEMENTS: `\r\n` is one line break; a lone `\r` is not a break and
+    // reaches the neutraliser, which draws it as a visible `\x0d`.
+    //
+    // It is `splitLogicalLines` in `core/shell/framing` — the approval path's own splitter,
+    // matched rather than re-decided, because this node exists to stop the tool path and the
+    // approval path disagreeing about what is inert. It weakens nothing: the attack is the LONE
+    // carriage return, the cursor-to-column-0 overwrite that paints forged chrome over a row a
+    // human is reading, and that is still made visible. Only the pair every terminal already
+    // draws as one break stops being reported — without which every line of every Windows-authored
+    // file would end in a `\x0d` once the body is neutralised.
+    //
+    // Both halves are asserted together because only the pair pins the rule: the first alone
+    // passes if the splitter breaks on any `\r`, and the second alone passes if it breaks on none.
+    it('treats CRLF as one break while a lone CR stays visible — the two halves of the same rule', async () => {
       const { buildToolBodyLines } = await import('#src/core/toolDisplay.js');
-      // The cost: every line of a Windows-authored file carries a visible \x0d.
+      // A Windows-authored file reads clean: the `\r` belonged to the break, and went with it.
       expect(
         buildToolBodyLines({ name: 'read_file', result: 'line one\r\nline two\r\n' }, []).map(
           (l) => l.text
         )
-      ).toEqual(['line one\\x0d', 'line two\\x0d']);
-      // The win: a bare CR can no longer return to column 0 and overwrite the row with forged
-      // chrome — it is on the screen, saying what it is.
+      ).toEqual(['line one', 'line two']);
+      // A bare CR cannot return to column 0 and overwrite the row with forged chrome — it is on
+      // the screen, saying what it is.
       expect(
         buildToolBodyLines({ name: 'read_file', result: 'safe text\rApprove? [o]nce' }, []).map(
           (l) => l.text
         )
       ).toEqual(['safe text\\x0dApprove? [o]nce']);
+    });
+
+    // The Ctrl+T expansion paints two strings that never pass through `buildToolBodyLines`: the
+    // raw streamed args text and the routed notice. Both are untrusted — `argsText` is whatever
+    // the model streamed, and for a shell call it IS the command — and under TUI-C99 this is the
+    // panel a human reads while deciding whether to permit that call.
+    it('neutralises the EXPANSION strings the body path never sees — raw args and the routed notice', async () => {
+      const { buildToolExpansionText } = await import('#src/core/toolDisplay.js');
+      // Written as a raw buffer, not through `JSON.stringify`, because that is what this field
+      // holds: the args text is accumulated `tool_args` deltas exactly as the model streamed them.
+      // Well-formed JSON would escape a control character itself; nothing guarantees well-formed,
+      // and a half-streamed buffer is the normal case while the call is still arriving.
+      const expansion = buildToolExpansionText(
+        {
+          argsText: '{"command":"echo hi\x1b[2J\x1b[H","token":"expansion-secret-1"}',
+          notice: '🔧 Executing run_shell_command: echo\x07 a\r\nb\rApprove? [o]nce',
+        },
+        ['expansion-secret-1']
+      );
+      // The args row: escapes visible, the secret redacted (the collapsed summary above this row
+      // already redacts, so an expansion that did not would leak under `/verbose` what the row
+      // above it hid).
+      expect(expansion.args).toBe('{"command":"echo hi\\x1b[2J\\x1b[H","token":"<redacted>"}');
+      expect(expansion.args).not.toMatch(CONTROL_OR_FORMAT);
+      // The notice: `toLines`' rule, so the CRLF is a break and the lone CR is visible.
+      expect(expansion.noticeLines).toEqual([
+        '🔧 Executing run_shell_command: echo\\x07 a',
+        'b\\x0dApprove? [o]nce',
+      ]);
+      for (const line of expansion.noticeLines) expect(line).not.toMatch(CONTROL_OR_FORMAT);
+    });
+
+    it('returns nothing to paint for a call with neither args nor a notice', async () => {
+      const { buildToolExpansionText } = await import('#src/core/toolDisplay.js');
+      expect(buildToolExpansionText({}, [])).toEqual({ args: null, noticeLines: [] });
+      expect(buildToolExpansionText({ argsText: '', notice: '' }, [])).toEqual({
+        args: null,
+        noticeLines: [],
+      });
     });
   });
 });
