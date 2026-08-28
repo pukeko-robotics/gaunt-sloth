@@ -150,8 +150,9 @@ import type { SurfaceType } from '../scripts/type-surface.mjs';
  *   `#src/history/historyStore.js`: every cell here stays green while `new HistoryStore(...)` from
  *   the package root stops compiling for an embedder. Three entries in the golden are classes
  *   (`ConfigDiscoveryError`, `HistoryStore`, `MissingProviderKeyError`) whose value half this pin
- *   cannot see, and no spec in this package imports the barrel for its runtime exports, so that
- *   half is unguarded rather than guarded elsewhere.
+ *   cannot see. That half is guarded by `coreBarrelValueSurface.spec.ts`, which imports the built
+ *   barrel and pins its runtime exports against a golden of its own; on the `export type *`
+ *   mutation measured here, that spec is what goes red and names `HistoryStore`.
  * - **A type emitted without an `export` modifier at its own declaration.** It is nameable by no
  *   route at all, so no barrel re-export could fix it, and it is excluded from `required` on that
  *   mechanism — the modifier flags read off the emitted node, not an opinion about the type.
