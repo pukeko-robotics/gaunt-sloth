@@ -538,6 +538,25 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
           textRunId = null;
         }
       };
+      /**
+       * [[TUI-C100]] — tool calls this response has STARTED and not yet ended.
+       *
+       * AG-UI's `TOOL_CALL_END` closes a call's DEFINITION, which is a different fact from the
+       * runtime's `tool_end` ("this call has finished"): the runtime now withholds that until a
+       * call's own result is known, and a call suspended for a client to fulfil never gets one at
+       * all. The protocol does not tolerate the gap — its verifier rejects `RUN_FINISHED` while any
+       * tool call is still active, and rejects an `END` for a call it never saw start — so the
+       * framing is closed here, from what this response actually emitted, rather than inferred from
+       * a runtime event that may legitimately not arrive.
+       *
+       * Interleaved calls are fine: the verifier keys active calls by id, so a sibling's `START`
+       * between another call's `START` and `END` is valid.
+       */
+      const openToolCalls = new Set<string>();
+      const endToolCall = (toolCallId: string) => {
+        if (!openToolCalls.delete(toolCallId)) return;
+        res.write(encoder.encode({ type: EventType.TOOL_CALL_END, toolCallId }));
+      };
 
       let eventStream;
       if (isCopilotToolResume) {
@@ -604,6 +623,7 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
           case 'tool_start': {
             // Close any open text run first so its final line isn't swallowed.
             endTextRun();
+            openToolCalls.add(event.id);
             res.write(
               encoder.encode({
                 type: EventType.TOOL_CALL_START,
@@ -625,15 +645,14 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
             break;
           }
           case 'tool_end': {
-            res.write(
-              encoder.encode({
-                type: EventType.TOOL_CALL_END,
-                toolCallId: event.id,
-              })
-            );
+            endToolCall(event.id);
             break;
           }
           case 'tool_result': {
+            // A result always follows the call's own END, so close it here if the runtime did not
+            // (a call started in an earlier response, whose framing this one never opened, is
+            // simply not open and is left alone).
+            endToolCall(event.id);
             // RC-33: never hand a result back to the client that the client itself supplied.
             if (clientHeldToolResultIds.has(event.id)) break;
             res.write(
@@ -689,6 +708,10 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
 
       // Close any still-open text run at the end of the stream.
       endTextRun();
+      // [[TUI-C100]] — and any tool call whose definition is still open: one suspended for the
+      // client to fulfil, or one the graph interrupted at the approval gate. A run may not finish
+      // with a tool call left active.
+      for (const toolCallId of [...openToolCalls]) endToolCall(toolCallId);
 
       // RUN_FINISHED
       res.write(

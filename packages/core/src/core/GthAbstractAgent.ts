@@ -1054,6 +1054,16 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
     let aggregatedAIChunk: AIMessageChunk | null = null;
     let reasoningOpen = false;
     const flushed = new Set<string>();
+    /**
+     * [[TUI-C100]] — calls that have been ANNOUNCED (`tool_start` + `tool_args`) and whose own
+     * result is not yet known, so their `tool_end` is still owed.
+     *
+     * Kept here rather than derived from {@link aggregatedAIChunk} because the aggregate is nulled
+     * after every round (see the reset below) while the calls it announced can still be waiting —
+     * at the approval gate, or simply behind a sibling in the same message. A set that died with
+     * the aggregate would lose exactly the calls this exists to track.
+     */
+    const pendingEnds = new Set<string>();
     // EXT-41: a content-policy refusal on this typed-event path was de-scoped by EXT-37 (there is
     // no empty-response retry here, so no wrong-retry bug), but it still rendered as a SILENT empty
     // turn. Capture it (first per-chunk signal wins; aggregate fallback at stream end) and surface
@@ -1102,6 +1112,17 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
       }
     }
 
+    /**
+     * Announce every call the assistant message carries, once its arguments are complete.
+     *
+     * [[TUI-C100]] — **announcing a call is not ending it.** This runs when the round's FIRST
+     * `ToolMessage` lands, because that is what makes the streamed aggregate complete, so it speaks
+     * for every call in the message at once: the one that just returned, the ones still queued, and
+     * the one suspended at the approval gate with a human being asked about it. `tool_start` and
+     * `tool_args` are true for all of them — the model has finished emitting the arguments — and
+     * that is what puts a call on screen, with the arguments the human is about to rule on.
+     * `tool_end` is not: it is owed until the call's own result is known, and is emitted there.
+     */
     function* flushAggregated(): Generator<AgentStreamEvent> {
       if (!aggregatedAIChunk) return;
       const toolCalls = aggregatedAIChunk.tool_calls ?? [];
@@ -1112,10 +1133,15 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
         flushed.add(id);
         yield { type: 'tool_start', id, name: tc.name };
         yield { type: 'tool_args', id, delta: JSON.stringify(tc.args ?? {}) };
-        yield { type: 'tool_end', id };
+        pendingEnds.add(id);
       }
       // Surface invalid tool calls too so the client at least sees the raw args
       // string the model produced, instead of silently dropping them.
+      //
+      // These END INLINE, unlike the calls above, and the asymmetry is the point: an invalid call
+      // is never dispatched, so there is no result to wait for and nothing that could later change
+      // what it says. Deferring it would leave a row that cannot progress sitting at `running`
+      // until the turn ended, in exchange for nothing.
       for (const tc of invalidToolCalls) {
         const id = tc.id as string | undefined;
         if (!id || flushed.has(id)) continue;
@@ -1222,6 +1248,13 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
         // `isError` still says the call did not run, which is what the model, `gth eval`'s
         // tool-result assertions and the ACP bridge all read.
         const toolCallId = chunk.tool_call_id as string;
+        // [[TUI-C100]] — the call's own result is here, so NOW it has ended. Emitted only for a
+        // call this stream announced, which keeps the invariant every consumer was written
+        // against: a `tool_end` never arrives for an id that had no `tool_start` (the AG-UI
+        // bridge's protocol verifier rejects that outright).
+        if (pendingEnds.delete(toolCallId)) {
+          yield { type: 'tool_end', id: toolCallId };
+        }
         yield {
           type: 'tool_result',
           id: toolCallId,
@@ -1241,7 +1274,18 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
       yield { type: 'reasoning_end' };
     }
 
-    // Flush any tool calls not followed by a ToolMessage (e.g. terminal tool calls).
+    // Announce any tool calls not followed by a ToolMessage (e.g. terminal tool calls), so a call
+    // the model asked for is never silently absent from the stream.
+    //
+    // [[TUI-C100]] — and deliberately NO `tool_end` sweep of {@link pendingEnds} here, which is
+    // the tempting shape and the wrong one. **A stream that ends with calls outstanding is what
+    // suspending at the approval gate LOOKS like**: the graph interrupts, this generator returns,
+    // and `GthAgentRunner.processMessagesWithEvents` only then opens the prompt
+    // (`resolveToolInterruptsWithEvents`). Ending them here would put the tick and the word `done`
+    // back on the row a moment before the human is asked about it — the defect, moved rather than
+    // fixed. A call held at the gate and a genuinely terminal one are indistinguishable from
+    // inside the stream; the turn's end is the first place they differ, and that is where the
+    // runner closes what is still owed.
     yield* flushAggregated();
 
     if (this.config?.writeBinaryOutputsToFile && binaryBlocks.length > 0) {

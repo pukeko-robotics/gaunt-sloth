@@ -6,7 +6,11 @@ import { fileURLToPath } from 'node:url';
 import { HumanMessage } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
 import type { GthConfig } from '#src/config.js';
-import type { PendingToolInterrupt, StatusUpdateCallback } from '#src/core/types.js';
+import type {
+  AgentStreamEvent,
+  PendingToolInterrupt,
+  StatusUpdateCallback,
+} from '#src/core/types.js';
 import { AttackHaltError, NonInteractiveEscalationError } from '#src/core/shell/approvalStop.js';
 import {
   applyDestructiveFloor,
@@ -141,6 +145,143 @@ describe('GthAgentRunner', () => {
 
   afterAll(() => {
     rmSync(projectDir, { recursive: true, force: true });
+  });
+
+  /**
+   * [[TUI-C100]] — **the turn is where a call with no result of its own is closed.**
+   *
+   * `processEventStream` deliberately ends nothing it has no result for, because from inside a
+   * stream a call suspended at the approval gate and a genuinely terminal one look identical: both
+   * leave the stream outstanding. They part company one level up. This generator yields the first
+   * stream to completion, THEN resolves interrupts — which is where the human is asked — so by the
+   * time it returns, a gated call has been decided and has produced its result, and whatever is
+   * still owed an end is a call that will never get one.
+   *
+   * Both halves are asserted here because either alone passes on a broken build: end everything and
+   * the gated row lies; end nothing and a terminal row hangs at *running* for the session.
+   */
+  describe('[[TUI-C100]] closing tool calls at the end of a turn', () => {
+    /** An event stream over a fixed list — the shape `streamWithEvents` returns. */
+    function eventStreamOf(events: AgentStreamEvent[]) {
+      return (async function* () {
+        for (const event of events) yield event;
+      })();
+    }
+
+    /** A call's announcement: what a flush emits for every call in the assistant message. */
+    const announced = (id: string, name: string, args: string): AgentStreamEvent[] => [
+      { type: 'tool_start', id, name },
+      { type: 'tool_args', id, delta: args },
+    ];
+
+    async function collect(stream: AsyncGenerator<AgentStreamEvent>): Promise<AgentStreamEvent[]> {
+      const events: AgentStreamEvent[] = [];
+      for await (const event of stream) events.push(event);
+      return events;
+    }
+
+    /**
+     * **The trap.** A terminal call in a multi-call round was announced by the FIRST call's flush,
+     * and the aggregate it came from is gone by the time the stream ends — so nothing inside the
+     * stream can close it. Without the turn-level drain its row never leaves *running*.
+     */
+    it('ends a call that never produced a result, once the turn is over', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      mockAgent.streamWithEvents.mockReturnValue(
+        eventStreamOf([
+          ...announced('call-read', 'list_directory', '{"path":"/tmp"}'),
+          ...announced('call-term', 'run_shell_command', '{"command":"ls"}'),
+          { type: 'tool_end', id: 'call-read' },
+          { type: 'tool_result', id: 'call-read', content: '[FILE] x' },
+        ])
+      );
+      await runner.init(undefined, { ...mockConfig, approvals: 'write' } as any);
+
+      const events = await collect(runner.processMessagesWithEvents([new HumanMessage('go')]));
+
+      expect(events.at(-1)).toEqual({ type: 'tool_end', id: 'call-term' });
+      // And exactly once — the call that already ended is not ended a second time.
+      expect(events.filter((e) => e.type === 'tool_end')).toEqual([
+        { type: 'tool_end', id: 'call-read' },
+        { type: 'tool_end', id: 'call-term' },
+      ]);
+    });
+
+    /**
+     * **The node.** The gated sibling must not be reported ended while the human is being asked,
+     * and the drain above must not become a new way to do that: the prompt opens AFTER the first
+     * stream has finished, so a close placed anywhere inside that stream — or at its end — would
+     * put the tick back one moment before the question.
+     *
+     * The snapshot is taken inside the approval callback, which is the exact instant the prompt is
+     * on screen.
+     */
+    it('has not ended the gated call at the moment the human is asked, and ends it when it runs', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      const gatedAnnouncement: AgentStreamEvent[] = [
+        ...announced('call-read', 'list_directory', '{"path":"/tmp"}'),
+        ...announced('call-gate', 'run_shell_command', '{"command":"git clone https://x"}'),
+        { type: 'tool_end', id: 'call-read' },
+        { type: 'tool_result', id: 'call-read', content: '[FILE] x' },
+      ];
+      mockAgent.streamWithEvents.mockReturnValue(eventStreamOf(gatedAnnouncement));
+      (mockAgent as any).getPendingToolInterrupts = vi
+        .fn()
+        .mockResolvedValueOnce([
+          { name: 'run_shell_command', args: { command: 'git clone https://x' }, id: 'call-gate' },
+        ])
+        .mockResolvedValueOnce([]);
+      (mockAgent as any).streamWithEventsResume = vi.fn().mockImplementation(() =>
+        eventStreamOf([
+          { type: 'tool_end', id: 'call-gate' },
+          { type: 'tool_result', id: 'call-gate', content: 'cloned' },
+        ])
+      );
+      await runner.init(undefined, { ...mockConfig, approvals: 'write' } as any);
+
+      const events: AgentStreamEvent[] = [];
+      let seenWhenAsked: AgentStreamEvent[] = [];
+      runner.setToolApprovalCallback(async () => {
+        // Everything the surface has been told at the instant the prompt is open.
+        seenWhenAsked = [...events];
+        return { type: 'approve' };
+      });
+
+      for await (const event of runner.processMessagesWithEvents([new HumanMessage('go')])) {
+        events.push(event);
+      }
+
+      expect(seenWhenAsked).not.toHaveLength(0);
+      expect(seenWhenAsked).not.toContainEqual({ type: 'tool_end', id: 'call-gate' });
+      // The call WAS announced, with its arguments — that is what the human is ruling on.
+      expect(seenWhenAsked).toContainEqual({
+        type: 'tool_start',
+        id: 'call-gate',
+        name: 'run_shell_command',
+      });
+      // And once it has run, it ends exactly once — not again at the turn's end.
+      expect(
+        events.filter((e) => e.type === 'tool_end' && (e as { id: string }).id === 'call-gate')
+      ).toHaveLength(1);
+      expect(events.at(-1)).toEqual({ type: 'tool_result', id: 'call-gate', content: 'cloned' });
+    });
+
+    /** A turn with nothing outstanding gains nothing: the drain adds no events of its own. */
+    it('adds no events when every call already ended', async () => {
+      const runner = new GthAgentRunner(statusUpdateCallback);
+      const complete: AgentStreamEvent[] = [
+        ...announced('call-read', 'list_directory', '{"path":"/tmp"}'),
+        { type: 'tool_end', id: 'call-read' },
+        { type: 'tool_result', id: 'call-read', content: '[FILE] x' },
+        { type: 'text', delta: 'done' },
+      ];
+      mockAgent.streamWithEvents.mockReturnValue(eventStreamOf(complete));
+      await runner.init(undefined, { ...mockConfig, approvals: 'write' } as any);
+
+      const events = await collect(runner.processMessagesWithEvents([new HumanMessage('go')]));
+
+      expect(events).toEqual(complete);
+    });
   });
 
   describe('init', () => {

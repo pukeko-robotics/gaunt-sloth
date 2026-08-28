@@ -355,6 +355,99 @@ describe('apiAgUiModule', () => {
       expect(afterContent!.messageId).toBe(startIds[1]);
     });
 
+    /**
+     * [[TUI-C100]] — **the framing of a tool call is this bridge's job, not the runtime's.**
+     *
+     * `TOOL_CALL_END` closes a call's DEFINITION in AG-UI, which is a different fact from the
+     * runtime's `tool_end` ("this call has finished"). The runtime withholds the latter until a
+     * call's own result is known — a call suspended at the approval gate, or handed to the client
+     * to fulfil, may never produce one — so the bridge must close what it opened.
+     *
+     * The rules asserted below are read from the protocol's own verifier
+     * (`@ag-ui/client`'s `verifyEvents`): a run may not finish while a tool call is active, an
+     * `END`/`ARGS` requires a `START` for the same id, and a `START` may not repeat an active id.
+     * Interleaved calls are explicitly fine — active calls are keyed by id — which is what lets a
+     * sibling be announced while another is still open.
+     */
+    describe('[[TUI-C100]] tool-call framing', () => {
+      /** The verifier's tool-call rules, applied to what this bridge actually wrote. */
+      function protocolViolations(events: Array<Record<string, unknown>>): string[] {
+        const active = new Set<string>();
+        const problems: string[] = [];
+        for (const event of events) {
+          const id = event.toolCallId as string;
+          if (event.type === 'TOOL_CALL_START') {
+            if (active.has(id)) problems.push(`START for an already-active call ${id}`);
+            active.add(id);
+          } else if (event.type === 'TOOL_CALL_ARGS' || event.type === 'TOOL_CALL_END') {
+            if (!active.has(id)) problems.push(`${String(event.type)} for an unstarted call ${id}`);
+            if (event.type === 'TOOL_CALL_END') active.delete(id);
+          } else if (event.type === 'RUN_FINISHED' && active.size > 0) {
+            problems.push(`RUN_FINISHED with tool calls still active: ${[...active].join(', ')}`);
+          }
+        }
+        return problems;
+      }
+
+      /** The gated shape: a sibling returns, the other is left suspended with no result. */
+      function gatedRoundStream() {
+        return (async function* () {
+          yield { type: 'tool_start' as const, id: 'call-read', name: 'list_directory' };
+          yield { type: 'tool_args' as const, id: 'call-read', delta: '{"path":"/tmp"}' };
+          yield { type: 'tool_start' as const, id: 'call-gate', name: 'run_shell_command' };
+          yield { type: 'tool_args' as const, id: 'call-gate', delta: '{"command":"git clone x"}' };
+          yield { type: 'tool_end' as const, id: 'call-read' };
+          yield { type: 'tool_result' as const, id: 'call-read', content: '[FILE] x' };
+        })();
+      }
+
+      it('closes a suspended tool call before the run finishes', async () => {
+        gthLangChainAgentStreamWithEventsMock.mockReturnValue(gatedRoundStream());
+
+        const handler = await getRunHandler();
+        const res = makeMockRes();
+        await handler(makeRunReq({ threadId: 'gated-thread', runId: 'gated-run' }), res);
+
+        const events = mockEncoderInstance.encode.mock.calls.map((c) => c[0]) as Array<
+          Record<string, unknown>
+        >;
+        const types = events.map((e) => e.type);
+        const ended = events
+          .filter((e) => e.type === 'TOOL_CALL_END')
+          .map((e) => e.toolCallId as string);
+
+        expect(ended).toEqual(['call-read', 'call-gate']);
+        expect(types.lastIndexOf('TOOL_CALL_END')).toBeLessThan(types.indexOf('RUN_FINISHED'));
+        expect(protocolViolations(events)).toEqual([]);
+      });
+
+      it('ends each call exactly once, and never one it did not start', async () => {
+        gthLangChainAgentStreamWithEventsMock.mockReturnValue(
+          (async function* () {
+            yield { type: 'tool_start' as const, id: 'tc-1', name: 'run_shell_command' };
+            yield { type: 'tool_args' as const, id: 'tc-1', delta: '{}' };
+            yield { type: 'tool_end' as const, id: 'tc-1' };
+            yield { type: 'tool_result' as const, id: 'tc-1', content: 'ok' };
+            // Defensive: a stray end/result for a call this response never opened (an id whose
+            // aggregate was lost, or one started in an earlier response) must not be framed.
+            yield { type: 'tool_end' as const, id: 'tc-unknown' };
+          })()
+        );
+
+        const handler = await getRunHandler();
+        const res = makeMockRes();
+        await handler(makeRunReq({ threadId: 'once-thread', runId: 'once-run' }), res);
+
+        const events = mockEncoderInstance.encode.mock.calls.map((c) => c[0]) as Array<
+          Record<string, unknown>
+        >;
+        expect(events.filter((e) => e.type === 'TOOL_CALL_END').map((e) => e.toolCallId)).toEqual([
+          'tc-1',
+        ]);
+        expect(protocolViolations(events)).toEqual([]);
+      });
+    });
+
     it('should set SSE headers on the response', async () => {
       const handler = await getRunHandler();
       const req = makeRunReq({ threadId: 'headers-thread' });

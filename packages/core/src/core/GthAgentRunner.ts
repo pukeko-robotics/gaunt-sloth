@@ -2998,8 +2998,37 @@ export class GthAgentRunner {
     debugLog('Processing messages (event stream)...');
     debugLogObject('Input Messages', messages);
     try {
-      yield* this.agent.streamWithEvents(messages, this.runConfig, signal);
-      yield* this.resolveToolInterruptsWithEvents(signal);
+      // [[TUI-C100]] — **a tool call that never produced a result is closed here, and nowhere
+      // earlier.** `processEventStream` ends a call when its own result arrives and otherwise
+      // leaves it open, because from inside a stream a call suspended at the approval gate looks
+      // exactly like a terminal one: the graph interrupts, the stream returns, and the calls it
+      // announced are still outstanding either way. The two only part company at THIS level — the
+      // prompt is opened by `resolveToolInterruptsWithEvents` below, after the first stream has
+      // finished — so closing anything before that point would tell the surface a call had
+      // finished while the human was still being asked whether it may run at all.
+      //
+      // By the time both stages are done, a gated call has been decided and has produced its
+      // result, and what is still owed an end is a call that will never get one. Ending those is
+      // not cosmetic: the AG-UI protocol requires every announced tool call to be closed before a
+      // run finishes, and an unclosed row on the TUI sits at `running` for the rest of the session.
+      const unendedToolCalls = new Set<string>();
+      const tracking = async function* (
+        source: AsyncGenerator<AgentStreamEvent>
+      ): AsyncGenerator<AgentStreamEvent> {
+        for await (const event of source) {
+          if (event.type === 'tool_start') unendedToolCalls.add(event.id);
+          else if (event.type === 'tool_end' || event.type === 'tool_result')
+            unendedToolCalls.delete(event.id);
+          yield event;
+        }
+      };
+      yield* tracking(this.agent.streamWithEvents(messages, this.runConfig, signal));
+      yield* tracking(this.resolveToolInterruptsWithEvents(signal));
+      // Deliberately at the end of the `try` rather than in the `finally`: a consumer that breaks
+      // out of the loop (the TUI's Esc) closes this generator, and yielding during a return
+      // completion suspends it again instead of finishing. An abandoned turn leaves its rows
+      // as they stood, which is what an abandoned turn looks like.
+      for (const id of unendedToolCalls) yield { type: 'tool_end', id };
     } finally {
       // [[TUI-C69]] §5.4 — **the turn is over, so the argument is over.** Until this existed the
       // panel was cleared only by the NEXT turn's `endNegotiation`, so a negotiation that CONVERGED
