@@ -71,16 +71,20 @@ type IsAllowed = (absPath: string) => boolean;
  * Reuses the SAME {@link shouldIgnoreFile} matcher and the SAME rootDir (the work-dir) the fs toolkit
  * uses, so a file is treated identically here as there — no hand-rolled `.aiignore` parsing.
  *
- * SECURITY (GS2-85): a hidden DIRECTORY hides its CONTENTS. Asking the matcher only about the file
- * itself answers a narrower question than the boundary makes: `shouldIgnoreFile` matches one path
- * against the patterns, so a pattern naming a directory is false for every file inside it, and an
- * ordinary walk returned those files' matching lines in full — passively, with nothing unusual
- * asked of the model. The filesystem toolkit never had that gap because its listing tools test each
- * directory entry as they walk and stop at an ignored one; gth_grep runs its own traversal (and, on
- * the rg path, no traversal it controls at all), so it must ask the same question itself. It does
- * that by walking from the path up to — but not including — the work-dir root and asking the SAME
- * matcher about each ancestor, so the hidden set here is the one the listing tools already reach
- * from the same `.aiignore` line, rather than a second, private notion of what is hidden.
+ * SECURITY (GS2-85): a hidden DIRECTORY hides its CONTENTS. gth_grep runs its own traversal (and,
+ * on the rg path, no traversal it controls at all), so — unlike the filesystem toolkit, whose
+ * listing tools test each directory entry as they walk and stop at an ignored one — it must ask
+ * that question itself. It does so by walking from the path up to, but not including, the work-dir
+ * root and asking the SAME matcher about each ancestor, so the hidden set here is the one the
+ * listing tools reach from the same `.aiignore` line rather than a second, private notion of what
+ * is hidden.
+ *
+ * The ancestor walk is now belt-and-braces rather than the load-bearing part: since GS2-83 the
+ * matcher itself covers the subtree beneath anything a pattern matches, so a file inside an
+ * `.aiignore`'d directory is already withheld when asked about directly. The walk is kept because
+ * it fails safe — it withholds a path whenever any ancestor is ignored, independently of how the
+ * pattern was spelled — and because dropping it would make this tool's boundary depend on a
+ * detail of the matcher rather than on the ancestry question the boundary actually asks.
  *
  * This widens only by ancestry: a path is newly withheld exactly when some ancestor directory
  * strictly below the work-dir root matches. Which strings the matcher matches is untouched.

@@ -49,12 +49,13 @@ describe('Aiignore Integration Tests', () => {
    * that was never created is absent for the wrong reason, and the negative assertion would pass
    * vacuously. They also fail fast, before an API call is spent.
    *
-   * **Why the pattern is directory-qualified rather than bare `*.secret.txt`.** `list_directory`
-   * filters through `shouldIgnoreFile` (`packages/core/src/utils/aiignoreUtils.ts`), which matches
-   * with `path.matchesGlob` against the workdir-relative path, and `*` there does not cross `/`.
-   * A bare pattern consequently does NOT reach into a subdirectory on this code path. That makes
-   * the test self-defending: "simplify" the pattern to a bare one and `notes.secret.txt` reappears
-   * in the listing and this case goes red.
+   * **Why the pattern stays directory-qualified rather than bare `*.secret.txt`.** A bare pattern
+   * would also hide `notes.secret.txt` — `shouldIgnoreFile`
+   * (`packages/core/src/utils/aiignoreUtils.ts`) applies a separator-free pattern at every depth —
+   * but it would hide it via a rule that reaches the whole workdir, so the case would no longer
+   * distinguish "the filter matched this subdirectory's file" from "the filter matched everything
+   * of that name anywhere". The qualified form keeps the assertion pinned to a pattern whose
+   * anchoring is part of what is under test.
    *
    * **Why its own subdirectory.** It gives this case a short listing that cannot be perturbed by
    * the root case or by accumulated run artifacts, and it keeps these fixtures out of the root

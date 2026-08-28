@@ -144,7 +144,7 @@ into `.gsloth/.gsloth-settings/` by hand.
 ## AI ignore (`.aiignore`)
 
 Hide files and directories from the filesystem tools with a `.aiignore` file in the project root.
-Patterns use minimatch rules (like `.gitignore`); lines starting with `#` are comments.
+Lines starting with `#` are comments.
 
 ```
 node_modules/
@@ -165,6 +165,47 @@ array supplied directly instead of reading `.aiignore`):
 ```
 
 When `.aiignore` is missing, Gaunt Sloth logs that at debug level only.
+
+### Pattern rules
+
+Patterns follow `.gitignore` rules, with the exceptions noted below. Paths are matched relative to
+the working directory.
+
+| Pattern | Hides |
+|---|---|
+| `*.log` | every `.log` file at any depth — `app.log` and `sub/app.log` alike |
+| `secrets.txt` | any file or directory of that name, at any depth |
+| `dist/` | the `dist` directory and everything inside it |
+| `build/out` | only `build/out` and its contents — not `src/build/out` |
+| `/dist` | only a `dist` at the project root, not one nested deeper |
+
+Two rules carry most of the weight:
+
+- **A pattern without a `/` applies at every depth.** `*.log` reaches into subdirectories; you do
+  not need to write `**/*.log`.
+- **A pattern that names a directory hides its name and its whole subtree.** One line is enough:
+  `secretdir` removes the directory from every listing *and* withholds every file beneath it. You
+  do not need a second `secretdir/**` line.
+
+A pattern containing a `/` is anchored to the working directory instead of applying at every depth,
+which is what makes `build/out` above miss `src/build/out`. A leading `/` anchors an otherwise-bare
+pattern the same way.
+
+Two deliberate differences from `.gitignore`:
+
+- **A trailing `/` does not restrict the match to directories.** `dist/` and `dist` behave
+  identically, so a *file* named `dist` is hidden too. Matching directories only would require
+  knowing each entry's type, and `.aiignore` errs toward hiding: a file wrongly hidden is visible
+  to you and easy to rename around, whereas the opposite mistake silently exposes something you
+  asked to be hidden.
+- **Re-inclusion (`!pattern`) is not supported.** A leading `!` is matched literally rather than
+  un-hiding anything, so you cannot carve an exception out of a broader pattern. Narrow the
+  pattern instead.
+
+`.aiignore` keeps matching files out of what the filesystem and search tools disclose — directory
+listings, file searches, and `gth_grep` results and the file contents behind them. It is a privacy
+boundary rather than a tidiness setting, which is why the rules above resolve every ambiguity by
+hiding more rather than less.
 
 ## The full config object
 
