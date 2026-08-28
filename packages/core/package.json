@@ -25,7 +25,8 @@
   "scripts": {
     "build": "tsc",
     "schema:generate": "node scripts/generate-config-schema.mjs",
-    "surface:generate": "node scripts/generate-type-surface.mjs"
+    "surface:generate": "node scripts/generate-type-surface.mjs",
+    "value-surface:generate": "node scripts/generate-value-surface.mjs"
   },
   "exports": {
     ".": "./dist/index.js",
