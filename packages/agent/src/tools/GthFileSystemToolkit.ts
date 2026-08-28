@@ -18,6 +18,15 @@ import { getFormatForExtension, getMimeType, readBinaryFile } from '#src/tools/b
 // TODO make it configurable
 const IGNORED_DIRS = ['node_modules', '.git', '.idea', 'dist'];
 
+/**
+ * Refusal thrown when a path is inside the `.aiignore` boundary.
+ *
+ * It deliberately names no path: the tool wrappers already echo back the path the model itself
+ * supplied, and interpolating the *resolved* path would disclose a symlink's target — the very
+ * location the boundary exists to withhold.
+ */
+const AIIGNORE_ACCESS_DENIED = 'Access denied - path is blocked by .aiignore';
+
 // read_file safety envelope (GS2-39). A single large file — or a minified bundle that is one
 // multi-MB line — must not consume the whole context window in one uncapped read. Defaults are
 // adopted from opencode's read tool (packages/core/src/tool/read-filesystem.ts): at most
@@ -255,6 +264,40 @@ export default class GthFileSystemToolkit extends BaseToolkit {
     return `./${unquotedPath}`;
   }
 
+  /**
+   * Throw when `absolutePath` is inside the `.aiignore` boundary.
+   *
+   * `.aiignore` means **may not touch**, not may not read. A read-class-only guard would leave
+   * `move_file` able to rename a hidden file to an unhidden name, after which nothing hides it —
+   * so a read guarantee that does not also cover the write class is not a guarantee at all.
+   *
+   * Asks the SAME {@link shouldIgnoreFile} matcher, against the SAME work-dir root, that the
+   * listing tools use to filter their entries, so a path is hidden from a by-hand access exactly
+   * when it is hidden from discovery. Since the matcher covers the subtree beneath anything a
+   * pattern matches, one `.aiignore` line answers for a hidden directory's contents too, with no
+   * separate ancestor walk here.
+   *
+   * The matcher is pattern-only — it never stats — so the refusal is identical for a path that
+   * exists and one that does not, and therefore discloses no existence.
+   *
+   * This does NOT extend to the shell: `run_shell_command` reaches the filesystem through its own
+   * process and goes around this boundary entirely. `.aiignore` binds the built-in filesystem
+   * tools; it is not a categorical guarantee about what an agent with a shell can reach.
+   */
+  private assertNotAiignored(absolutePath: string): void {
+    const aiignoreConfig = this.aiignoreConfig;
+    if (
+      shouldIgnoreFile(
+        absolutePath,
+        getCurrentWorkDir(),
+        aiignoreConfig?.patterns,
+        aiignoreConfig?.enabled
+      )
+    ) {
+      throw new Error(AIIGNORE_ACCESS_DENIED);
+    }
+  }
+
   private async validatePath(requestedPath: string): Promise<string> {
     const sanitizedPath = this.sanitizeRequestedPath(requestedPath);
     const expandedPath = this.expandHome(sanitizedPath);
@@ -276,6 +319,13 @@ export default class GthFileSystemToolkit extends BaseToolkit {
       );
     }
 
+    // The `.aiignore` boundary, tested on the requested path BEFORE any filesystem call. This is
+    // the primary test: `absolute` is resolved against the same work-dir root the matcher takes its
+    // relative path from, so an anchored pattern (`build/out`) still matches — which it need not
+    // for a realpath resolved through a symlinked root. Testing it here also means the answer does
+    // not depend on whether the path exists.
+    this.assertNotAiignored(normalizedRequested);
+
     try {
       // Try to get the real path for existing files/directories
       const realPath = await fs.realpath(absolute);
@@ -285,6 +335,9 @@ export default class GthFileSystemToolkit extends BaseToolkit {
       if (!isWithinAllowedDir(normalizedReal)) {
         throw new Error('Access denied - symlink target outside allowed directories');
       }
+      // Belt-and-braces: a symlink whose own name is not hidden must not become a way to reach a
+      // hidden target. Secondary to the check above, never a replacement for it.
+      this.assertNotAiignored(normalizedReal);
       return realPath;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (error: any) {
@@ -362,6 +415,23 @@ export default class GthFileSystemToolkit extends BaseToolkit {
         const fullPath = path.join(currentPath, entryName);
 
         try {
+          // The one validatePath call site whose correct answer to an `.aiignore` hit is SKIP, not
+          // REFUSE: a walk must step over a hidden entry and keep searching, never abandon the
+          // search. Asking the matcher here, ahead of validatePath, is what makes that decision
+          // explicit — the enclosing catch would also turn validatePath's refusal into a continue,
+          // but a privacy boundary should not rest on an enclosing catch that a later refactor
+          // could narrow.
+          const shouldIgnore = shouldIgnoreFile(
+            fullPath,
+            getCurrentWorkDir(),
+            aiignoreConfig?.patterns,
+            aiignoreConfig?.enabled
+          );
+
+          if (shouldIgnore) {
+            continue;
+          }
+
           await this.validatePath(fullPath);
 
           const relativePath = path.relative(rootPath, fullPath);
@@ -371,17 +441,6 @@ export default class GthFileSystemToolkit extends BaseToolkit {
           });
 
           if (shouldExclude) {
-            continue;
-          }
-
-          const shouldIgnore = shouldIgnoreFile(
-            fullPath,
-            getCurrentWorkDir(),
-            aiignoreConfig?.patterns,
-            aiignoreConfig?.enabled
-          );
-
-          if (shouldIgnore) {
             continue;
           }
 
