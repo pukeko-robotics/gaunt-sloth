@@ -128,12 +128,17 @@ chooses which files it searches:
 Disable it with `{ "gth_grep": { "enabled": false } }` (or `{ "gth_grep": false }`).
 
 **Whatever the `fileSet`, `gth_grep` honors [`.aiignore`](./index.md#ai-ignore-aiignore).**
-It reads file contents through its own search path, so it enforces the same `.aiignore` privacy
-boundary as the filesystem tools: a file hidden by `.aiignore` is never searched or returned, even
-under `fileSet: "all"`, and neither is any file inside a directory that `.aiignore` hides.
-(`.gitignore` decides what stays out of version control; `.aiignore` decides
-what the AI may read at all — so a tracked, non-ignored file can still be kept out of `gth_grep` by
+It searches file contents through its own path rather than through the filesystem tools, so it
+applies `.aiignore` itself: no result from a file hidden by `.aiignore` is returned, even under
+`fileSet: "all"`, and neither is a result from any file inside a directory that `.aiignore` hides.
+(`.gitignore` decides what stays out of version control; `.aiignore` decides what the built-in file
+tools may disclose — so a tracked, non-ignored file can still be kept out of `gth_grep` results by
 `.aiignore`.)
+
+That covers `gth_grep` and the other built-in file tools, and it is the limit of what `.aiignore`
+reaches: a shell command is arbitrary code running as you, and reads whatever your account can read.
+What the boundary is worth therefore depends on the mode you run in — see
+[What `.aiignore` is worth in each mode](./index.md#what-aiignore-is-worth-in-each-mode).
 
 ### GitHub file reads during a PR review (`gth_gh_read_file`)
 

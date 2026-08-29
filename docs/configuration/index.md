@@ -143,8 +143,8 @@ into `.gsloth/.gsloth-settings/` by hand.
 
 ## AI ignore (`.aiignore`)
 
-Hide files and directories from the filesystem tools with a `.aiignore` file in the project root.
-Lines starting with `#` are comments.
+Put files and directories out of the built-in file tools' reach with a `.aiignore` file in the
+project root. Lines starting with `#` are comments.
 
 ```
 node_modules/
@@ -202,10 +202,46 @@ Two deliberate differences from `.gitignore`:
   un-hiding anything, so you cannot carve an exception out of a broader pattern. Narrow the
   pattern instead.
 
-`.aiignore` keeps matching files out of what the filesystem and search tools disclose — directory
-listings, file searches, and `gth_grep` results and the file contents behind them. It is a privacy
-boundary rather than a tidiness setting, which is why the rules above resolve every ambiguity by
-hiding more rather than less.
+### What `.aiignore` covers
+
+`.aiignore` keeps matching files out of what the built-in filesystem and search tools disclose —
+directory listings, file searches, and `gth_grep` results and the file contents behind them. It is a
+privacy boundary rather than a tidiness setting, which is why the rules above resolve every
+ambiguity by hiding more rather than less.
+
+It is a *may not touch* boundary rather than a *may not read* one, so it runs in both directions.
+The built-in write tools — `write_file`, `create_directory` and `move_file` — refuse a path **inside**
+an ignored directory just as the read tools refuse to disclose one, so a directory you hid to keep
+the agent's eyes off it is also one you cannot ask the agent to write into. Move a path out of
+`.aiignore` if you want the agent working in it. The refusal deliberately names no path: resolving
+one into the message would disclose where a symlink points.
+
+### What `.aiignore` is worth in each mode
+
+`.aiignore` binds the built-in file tools. It does not bind the shell, and a shell command is
+arbitrary code running as you — so the same file has two routes:
+
+```
+read_file  secrets/keys.txt   → refused
+cat        secrets/keys.txt   → read
+```
+
+Which of those the agent can take on its own is decided by
+[the approvals mode](../guides/shell-tool-and-approvals.md#the-ladder-approvals):
+
+- At **Manual** and **Write**, every shell command comes to you before it runs, so `.aiignore` holds
+  against anything the agent does unattended — until you add a command to `approvals.allow`, which
+  is a standing yes for that command.
+- At **Assisted**, **Auto** and **Bypass**, a shell command can run without your seeing it. A
+  command that happens to read an ignored file is judged like any other command, on its text, and
+  nothing in it is checked against `.aiignore`.
+
+So `.aiignore` is worth most where you are reading each command anyway, and much less in the modes
+you would leave running. It keeps a secret out of the agent's ordinary reach; it does not keep one
+out of the run. Anything that must not be read at all belongs outside the working folder, or outside
+the machine the agent runs on —
+[what approvals protect you from](../guides/what-approvals-protect-you-from.md) is the fuller
+account of where that line falls and what does hold.
 
 ## The full config object
 
