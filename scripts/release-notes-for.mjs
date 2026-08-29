@@ -2,10 +2,12 @@
 // Resolve the GitHub Release title and body for one version from the hand-written notes in
 // release-notes/, for the "Create GitHub Release" step of .github/workflows/release.yml.
 //
-// Without this the Release page shows `--generate-notes` output — a list of merged pull requests —
-// while the considered account of the release sits unread in release-notes/. In this repo that list
-// is also partial by construction: branches land by local merge and usually never open a PR, so the
-// generated body can only show whatever happened to arrive as one.
+// The Release page shows the considered account of the release that sits in release-notes/, and
+// nothing else. It is never a list of merged pull requests: in this repo such a list is partial by
+// construction — branches land by local merge and usually never open a PR — so it can only show
+// whatever happened to arrive as one, a plausible-looking account of a release it does not
+// describe. A version nobody wrote notes for therefore ships a blank body. Blank says nothing; a
+// synthesised list says something untrue.
 //
 // The logic lives here rather than inline in the YAML because that step runs only during a real
 // release dispatch: inline bash could be verified only by shipping a broken release, while a script
@@ -23,10 +25,11 @@
 //   - First line is an ATX H1 -> that line, minus the leading `# `, is the Release TITLE, and the
 //     line is removed from the body so the title is not repeated inside it. A single blank line
 //     immediately after it is dropped too.
+//   - A file that is nothing but its H1 -> that title and an EMPTY body. Intended, not a
+//     degenerate case: a release whose heading says everything needs no paragraph under it.
 //   - First line is not an H1 -> the title stays `v<version>` and the WHOLE file is the body.
-//   - No file for the version -> no body; the caller falls back to `--generate-notes`. That
-//     fallback is deliberate: a Release with an empty body is worse than a partial PR list, and the
-//     path only fires when someone dispatched a release without writing notes.
+//   - No file for the version -> no body at all, and the caller creates the Release with an empty
+//     one. Nothing is synthesised to fill it.
 //
 // The H1 is taken VERBATIM. It is not required to contain the version (release-notes/v0/v0_9_0.md
 // opens `# Gaunt Sloth Assistant v0.9.0 Release Notes`) and it may contain any markdown, including
@@ -37,7 +40,8 @@
 // CLI:
 //   node scripts/release-notes-for.mjs <version> [--dir <notes dir>] [--body-out <path>]
 // Writes the resolved body to --body-out when there is one, prints a summary on stdout, and — when
-// GITHUB_OUTPUT is set — appends the step outputs `title` and `body_file` (empty on the fallback).
+// GITHUB_OUTPUT is set — appends the step outputs `title` and `body_file` (empty when the version
+// has no notes file, which is how the workflow tells the two apart).
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -106,23 +110,24 @@ export function splitTitleAndBody(text, version) {
  *
  * @param {string} version
  * @param {string} [notesDir]
- * @returns {{ version: string, title: string, notesPath: string | undefined, body: string | undefined, generateNotes: boolean }}
+ * @returns {{ version: string, title: string, notesPath: string | undefined, body: string | undefined, notesMissing: boolean }}
  */
 export function releaseNotesFor(version, notesDir = DEFAULT_NOTES_DIR) {
   const notesPath = resolveNotesPath(version, notesDir);
   if (!notesPath) {
-    // The documented fallback: no notes were written for this version, so the caller asks GitHub to
-    // synthesise a body. Title still comes from here, so the workflow has one source for it.
+    // Nobody wrote notes for this version, so there is no body — and none is invented. The caller
+    // creates the Release with an empty body. Title still comes from here, so the workflow has one
+    // source for it. This must not throw: the step runs under `set -euo pipefail`.
     return {
       version,
       title: `v${version}`,
       notesPath: undefined,
       body: undefined,
-      generateNotes: true,
+      notesMissing: true,
     };
   }
   const { title, body } = splitTitleAndBody(readFileSync(notesPath, 'utf8'), version);
-  return { version, title, notesPath, body, generateNotes: false };
+  return { version, title, notesPath, body, notesMissing: false };
 }
 
 /**
@@ -131,7 +136,8 @@ export function releaseNotesFor(version, notesDir = DEFAULT_NOTES_DIR) {
  * The title is forced onto one line. It already is one by construction, but a newline in a value is
  * how a step output injects a second output, and this is the boundary where that would matter.
  * @param {{ title: string }} result
- * @param {string | undefined} bodyFile the written body file, or undefined on the fallback
+ * @param {string | undefined} bodyFile the written body file, or undefined when the version has no
+ *   notes file
  * @returns {string}
  */
 export function githubOutputLines(result, bodyFile) {
@@ -166,7 +172,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
   const result = releaseNotesFor(version, notesDir);
   let bodyFile;
-  if (!result.generateNotes) {
+  if (!result.notesMissing) {
     mkdirSync(dirname(resolve(bodyOut)), { recursive: true });
     writeFileSync(bodyOut, result.body, 'utf8');
     bodyFile = bodyOut;
@@ -176,7 +182,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   } else {
     process.stdout.write(
       `No release notes file for ${version} (looked for ` +
-        `${join(notesDir, notesFileName(version))}) — falling back to GitHub's generated notes.\n`
+        `${join(notesDir, notesFileName(version))}) — the Release will have an empty body.\n`
     );
     process.stdout.write(`title: ${result.title}\n`);
   }

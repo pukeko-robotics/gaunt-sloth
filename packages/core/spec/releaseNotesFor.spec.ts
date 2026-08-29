@@ -180,8 +180,10 @@ describe('scripts/release-notes-for.mjs', () => {
       expect(body).toBe('First line.\r\n');
     });
 
-    it('handles a file that is nothing but an H1', async () => {
+    it('gives a file that is nothing but an H1 that title and an empty body', async () => {
       const { splitTitleAndBody } = await import(HELPER);
+      // Settled behaviour, not an accident of the parser: a title with nothing under it is a
+      // legitimate release note, and the Release page shows exactly that.
       const { title, body } = splitTitleAndBody('# v1.2.3 Title', '1.2.3');
       expect(title).toBe('v1.2.3 Title');
       expect(body).toBe('');
@@ -195,19 +197,33 @@ describe('scripts/release-notes-for.mjs', () => {
         'v2_0_0-beta_3.md': '# v2.0.0-beta.3 The Considered Account\n\nWhat changed.\n',
       });
       const result = releaseNotesFor('2.0.0-beta.3', dir);
-      expect(result.generateNotes).toBe(false);
+      expect(result.notesMissing).toBe(false);
       expect(result.notesPath).toBe(join(dir, 'v2_0_0-beta_3.md'));
       expect(result.title).toBe('v2.0.0-beta.3 The Considered Account');
       expect(result.body).toBe('What changed.\n');
     });
 
-    it('falls back to generated notes when the version has no file', async () => {
+    it('takes the title from a file that is nothing but its H1, with an empty body', async () => {
       const { releaseNotesFor } = await import(HELPER);
-      // The deliberate fallback: no notes were written, so the workflow asks GitHub to synthesise a
+      // Intended, not a degenerate case: a release whose heading says everything needs no
+      // paragraph under it. The title carries a suffix on purpose — a heading of the bare version
+      // is also what the no-file case produces, so a fixture without one could not tell the two
+      // apart, and both end with an empty body.
+      const dir = notesDir({ 'v2_0_0-beta_3.md': '# v2.0.0-beta.3 Title Only\n' });
+      const result = releaseNotesFor('2.0.0-beta.3', dir);
+      expect(result.notesMissing).toBe(false);
+      expect(result.notesPath).toBe(join(dir, 'v2_0_0-beta_3.md'));
+      expect(result.title).toBe('v2.0.0-beta.3 Title Only');
+      expect(result.body).toBe('');
+    });
+
+    it('reports no notes and no body when the version has no file', async () => {
+      const { releaseNotesFor } = await import(HELPER);
+      // Nothing is synthesised to fill the gap: the workflow creates the Release with an empty
       // body. It must not throw — the step runs under `set -euo pipefail` and this would abort a
       // release — and the title must still be the plain version.
       const result = releaseNotesFor('9.9.9', notesDir());
-      expect(result.generateNotes).toBe(true);
+      expect(result.notesMissing).toBe(true);
       expect(result.notesPath).toBeUndefined();
       expect(result.body).toBeUndefined();
       expect(result.title).toBe('v9.9.9');
@@ -218,7 +234,7 @@ describe('scripts/release-notes-for.mjs', () => {
       // No notesDir argument: this is the resolution the workflow actually performs, against the
       // files in the repo. A fixture cannot prove the helper meets them.
       const result = releaseNotesFor('2.0.0-beta.2');
-      expect(result.generateNotes).toBe(false);
+      expect(result.notesMissing).toBe(false);
       expect(result.title).toBe('v2.0.0-beta.2 The Alignment Check');
       expect(result.body).not.toContain('# v2.0.0-beta.2 The Alignment Check');
       // The real file separates its H1 from the body with a blank line; the body must start at the
@@ -236,7 +252,7 @@ describe('scripts/release-notes-for.mjs', () => {
       );
     });
 
-    it('reports an empty body file on the fallback, which is what selects --generate-notes', async () => {
+    it('reports an empty body file when there are no notes, which is what selects the empty-body branch', async () => {
       const { githubOutputLines } = await import(HELPER);
       expect(githubOutputLines({ title: 'v1.2.3' }, undefined)).toBe('title=v1.2.3\nbody_file=\n');
     });
@@ -274,6 +290,23 @@ describe('scripts/release-notes-for.mjs', () => {
         `title=v2.0.0-beta.3 The Considered Account\nbody_file=${bodyOut}\n`
       );
       expect(readFileSync(bodyOut, 'utf8')).toBe('What changed.\n');
+    });
+
+    it('writes an empty body file for an H1-only notes file, and still names it', () => {
+      // The pair that separates "title only, on purpose" from "no notes at all": both Releases end
+      // with an empty body, and only the title and the body_file output tell the workflow which
+      // branch it is in. Here body_file must point at a real (empty) file, so the step takes the
+      // --notes-file branch, and the title must come from the H1 rather than from the version.
+      const dir = notesDir({ 'v2_0_0-beta_3.md': '# v2.0.0-beta.3 Title Only\n' });
+      const bodyOut = join(dir, 'out', 'release-body.md');
+      const outputFile = join(dir, 'github-output.txt');
+      const result = run('2.0.0-beta.3', dir, bodyOut, outputFile);
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(outputFile, 'utf8')).toBe(
+        `title=v2.0.0-beta.3 Title Only\nbody_file=${bodyOut}\n`
+      );
+      expect(existsSync(bodyOut)).toBe(true);
+      expect(readFileSync(bodyOut, 'utf8')).toBe('');
     });
 
     it('exits 0 with an empty body_file when the version has no notes', () => {

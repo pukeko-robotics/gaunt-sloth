@@ -15,7 +15,11 @@ import { existsSync, readFileSync } from 'node:fs';
  * could break a release rather than merely undo itself:
  *
  *  - the `gh release view` skip stays, so a re-dispatch after a failed publish does not die;
- *  - the `--generate-notes` fallback stays, so a version with no notes file still gets a body;
+ *  - a version with no notes file gets an EMPTY body, stated explicitly with `--notes ""`, and
+ *    nothing synthesises one for it. `--generate-notes` would fill the page with merged pull
+ *    requests, which here describe whatever happened to open one rather than the release — blank
+ *    says nothing, that list says something untrue. The empty body is spelled out rather than left
+ *    implicit so the step does not depend on `gh` deciding it cannot prompt;
  *  - the run block interpolates no `${{ }}` expression. An expression is spliced into the script as
  *    TEXT before bash parses it, and a release note title may contain a backtick
  *    (release-notes/v1_2_0.md) — which would then run as command substitution inside the release
@@ -111,13 +115,28 @@ describe('OPS-98 the release notes helper is wired into the release job', () => 
     ).toBe(true);
   });
 
-  it('keeps the --generate-notes fallback for a version with no notes file', () => {
+  it('creates the Release with an explicitly empty body when there is no notes file', () => {
     const step = runBlock(stepText(releaseJob(), RELEASE_STEP));
+    expect(step, `the "${RELEASE_STEP}" step has no run block`).not.toBe('');
     expect(
-      blockLine('gh release create .*--generate-notes').test(step),
-      'a version nobody wrote notes for must still get a body — an empty Release is worse than ' +
-        'a partial list of PRs. Removing this branch is a deliberate decision, not a cleanup.'
+      blockLine('gh release create .*--notes ""').test(step),
+      'a version nobody wrote notes for must still create the Release, with an empty body stated ' +
+        'as `--notes ""`. Omitting the notes flags instead leaves the body to whatever `gh` does ' +
+        'when it decides it cannot prompt, which is not a property this step should rest on.'
     ).toBe(true);
+  });
+
+  it('synthesises nothing to fill an empty Release body', () => {
+    const step = runBlock(stepText(releaseJob(), RELEASE_STEP));
+    // Control: an empty slice would satisfy the assertion below for the wrong reason.
+    expect(step).toContain('gh release create');
+    expect(
+      step.includes('--generate-notes'),
+      'the Release body is the notes we wrote or nothing. `--generate-notes` fills the page with ' +
+        'merged pull requests, and branches here land by local merge and usually open none — so ' +
+        'that list describes whatever happened to arrive as a PR, not this release. Blank says ' +
+        'nothing; a plausible-looking list of unrelated changes says something untrue.'
+    ).toBe(false);
   });
 
   it('keeps the already-exists skip, so a re-dispatch does not die', () => {
@@ -139,6 +158,37 @@ describe('OPS-98 the release notes helper is wired into the release job', () => 
         'release note title containing a backtick would run as command substitution in the ' +
         'release job. Pass the value through `env:` and reference it as a quoted variable.'
     ).toBe(false);
+  });
+
+  /**
+   * The workflow is one of five places that described the generated-PR-list fallback: the step
+   * itself, the helper's docblock, and three documents that tell a human (or an agent) what a
+   * release does. Removing the behaviour from the shell while a document still promises it leaves
+   * the repository stating something false, and the next person to touch the step reinstates it
+   * from the doc. The list is hardcoded rather than a glob: archived notes under release-notes/
+   * may name the flag as history, and those files are not ours to rewrite.
+   */
+  describe('nothing still promises the generated pull request list', () => {
+    const FILES = [
+      'AGENTS.md',
+      'maintenance/RELEASE-HOWTO.md',
+      'release-notes/RELEASE-NOTES-HOWTO.md',
+      'scripts/release-notes-for.mjs',
+      '.github/workflows/release.yml',
+    ];
+
+    it.each(FILES)('%s does not mention --generate-notes', (file) => {
+      const text = readFileSync(new URL(`../../../${file}`, import.meta.url), 'utf8');
+      // Control: a renamed file throws on the read above, but an emptied or stubbed one would
+      // pass the sweep by having no content to fail on — the same result as the sweep succeeding.
+      expect(text.length, `${file} is unexpectedly short`).toBeGreaterThan(200);
+      expect(
+        text.includes('--generate-notes'),
+        `${file} still describes the Release body being synthesised from merged pull requests. ` +
+          'The release job no longer does that; a document that says otherwise is how the branch ' +
+          'gets put back.'
+      ).toBe(false);
+    });
   });
 
   it('slices only the named step, not the ones after it', () => {

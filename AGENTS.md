@@ -276,6 +276,8 @@ pnpm install -g ./
 ## Release Notes
 
 Release notes are stored in `release-notes/` and follow a consistent format.
+[release-notes/RELEASE-NOTES-HOWTO.md](release-notes/RELEASE-NOTES-HOWTO.md) is the full guide; the
+essentials are here.
 
 ### Writing Release Notes
 
@@ -283,19 +285,25 @@ When creating release notes for a new version:
 
 1. **File naming**: `v` + the version with **every dot replaced by an underscore** + `.md`, so
    `1.1.0` is `v1_1_0.md` and the prerelease `2.0.0-beta.3` is `v2_0_0-beta_3.md`
-2. **Title format**: `# v{version} {Brief Description}`
-3. **Style**: Keep language dry and factual, not excited or marketing-oriented
+2. **Title format**: `# v{version}` — the version alone. A descriptive suffix, as in
+   `# v2.0.0-beta.2 The Alignment Check`, is earned by a release carrying a new feature or a change
+   that is big **to someone using the tool**; work that was significant to the project and is a
+   non-event for a user keeps the flat heading
+3. **Length**: most files are three to seven lines of text. Concision is the default, not a fallback
+   for a release with little in it — and when something genuinely important ships, one or two
+   paragraphs for that feature is enough
+4. **Style**: Keep language dry and factual, not excited or marketing-oriented
 
 **The release pipeline reads this file.** `scripts/release-notes-for.mjs` resolves it from the
 version being shipped: the `#` heading becomes the GitHub Release title and the rest becomes its
-body. A file named anything else is simply not found, and the Release falls back to a body GitHub
-synthesises from merged pull requests — partial here, since branches land by local merge and usually
-open no PR — with no error anywhere to say the notes were missed. Write the notes before dispatching
-a release.
+body. A file named anything else is simply not found, and the Release ships with a **blank body** —
+nothing is synthesised to fill it, and no error anywhere says the notes were missed. Write the notes
+before dispatching a release.
 
 ### Structure
 
-Release notes should include relevant sections:
+A short file needs no headings at all — bullets under the H1 are enough, and most releases end
+there. A release large enough to sort uses the sections that apply, and only those:
 
 - **New Features**: Major functionality additions
 - **Potentially Breaking Changes**: Changes that might require user action
@@ -309,9 +317,19 @@ Release notes should include relevant sections:
 - Omit internal implementation details like specific test counts or documentation updates unless relevant
 - Use concrete examples where helpful
 - For breaking changes, explain what users need to do
-- Reference examples: `v1_0_0.md`, `v1_0_2.md`, `v1_0_4.md`, `v1_0_5.md`
+- Reference examples: `v2_0_0-beta_3.md` for the usual short shape, `v2_0_0-beta_2.md` for a release
+  big enough to need sections
 
 ### Example Structure
+
+```markdown
+# v2.0.0-beta.3
+
+- One line per change, from the user's side of it.
+- A second change.
+```
+
+A release carrying a new feature, sorted into sections:
 
 ```markdown
 # v1.1.0 Custom Tools
