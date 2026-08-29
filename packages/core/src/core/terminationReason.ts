@@ -275,6 +275,27 @@ export interface GthTerminationReason extends GthTerminationPosture {
   detail?: string;
 }
 
+/**
+ * [[EXT-159]] — one observation of what the provider said about why a model message stopped.
+ *
+ * Recorded per finished model message, on every path, whether or not the provider said anything.
+ * No `finish_reason` was written to any log anywhere before this, so the artifact a maintainer
+ * reaches for first could not answer the question it exists to answer — and a turn where the
+ * provider stayed silent looked exactly like one that ended normally.
+ *
+ * **The absence is the observation.** `token: null` states that the message carried no stop or
+ * finish reason at all; it is never a stand-in for one, and no observation is invented for a
+ * message that was never seen.
+ */
+export interface GthFinishReasonObservation {
+  /** When the message was observed, as an ISO instant with a zone. */
+  at: string;
+  /** Which of the agent's three paths produced the message. */
+  path: 'invoke' | 'stream' | 'events';
+  /** The provider's raw token, lower-cased — or `null` when the message carried none. */
+  token: string | null;
+}
+
 /** The classification a feeder produces, before a site is attached to it. */
 export interface GthTerminationClassification {
   category: GthTerminationCategory;

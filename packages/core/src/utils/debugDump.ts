@@ -13,6 +13,10 @@ import {
 } from '#src/utils/redactSecrets.js';
 import type { LastModelRequest } from '#src/core/debugCapture.js';
 import type { ApprovalDecisionCapture } from '#src/core/shell/approvalCapture.js';
+import type {
+  GthFinishReasonObservation,
+  GthTerminationReason,
+} from '#src/core/terminationReason.js';
 
 /**
  * GS2-46/GS2-47 — `/debug-dump`: a live-session diagnostic archive. GS2-46 shipped it raw; GS2-47
@@ -72,6 +76,71 @@ export interface WriteDebugDumpInput {
    * second redaction policy for one artifact is how two policies come to disagree.
    */
   approvals?: readonly ApprovalDecisionCapture[];
+  /**
+   * [[EXT-159]] — why the last turn ended, and what the provider said about each message in it.
+   *
+   * **This is the artifact's answer to the question it exists to be asked.** Measured on two real
+   * dumps of a stopped run: the terminating error appeared only in `transcript.json`, nothing in
+   * `debug-log.txt` said what happened, and no `finish_reason` was recorded anywhere at all — so
+   * the file a maintainer opens first could not say which of a dozen unrelated causes it was.
+   *
+   * ALWAYS written when the caller threads it, including when `reason` is `null`. An absent reason
+   * means a termination site nobody classified, which is a defect signal this archive exists to
+   * carry; omitting the file for it would make the one case worth reporting the one case that
+   * leaves no trace.
+   */
+  termination?: DebugDumpTermination;
+}
+
+/** [[EXT-159]] — the termination section of a dump: the reason, and the provider's own tokens. */
+export interface DebugDumpTermination {
+  /**
+   * The typed reason the last turn ended, or `null` when no site classified it.
+   *
+   * `null` is written as `null`, never replaced by a placeholder category: the taxonomy's contract
+   * is that absence means a site we missed, and a filled-in default would silence exactly the
+   * detector that contract exists to provide.
+   */
+  reason: GthTerminationReason | null;
+  /**
+   * The provider's stop/finish reason per observed model message — with `token: null` on any
+   * message that carried none.
+   *
+   * Three states, and they are all different: a token says what the provider said; a `null` token
+   * says the provider said nothing about a message we DID see; and an empty list says no finished
+   * model message was observed at all.
+   */
+  finishReasons: readonly GthFinishReasonObservation[];
+}
+
+/** The read surface {@link readTermination} needs — satisfied by `GthAgentRunner`. */
+export interface TerminationReadable {
+  getTerminationReason(): GthTerminationReason | null;
+  getFinishReasonObservations(): readonly GthFinishReasonObservation[];
+}
+
+/**
+ * [[EXT-159]] — build the dump's termination section from a runner, or `undefined` if it cannot be
+ * read at all.
+ *
+ * **Three outcomes, and collapsing any two of them loses the point.** A reason is the answer. A
+ * `null` reason is the answer that no site classified the ending — a defect signal, and the reading
+ * a maintainer most needs, so it is written rather than omitted. A failed read is neither: it says
+ * this session could not report on itself (an older runner, an embedder's own), and omitting the
+ * section is how that stays distinguishable from "nobody classified it".
+ *
+ * Shared by the two `/debug-dump` writers rather than written twice, so the surfaces cannot come to
+ * disagree about what an absence means.
+ */
+export function readTermination(runner: TerminationReadable): DebugDumpTermination | undefined {
+  try {
+    return {
+      reason: runner.getTerminationReason(),
+      finishReasons: runner.getFinishReasonObservations(),
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 export interface WriteDebugDumpResult {
@@ -372,6 +441,19 @@ export function writeDebugDump(input: WriteDebugDumpInput): WriteDebugDumpResult
     writeFileSync(
       resolve(archiveDir, 'approvals.json'),
       renderStructured(input.approvals, redact, secrets),
+      'utf8'
+    );
+  }
+
+  // [[EXT-159]] — termination.json: why the last turn ended, and the provider's own stop tokens.
+  // Written whenever the caller threads the section, INCLUDING for an unclassified ending: the
+  // whole point of recording an ordinary completion is that a blank means a site we missed, and a
+  // file omitted on exactly that case would hide the one reading worth acting on. Same
+  // `renderStructured` pass as every other artifact — a `detail` field carries raw provider text.
+  if (input.termination) {
+    writeFileSync(
+      resolve(archiveDir, 'termination.json'),
+      renderStructured(input.termination, redact, secrets),
       'utf8'
     );
   }

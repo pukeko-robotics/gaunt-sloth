@@ -27,6 +27,7 @@ import type { LiveNegotiationRound } from '@gaunt-sloth/core/core/shell/negotiat
 import type { ApprovalRung } from '@gaunt-sloth/core/config.js';
 import { buildRejectionMessage } from '@gaunt-sloth/core/core/shell/rejection.js';
 import { ApprovalStopError } from '@gaunt-sloth/core/core/shell/approvalStop.js';
+import { shouldAnnounceTermination } from '@gaunt-sloth/core/core/terminationNotice.js';
 import {
   attackBannerCopy,
   grantsRunAnyway,
@@ -427,6 +428,25 @@ export function App(props: TuiAppProps): React.ReactElement {
       } finally {
         const vm = liveVmRef.current ?? initialTurnViewModel();
         push({ kind: 'assistant', turn: vm });
+        // [[EXT-159]] — and, immediately under the answer, why the turn ended when that is not
+        // simply "the model finished".
+        //
+        // **This is the surface the whole node is about.** Most people never make a debug dump, the
+        // ones who hit a silent stop have usually quit before anyone can ask for one, and reading a
+        // dump is a skill that fails; so a run that stops has to say so here, in the transcript,
+        // while the person is still looking at it. In the `finally` because the endings that need
+        // it most reach neither the loop's normal exit nor the catch: a cancelled turn returns
+        // cleanly with nothing on screen, which is exactly the shape that gets blamed on the
+        // provider for months.
+        //
+        // The REASON is committed, not a rendered line — the words are derived in the component, so
+        // the transcript holds the classification itself.
+        try {
+          const reason = agent.getTerminationReason?.() ?? null;
+          if (reason && shouldAnnounceTermination(reason)) push({ kind: 'termination', reason });
+        } catch {
+          /* fail-soft: explaining a turn must never be what breaks the session */
+        }
         // [[TUI-C99]] — the decisions taken during the turn, committed straight after it so the
         // record reads in the order it happened. Before `runningRef` is cleared is fine and after
         // would be too: both are in this synchronous block, and nothing between them enqueues.

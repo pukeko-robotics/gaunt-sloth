@@ -137,6 +137,129 @@ describe('utils/debugDump', () => {
     expect(existsSync(resolve(archiveDir, 'model-messages.json'))).toBe(false);
   });
 
+  /**
+   * [[EXT-159]] — **the artifact a maintainer opens first can now answer the question it exists to
+   * be asked.**
+   *
+   * Measured on two real dumps of a stopped run: the terminating error appeared only in
+   * `transcript.json`, `debug-log.txt` said nothing about it, and no `finish_reason` was recorded
+   * anywhere at all. So a turn that stopped for a rate limit and one that stopped for a full context
+   * left the same evidence, and a turn where the provider never said why looked like a normal end.
+   */
+  describe('[[EXT-159]] termination.json', () => {
+    it('records the typed reason and the provider’s own tokens', async () => {
+      const { writeDebugDump } = await import('#src/utils/debugDump.js');
+      const { terminationReason } = await import('#src/core/terminationReason.js');
+
+      const { archiveDir } = writeDebugDump({
+        transcript: [],
+        config: {},
+        cwd: notGitDir,
+        termination: {
+          reason: terminationReason('runner.stream-error', 'exception', {
+            category: 'rate_limited',
+            provider: 'openai',
+            detail: '429',
+          }),
+          finishReasons: [{ at: '2026-08-30T00:00:00.000Z', path: 'events', token: 'stop' }],
+        },
+      });
+
+      const written = JSON.parse(readFileSync(resolve(archiveDir, 'termination.json'), 'utf8'));
+      expect(written.reason).toMatchObject({
+        category: 'rate_limited',
+        site: 'runner.stream-error',
+        source: 'exception',
+        remedy: 'back-off',
+      });
+      expect(written.finishReasons).toEqual([
+        { at: '2026-08-30T00:00:00.000Z', path: 'events', token: 'stop' },
+      ]);
+    });
+
+    /**
+     * **The file is written for an unclassified ending too, and that is the point.** An absent
+     * reason means a termination site nobody classified — the one reading a maintainer most needs —
+     * so omitting the artifact for it would make the only case worth reporting the only case that
+     * leaves no trace.
+     */
+    it('records an unclassified ending as null rather than omitting the file', async () => {
+      const { writeDebugDump } = await import('#src/utils/debugDump.js');
+
+      const { archiveDir } = writeDebugDump({
+        transcript: [],
+        config: {},
+        cwd: notGitDir,
+        termination: { reason: null, finishReasons: [] },
+      });
+
+      const written = JSON.parse(readFileSync(resolve(archiveDir, 'termination.json'), 'utf8'));
+      expect(written.reason).toBeNull();
+      expect(written.finishReasons).toEqual([]);
+    });
+
+    /** A `null` TOKEN is the provider staying silent about a message we did see. */
+    it('keeps an absent finish reason as an absence rather than dropping the entry', async () => {
+      const { writeDebugDump } = await import('#src/utils/debugDump.js');
+
+      const { archiveDir } = writeDebugDump({
+        transcript: [],
+        config: {},
+        cwd: notGitDir,
+        termination: {
+          reason: null,
+          finishReasons: [{ at: '2026-08-30T00:00:00.000Z', path: 'invoke', token: null }],
+        },
+      });
+
+      const written = JSON.parse(readFileSync(resolve(archiveDir, 'termination.json'), 'utf8'));
+      expect(written.finishReasons).toEqual([
+        { at: '2026-08-30T00:00:00.000Z', path: 'invoke', token: null },
+      ]);
+    });
+
+    it('omits the file when the caller threads no termination section at all', async () => {
+      const { writeDebugDump } = await import('#src/utils/debugDump.js');
+
+      const { archiveDir } = writeDebugDump({ transcript: [], config: {}, cwd: notGitDir });
+
+      expect(existsSync(resolve(archiveDir, 'termination.json'))).toBe(false);
+    });
+
+    describe('readTermination — the three outcomes the surfaces share', () => {
+      it('reads the reason and the observations off a runner', async () => {
+        const { readTermination } = await import('#src/utils/debugDump.js');
+        const { terminationReason } = await import('#src/core/terminationReason.js');
+        const reason = terminationReason('runner.completed', 'control', 'completed');
+
+        expect(
+          readTermination({
+            getTerminationReason: () => reason,
+            getFinishReasonObservations: () => [],
+          })
+        ).toEqual({ reason, finishReasons: [] });
+      });
+
+      /**
+       * A failed READ is a third outcome, not the same as an unclassified ending. Collapsing them
+       * would make "this session could not report on itself" indistinguishable from "no site
+       * classified this turn", and only the second is a defect in the runtime.
+       */
+      it('omits the section when the runner cannot be asked at all', async () => {
+        const { readTermination } = await import('#src/utils/debugDump.js');
+
+        expect(
+          readTermination({
+            getTerminationReason: () => {
+              throw new Error('no such method');
+            },
+            getFinishReasonObservations: () => [],
+          })
+        ).toBeUndefined();
+      });
+    });
+  });
+
   it('includes git-state.json (branch/remote/dirty) when run inside a git repo', async () => {
     const { writeDebugDump } = await import('#src/utils/debugDump.js');
 

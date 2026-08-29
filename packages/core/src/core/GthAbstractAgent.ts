@@ -49,13 +49,16 @@ import {
   detectRefusal,
   detectStopMetadata,
   buildRefusalMessage,
+  readStopReasonToken,
   type RefusalInfo,
 } from '#src/core/refusal.js';
 import {
   terminationReason,
+  type GthFinishReasonObservation,
   type GthTerminationReason,
   type GthTerminationSite,
 } from '#src/core/terminationReason.js';
+import { terminationLogLine } from '#src/core/terminationNotice.js';
 import {
   answerTextOf,
   segmentAssistantContent,
@@ -65,6 +68,17 @@ import {
 
 const THINK_OPEN = '<think>';
 const THINK_CLOSE = '</think>';
+
+/**
+ * [[EXT-159]] — how many per-message `finish_reason` observations one turn keeps.
+ *
+ * An agentic turn produces one per model round and the list is held for the life of the turn, so it
+ * is bounded rather than trusted to stay small. The cap drops the TAIL rather than the head: the
+ * observations that explain how a turn ENDED are the last ones, but a turn that has already made a
+ * thousand model rounds has a different problem, and keeping the head keeps the record of how it
+ * got there. Every observation reaches the debug log either way, so nothing is lost outright.
+ */
+const FINISH_REASON_OBSERVATION_MAX = 1000;
 
 /**
  * TUI-C22 — length of the longest suffix of `s` that is a *proper* (shorter-than-full) prefix of
@@ -324,6 +338,15 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
   private terminationReason: GthTerminationReason | null = null;
 
   /**
+   * [[EXT-159]] — what the provider said about why each finished model message stopped, this turn.
+   *
+   * Reset with {@link terminationReason} at each turn boundary and read by `GthAgentRunner` for the
+   * debug dump. Bounded, because a long agentic turn produces one entry per model round and this
+   * has to be safe to keep for the whole session.
+   */
+  private finishReasonObservations: GthFinishReasonObservation[] = [];
+
+  /**
    * EXT-58 — the names of the tools registered with the graph at the last {@link init}, recorded by
    * {@link registerApprovalsAwareTools}. Read by `GthAgentRunner` to build the rater's
    * granted-built-in list (§4.4), so a suggestion can only ever name a tool the model actually has.
@@ -502,11 +525,53 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
    */
   resetTerminationReason(): void {
     this.terminationReason = null;
+    this.finishReasonObservations = [];
   }
 
   /** [[EXT-159]] — why this turn ended, or `null` when no site inside this agent classified it. */
   getTerminationReason(): GthTerminationReason | null {
     return this.terminationReason;
+  }
+
+  /**
+   * [[EXT-159]] — what the provider said about why each model message stopped, this turn.
+   *
+   * A copy, so a reader (the debug dump) cannot mutate the live record. An EMPTY list is itself
+   * meaningful and is not the same as a list of absences: it says no finished model message was
+   * observed at all, where an entry with a `null` token says one was observed and the provider said
+   * nothing.
+   */
+  getFinishReasonObservations(): readonly GthFinishReasonObservation[] {
+    return [...this.finishReasonObservations];
+  }
+
+  /**
+   * [[EXT-159]] — record the provider's stop/finish reason for one finished model message, and
+   * write it to the debug log.
+   *
+   * Called on EVERY finished message rather than only on the interesting ones, because the fact
+   * this exists to capture is as much "the provider said nothing" as "the provider said `length`".
+   * The debug log is where a maintainer looks first and it carried none of this; the ring buffer
+   * behind `debugLog` is populated whether or not on-disk debug logging was ever switched on, so
+   * the observation reaches `/debug-dump` from a default install too.
+   *
+   * Fail-soft, and bounded: a long agentic turn logs one entry per model round.
+   */
+  protected noteFinishReason(path: GthFinishReasonObservation['path'], message: unknown): void {
+    try {
+      // No message means no observation — NOT an observation of absence. A turn whose stream
+      // produced nothing to aggregate has no provider statement to be missing, and recording a
+      // `null` token for it would make "the provider said nothing about this message" and "there
+      // was no message" read the same, which is the conflation this whole node is about.
+      if (!message || typeof message !== 'object') return;
+      const token = readStopReasonToken(message);
+      if (this.finishReasonObservations.length < FINISH_REASON_OBSERVATION_MAX) {
+        this.finishReasonObservations.push({ at: new Date().toISOString(), path, token });
+      }
+      debugLog(`EXT-159 finish_reason path=${path} token=${token ?? '<absent>'}`);
+    } catch {
+      /* fail-soft: observing why a message stopped must never be what stops a run */
+    }
   }
 
   /**
@@ -521,6 +586,11 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
     try {
       if (this.terminationReason) return;
       this.terminationReason = reason;
+      // [[EXT-159]] — written where the reason is DECIDED, not where a surface later reads it. The
+      // terminating error reached only `transcript.json` and never the debug log, so the artifact a
+      // maintainer opens first could not say why a run ended; logging at the decision means the
+      // line exists even for a run whose surface never got to ask.
+      debugLog(terminationLogLine(reason));
     } catch {
       /* fail-soft: recording why a run ended must never be what ends it */
     }
@@ -641,6 +711,10 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
         // Records why the turn ended (a refusal, or an answer cut off against the output cap)
         // before the refusal branch below decides what to SAY about it; a truncation says nothing
         // and is classification only.
+        // [[EXT-159]] — and record what the provider said about why the message stopped, or that it
+        // said nothing. Separate from the classification above: the metadata feeder speaks only for
+        // a refusal or a truncation, while this is the raw fact, kept for every ending.
+        this.noteFinishReason('invoke', finalMessage);
         this.noteStopMetadata('agent.invoke-stop-metadata', finalMessage);
         const refusal = detectRefusal(finalMessage);
         if (refusal) {
@@ -761,6 +835,8 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
     const noteTermination = (reason: GthTerminationReason) => this.noteTermination(reason);
     const noteStopMetadata = (site: GthTerminationSite, message: unknown) =>
       this.noteStopMetadata(site, message);
+    const noteFinishReason = (path: GthFinishReasonObservation['path'], message: unknown) =>
+      this.noteFinishReason(path, message);
     // TUI-C30 — compact per-tool-call indication for the plain surface (`name(args…)` + the
     // canonical 10-line greyed preview when each ToolMessage lands). Per-stream state; emits at
     // INFO level so the existing consoleLevel gate governs it like the historical tool notices.
@@ -907,6 +983,10 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
           // (so the drained result is non-empty and bypasses the empty-response retry) and print it
           // once at WARNING level (surfaceRefusal). Any partial content already streamed is kept;
           // the refusal notice follows it, and its explanation carries any model-provided text.
+          // [[EXT-159]] — the provider's own word on why this message stopped, recorded before
+          // either branch decides what to make of it, so the raw fact is kept on the refusal path
+          // as well as the ordinary one.
+          noteFinishReason('stream', aggregatedChunk);
           if (refusalInfo) {
             // [[EXT-159]] — classified through `classifyRefusal` rather than mapped here, so this
             // site and the metadata feeder cannot come to disagree about what a refusal is.
@@ -1451,6 +1531,9 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
     if (!refusalInfo && aggregatedAIChunk) {
       refusalInfo = detectRefusal(aggregatedAIChunk);
     }
+    // [[EXT-159]] — the typed-event path's raw provider statement, on both branches. This is the
+    // surface most users watch, and it recorded no `finish_reason` anywhere at all.
+    this.noteFinishReason('events', aggregatedAIChunk);
     if (refusalInfo) {
       // [[EXT-159]] — the typed-event path's metadata site; classified through the same
       // `classifyRefusal` the other two use.

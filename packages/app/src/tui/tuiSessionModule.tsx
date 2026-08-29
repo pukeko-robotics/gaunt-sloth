@@ -44,7 +44,7 @@ import { resolveAgentFactory } from '@gaunt-sloth/agent/core/resolveAgentFactory
 import { GthAbstractAgent } from '@gaunt-sloth/core/core/GthAbstractAgent.js';
 import type { SessionConfig } from '@gaunt-sloth/agent/modules/interactiveSessionModule.js';
 import type { BaseMessage } from '@langchain/core/messages';
-import { writeDebugDump } from '@gaunt-sloth/core/utils/debugDump.js';
+import { readTermination, writeDebugDump } from '@gaunt-sloth/core/utils/debugDump.js';
 import { App } from '#src/tui/components/App.js';
 import { applyTuiColour } from '#src/tui/colour.js';
 import {
@@ -643,6 +643,13 @@ export async function createTuiSession(
         // [[TUI-C27]] — the approvals gate's record of every gated decision, read from the live
         // runner at CALL time for the same reason the model request is.
         approvals: runner.getApprovalCaptures(),
+        // [[EXT-159]] — why the last turn ended, and the provider's own stop tokens for it. Read at
+        // CALL time like everything above, and threaded whenever it can be read at all: a `null`
+        // REASON is the archive's record that no site classified the ending, which is the reading a
+        // maintainer most needs. A failed READ is a third thing and omits the section instead, so
+        // "nobody classified this turn" and "this session could not report it" stay distinguishable
+        // — and a diagnostics field can never be what stops the diagnostics being written.
+        termination: readTermination(runner),
       });
 
     // GS2-16: wall-clock start of the in-flight turn, stamped when runTurn begins and read by
@@ -693,6 +700,12 @@ export async function createTuiSession(
         yield* mergeToolOutputIntoEvents(
           runner.processMessagesWithEvents([new HumanMessage(userInput)], signal)
         );
+      },
+      // [[EXT-159]] — why the turn that just ended ended. The App reads this after the event
+      // stream is done and commits it to the transcript, which is how a stop reaches the person
+      // watching instead of only a dump they will never make.
+      getTerminationReason() {
+        return runner.getTerminationReason();
       },
       // `/clear` rotates the runner's thread_id so the model context truly matches the
       // cleared transcript (the checkpointer otherwise replays the whole prior conversation).

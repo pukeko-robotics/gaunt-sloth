@@ -31,6 +31,7 @@ import {
   summariseToolCall,
 } from '@gaunt-sloth/core/core/toolDisplay.js';
 import { approvalStopRows } from '@gaunt-sloth/core/core/shell/approvalStop.js';
+import { terminationNotice } from '@gaunt-sloth/core/core/terminationNotice.js';
 import { approvalRequestRows } from '@gaunt-sloth/core/core/approvals/approvalRequest.js';
 import { displayWidth } from '@gaunt-sloth/core/utils/displayWidth.js';
 import { renderMarkdown } from '#src/tui/markdown.js';
@@ -197,6 +198,15 @@ export function estimateItemRows(
       rows += 1 + siblingRows(item.title, columns);
       for (const line of item.lines) rows += siblingRows(line, columns);
       break;
+    case 'termination': {
+      // [[EXT-159]] — rendered as a <CommandNotice>, so it is counted as one. The lines come from
+      // the SAME renderer the component calls rather than a second model of them: an estimator
+      // with its own idea of the wording is exactly how the two drift apart.
+      const notice = terminationNotice(item.reason);
+      rows += 1 + siblingRows(notice.title, columns);
+      for (const line of notice.lines) rows += siblingRows(line, columns);
+      break;
+    }
     case 'stop':
       // [[TUI-C71]] <ApprovalStopMessage>: one sibling <Text> per row, and the rows are built by
       // core's own renderer at the same width the component frames at — the estimator counting a

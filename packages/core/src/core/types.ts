@@ -2,7 +2,10 @@ import type { GthConfig } from '#src/config.js';
 import type { DeclaredToolAnnotations } from '#src/core/approvals/annotations.js';
 import type { ApprovalSubject } from '#src/core/approvals/matcher.js';
 import type { RaterNegotiationRound, ShellSafetyVerdict } from '#src/core/shell/rater.js';
-import type { GthTerminationReason } from '#src/core/terminationReason.js';
+import type {
+  GthFinishReasonObservation,
+  GthTerminationReason,
+} from '#src/core/terminationReason.js';
 import type { BaseMessage } from '@langchain/core/messages';
 import type { RunnableConfig } from '@langchain/core/runnables';
 import type { StructuredToolInterface } from '@langchain/core/tools';
@@ -54,6 +57,7 @@ export type { AlignmentDecision, AlignmentDecisionKind } from '#src/core/shell/a
 // it is holding. The taxonomy's runtime surface (the classifier, the posture table, the builder)
 // stays at its deep path, exactly as the rater's and the matcher's do.
 export type {
+  GthFinishReasonObservation,
   GthTerminationCategory,
   GthTerminationPosture,
   GthTerminationReason,
@@ -676,6 +680,16 @@ export interface GthAgentInterface {
    * not overwrite it. Optional; reading must never throw.
    */
   getTerminationReason?(): GthTerminationReason | null;
+
+  /**
+   * [[EXT-159]] — what the provider said about why each finished model message stopped, this turn.
+   *
+   * The raw `finish_reason` / `stop_reason` / `done_reason` token per observed message, or `null`
+   * on an entry whose message carried none — the absence recorded as an absence rather than left to
+   * look like an ordinary end. An EMPTY list is a third thing again: no finished model message was
+   * observed at all. Optional; reading must never throw.
+   */
+  getFinishReasonObservations?(): readonly GthFinishReasonObservation[];
 
   cleanup?(): Promise<void>;
 }

@@ -49,6 +49,7 @@ import type {
   ToolApprovalDecision,
 } from '@gaunt-sloth/core/core/types.js';
 import { peekProjectDir, setProjectDir } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { TERMINATION_NOTICE_TITLE_PREFIX } from '@gaunt-sloth/core/core/terminationNotice.js';
 import {
   ACP_ATTACHMENT_FENCE_BEGIN,
   ACP_ATTACHMENT_FENCE_END,
@@ -563,7 +564,13 @@ describe('the ACP v1 agent — session lifecycle', () => {
     // **The v1 lifecycle in one assertion.** The response is not an acknowledgement: by the time it
     // arrives the turn is over and this is how it ended. A v2-shaped handler answering `{}` here
     // leaves a v1 client waiting for a notification that never comes.
-    expect(response).toEqual({ stopReason: 'end_turn' });
+    expect(response).toMatchObject({ stopReason: 'end_turn' });
+    // [[EXT-159]] — and the closed five-word stop reason is no longer the whole answer: the typed
+    // classification rides in `_meta`, which the protocol reserves for exactly this. Read
+    // structurally, so the cell is about the fact rather than about any wording.
+    expect(response).toMatchObject({
+      _meta: { 'gauntSloth/terminationReason': { category: 'completed' } },
+    });
 
     expect(new Set(updateSessionIds)).toEqual(new Set([sessionId]));
     // The two text deltas were sent as chunks and the client appended them into one message.
@@ -643,9 +650,15 @@ describe('the ACP v1 agent — session lifecycle', () => {
       }
     );
 
-    expect(response).toEqual({ stopReason: 'cancelled' });
+    expect(response).toMatchObject({ stopReason: 'cancelled' });
+    // [[EXT-159]] — a cancelled turn used to end with nothing saying so. It now carries the typed
+    // reason to the client structurally, and says it in the conversation as well.
+    expect(response).toMatchObject({
+      _meta: { 'gauntSloth/terminationReason': { category: 'cancelled' } },
+    });
     // What was streamed before the cancel is still delivered.
-    expect(view.textOf(view.agentMessages)).toBe('thinking');
+    expect(view.textOf(view.agentMessages)).toContain('thinking');
+    expect(view.textOf(view.agentMessages)).toContain(TERMINATION_NOTICE_TITLE_PREFIX);
   });
 
   /**
@@ -760,7 +773,7 @@ describe('the ACP v1 agent — session lifecycle', () => {
     );
 
     expect(closed).toEqual({});
-    expect(prompt).toEqual({ stopReason: 'cancelled' });
+    expect(prompt).toMatchObject({ stopReason: 'cancelled' });
   }, 15000);
 
   /**
@@ -791,7 +804,7 @@ describe('the ACP v1 agent — session lifecycle', () => {
     );
 
     expect(requests).toHaveLength(1);
-    expect(response).toEqual({ stopReason: 'cancelled' });
+    expect(response).toMatchObject({ stopReason: 'cancelled' });
   }, 15000);
 
   /**
@@ -1144,7 +1157,7 @@ describe('the ACP v1 agent — the real ndJsonStream transport, through the rout
       }
     );
 
-    expect(response).toEqual({ stopReason: 'end_turn' });
+    expect(response).toMatchObject({ stopReason: 'end_turn' });
     expect(view.textOf(view.agentMessages)).toBe('over the wire');
   });
 });

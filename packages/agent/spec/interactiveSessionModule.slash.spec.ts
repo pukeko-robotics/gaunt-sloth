@@ -71,6 +71,9 @@ const runnerInstanceMock = {
   getAgent: vi.fn(),
   // [[TUI-C27]] — the approvals-capture log this surface threads into the dump.
   getApprovalCaptures: vi.fn(() => []),
+  // [[EXT-159]] — the termination section this surface threads into the dump, read from the runner.
+  getTerminationReason: vi.fn(() => null),
+  getFinishReasonObservations: vi.fn(() => []),
   cleanup: vi.fn(),
 };
 vi.mock('@gaunt-sloth/core/core/GthAgentRunner.js', () => ({
@@ -83,7 +86,20 @@ vi.mock('@gaunt-sloth/core/core/GthAgentRunner.js', () => ({
 // always-on last-model-request snapshot. Mock the writer (so no real `~/.gsloth` I/O) and stand in
 // a minimal GthAbstractAgent class so the module's `instanceof` narrowing resolves against it.
 const writeDebugDumpMock = vi.fn(() => ({ archiveDir: '/fake/.gsloth/debug-dumps/stamp' }));
-vi.mock('@gaunt-sloth/core/utils/debugDump.js', () => ({ writeDebugDump: writeDebugDumpMock }));
+// [[EXT-159]] — `readTermination` is mocked with the REAL implementation's contract rather than
+// omitted: the surface calls it to build the dump's termination section, and a module mock missing
+// it makes `/debug-dump` report itself unavailable — a silent pass-by-absence rather than a failure
+// about the thing under test.
+vi.mock('@gaunt-sloth/core/utils/debugDump.js', () => ({
+  writeDebugDump: writeDebugDumpMock,
+  readTermination: (runner: {
+    getTerminationReason(): unknown;
+    getFinishReasonObservations(): unknown;
+  }) => ({
+    reason: runner.getTerminationReason(),
+    finishReasons: runner.getFinishReasonObservations(),
+  }),
+}));
 class FakeAbstractAgent {
   lastModelRequest: unknown;
 }

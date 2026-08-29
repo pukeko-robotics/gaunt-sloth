@@ -183,6 +183,25 @@ function stopReasonTokens(message: unknown): string[] {
 }
 
 /**
+ * [[EXT-159]] — the provider's own stop/finish reason for a finished message, or `null` when the
+ * message carried none.
+ *
+ * **`null` is a recorded fact, not a missing one.** No `finish_reason` was written to any log
+ * anywhere, so a turn that ended without the provider saying why was indistinguishable from one
+ * that ended normally. A caller records the `null` as explicitly as it records a token.
+ *
+ * Built on the SAME reader {@link detectStopMetadata} uses rather than a second one beside it: a
+ * separate scan of `response_metadata` is how two readers come to disagree about what the provider
+ * said, and the whole point of this node is that the two halves of the classification share one
+ * source. The first token wins, in the key order that shared reader walks, and it is lower-cased
+ * there — this is diagnostic detail, never the carrier of a classification.
+ */
+export function readStopReasonToken(message: unknown): string | null {
+  if (!message || typeof message !== 'object') return null;
+  return stopReasonTokens(message)[0] ?? null;
+}
+
+/**
  * Inspect a finished model message and return an output-truncation classification when its
  * stop/finish reason says the answer hit the output cap, else `null`.
  *

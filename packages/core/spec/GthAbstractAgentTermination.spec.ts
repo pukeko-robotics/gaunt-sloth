@@ -376,6 +376,174 @@ describe('[[EXT-159]] a reason at every GthAbstractAgent termination site', () =
     });
   });
 
+  /**
+   * [[EXT-159]] task 2 — **the provider's own `finish_reason`, and the fact that it often is not
+   * there.**
+   *
+   * Measured on two real dumps of a stopped run: no `finish_reason` was recorded on any chunk in
+   * either log, anywhere. So a turn where the provider said why it stopped and a turn where it said
+   * nothing left identical evidence, and the second — the interesting one — read as an ordinary
+   * end.
+   *
+   * The observation therefore has **three** states, and the cells here are written as the triple
+   * because any pair of them collapsed loses the distinction: a token (the provider spoke), a
+   * `null` token (a message was seen and the provider said nothing), and an empty list (no finished
+   * model message was seen at all). This is deliberately separate from the classification above:
+   * the metadata feeder speaks only for a refusal or a truncation, while this is the raw fact kept
+   * for every ending.
+   */
+  describe('the provider’s finish reason, recorded — including when it is absent', () => {
+    it('records the token on the non-streaming path', async () => {
+      const agent = agentWithGraph({
+        async getState() {
+          return { values: { messages: [] } };
+        },
+        async invoke() {
+          return {
+            messages: [
+              new AIMessage({ content: 'hi', response_metadata: { finish_reason: 'stop' } }),
+            ],
+          };
+        },
+        async stream() {
+          throw new Error('stream not used');
+        },
+      });
+
+      await agent.invoke([new HumanMessage('q')], runConfig);
+
+      expect(agent.getFinishReasonObservations()).toEqual([
+        { at: expect.any(String), path: 'invoke', token: 'stop' },
+      ]);
+    });
+
+    /**
+     * The discriminating half of the pair. Same path, same shape of message, one difference: the
+     * provider said nothing. A build that recorded only the tokens it found would be green on the
+     * cell above and would leave this turn — the one worth reporting — with no entry at all.
+     */
+    it('records a NULL token when the message carried no finish reason', async () => {
+      const agent = agentWithGraph({
+        async getState() {
+          return { values: { messages: [] } };
+        },
+        async invoke() {
+          return { messages: [new AIMessage({ content: 'hi' })] };
+        },
+        async stream() {
+          throw new Error('stream not used');
+        },
+      });
+
+      await agent.invoke([new HumanMessage('q')], runConfig);
+
+      expect(agent.getFinishReasonObservations()).toEqual([
+        { at: expect.any(String), path: 'invoke', token: null },
+      ]);
+    });
+
+    it('records it on the string-streaming path too', async () => {
+      const agent = agentWithGraph({
+        async invoke() {
+          throw new Error('invoke not used');
+        },
+        async stream() {
+          return (async function* () {
+            yield [chunkWithMetadata('cut', { finish_reason: 'length' }), {}];
+          })();
+        },
+      });
+
+      const stream = await agent.stream([new HumanMessage('q')], runConfig);
+      for await (const _chunk of stream) void _chunk;
+
+      expect(agent.getFinishReasonObservations()).toEqual([
+        { at: expect.any(String), path: 'stream', token: 'length' },
+      ]);
+    });
+
+    /** The surface most users watch, and the one the measurement found recorded nothing at all. */
+    it('records it on the typed-event path', async () => {
+      const agent = agentWithGraph({
+        async invoke() {
+          throw new Error('invoke not used');
+        },
+        async stream() {
+          return (async function* () {
+            yield [chunkWithMetadata('done', { finish_reason: 'stop' }), {}];
+          })();
+        },
+      });
+
+      await drain(agent.streamWithEvents([new HumanMessage('q')], runConfig));
+
+      expect(agent.getFinishReasonObservations()).toEqual([
+        { at: expect.any(String), path: 'events', token: 'stop' },
+      ]);
+    });
+
+    /**
+     * The third state. A turn whose stream produced nothing to aggregate has no provider statement
+     * to be missing — recording a `null` for it would make "the provider said nothing about this
+     * message" and "there was no message" read alike, which is the conflation this node is about.
+     */
+    it('records NOTHING when there was no finished model message to observe', async () => {
+      const agent = agentWithGraph({
+        async invoke() {
+          throw new Error('invoke not used');
+        },
+        async stream() {
+          return (async function* () {
+            /* an empty stream — nothing to aggregate */
+          })();
+        },
+      });
+
+      await drain(agent.streamWithEvents([new HumanMessage('q')], runConfig));
+
+      expect(agent.getFinishReasonObservations()).toEqual([]);
+    });
+
+    it('is forgotten at the turn boundary, with the reason it sits beside', async () => {
+      const agent = agentWithGraph({
+        async invoke() {
+          throw new Error('invoke not used');
+        },
+        async stream() {
+          return (async function* () {
+            yield [chunkWithMetadata('done', { finish_reason: 'stop' }), {}];
+          })();
+        },
+      });
+
+      await drain(agent.streamWithEvents([new HumanMessage('q')], runConfig));
+      expect(agent.getFinishReasonObservations()).toHaveLength(1);
+
+      agent.resetTerminationReason();
+
+      expect(agent.getFinishReasonObservations()).toEqual([]);
+    });
+
+    /** A reader must not be able to change the record it is reading. */
+    it('hands out a copy, not the live list', async () => {
+      const agent = agentWithGraph({
+        async invoke() {
+          throw new Error('invoke not used');
+        },
+        async stream() {
+          return (async function* () {
+            yield [chunkWithMetadata('done', { finish_reason: 'stop' }), {}];
+          })();
+        },
+      });
+
+      await drain(agent.streamWithEvents([new HumanMessage('q')], runConfig));
+      (agent.getFinishReasonObservations() as unknown as unknown[]).length = 0;
+
+      expect(agent.getFinishReasonObservations()).toHaveLength(1);
+    });
+  });
+
   describe('the carrier', () => {
     /** First-write-wins: the truer inner classification is not overwritten by a later, coarser one. */
     it('keeps the first reason recorded in a turn', async () => {

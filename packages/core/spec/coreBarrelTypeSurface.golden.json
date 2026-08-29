@@ -252,6 +252,11 @@
       "arity": 0
     },
     {
+      "name": "GthFinishReasonObservation",
+      "file": "core/terminationReason.d.ts",
+      "arity": 0
+    },
+    {
       "name": "GthOutputHeaderRung",
       "file": "config/schema.d.ts",
       "arity": 0

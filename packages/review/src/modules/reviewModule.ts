@@ -27,6 +27,7 @@ import {
 import { deleteArtifact, getArtifact } from '@gaunt-sloth/core/state/artifactStore.js';
 import { setExitCode, stdout } from '@gaunt-sloth/core/utils/systemUtils.js';
 import { ApprovalStopError, approvalStopRows } from '@gaunt-sloth/core/core/shell/approvalStop.js';
+import { displayTermination } from '@gaunt-sloth/core/core/terminationNotice.js';
 import type { AgentResolvers } from '@gaunt-sloth/core/core/types.js';
 import { get as getGhReadFileTool, GTH_GH_READ_FILE_TOOL_NAME } from '#src/tools/ghReadFileTool.js';
 
@@ -159,6 +160,18 @@ export async function review(
       }
     } finally {
       await runner.cleanup();
+    }
+
+    // [[EXT-159]] — say why the run ended, on the one surface `review` and `pr` have.
+    //
+    // These verbs write a report and exit; there is no prompt to return to, so this line and the
+    // catch above are everything the user gets. Read after `cleanup()` for the reason the runner
+    // snapshots at cleanup: the agent is gone by here, and its own sites are the innermost ones.
+    // A run that produced a review says nothing — an ordinary completion is not news.
+    try {
+      displayTermination(runner.getTerminationReason());
+    } catch {
+      /* fail-soft: explaining a run must never be what breaks it */
     }
 
     progressIndicator?.stop();

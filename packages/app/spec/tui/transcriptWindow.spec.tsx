@@ -9,6 +9,7 @@ import {
 import { TranscriptViewport } from '#src/tui/components/TranscriptViewport.js';
 import type { TranscriptItem } from '#src/tui/types.js';
 import { AttackHaltError } from '@gaunt-sloth/core/core/shell/approvalStop.js';
+import { terminationReason } from '@gaunt-sloth/core/core/terminationReason.js';
 import {
   initialTurnViewModel,
   type ToolCallViewModel,
@@ -126,6 +127,22 @@ const CASES: Array<{ name: string; item: TranscriptItem }> = [
       id: 10,
       reasoning: 'First I weigh it.\n\nThen I choose.',
       turnNumber: 2,
+    },
+  },
+  {
+    // [[EXT-159]] — why the turn ended, rendered as a <CommandNotice> from the committed reason.
+    // The estimator has to build its lines from the SAME renderer the component paints from; a
+    // second model of the wording is how the two drift, and drift here shows as conversation
+    // quietly going missing rather than as an error.
+    name: 'termination notice',
+    item: {
+      kind: 'termination',
+      id: 20,
+      reason: terminationReason('runner.stream-error', 'exception', {
+        category: 'rate_limited',
+        provider: 'openai',
+        detail: '429',
+      }),
     },
   },
   {

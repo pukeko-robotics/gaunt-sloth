@@ -20,6 +20,7 @@ import type {
 } from '@gaunt-sloth/core/config.js';
 import type { ApprovalGrant } from '@gaunt-sloth/core/core/approvals/grants.js';
 import type { ApprovalStopPart } from '@gaunt-sloth/core/core/shell/approvalStop.js';
+import type { GthTerminationReason } from '@gaunt-sloth/core/core/terminationReason.js';
 import type { LiveNegotiationRound } from '@gaunt-sloth/core/core/shell/negotiation.js';
 import type { CommandNoticeTone } from '#src/tui/components/CommandNotice.js';
 import type { DebugDumpInput } from '@gaunt-sloth/agent/modules/slashCommands.js';
@@ -69,6 +70,17 @@ export interface PendingAttackBanner {
 export interface TuiAgent {
   /** Run one user turn, yielding typed events; aborts when `signal` fires (Esc). */
   runTurn(userInput: string, signal: AbortSignal): AsyncGenerator<AgentStreamEvent>;
+  /**
+   * [[EXT-159]] — why the turn that just ended ended, or `null` when nothing classified it.
+   *
+   * Read once per turn, after the stream is done, and committed to the transcript as a value. It is
+   * NOT an event on the stream: a turn abandoned by the consumer never finishes its generator, so
+   * the one ending most in need of an explanation is the one an in-band event could not carry.
+   *
+   * Optional, so the scripted fixture agent may omit it — a surface with no reason to report says
+   * nothing, exactly as it did before.
+   */
+  getTerminationReason?(): GthTerminationReason | null;
   /**
    * Reset the agent's conversation thread so subsequent turns start from an empty model
    * context — wired to the TUI's `/clear`, which only clears the on-screen transcript.
@@ -181,7 +193,14 @@ export type TranscriptItem =
   // TUI-C18 — a committed turn's thinking reprinted by `/reasoning`. Rendered via the shared
   // TUI-C15 <ReasoningPanel> (expanded) so a recalled block matches the original 💭/gutter styling;
   // `turnNumber` is the 1-based transcript turn it was recalled from.
-  | { kind: 'reasoning'; id: number; reasoning: string; turnNumber: number };
+  | { kind: 'reasoning'; id: number; reasoning: string; turnNumber: number }
+  // [[EXT-159]] — why the turn ended, when that is not simply "the model finished". Its own kind
+  // rather than a `system` line or a pre-rendered `notice`, because **the classification travels as
+  // the VALUE and the words are derived from it at render time**: a `notice` would commit prose to
+  // the transcript and leave the fact recoverable only by parsing it back, which is the funnel this
+  // whole node exists to remove. It is the surface half of the same reason the dump and the debug
+  // log record — one taxonomy, four consumers, no second vocabulary.
+  | { kind: 'termination'; id: number; reason: GthTerminationReason };
 
 /** Props for the root `<App>`; the real session wires these to a `GthAgentRunner`. */
 export interface TuiAppProps {

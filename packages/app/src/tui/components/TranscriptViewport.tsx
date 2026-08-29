@@ -5,6 +5,7 @@ import { LiveTurn, ReasoningPanel } from '#src/tui/components/LiveTurn.js';
 import { Rule } from '#src/tui/components/Rule.js';
 import { BlankRow } from '#src/tui/components/BlankRow.js';
 import { CommandNotice } from '#src/tui/components/CommandNotice.js';
+import { terminationNotice } from '@gaunt-sloth/core/core/terminationNotice.js';
 import { ApprovalStopMessage } from '#src/tui/components/ApprovalStopMessage.js';
 import { ApprovalRequestPanel } from '#src/tui/components/ApprovalRequestPanel.js';
 import { transcriptWindowEnd, transcriptWindowStart } from '#src/tui/transcriptWindow.js';
@@ -290,6 +291,14 @@ function renderItem(
     case 'notice':
       // Structured command feedback (TUI-C14): a noticeable title + explanatory body lines.
       return <CommandNotice title={item.title} lines={item.lines} tone={item.tone} />;
+    case 'termination': {
+      // [[EXT-159]] — why the turn ended. The words are derived HERE from the committed reason, so
+      // the transcript holds the classification and the rendering holds the sentence; a test reads
+      // the item, not the screen. `warn`, because every category that reaches this point is one
+      // where something the user did not ask for decided the turn was over.
+      const notice = terminationNotice(item.reason);
+      return <CommandNotice title={notice.title} lines={notice.lines} tone="warn" />;
+    }
     case 'stop':
       // [[TUI-C71]] — a run-ending approvals stop. Its untrusted halves are the most hostile text
       // this surface prints, so they go through the shared framing renderer rather than into the

@@ -20,6 +20,8 @@ import { recordSessionSafe } from '#src/history/recordSession.js';
 import type { GthRunStats } from '#src/core/types.js';
 import { getProjectDir, stdout } from '#src/utils/systemUtils.js';
 import { ApprovalStopError, approvalStopRows } from '#src/core/shell/approvalStop.js';
+import { displayTermination } from '#src/core/terminationNotice.js';
+import type { GthTerminationReason } from '#src/core/terminationReason.js';
 
 /**
  * One turn's result inside a {@link runConversation} run: the per-turn `ok`/`answer` plus that
@@ -35,6 +37,16 @@ export interface ConversationTurnResult extends GthRunStats {
   answer: string;
   /** Set when `ok` is `false`: why this turn failed. */
   error?: string;
+  /**
+   * [[EXT-159]] — why this turn ended, as a value.
+   *
+   * Per turn, like every other field here, and read before the next turn resets it. It is the
+   * structural carrier the console line beside it is rendered FROM, so a consumer — a multi-turn
+   * eval asking whether a run stopped because the provider faulted or because the model handed back
+   * — reads the classification instead of parsing `error`. `null` means no site classified the
+   * ending, which is a site we missed rather than a turn that went well.
+   */
+  terminationReason: GthTerminationReason | null;
 }
 
 /**
@@ -174,7 +186,18 @@ export async function runConversation(
           durationMs: Date.now() - startedAt,
         });
 
-        results.push({ ok, answer, error, ...runStats });
+        // [[EXT-159]] — why THIS turn ended, read before the next turn's reset clears it, and said
+        // on the same console this surface already reports a failed turn on. A scripted multi-turn
+        // run is watched like any other: the turn that stops is the one the person is looking at.
+        let terminationReason: GthTerminationReason | null = null;
+        try {
+          terminationReason = runner.getTerminationReason();
+        } catch {
+          /* fail-soft: explaining a turn must never be what ends the conversation */
+        }
+        displayTermination(terminationReason);
+
+        results.push({ ok, answer, error, terminationReason, ...runStats });
 
         // A failed turn breaks the conversation's context — stop rather than run later turns on it.
         if (!ok) break;

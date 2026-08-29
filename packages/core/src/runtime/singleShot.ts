@@ -18,6 +18,8 @@ import { recordSessionSafe } from '#src/history/recordSession.js';
 import type { GthRunStats } from '#src/core/types.js';
 import { getProjectDir, stdout } from '#src/utils/systemUtils.js';
 import { ApprovalStopError, approvalStopRows } from '#src/core/shell/approvalStop.js';
+import { displayTermination } from '#src/core/terminationNotice.js';
+import type { GthTerminationReason } from '#src/core/terminationReason.js';
 
 /**
  * Result of a {@link runSingleShot} run: the pass/fail contract callers such as `ask`/`exec` have
@@ -30,6 +32,16 @@ export interface SingleShotResult extends GthRunStats {
   ok: boolean;
   /** The SUT's full answer text (`runner.processMessages()`'s return value). Empty on failure. */
   answer: string;
+  /**
+   * [[EXT-159]] — why the run ended, as a value.
+   *
+   * The structural twin of the line this runtime prints: a caller (and a test) reads the
+   * classification here rather than matching the prose on the console, so no user-facing string is
+   * the only carrier of it. `null` means no site classified the ending, which by this taxonomy's
+   * contract is a site we missed — never a stand-in for an ordinary finish, which is recorded as
+   * `completed`.
+   */
+  terminationReason: GthTerminationReason | null;
 }
 
 /** Options that qualify a {@link runSingleShot} run without changing how it behaves. */
@@ -131,6 +143,25 @@ export async function runSingleShot(
       await runner.cleanup();
     }
 
+    // [[EXT-159]] — say why the run ended, on the surface the user is actually looking at.
+    //
+    // This is the non-interactive verb's live session: there is no prompt to come back to and no
+    // transcript to scroll, so the moment the process is about to print its last line is the only
+    // moment this can reach anyone. Read post-cleanup for the same reason the stats below are — the
+    // runner snapshots the agent's answer at `cleanup()`, which the `finally` above has already run.
+    //
+    // Placed AFTER the catch's own message rather than instead of it: [[EXT-92]] owns rendering a
+    // provider error as prose, and this node supplies the classification that prose has never
+    // carried. On the success path an ordinary completion says nothing, so a run that worked looks
+    // exactly as it did.
+    let terminationReason: GthTerminationReason | null = null;
+    try {
+      terminationReason = runner.getTerminationReason();
+    } catch {
+      /* fail-soft: explaining a run must never be what breaks it */
+    }
+    displayTermination(terminationReason);
+
     // GS2-16: live token usage + invoked tool names for this run (fail-soft; empty when the
     // provider reported no usage / the runner has no stats). Read post-cleanup — the runner
     // snapshots stats at cleanup() so this still reflects the finished run.
@@ -173,7 +204,7 @@ export async function runSingleShot(
       }
     }
 
-    return { ok: succeeded, answer: responseText, ...runStats };
+    return { ok: succeeded, answer: responseText, terminationReason, ...runStats };
   } finally {
     // EXT-53: the indicator owns a 1s setInterval — an active libuv handle that keeps Node's event
     // loop from ever draining, so leaking it hangs the CLI forever after the work is done. The

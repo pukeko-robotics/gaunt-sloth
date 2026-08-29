@@ -35,7 +35,8 @@ import {
   approvalRequestRows,
 } from '@gaunt-sloth/core/core/approvals/approvalRequest.js';
 import { ApprovalStopError, approvalStopRows } from '@gaunt-sloth/core/core/shell/approvalStop.js';
-import { writeDebugDump } from '@gaunt-sloth/core/utils/debugDump.js';
+import { displayTermination } from '@gaunt-sloth/core/core/terminationNotice.js';
+import { readTermination, writeDebugDump } from '@gaunt-sloth/core/utils/debugDump.js';
 import { appendToFile, getCommandOutputFilePath } from '@gaunt-sloth/core/utils/fileUtils.js';
 import {
   openConversationSafe,
@@ -207,6 +208,13 @@ export async function createInteractiveSession(
         // [[TUI-C27]] — the approvals gate's record of every gated decision, read from the live
         // runner at CALL time for the same reason the model request is.
         approvals: runner.getApprovalCaptures(),
+        // [[EXT-159]] — why the last turn ended, and the provider's own stop tokens for it. Read at
+        // CALL time like everything above, and threaded whenever it can be read at all: a `null`
+        // REASON is the archive's record that no site classified the ending, which is the reading a
+        // maintainer most needs. A failed READ is a third thing and omits the section instead, so
+        // "nobody classified this turn" and "this session could not report it" stay distinguishable
+        // — and a diagnostics field can never be what stops the diagnostics being written.
+        termination: readTermination(runner),
       });
     };
 
@@ -514,6 +522,18 @@ export async function createInteractiveSession(
       // unchanged. GS2-16 threads live token/tool/duration analytics; costUsd stays unset.
       const startedAt = Date.now();
       const responseText = await runner.processMessages(messages);
+      // [[EXT-159]] — say why the turn ended, before the prompt comes back.
+      //
+      // The plain/readline surface is where a user lands whenever the Ink TUI cannot run, and it
+      // showed exactly what the TUI did about a stop: the wrapped error string, or on a silent
+      // ending nothing at all. Read from the runner rather than inferred from `responseText`,
+      // because the endings this exists for — a cancellation, an exhausted approval drain, an empty
+      // turn — are the ones that return normally with nothing to infer from.
+      try {
+        displayTermination(runner.getTerminationReason());
+      } catch {
+        /* fail-soft: explaining a turn must never be what ends the session */
+      }
       let runStats: GthRunStats = { tools: [] };
       try {
         const s = runner.getRunStats?.();

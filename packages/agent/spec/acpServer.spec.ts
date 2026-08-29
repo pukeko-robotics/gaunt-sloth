@@ -51,6 +51,7 @@ import type {
   ToolApprovalDecision,
 } from '@gaunt-sloth/core/core/types.js';
 import { peekProjectDir, setProjectDir } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { TERMINATION_NOTICE_TITLE_PREFIX } from '@gaunt-sloth/core/core/terminationNotice.js';
 import {
   ACP_ATTACHMENT_FENCE_BEGIN,
   ACP_ATTACHMENT_FENCE_END,
@@ -623,7 +624,14 @@ describe('the ACP v2 agent — session lifecycle', () => {
     expect(response).not.toHaveProperty('stopReason');
     expect(view.states.at(-1)).toMatchObject({ state: 'idle', stopReason: 'cancelled' });
     // What was streamed before the cancel is still delivered.
-    expect(view.textOf(view.agentMessages)).toBe('thinking');
+    expect(view.textOf(view.agentMessages)).toContain('thinking');
+    // [[EXT-159]] — and the turn now SAYS it was cancelled, which is the whole point: a cancelled
+    // turn used to end with nothing on screen explaining why, the shape that gets blamed on the
+    // provider for months. The classification is read off `_meta`, not off the sentence.
+    expect(view.states.at(-1)).toMatchObject({
+      _meta: { 'gauntSloth/terminationReason': { category: 'cancelled' } },
+    });
+    expect(view.textOf(view.agentMessages)).toContain(TERMINATION_NOTICE_TITLE_PREFIX);
   });
 
   it('reports a failed turn as idle rather than leaving the client waiting', async () => {
@@ -1056,7 +1064,12 @@ describe('the ACP v2 agent — session/request_permission', () => {
           ((update as unknown as { content?: { text?: string }[] }).content ?? [])
             .map((block) => block.text ?? '')
             .join('')
-        );
+        )
+        // [[EXT-159]] — the turn's own termination notice travels on this same channel (the agent
+        // speaking about the session), and these cells are about the remembering confirmation.
+        // Keyed on the exported prefix rather than a transcribed copy of the wording, so the filter
+        // moves with the copy instead of quietly stopping matching it.
+        .filter((text) => !text.startsWith(TERMINATION_NOTICE_TITLE_PREFIX));
 
     /** Drive one gated command to the client and answer it with `optionId`. */
     const answerWith = async (optionId: string, command: string, approvals: unknown = 'write') =>

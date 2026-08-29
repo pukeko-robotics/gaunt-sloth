@@ -62,6 +62,16 @@ import {
   rememberedAnswerNote,
 } from '#src/modules/acp/acpPermissions.js';
 import type { PendingToolInterrupt } from '@gaunt-sloth/core/core/types.js';
+import type { GthTerminationReason } from '@gaunt-sloth/core/core/terminationReason.js';
+import {
+  shouldAnnounceTermination,
+  terminationNotice,
+} from '@gaunt-sloth/core/core/terminationNotice.js';
+import {
+  ACP_ERROR_STOP_REASON,
+  acpStopReasonFor,
+  acpTerminationMeta,
+} from '#src/modules/acp/acpStopReason.js';
 import {
   ACP_AGENT_NAME,
   ACP_AGENT_TITLE,
@@ -173,6 +183,22 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
    * sees. Every exit — success, cancellation, failure — ends on an idle `state_update` with a stop
    * reason, because that notification is the ONLY thing that tells a client the turn is over.
    */
+  /**
+   * [[EXT-159]] — why the turn that just ended ended, or `null` when no site classified it.
+   *
+   * Fail-soft and read at the point of use rather than captured up front: the runner holds this
+   * turn's reason until the next turn resets it, so both the stop-reason decision and the report to
+   * the client see the same value, and a runner that does not implement it (a test double, an
+   * embedder's own) degrades to "unclassified" instead of taking the session down.
+   */
+  const terminationOf = (session: AcpSession): GthTerminationReason | null => {
+    try {
+      return session.runner.getTerminationReason?.() ?? null;
+    } catch {
+      return null;
+    }
+  };
+
   const runTurn = async (session: AcpSession, prompt: acp.ContentBlock[]): Promise<void> => {
     const mapper = new AcpUpdateMapper();
     const abort = new AbortController();
@@ -284,6 +310,18 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
         }
       }
       if (session.cancelled || abort.signal.aborted) stopReason = 'cancelled';
+      else {
+        // [[EXT-159]] — the turn returned, and the typed reason is what says which ending it was.
+        // A truncated answer and an ordinary finish both used to arrive as `end_turn`; the map is
+        // what tells them apart, and `_error` is v2's sanctioned way to say "stopped, and none of
+        // the defined reasons is what happened".
+        //
+        // An UNCLASSIFIED ending keeps `end_turn` rather than becoming `_error`. Absence means a
+        // site we missed — a fact for us, recorded in the log and the dump — and reporting our own
+        // blind spot to the client as a failed turn would state something false about their run.
+        const ended = terminationOf(session);
+        if (ended) stopReason = acpStopReasonFor(ended) ?? ACP_ERROR_STOP_REASON;
+      }
     } catch (error) {
       // A cancelled run surfaces as a thrown abort from whatever library noticed the signal first.
       // The spec is explicit that this must NOT reach the client as a generic failure, or a client
@@ -324,8 +362,30 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
           });
         }
       }
+      // [[EXT-159]] — and the editor is told WHY, not just that it stopped.
+      //
+      // A stop reason alone cannot carry this: ACP's vocabulary is five words wide and a dozen
+      // unrelated causes land on the same one, which is the flattening this node exists to undo. So
+      // the classification goes to the client twice — as a line in the conversation, which is where
+      // the person is looking, and as structured `_meta` on the state update, which is what a
+      // client can act on without parsing prose. Nothing is announced for an ordinary end.
+      const reason = terminationOf(session);
+      if (reason && shouldAnnounceTermination(reason)) {
+        const notice = terminationNotice(reason);
+        await sendUpdate(session, {
+          sessionUpdate: 'agent_message',
+          messageId: randomUUID(),
+          content: [{ type: 'text', text: [notice.title, ...notice.lines].join('\n') }],
+        }).catch(() => {
+          /* the connection is already gone; the idle state below is still attempted */
+        });
+      }
       // The turn is over only once this lands, whatever happened above.
-      await sendState(session, { state: 'idle', stopReason }).catch(() => {
+      await sendState(session, {
+        state: 'idle',
+        stopReason,
+        ...(acpTerminationMeta(reason) ? { _meta: acpTerminationMeta(reason) } : {}),
+      } as acp.StateUpdate).catch(() => {
         /* connection closed mid-turn; nothing left to report to */
       });
     }

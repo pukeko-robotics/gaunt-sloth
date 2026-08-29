@@ -686,6 +686,60 @@ describe('[[EXT-159]] a reason at every GthAgentRunner termination site', () => 
       expect(runner.getTerminationReason()).not.toMatchObject({ category: 'completed' });
     });
 
+    /**
+     * [[EXT-159]] task 2 — **the coverage gap task 1's review left, closed with a cell of its own.**
+     *
+     * The cells above give the guard a turn that produced an ANSWER, so the empty-turn site never
+     * gets a chance to speak and the ordering between them is never exercised. A real exhausted
+     * drain is the opposite case: the graph re-suspends on gated calls until the bound is reached
+     * and the turn ends having said nothing, so `runner.events-interrupt-guard-exhausted` and
+     * `runner.events-empty` both describe it and only the first is TRUE. `empty_response` here
+     * would send the honest consumer to retry a turn that will exhaust the same bound again — it
+     * carries `retryableAsIs: true` — where the bound's own posture asks for less gated work.
+     *
+     * Until now that ordering rested on where the note was written plus first-write-wins pinned by
+     * other cells; nothing went red if the guard's note moved after the empty check. This does.
+     */
+    it('the bound outranks the EMPTY-turn site on a drain that produced no answer', async () => {
+      alwaysPending();
+      // No text on either stream: the turn really is empty, so both sites genuinely apply.
+      mockAgent.streamWithEvents.mockImplementation(() => eventStreamOf([]));
+      mockAgent.streamWithEventsResume.mockImplementation(() => eventStreamOf([]));
+      const runner = await runnerFor(streamingConfig);
+
+      await drainEvents(runner.processMessagesWithEvents(ask));
+
+      expect(runner.getTerminationReason()).toMatchObject({
+        site: 'runner.events-interrupt-guard-exhausted',
+        category: 'interrupt_drain_guard',
+      });
+      // Stated as its own assertion rather than left implied by the match above: the posture is
+      // what a consumer acts on, and `empty_response` would offer the as-is retry this bound has
+      // already proved pointless.
+      expect(runner.getTerminationReason()?.category).not.toBe('empty_response');
+      expect(runner.getTerminationReason()?.retryableAsIs).toBe(false);
+    });
+
+    /**
+     * The string path's twin of the cell above. Here the competing site is
+     * `runner.empty-after-fallback`, reached when the streamed turn AND the non-streaming fallback
+     * both come back empty — a different site, the same false answer, and the same wrong posture.
+     */
+    it('the bound outranks the empty-after-fallback site on the string path', async () => {
+      alwaysPending();
+      mockAgent.stream.mockResolvedValue(textStreamOf([]));
+      mockAgent.streamResume.mockImplementation(() => textStreamOf([]));
+      mockAgent.invoke.mockResolvedValue('');
+      const runner = await runnerFor(streamingConfig);
+
+      await runner.processMessages(ask).catch(() => undefined);
+
+      expect(runner.getTerminationReason()).toMatchObject({
+        site: 'runner.interrupt-guard-exhausted',
+        category: 'interrupt_drain_guard',
+      });
+    });
+
     /** A drain that finishes normally is not a bound being hit, and must say nothing at all. */
     it('says nothing when the drain completes with no pending interrupts', async () => {
       mockAgent.getPendingToolInterrupts.mockResolvedValue([]);
@@ -721,6 +775,62 @@ describe('[[EXT-159]] a reason at every GthAgentRunner termination site', () => 
         site: 'runner.events-cancelled',
         category: 'cancelled',
       });
+    });
+  });
+
+  /**
+   * [[EXT-159]] task 2 — **the debug log records the classification, at the moment it is decided.**
+   *
+   * Measured on two real dumps of a stopped run: the terminating error appeared only in
+   * `transcript.json` and `debug-log.txt` said nothing about it, so the artifact a maintainer opens
+   * first could not answer the question it exists to be asked.
+   *
+   * Written where the reason is DECIDED rather than where a surface later reads it, which matters
+   * for the case this node is about: the ring buffer behind `debugLog` is populated whether or not
+   * on-disk debug logging was ever switched on, so the line exists even for a session whose surface
+   * never got to ask — and for a user who closed the app in frustration.
+   */
+  describe('the debug log', () => {
+    /**
+     * Matched by a marker carried on the thrown error rather than by a slice of the buffer: the ring
+     * buffer is capped and shifts, so an index taken before the run is not a reliable cursor once a
+     * suite has filled it — a cell written that way passes or fails on how many tests ran first.
+     */
+    it('records the classification when a site decides it', async () => {
+      const { getDebugLogBuffer } = await import('#src/utils/debugUtils.js');
+      const overflow = new ContextOverflowError('maximum context length exceeded');
+      overflow.name = 'Ext159LogMarkerOverflow';
+      mockAgent.stream.mockResolvedValue(throwingTextStream(overflow));
+      const runner = await runnerFor(streamingConfig);
+
+      await runner.processMessages(ask).catch(() => undefined);
+
+      const written = getDebugLogBuffer()
+        .filter((line) => line.includes('Ext159LogMarkerOverflow'))
+        .join('\n');
+      expect(written).toContain('category=context_overflow');
+      expect(written).toContain('site=runner.stream-error');
+      expect(written).toContain('remedy=reduce-context');
+    });
+
+    /**
+     * First-write-wins, in the log as much as in the field. The two wrappers are nested, so a
+     * streamed fault reaches both; a log line per site would put the outer wrapper's coarser answer
+     * underneath the true one and leave a reader to guess which is authoritative.
+     */
+    it('writes the classification once, not once per nested wrapper', async () => {
+      const { getDebugLogBuffer } = await import('#src/utils/debugUtils.js');
+      const boom = new Error('boom');
+      boom.name = 'Ext159LogMarkerOnce';
+      mockAgent.stream.mockResolvedValue(throwingTextStream(boom));
+      const runner = await runnerFor(streamingConfig);
+
+      await runner.processMessages(ask).catch(() => undefined);
+
+      const lines = getDebugLogBuffer().filter(
+        (line) => line.includes('EXT-159 termination:') && line.includes('Ext159LogMarkerOnce')
+      );
+      expect(lines).toHaveLength(1);
     });
   });
 

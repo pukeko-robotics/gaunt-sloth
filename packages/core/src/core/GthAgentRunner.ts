@@ -75,7 +75,9 @@ import {
   classifyThrownTermination,
   terminationReason,
   terminationReasonOf,
+  type GthFinishReasonObservation,
 } from '#src/core/terminationReason.js';
+import { terminationLogLine } from '#src/core/terminationNotice.js';
 import {
   applyDestructiveFloor,
   effectivePreflightFloorFinding,
@@ -387,6 +389,13 @@ export class GthAgentRunner {
    * the reason afterwards.
    */
   private agentTerminationReason: GthTerminationReason | null = null;
+
+  /**
+   * [[EXT-159]] — snapshot of the agent's per-message `finish_reason` observations, kept for the
+   * same reason {@link agentTerminationReason} is: `/debug-dump` and the non-interactive verbs ask
+   * after {@link cleanup} has already dropped the agent.
+   */
+  private agentFinishReasons: readonly GthFinishReasonObservation[] = [];
 
   /**
    * CFG-27 — the runtime, session-scoped approvals posture, seeded at {@link init} from
@@ -3286,6 +3295,7 @@ export class GthAgentRunner {
   private resetTerminationReason(): void {
     this.terminationReason = null;
     this.agentTerminationReason = null;
+    this.agentFinishReasons = [];
     try {
       this.agent?.resetTerminationReason?.();
     } catch {
@@ -3305,6 +3315,10 @@ export class GthAgentRunner {
     try {
       if (this.terminationReason) return;
       this.terminationReason = reason;
+      // [[EXT-159]] — the debug log carried the wrapped error string and never the classification.
+      // Written at the decision so it survives a session whose surface never got to ask, and so a
+      // dump taken after a kill still holds it (the ring buffer behind `debugLog` is always on).
+      debugLog(terminationLogLine(reason));
     } catch {
       /* fail-soft */
     }
@@ -3380,6 +3394,28 @@ export class GthAgentRunner {
     return this.agentTerminationReason;
   }
 
+  /**
+   * [[EXT-159]] — what the provider said about why each model message stopped, this turn.
+   *
+   * Reads live from the agent while one is present and falls back to the {@link cleanup} snapshot
+   * afterwards, the same way {@link getRunStats} does — `/debug-dump` on the readline surface and
+   * the non-interactive verbs both ask once the agent has been dropped.
+   */
+  public getFinishReasonObservations(): readonly GthFinishReasonObservation[] {
+    return this.captureFinishReasonObservations();
+  }
+
+  /** [[EXT-159]] — read the live agent's finish-reason observations into the snapshot (fail-soft). */
+  private captureFinishReasonObservations(): readonly GthFinishReasonObservation[] {
+    try {
+      const observed = this.agent?.getFinishReasonObservations?.();
+      if (observed) this.agentFinishReasons = observed;
+    } catch {
+      /* fail-soft */
+    }
+    return this.agentFinishReasons;
+  }
+
   /** GS2-16 — read the live agent's run stats (fail-soft; empty tally if unavailable). */
   private captureRunStats(): GthRunStats {
     try {
@@ -3435,6 +3471,9 @@ export class GthAgentRunner {
     // [[EXT-159]] — and the agent's termination reason with it, for the same reason: the
     // single-shot path asks why the run ended after the agent has already been nulled.
     this.captureAgentTerminationReason();
+    // [[EXT-159]] — likewise the provider's per-message finish reasons, which `/debug-dump` and the
+    // non-interactive verbs read post-cleanup.
+    this.captureFinishReasonObservations();
     if (this.agent && 'cleanup' in this.agent && typeof this.agent.cleanup === 'function') {
       await this.agent.cleanup();
     }

@@ -11,6 +11,15 @@ import {
   displayWarning,
 } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { getNewRunnableConfig } from '@gaunt-sloth/core/utils/llmUtils.js';
+import {
+  shouldAnnounceTermination,
+  terminationCode,
+  terminationNotice,
+} from '@gaunt-sloth/core/core/terminationNotice.js';
+import {
+  terminationReasonOf,
+  type GthTerminationReason,
+} from '@gaunt-sloth/core/core/terminationReason.js';
 import { textToNativeToolCalls } from '@gaunt-sloth/core/core/toolCallRepair/index.js';
 import { HumanMessage, AIMessage, SystemMessage, ToolMessage } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
@@ -301,6 +310,24 @@ export function convertMessages(
  */
 function createConfiguredAgent(_cfg: GthConfig): GthAbstractAgent {
   return new GthLangChainAgent(defaultStatusCallback, createResolvers());
+}
+
+/**
+ * [[EXT-159]] — why the run that just ended ended, or `null` when no site classified it.
+ *
+ * Read off the AGENT rather than a runner, because this is the one surface that drives
+ * `streamWithEvents` directly: there is no runner here to ask, and an enumeration of surfaces built
+ * from the runner's callers would have missed this server entirely.
+ *
+ * Fail-soft. Explaining why a run ended must never be the thing that ends it, and a request handler
+ * is the last place that can afford a throw.
+ */
+function terminationOf(agent: GthAbstractAgent | null | undefined): GthTerminationReason | null {
+  try {
+    return agent?.getTerminationReason?.() ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export async function startAgUiServer(config: GthConfig, port: number): Promise<void> {
@@ -713,12 +740,23 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
       // with a tool call left active.
       for (const toolCallId of [...openToolCalls]) endToolCall(toolCallId);
 
+      // [[EXT-159]] — why the run ended, carried out to the browser on the event that ends it.
+      //
+      // This surface drives the agent directly rather than through the runner, so the reason is
+      // read off the agent — the same value the runner would have handed on, from the same sites.
+      // It rides in `result`, which the protocol leaves open for exactly this, as the reason value
+      // itself PLUS the rendered notice: a client can act on the classification without parsing our
+      // prose, and can show the sentence without inventing its own wording for twenty categories.
+      const ended = terminationOf(activeAgent);
       // RUN_FINISHED
       res.write(
         encoder.encode({
           type: EventType.RUN_FINISHED,
           threadId: effectiveThreadId,
           runId: effectiveRunId,
+          ...(ended && shouldAnnounceTermination(ended)
+            ? { result: { termination: terminationNotice(ended) } }
+            : {}),
         })
       );
 
@@ -731,10 +769,18 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
         return;
       }
       const errorMessage = error instanceof Error ? error.message : String(error);
+      // [[EXT-159]] — the classification travels with the failure, in the protocol's own `code`
+      // field. `message` is the provider's prose, which is all this class of fault has ever
+      // arrived as; `code` is the one short token that says which of a dozen unrelated causes it
+      // was, and a client reads it without matching a sentence. Read from the ERROR first: the
+      // reason was attached to it at the site that classified it, and that inner site's answer
+      // outranks anything a later reader can derive.
+      const failed = terminationReasonOf(error) ?? terminationOf(activeAgent);
       res.write(
         encoder.encode({
           type: EventType.RUN_ERROR,
           message: errorMessage,
+          ...(failed ? { code: terminationCode(failed) } : {}),
         })
       );
       res.end();

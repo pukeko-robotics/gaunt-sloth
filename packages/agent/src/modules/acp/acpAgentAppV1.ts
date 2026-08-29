@@ -56,6 +56,12 @@ import { resolveAgentFactory } from '#src/core/resolveAgentFactory.js';
 import { AcpV1UpdateMapper } from '#src/modules/acp/acpUpdatesV1.js';
 import { decisionForOutcome, rememberedAnswerNote } from '#src/modules/acp/acpPermissions.js';
 import type { PendingToolInterrupt } from '@gaunt-sloth/core/core/types.js';
+import type { GthTerminationReason } from '@gaunt-sloth/core/core/terminationReason.js';
+import {
+  shouldAnnounceTermination,
+  terminationNotice,
+} from '@gaunt-sloth/core/core/terminationNotice.js';
+import { acpStopReasonFor, acpTerminationMeta } from '#src/modules/acp/acpStopReason.js';
 import { permissionRequestForV1 } from '#src/modules/acp/acpPermissionsV1.js';
 import {
   ACP_AGENT_NAME,
@@ -121,8 +127,25 @@ function cancelledWhenAborted(signal: AbortSignal): Promise<acp.RequestPermissio
  * awaits, is a promise that cannot reject.
  */
 type TurnOutcome =
-  | { readonly ok: true; readonly stopReason: acp.StopReason }
-  | { readonly ok: false; readonly message: string };
+  | {
+      readonly ok: true;
+      readonly stopReason: acp.StopReason;
+      /**
+       * [[EXT-159]] — the classification the closed `stopReason` above cannot carry, travelling
+       * beside it to the response's `_meta`.
+       *
+       * v1's union is five words wide and a dozen unrelated causes land on the same one; the
+       * protocol reserves `_meta` for exactly this, so the fact is handed over intact rather than
+       * flattened or forked into a second vocabulary of ours.
+       */
+      readonly termination?: GthTerminationReason | null;
+    }
+  | {
+      readonly ok: false;
+      readonly message: string;
+      /** [[EXT-159]] — the same classification, for the error's `data`. A failed turn owes it too. */
+      readonly termination?: GthTerminationReason | null;
+    };
 
 /**
  * Builds the ACP v1 agent app. Register-and-return only: nothing is connected and no config is
@@ -166,6 +189,21 @@ export function createAcpV1AgentApp(options: AcpAgentAppOptions = {}): acp.Agent
       sessionId: session.sessionId,
       update,
     });
+  };
+
+  /**
+   * [[EXT-159]] — why the turn that just ended ended, or `null` when no site classified it.
+   *
+   * Fail-soft: a runner without the getter (a test double, an embedder's own) degrades to
+   * "unclassified" rather than taking the session down, and an unclassified ending is reported as
+   * an absence everywhere it travels rather than being filled in with a guess.
+   */
+  const terminationOf = (session: AcpV1Session): GthTerminationReason | null => {
+    try {
+      return session.runner.getTerminationReason?.() ?? null;
+    } catch {
+      return null;
+    }
   };
 
   /**
@@ -263,16 +301,45 @@ export function createAcpV1AgentApp(options: AcpAgentAppOptions = {}): acp.Agent
       )) {
         for (const update of mapper.map(event)) await sendUpdate(session, update);
       }
-      if (session.cancelled || abort.signal.aborted) return { ok: true, stopReason: 'cancelled' };
-      return { ok: true, stopReason: 'end_turn' };
+      const ended = terminationOf(session);
+      // [[EXT-159]] — the client is told why, in the two channels v1 has for it: a line in the
+      // conversation, because that is where the person is looking, and structured `_meta` on the
+      // response, because that is what a client can act on. Nothing is said for an ordinary end.
+      if (ended && shouldAnnounceTermination(ended)) {
+        const notice = terminationNotice(ended);
+        await sendUpdate(session, {
+          sessionUpdate: 'agent_message_chunk',
+          messageId: randomUUID(),
+          content: { type: 'text', text: [notice.title, ...notice.lines].join('\n') },
+        } as acp.SessionUpdate).catch(() => undefined);
+      }
+      if (session.cancelled || abort.signal.aborted) {
+        return { ok: true, stopReason: 'cancelled', termination: ended };
+      }
+      // An UNCLASSIFIED ending keeps `end_turn`: absence means a site we missed, which is our fact
+      // to record, not a failure to report to somebody else's editor. A classified one the closed
+      // union cannot state is the case v1 answers with a JSON-RPC error, below and by the caller.
+      const mapped = ended ? acpStopReasonFor(ended) : 'end_turn';
+      if (mapped) return { ok: true, stopReason: mapped, termination: ended };
+      return {
+        ok: false,
+        message: terminationNotice(ended as GthTerminationReason).title,
+        termination: ended,
+      };
     } catch (error) {
       // A cancelled run surfaces as a thrown abort from whatever library noticed the signal first.
       // The spec is explicit that this MUST NOT reach the client as an error: clients render
       // unrecognized errors, and a user who pressed stop would be shown a failure for it.
-      if (session.cancelled || abort.signal.aborted) return { ok: true, stopReason: 'cancelled' };
+      const ended = terminationOf(session);
+      if (session.cancelled || abort.signal.aborted) {
+        return { ok: true, stopReason: 'cancelled', termination: ended };
+      }
       const message = error instanceof Error ? error.message : String(error);
       displayWarning(`ACP session ${session.sessionId}: turn failed — ${message}`);
-      return { ok: false, message };
+      // [[EXT-159]] — the classification rides out with the failure. The message is the provider's
+      // prose, which is what this class of fault has always been reduced to; `termination` is the
+      // fact that says which of a dozen unrelated causes it was.
+      return { ok: false, message, termination: ended };
     } finally {
       session.runner.setToolApprovalCallback(null);
       // [[EXT-154]] — cleared with its partner. Both close over this turn's state, and a stale one
@@ -407,11 +474,16 @@ export function createAcpV1AgentApp(options: AcpAgentAppOptions = {}): acp.Agent
       const outcome = await turn;
       if (!outcome.ok) {
         throw acp.RequestError.internalError(
-          { sessionId: session.sessionId },
+          // [[EXT-159]] — the classification goes in the error's `data`, where a client reads
+          // structured detail, rather than only into the sentence it renders. Same value, same
+          // taxonomy as the `_meta` on a successful turn: one answer to "why did this end",
+          // whichever way the turn left.
+          { sessionId: session.sessionId, ...(acpTerminationMeta(outcome.termination) ?? {}) },
           `The agent could not complete this turn: ${outcome.message}`
         );
       }
-      return { stopReason: outcome.stopReason };
+      const meta = acpTerminationMeta(outcome.termination);
+      return { stopReason: outcome.stopReason, ...(meta ? { _meta: meta } : {}) };
     })
     .onNotification(acp.AGENT_METHODS.session_cancel, ({ params }) => {
       const session = sessions.get(params.sessionId);
