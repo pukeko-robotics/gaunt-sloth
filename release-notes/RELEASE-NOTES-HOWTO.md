@@ -23,6 +23,14 @@ missed. So the notes are written before a release is dispatched.
 A file that is nothing but its H1 is a valid release note: the Release page then shows that title
 and nothing under it.
 
+- **While `latest` points at a prerelease, say what that does to a library consumer.** A known-good
+  prerelease is deliberately promoted to `latest`, so `npm i @gaunt-sloth/<pkg>` writes a
+  `^2.0.0-beta.N` range that admits every later prerelease of the same version — the user is
+  subscribed to a line where breaking changes are still permitted, and nothing they typed said so.
+  It is not a breaking change and does not belong under that heading; it is a consequence of the
+  channel and is worth one bullet on the release that introduces it. Installing the CLI globally is
+  unaffected, since that writes no manifest.
+
 ## Style
 
 Dry and factual, not excited or marketing-oriented. `v2_0_0-beta_3.md` is the shape to follow.
