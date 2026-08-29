@@ -47,6 +47,13 @@
  * rule; which of those two goes last is decided by asking which one survives when the other is
  * long.
  *
+ * **The hosts are named in two groups, and the second is the point of [[EXT-156]].** The gate
+ * matches an NFKC-folded command, so the hosts it extracts can be spelled differently from the call
+ * shown above them — a fullwidth `r` in `ｒegistry.npmjs.org` folds to the real npm registry, which
+ * that command does not contain. {@link approvalHostGroups} asks the item's own control of each
+ * host — *does the call text contain it?* — and the ones that fail are labelled as such rather than
+ * shown as though the call had written them. It reads: no extraction and no matcher moves.
+ *
  * **The hosts are framed, not allow-listed.** `core/shell/openWorld`'s `listHostsForFloorNote`
  * quotes a host only when it passes a character allow-list and a length bound, because that
  * sentence is our prose sitting OUTSIDE the `<command_to_evaluate>` fence in a rater's prompt,
@@ -184,6 +191,26 @@ export const APPROVAL_REQUEST_HEADING = '⚠ Gaunt Sloth is asking about this ca
 export const APPROVAL_HOSTS_LABEL = 'Hosts this call names:';
 
 /**
+ * [[EXT-156]] — our label for the hosts the block names that the call does not SPELL that way.
+ *
+ * It is a second label rather than a sentence appended to the first because the disagreement is a
+ * property of individual hosts: a call naming three of them may spell two and fold one, and a
+ * notice over the whole block would leave a reader to work out which. Two labelled groups say it
+ * structurally, and neither carries a value read out of the call.
+ */
+export const APPROVAL_FOLDED_HOSTS_LABEL = '⚠ Hosts this call names but does not spell this way:';
+
+/**
+ * The second row of that block: the fact the label above is only useful with.
+ *
+ * *Different characters* rather than *look-alike characters*, because what the check establishes is
+ * that the characters differ and not that they resemble one another — a compatibility form the fold
+ * rewrites need not look like anything.
+ */
+export const APPROVAL_FOLDED_HOSTS_NOTE =
+  '    The call above writes them with different characters.';
+
+/**
  * The command a pending call would run, when the call carries one as a plain string.
  *
  * Deliberately keyed on the ARGUMENT rather than on the tool name: the two terminal surfaces have
@@ -237,6 +264,99 @@ export function approvalHosts(pending: Pick<PendingToolInterrupt, 'args' | 'subj
     if (!hosts.includes(host)) hosts.push(host);
   }
   return hosts;
+}
+
+/**
+ * One call's hosts, split by whether the call SPELLS the host this block is about to name.
+ *
+ * @see {@link approvalHostGroups}
+ */
+export interface ApprovalHostGroups {
+  /** Hosts that occur in {@link approvalCallText} as written. */
+  written: string[];
+  /** Hosts that do not — produced by a fold the gate applies and the call's own text does not show. */
+  folded: string[];
+}
+
+/**
+ * `text` with its ASCII letters lower-cased, **and no other character touched.**
+ *
+ * The restriction is the safety property, not tidiness. `String.prototype.toLowerCase` is
+ * Unicode-aware: it maps U+212A KELVIN SIGN to `k`, which is exactly the class of character the
+ * check below exists to catch — NFKC rewrites that same sign to `K`, so a full case fold would map
+ * both sides onto `k`, find them equal, and suppress the disclosure on a host whose real spelling
+ * is a Kelvin sign. An ASCII-only fold cannot merge any non-ASCII character with an ASCII one, so
+ * it removes the case noise and nothing else.
+ */
+function asciiLowerCase(text: string): string {
+  return text.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+}
+
+/**
+ * [[EXT-156]] — the hosts of one call, split by whether the call spells the ones it names.
+ *
+ * **This reads; it decides nothing.** {@link approvalHosts} and both extractions behind it are
+ * untouched, and so is the {@link approvalCategoryFor} classifier that reads them: the same hosts
+ * are named, the same floor fires, the same category is chosen. What is added is the statement of a
+ * disagreement that was previously silent.
+ *
+ * ## The disagreement, and why it exists
+ *
+ * {@link approvalCallText} returns the call's true characters. `approvalHosts` reads its hosts
+ * through the gate's own extractions, which match `core/shell/normalize`'s **NFKC-folded** form —
+ * so a host written with a character NFKC rewrites is reported in its folded spelling, and the
+ * block goes on to name a host the call never wrote. Measured on U+FF52, the fullwidth `r`:
+ * `curl -o index.html https://ｒegistry.npmjs.org/simple/` names `https://registry.npmjs.org/simple/`,
+ * which is the real npm registry and is not in that command at all.
+ *
+ * **The fold is right and is not what changes here.** The hardline blocklist and the allow-list
+ * classifier match the normalised form deliberately, so trivial obfuscation cannot smuggle a command
+ * past the guard; removing it would widen what the gate lets through. The defect is that a
+ * *human-facing* field inherited it silently, and the remedy is to say so.
+ *
+ * **The `tool`/`mcpTool` arm is checked rather than assumed.** It reaches `core/approvals/toolHost`,
+ * which reads structured arguments by `URL` parsing — a DIFFERENT fold, not no fold. Measured: `URL`
+ * applies IDNA, so the same fullwidth `r` yields `registry.npmjs.org`, and a Cyrillic `а` yields the
+ * punycode `xn--pypal-4ve.com` for an argument spelling `pаypal.com`. Both are disagreements and
+ * both are disclosed here. That arm also lower-cases its host, which is why the comparison folds
+ * ASCII case, and ASCII case only — a host argument written `REGISTRY.npmjs.org` names the same
+ * host and must not raise an alarm that trains readers to ignore this one.
+ *
+ * ## What the predicate is, and the one direction it errs in
+ *
+ * *Does the host occur in the call text?* — the item's own control, needing no offset mapping back
+ * through NFKC (which is not length-preserving) and no second notion of what a host is.
+ *
+ * **It errs toward saying nothing, and the shape that suppresses it is measured rather than
+ * feared.** The test is occurrence anywhere in the call text, so a call that also writes the folded
+ * spelling somewhere else reads as written and says nothing. On the shell arm that takes the whole
+ * folded URL, since the host there IS the URL — `echo https://registry.npmjs.org/x && curl
+ * https://ｒegistry.npmjs.org/x` is suppressed while an incidental bare hostname elsewhere is not.
+ * On the tool arm the host is a bare hostname, so a sibling argument mentioning it in prose is
+ * enough. What would close it is a POSITIONAL test, and a positional test is a second notion of
+ * where a host lives — the thing this must not grow. The residue is a suppressed disclosure on a
+ * call that already cannot auto-approve ([[EXT-61]] floors it at `destructive` before the rater),
+ * never a disclosure on a call that agrees.
+ *
+ * ## Why the raw spelling is not reproduced here
+ *
+ * It is already on the screen: the framed call sits directly above this block and carries the call's
+ * true characters, so both forms are in front of the reader and what was missing was the statement
+ * that they differ. Recovering the raw *host substring* to print beside the folded one would need
+ * exactly the NFKC offset mapping this predicate exists to avoid — and it would buy a reader nothing
+ * they can act on, since the two spellings are by construction ones a terminal font does not
+ * distinguish. The disagreement is the signal.
+ */
+export function approvalHostGroups(
+  pending: Pick<PendingToolInterrupt, 'args' | 'subject'>
+): ApprovalHostGroups {
+  const callText = asciiLowerCase(approvalCallText(pending));
+  const written: string[] = [];
+  const folded: string[] = [];
+  for (const host of approvalHosts(pending)) {
+    (callText.includes(asciiLowerCase(host)) ? written : folded).push(host);
+  }
+  return { written, folded };
 }
 
 /**
@@ -434,11 +554,25 @@ export function approvalRequestRows(
   // The counterparties, LAST. See this module's header for why this block and not the command is
   // the one that ends the request: a hostile URL's identity is what a reader must not lose, and the
   // rows nearest the prompt are the rows that survive.
-  const hosts = approvalHosts(pending);
-  if (hosts.length > 0) {
+  //
+  // [[EXT-156]] — in two groups, because a host the gate's fold produced and a host the call
+  // actually wrote are different facts and the block used to state them as one. The hosts and their
+  // order within each group are `approvalHostGroups`', which reads `approvalHosts` unchanged.
+  const { written, folded } = approvalHostGroups(pending);
+  if (written.length > 0) {
     push('warn', APPROVAL_HOSTS_LABEL);
-    for (const host of hosts) {
+    for (const host of written) {
       for (const line of frameUntrustedText(host, { width }).lines) push('warn', line);
+    }
+  }
+  // The folded ones after them, and so last of all: of the two groups this is the one a reader must
+  // not lose, by the same argument that puts the whole block at the bottom. Both labels are our own
+  // prose; only the host rows are framed, exactly as before.
+  if (folded.length > 0) {
+    push('danger', APPROVAL_FOLDED_HOSTS_LABEL);
+    push('chrome', APPROVAL_FOLDED_HOSTS_NOTE);
+    for (const host of folded) {
+      for (const line of frameUntrustedText(host, { width }).lines) push('danger', line);
     }
   }
 

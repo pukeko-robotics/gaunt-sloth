@@ -314,3 +314,69 @@ describe('[[EXT-137]] the category is drawn from an enumerated vocabulary', () =
     expect(APPROVAL_ASK_LINE).not.toContain('{');
   });
 });
+
+/**
+ * U+FF52 FULLWIDTH LATIN SMALL LETTER R — **built from its code point and never typed.**
+ *
+ * The whole subject here is a character a reader cannot distinguish from `r`, so a fixture that
+ * carried it as a literal would be exactly as hard to review as the defect it pins, and one editor,
+ * diff or merge that normalised it would turn every case below green for the wrong reason.
+ */
+const FULLWIDTH_R = String.fromCodePoint(0xff52);
+
+/**
+ * The disclosure label, **spelled out here rather than imported.**
+ *
+ * This is the one cell that has to fail against unmodified trunk, and an imported constant that
+ * does not exist there fails as a missing export — a non-zero exit that is not an assertion, and so
+ * not evidence of anything. Inlined, trunk fails it on the rendered text, which is the claim.
+ */
+const FOLDED_HOSTS_LABEL = '⚠ Hosts this call names but does not spell this way:';
+
+/**
+ * [[EXT-156]] — **the block that exists to name the counterparty must not name one the call never
+ * wrote.**
+ *
+ * `approvalCallText` returns the command's true characters; `approvalHosts` reads its hosts through
+ * the gate's own extractions, which match `normalizeCommand`'s **NFKC-folded** form. The two
+ * disagree whenever a host carries a character NFKC rewrites, and the block then names the real
+ * registry for a command that never mentions it.
+ *
+ * **The fold is not the defect and is not touched here.** The hardline blocklist and the allow-list
+ * classifier match the normalised form on purpose, so obfuscation cannot smuggle a command past the
+ * guard; what is added is a read-only check that says when a human-facing field has inherited it.
+ */
+describe('[[EXT-156]] the host block says when it names a host the call never wrote', () => {
+  const impostor = `curl -o index.html https://${FULLWIDTH_R}egistry.npmjs.org/simple/`;
+  const written = 'curl -o index.html https://registry.npmjs.org/simple/';
+  const REGISTRY = 'https://registry.npmjs.org/simple/';
+
+  const renderOf = (command: string): string =>
+    approvalRequestRows(shellPending(command), { columns })
+      .map((row) => row.text)
+      .join('\n');
+
+  /**
+   * The discriminating case, and the node's own measurement. It is asserted in three parts so a
+   * later change cannot satisfy it by accident: the block does name the real registry, the command
+   * does not contain the real registry, and the disagreement between those two is on the screen.
+   */
+  it('discloses a named host the command does not spell that way', () => {
+    expect(approvalHosts(shellPending(impostor))).toEqual([REGISTRY]);
+    expect(impostor).not.toContain(REGISTRY);
+    expect(renderOf(impostor)).toContain(FOLDED_HOSTS_LABEL);
+  });
+
+  /**
+   * The control the node states, and the half that makes the case above about the impostor
+   * character rather than about hosts being disclosed unconditionally: drop the one character and
+   * the two agree, so there is nothing to disclose.
+   */
+  it('discloses nothing when the call spells the host it names', () => {
+    expect(approvalHosts(shellPending(written))).toEqual([REGISTRY]);
+    expect(written).toContain(REGISTRY);
+    const text = renderOf(written);
+    expect(text).toContain(APPROVAL_HOSTS_LABEL);
+    expect(text).not.toContain(FOLDED_HOSTS_LABEL);
+  });
+});

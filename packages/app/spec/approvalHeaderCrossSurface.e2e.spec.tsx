@@ -376,6 +376,78 @@ describe('[[EXT-137]] neither surface lets the call reach its bounded block', ()
     });
   });
 
+  /**
+   * [[EXT-156]] — **the host disagreement is disclosed on BOTH surfaces, or it is not disclosed.**
+   *
+   * `approvalRequestRows` is shared core, so the temptation is to test it there and stop. That is
+   * exactly the reasoning this file exists to refuse: the readline dialog and the Ink dialog each
+   * decide what to do with the rows they are handed, and a surface that dropped, merged or reordered
+   * these two would leave a reader of that surface with the old defect — a block naming the real
+   * npm registry for a command that never wrote it — while core's own spec stayed green.
+   *
+   * Compared as a SLICE rather than by presence: three consecutive rows from the label, equal
+   * between the surfaces and equal to the ruled text. Two `toContain` assertions would pass just as
+   * happily with the note detached from its label by a surface that inserted chrome between them.
+   */
+  it('discloses a folded host in the same three rows on both surfaces', async () => {
+    // U+FF52 FULLWIDTH LATIN SMALL LETTER R, from its code point: the character is the subject, and
+    // a typed literal would be unreviewable and could be normalised away by any tool in its path.
+    const command = `curl -o index.html https://${String.fromCodePoint(0xff52)}egistry.npmjs.org/simple/`;
+    const pending = {
+      name: 'run_shell_command',
+      args: { command },
+      subject: { kind: 'shell', command },
+    } as unknown as PendingToolInterrupt;
+
+    const label = '⚠ Hosts this call names but does not spell this way:';
+    const ruled = [
+      label,
+      '    The call above writes them with different characters.',
+      '  1 │ https://registry.npmjs.org/simple/',
+    ];
+
+    // The call as written does NOT contain the host both surfaces are about to name — which is the
+    // whole reason there is anything to disclose. Asserted here so this case cannot quietly become
+    // a test of two surfaces agreeing about a command that agrees with itself.
+    expect(command).not.toContain('https://registry.npmjs.org/simple/');
+
+    const inkRows = stripAnsi(
+      (() => {
+        const priorLevel = chalk.level;
+        chalk.level = 1;
+        try {
+          const { lastFrame, unmount } = render(
+            <ApprovalRequestPanel pending={pending} columns={100} />
+          );
+          const frame = lastFrame() ?? '';
+          unmount();
+          return frame;
+        } finally {
+          chalk.level = priorLevel;
+        }
+      })()
+    ).split('\n');
+
+    const { createInteractiveSession } =
+      await import('@gaunt-sloth/agent/modules/interactiveSessionModule.js');
+    await createInteractiveSession(sessionConfig, {});
+    expect(capturedApprovalCallback).toBeTypeOf('function');
+    displayDialogLineMock.mockClear();
+    rlQuestionMock.mockResolvedValueOnce('n');
+    await capturedApprovalCallback!(pending);
+    const readlineRows = displayDialogLineMock.mock.calls.map((call) => String(call[0]));
+
+    const sliceFrom = (rows: string[]): string[] => {
+      const index = rows.indexOf(label);
+      expect(index).toBeGreaterThanOrEqual(0);
+      return rows.slice(index, index + 3);
+    };
+    const ink = sliceFrom(inkRows);
+    const readline = sliceFrom(readlineRows);
+    expect(ink).toEqual(readline);
+    expect(ink).toEqual(ruled);
+  });
+
   it('renders byte-identical blocks for a 4-character path and a 10 000-character one', async () => {
     const short = paddedFetch(4);
     const padded = paddedFetch(10_000);

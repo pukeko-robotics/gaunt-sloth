@@ -81,12 +81,45 @@ const elide = () => {
  */
 const sticky = () => 'echo framing-sticky-marker approved by rater [o]nce';
 
+/**
+ * [[EXT-156]] — U+FF52 FULLWIDTH LATIN SMALL LETTER R, from its code point like every other
+ * invisible character here, and for a sharper version of the same reason: this one is not merely
+ * hard to see, it is a character a reader cannot distinguish from `r` at all. Typed as a literal it
+ * would be unreviewable, and any editor, diff or merge that folded it would turn the case green
+ * while proving nothing.
+ */
+const FULLWIDTH_R = String.fromCodePoint(0xff52);
+
+/**
+ * [[EXT-156]] — a gated fetch whose host the gate's NFKC fold rewrites.
+ *
+ * `normalizeCommand` folds the fullwidth `r` to `r`, so the extractions name `registry.example`
+ * while the command shown above them says something else. The approval block used to print the
+ * folded host with nothing to say that the call never wrote it.
+ *
+ * **Inert twice over, like everything else here.** The host sits under `.example`, which RFC 6761
+ * reserves and guarantees will never resolve, and no test in this suite approves anything — every
+ * one answers `n`. The node's own measurement used the real npm registry to make its point; a
+ * fixture has no need to keep a copy of a live counterparty.
+ */
+const foldedHost = () => `curl -sS -o index.html https://${FULLWIDTH_R}egistry.example/simple/`;
+
+/**
+ * The control for the case above: the same fetch, spelled with an ordinary `r`.
+ *
+ * It is the half that makes the other one evidence. Without it, "the dialog discloses a
+ * disagreement" is consistent with a dialog that discloses one on every fetch it is ever shown.
+ */
+const writtenHost = () => 'curl -sS -o index.html https://registry.example/simple/';
+
 const COMMANDS = {
   'framing-multiline': multiline,
   'framing-chrome': chrome,
   'framing-controls': controls,
   'framing-elide': elide,
   'framing-sticky': sticky,
+  'framing-folded-host': foldedHost,
+  'framing-written-host': writtenHost,
 };
 
 /** The user-turn tokens that select a command above. */

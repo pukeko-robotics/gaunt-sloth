@@ -346,6 +346,90 @@ test.describe('approval framing — the sticky-choice lines obey all of it', () 
   });
 });
 
+/**
+ * [[EXT-156]] — **the host block, on a real terminal, when the gate's fold and the command
+ * disagree.**
+ *
+ * The two labels are our own chrome and the host under them is read out of the call, so this is the
+ * same shape every case above rules on: the chrome flush-left, the untrusted half in the gutter. The
+ * reason it needs a PTY cell rather than a component test is the reason the whole suite exists — a
+ * component test asserts on the string Ink built, and what a reader is protected by is what the
+ * terminal drew.
+ */
+const FOLDED_HOSTS_LABEL = '⚠ Hosts this call names but does not spell this way:';
+const FOLDED_HOSTS_NOTE = '    The call above writes them with different characters.';
+const HOSTS_LABEL = 'Hosts this call names:';
+
+test.describe('approval framing — a host the gate folded is DISCLOSED as folded', () => {
+  framingSuite('folded-host', approvalConfig, 50);
+
+  test('names the folded host under its own label, in the gutter, never at column 0', async ({
+    terminal,
+  }) => {
+    await expect(terminal.getByText('ready to code')).toBeVisible();
+    terminal.write('run it framing-folded-host');
+    await expect(terminal.getByText('> run it framing-folded-host')).toBeVisible();
+    terminal.submit();
+    await expect(
+      terminal.getByText('The agent wants to run a shell command via run_shell_command')
+    ).toBeVisible();
+    await expect(terminal.getByText(FOLDED_HOSTS_LABEL)).toBeVisible();
+
+    // Both rows of the disclosure are OUR prose, so both sit flush-left where the dialog's chrome
+    // lives — the note directly under the label it explains.
+    atColumnZero(terminal, FOLDED_HOSTS_LABEL);
+    atColumnZero(terminal, FOLDED_HOSTS_NOTE);
+    const rows = screenRows(terminal).map((row) => row.replace(/\s+$/u, ''));
+    const label = rows.indexOf(FOLDED_HOSTS_LABEL);
+    expect(label).toBeGreaterThanOrEqual(0);
+    expect(rows[label + 1]).toBe(FOLDED_HOSTS_NOTE);
+
+    // The host itself is the untrusted half: numbered, in the gutter, and never flush-left.
+    expect(rows[label + 2]).toMatch(/^ {2} *1 │ https:\/\/registry\.example\/simple\/$/u);
+    notAtColumnZero(terminal, 'https://registry.example/simple/');
+
+    // The discriminating half at the terminal: this host is named ONLY under the folded label. The
+    // ordinary one is absent, so the disclosure replaced the old silent row rather than joining it.
+    expect(rows).not.toContain(HOSTS_LABEL);
+
+    terminal.write('n');
+    await expect(terminal.getByText('rejected by you', { strict: false })).toBeVisible();
+  });
+});
+
+test.describe('approval framing — a host the command spells is NOT disclosed as folded', () => {
+  framingSuite('written-host', approvalConfig, 50);
+
+  /**
+   * The control, and the half that makes the case above evidence: the same fetch with an ordinary
+   * `r`. Without it, "the dialog discloses a disagreement" is equally consistent with a dialog that
+   * discloses one on every fetch it is ever shown, which would be no signal at all.
+   */
+  test('keeps the ordinary label and says nothing about a disagreement', async ({ terminal }) => {
+    await expect(terminal.getByText('ready to code')).toBeVisible();
+    terminal.write('run it framing-written-host');
+    await expect(terminal.getByText('> run it framing-written-host')).toBeVisible();
+    terminal.submit();
+    await expect(
+      terminal.getByText('The agent wants to run a shell command via run_shell_command')
+    ).toBeVisible();
+    await expect(terminal.getByText(HOSTS_LABEL)).toBeVisible();
+
+    atColumnZero(terminal, HOSTS_LABEL);
+    const rows = screenRows(terminal).map((row) => row.replace(/\s+$/u, ''));
+    const label = rows.indexOf(HOSTS_LABEL);
+    expect(label).toBeGreaterThanOrEqual(0);
+    // The same host, named — so the two cases differ in the LABEL and not in whether a host block
+    // rendered at all.
+    expect(rows[label + 1]).toMatch(/^ {2} *1 │ https:\/\/registry\.example\/simple\/$/u);
+    expect(rows).not.toContain(FOLDED_HOSTS_LABEL);
+    expect(rows).not.toContain(FOLDED_HOSTS_NOTE);
+
+    terminal.write('n');
+    await expect(terminal.getByText('rejected by you', { strict: false })).toBeVisible();
+  });
+});
+
 test.describe("approval framing — the RATER'S REASON is framed too", () => {
   framingSuite('rated', raterConfig, 50);
 
