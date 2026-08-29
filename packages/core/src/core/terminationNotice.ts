@@ -137,7 +137,18 @@ export function shouldAnnounceTermination(reason: GthTerminationReason): boolean
   return reason.category !== 'completed' && reason.category !== 'suspended';
 }
 
-/** Render a reason for a surface that shows a title and body lines. */
+/**
+ * Render a reason for a surface that shows a title and body lines.
+ *
+ * **The `??` on the label lookup is a runtime floor, and it takes nothing away from the build-time
+ * one.** That a 23rd category fails the build comes from the category-label table being a `Record`
+ * over the whole union, which this expression cannot weaken. What it covers is the case the type
+ * system never saw: a reason that arrived from outside it — read back off an ACP `_meta`, handed
+ * over by an embedder, or revived from a dump — whose category is a string the table has no entry
+ * for. Without the fallback that renders as the literal word `undefined` in the one line the user
+ * is being shown, which is a worse answer than "the cause was not recognised" and is exactly the
+ * kind of second failure this module refuses to add to a first one.
+ */
 export function terminationNotice(reason: GthTerminationReason): GthTerminationNotice {
   const lines: string[] = [`Reason code: ${terminationCode(reason)}`];
   const seen: string[] = [];

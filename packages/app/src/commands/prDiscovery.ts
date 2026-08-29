@@ -12,6 +12,7 @@ import {
   displayWarning,
 } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { buildSystemMessages, readPromptFile } from '@gaunt-sloth/core/utils/llmUtils.js';
+import { displayTermination } from '@gaunt-sloth/core/core/terminationNotice.js';
 import { debugLog } from '@gaunt-sloth/core/utils/debugUtils.js';
 import { HumanMessage } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
@@ -248,6 +249,32 @@ export async function runPrDiscovery(config: GthConfig): Promise<PrDiscoveryResu
     ]);
   } finally {
     await runner.cleanup();
+    // [[EXT-159]] — say why the DISCOVERY run ended, because on the ending that matters nobody
+    // else will.
+    //
+    // Several endings return from `processMessages` normally rather than throwing — the interrupt
+    // drain giving up, the tool-error budget and the tool-loop guard ending the graph with
+    // `jumpTo: 'end'`, an Esc or abort closing the stream, a tool exception returned as the turn's
+    // answer, and a refusal or truncation classified from the provider's own metadata. Each leaves
+    // `state.diff` unset, and `prCommand` then prints "Change requirements discovery did not
+    // produce a diff" and RETURNS — so `review`'s own notice, the surface this run's ending used to
+    // be attributed to, is never reached. One sentence that fits a dozen unrelated causes, printed
+    // while the discriminating fact sat unread on this runner: the exact shape this node exists to
+    // remove.
+    //
+    // In the `finally`, so the endings that DO throw are announced too: `prCommand`'s catch prints
+    // the provider's prose, and the classification is the half a bug report needs beside it. A
+    // successful discovery costs nothing — it classifies `completed`, which
+    // `shouldAnnounceTermination` suppresses — so the review that follows is not preceded by a
+    // notice about the sub-run that fed it.
+    //
+    // Read after `cleanup()` for the reason `reviewModule` reads it there: the agent is gone by
+    // here and the runner snapshots its innermost classification at cleanup.
+    try {
+      displayTermination(runner.getTerminationReason());
+    } catch {
+      /* fail-soft: explaining a run must never be what ends it */
+    }
   }
 
   // The discovery agent streams its final text without a trailing newline, so emit a

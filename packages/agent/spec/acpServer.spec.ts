@@ -53,6 +53,10 @@ import type {
 import { peekProjectDir, setProjectDir } from '@gaunt-sloth/core/utils/systemUtils.js';
 import { TERMINATION_NOTICE_TITLE_PREFIX } from '@gaunt-sloth/core/core/terminationNotice.js';
 import {
+  terminationReason,
+  type GthTerminationReason,
+} from '@gaunt-sloth/core/core/terminationReason.js';
+import {
   ACP_ATTACHMENT_FENCE_BEGIN,
   ACP_ATTACHMENT_FENCE_END,
 } from '@gaunt-sloth/core/utils/untrustedText.js';
@@ -196,6 +200,16 @@ interface AgentScript {
   hangUntilAborted?: boolean;
   /** When set, the first pass throws after emitting its events. */
   throwAfterEvents?: string;
+  /**
+   * [[EXT-159]] — how this turn ended, as the AGENT's own sites would have classified it.
+   *
+   * The runner's sites can only say `completed`, `empty_response`, `cancelled` or `abandoned` from
+   * outside the model, so a turn ending in a truncation or a rate limit is not something a
+   * fixture can reach by scripting events. The agent's answer outranks the runner's
+   * (`GthAgentRunner.getTerminationReason`), which is what lets a script name any category in the
+   * taxonomy and see what this dialect makes of it.
+   */
+  terminationReason?: GthTerminationReason;
 }
 
 class FixtureAgent implements GthAgentInterface {
@@ -248,6 +262,11 @@ class FixtureAgent implements GthAgentInterface {
       ...((resumeValue as { decisions: ToolApprovalDecision[] }).decisions ?? [])
     );
     for (const event of this.script.resumeEvents ?? []) yield event;
+  }
+
+  /** [[EXT-159]] — the optional getter the runner prefers over its own classification. */
+  getTerminationReason(): GthTerminationReason | null {
+    return this.script.terminationReason ?? null;
   }
 
   async cleanup(): Promise<void> {}
@@ -652,6 +671,56 @@ describe('the ACP v2 agent — session lifecycle', () => {
     // custom stop reasons to underscore-prefixed names.
     expect(view.states.at(-1)).toMatchObject({ state: 'idle', stopReason: '_error' });
     expect(view.textOf(view.agentMessages)).toContain('the model exploded');
+  });
+
+  /**
+   * [[EXT-159]] — **the map is what tells the endings apart, and this is the cell that says so.**
+   *
+   * That the reason REACHES the client is pinned elsewhere (`_meta` and the in-conversation notice
+   * both go red when removed), and the map is unit-tested on its own in `acpStopReason.spec.ts`.
+   * Neither pins the JOIN: with both of those green, this surface could hand every ending the same
+   * word and nothing would notice. A truncated answer and an ordinary finish arriving as one
+   * `end_turn` is the exact flattening node scope (d) exists to stop, and a mapping nothing pins is
+   * a mapping that can silently degenerate to a constant.
+   *
+   * So the assertion is on the DISCRIMINATION, not on three values in isolation: three endings, and
+   * a client can tell all three apart. `output_truncated` is the closed-vocabulary hit,
+   * `rate_limited` is the one no member of the union is true of — v2's underscore-prefixed escape —
+   * and `completed` is the ordinary finish the other two used to be indistinguishable from.
+   *
+   * Each ending runs its own session, so no turn reads a reason cached from the one before it.
+   */
+  it('derives the stop reason from the termination map, so three endings are three stop reasons', async () => {
+    const stopFor = async (reason: GthTerminationReason): Promise<unknown> =>
+      withClient(
+        { script: { events: textEvents('an answer'), terminationReason: reason } },
+        async (ctx, h) => {
+          const sessionId = await newSession(ctx);
+          await ctx.request(acp.AGENT_METHODS.session_prompt, {
+            sessionId,
+            prompt: [{ type: 'text', text: 'go' }],
+          });
+          const idle = await waitForStop(h.view);
+          return idle.stopReason;
+        }
+      );
+
+    const truncated = await stopFor(
+      terminationReason('agent.events-stop-metadata', 'metadata', 'output_truncated')
+    );
+    const rateLimited = await stopFor(
+      terminationReason('runner.events-error', 'exception', 'rate_limited')
+    );
+    const finished = await stopFor(
+      terminationReason('agent.events-stop-metadata', 'metadata', 'completed')
+    );
+
+    expect(truncated).toBe('max_tokens');
+    expect(rateLimited).toBe('_error');
+    expect(finished).toBe('end_turn');
+    // Stated as its own claim: a constant would satisfy any one of the three lines above read
+    // charitably, and satisfies none of them together.
+    expect(new Set([truncated, rateLimited, finished]).size).toBe(3);
   });
 
   it('lists, resumes with a replay, and closes sessions', async () => {

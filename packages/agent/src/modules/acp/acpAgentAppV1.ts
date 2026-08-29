@@ -317,15 +317,18 @@ export function createAcpV1AgentApp(options: AcpAgentAppOptions = {}): acp.Agent
         return { ok: true, stopReason: 'cancelled', termination: ended };
       }
       // An UNCLASSIFIED ending keeps `end_turn`: absence means a site we missed, which is our fact
-      // to record, not a failure to report to somebody else's editor. A classified one the closed
-      // union cannot state is the case v1 answers with a JSON-RPC error, below and by the caller.
-      const mapped = ended ? acpStopReasonFor(ended) : 'end_turn';
+      // to record, not a failure to report to somebody else's editor.
+      //
+      // Its own branch rather than a `?:` folded into the map below, so everything after it holds a
+      // reason for certain. Written the other way, the call to `terminationNotice` needed an `as`
+      // cast whose safety rested on this very fallback being truthy four lines further up — and a
+      // cast is precisely the construct that stays quiet when the invariant under it moves.
+      if (!ended) return { ok: true, stopReason: 'end_turn', termination: null };
+      // A classified ending the closed union CAN state. One it cannot is the case v1 answers with a
+      // JSON-RPC error, below and by the caller.
+      const mapped = acpStopReasonFor(ended);
       if (mapped) return { ok: true, stopReason: mapped, termination: ended };
-      return {
-        ok: false,
-        message: terminationNotice(ended as GthTerminationReason).title,
-        termination: ended,
-      };
+      return { ok: false, message: terminationNotice(ended).title, termination: ended };
     } catch (error) {
       // A cancelled run surfaces as a thrown abort from whatever library noticed the signal first.
       // The spec is explicit that this MUST NOT reach the client as an error: clients render

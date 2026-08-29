@@ -81,6 +81,33 @@ describe('[[EXT-159]] rendering a termination reason for a person', () => {
         expect(terminationNotice(reasonFor(category)).title).not.toBe(unknownTitle);
       }
     });
+
+    /**
+     * The runtime floor under the label lookup, pinned so it is not read as dead code and deleted.
+     *
+     * Every category in the union has an entry, so this branch is unreachable for a value the
+     * compiler checked — and that is the point: the values that reach here unchecked are the ones
+     * that came from outside the type system, read back off an ACP `_meta`, handed over by an
+     * embedder, or revived from a dump. The failure it prevents is the literal string `undefined`
+     * appearing in the one line the user is shown, so that is what is asserted, not merely that
+     * some title comes back.
+     *
+     * The cast is deliberate and is the whole subject: no well-typed caller can produce this.
+     */
+    it('renders a category from outside the union as unrecognised, never as the word undefined', () => {
+      const offTaxonomy = {
+        ...reasonFor('unknown'),
+        category: 'a_category_from_a_newer_build' as GthTerminationCategory,
+      };
+
+      const title = terminationNotice(offTaxonomy).title;
+
+      expect(title).not.toContain('undefined');
+      expect(title).toBe(terminationNotice(reasonFor('unknown')).title);
+      // And the discriminating half still travels: the code carries the category verbatim, so the
+      // fallback softens the WORDS without ever hiding which category it was.
+      expect(terminationCode(offTaxonomy)).toContain('a_category_from_a_newer_build');
+    });
   });
 
   describe('the quotable code — the fact a bug report has to carry', () => {

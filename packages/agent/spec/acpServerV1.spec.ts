@@ -51,6 +51,10 @@ import type {
 import { peekProjectDir, setProjectDir } from '@gaunt-sloth/core/utils/systemUtils.js';
 import { TERMINATION_NOTICE_TITLE_PREFIX } from '@gaunt-sloth/core/core/terminationNotice.js';
 import {
+  terminationReason,
+  type GthTerminationReason,
+} from '@gaunt-sloth/core/core/terminationReason.js';
+import {
   ACP_ATTACHMENT_FENCE_BEGIN,
   ACP_ATTACHMENT_FENCE_END,
 } from '@gaunt-sloth/core/utils/untrustedText.js';
@@ -287,6 +291,16 @@ interface AgentScript {
   hangUntilAborted?: boolean;
   /** When set, the first pass throws after emitting its events. */
   throwAfterEvents?: string;
+  /**
+   * [[EXT-159]] — how this turn ended, as the AGENT's own sites would have classified it.
+   *
+   * The runner's sites can only say `completed`, `empty_response`, `cancelled` or `abandoned` from
+   * outside the model, so a turn ending in a truncation or a rate limit is not something a fixture
+   * can reach by scripting events. The agent's answer outranks the runner's
+   * (`GthAgentRunner.getTerminationReason`), which is what lets a script name any category in the
+   * taxonomy and see what this dialect makes of it.
+   */
+  terminationReason?: GthTerminationReason;
 }
 
 class FixtureAgent implements GthAgentInterface {
@@ -335,6 +349,11 @@ class FixtureAgent implements GthAgentInterface {
       ...((resumeValue as { decisions: ToolApprovalDecision[] }).decisions ?? [])
     );
     for (const event of this.script.resumeEvents ?? []) yield event;
+  }
+
+  /** [[EXT-159]] — the optional getter the runner prefers over its own classification. */
+  getTerminationReason(): GthTerminationReason | null {
+    return this.script.terminationReason ?? null;
   }
 
   async cleanup(): Promise<void> {}
@@ -691,6 +710,63 @@ describe('the ACP v1 agent — session lifecycle', () => {
     expect((outcome as { rejected: string }).rejected).toContain('the model exploded');
   });
 
+  /**
+   * [[EXT-159]] — **the map is what tells the endings apart, and this is the cell that says so.**
+   *
+   * That the reason REACHES the client is pinned elsewhere (`_meta` and the in-conversation notice
+   * both go red when removed), and the map is unit-tested on its own in `acpStopReason.spec.ts`.
+   * Neither pins the JOIN: with both of those green, this surface could answer every ending with
+   * the same word and nothing would notice. A truncated answer and an ordinary finish arriving as
+   * one `end_turn` is the exact flattening node scope (d) exists to stop, and a mapping nothing
+   * pins is a mapping that can silently degenerate to a constant.
+   *
+   * So the assertion is on the DISCRIMINATION rather than on three values in isolation, and on v1
+   * the three endings leave by two different protocol routes: a stop reason the closed union can
+   * state, an ordinary finish, and — for the rate limit, which no member of that union is true of —
+   * the JSON-RPC error this dialect answers with instead of picking the nearest wrong word.
+   *
+   * Each ending runs its own session, so no turn reads a reason cached from the one before it.
+   */
+  it('derives the stop reason from the termination map, so three endings are three answers', async () => {
+    const answerFor = async (reason: GthTerminationReason): Promise<string> =>
+      withClient(
+        { script: { events: textEvents('an answer'), terminationReason: reason } },
+        async (ctx) => {
+          const sessionId = await newSession(ctx);
+          return ctx
+            .request(acp.AGENT_METHODS.session_prompt, {
+              sessionId,
+              prompt: [{ type: 'text', text: 'go' }],
+            })
+            .then(
+              (response) => `stopReason:${(response as { stopReason: string }).stopReason}`,
+              (error: unknown) => `error:${(error as Error).message}`
+            );
+        }
+      );
+
+    const truncated = await answerFor(
+      terminationReason('agent.events-stop-metadata', 'metadata', 'output_truncated')
+    );
+    const rateLimited = await answerFor(
+      terminationReason('runner.events-error', 'exception', 'rate_limited')
+    );
+    const finished = await answerFor(
+      terminationReason('agent.events-stop-metadata', 'metadata', 'completed')
+    );
+
+    expect(truncated).toBe('stopReason:max_tokens');
+    // The closed union has no word for a rate limit, so v1 says so in its own error rather than
+    // claiming the model finished. The title carried out with it is derived from the reason.
+    expect(rateLimited).toBe(
+      `error:Internal error: The agent could not complete this turn: ${TERMINATION_NOTICE_TITLE_PREFIX}the provider rate-limited the request`
+    );
+    expect(finished).toBe('stopReason:end_turn');
+    // Stated as its own claim: a constant would satisfy any one of the three lines above read
+    // charitably, and satisfies none of them together.
+    expect(new Set([truncated, rateLimited, finished]).size).toBe(3);
+  });
+
   it('lists and closes sessions, and frees the workspace when the last one goes', async () => {
     const { listed, afterClose, promptAfterClose, rebind } = await withClient(
       { script: { events: textEvents('answer') } },
@@ -774,6 +850,12 @@ describe('the ACP v1 agent — session lifecycle', () => {
 
     expect(closed).toEqual({});
     expect(prompt).toMatchObject({ stopReason: 'cancelled' });
+    // [[EXT-159]] — the response legitimately grew a `_meta`, which is why this is no longer a
+    // `toEqual`. `toMatchObject` alone would have dropped the half `toEqual` was carrying: that
+    // the response has NO other keys. Asserted as the key set rather than by spelling `_meta` out,
+    // because its contents are the whole reason object and pinning those here would break the next
+    // time the taxonomy grows a field — a cost with nothing bought.
+    expect(Object.keys(prompt as object).sort()).toEqual(['_meta', 'stopReason']);
   }, 15000);
 
   /**
@@ -805,6 +887,8 @@ describe('the ACP v1 agent — session lifecycle', () => {
 
     expect(requests).toHaveLength(1);
     expect(response).toMatchObject({ stopReason: 'cancelled' });
+    // The exactness `toEqual` used to carry, kept without pinning `_meta`'s contents here.
+    expect(Object.keys(response as object).sort()).toEqual(['_meta', 'stopReason']);
   }, 15000);
 
   /**
@@ -1158,6 +1242,8 @@ describe('the ACP v1 agent — the real ndJsonStream transport, through the rout
     );
 
     expect(response).toMatchObject({ stopReason: 'end_turn' });
+    // The exactness `toEqual` used to carry, kept without pinning `_meta`'s contents here.
+    expect(Object.keys(response as object).sort()).toEqual(['_meta', 'stopReason']);
     expect(view.textOf(view.agentMessages)).toBe('over the wire');
   });
 });

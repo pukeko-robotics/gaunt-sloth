@@ -2,10 +2,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GthConfig } from '@gaunt-sloth/core/config.js';
 import type { AgentResolvers } from '@gaunt-sloth/core/core/types.js';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
+import { terminationReason } from '@gaunt-sloth/core/core/terminationReason.js';
+import {
+  TERMINATION_NOTICE_TITLE_PREFIX,
+  terminationCode,
+} from '@gaunt-sloth/core/core/terminationNotice.js';
 
 const processMessagesMock = vi.hoisted(() => vi.fn());
 const initMock = vi.hoisted(() => vi.fn());
 const cleanupMock = vi.hoisted(() => vi.fn());
+const getTerminationReasonMock = vi.hoisted(() => vi.fn());
 const ghDiffMock = vi.hoisted(() => vi.fn());
 const ghPrViewMock = vi.hoisted(() => vi.fn());
 const ghIssueMock = vi.hoisted(() => vi.fn());
@@ -13,6 +19,7 @@ const jiraIssueMock = vi.hoisted(() => vi.fn());
 const jiraIssueLegacyMock = vi.hoisted(() => vi.fn());
 const displayInfoMock = vi.hoisted(() => vi.fn());
 const displayWarningMock = vi.hoisted(() => vi.fn());
+const displayMock = vi.hoisted(() => vi.fn());
 const debugLogMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@gaunt-sloth/core/core/GthAgentRunner.js', () => ({
@@ -21,12 +28,22 @@ vi.mock('@gaunt-sloth/core/core/GthAgentRunner.js', () => ({
       init: initMock,
       processMessages: processMessagesMock,
       cleanup: cleanupMock,
+      // [[EXT-159]] — the double must answer this, because the production surface asks it. A
+      // runner mock missing the method is not a neutral omission: `displayTermination` is
+      // fail-soft by design, so the call throws, the swallow returns false, and the cell that
+      // meant to prove the notice reaches the user passes with nothing on screen.
+      getTerminationReason: getTerminationReasonMock,
     };
   }),
 }));
 
+// `display` belongs here for the same reason `getTerminationReason` does above: the termination
+// notice writes its body lines through it, and a factory that omits it makes the renderer throw
+// into the fail-soft catch instead of rendering — a cell failing by absence rather than by
+// assertion.
 vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => ({
   defaultStatusCallback: vi.fn(),
+  display: displayMock,
   displayInfo: displayInfoMock,
   displayWarning: displayWarningMock,
 }));
@@ -101,6 +118,7 @@ describe('runPrDiscovery', () => {
 
   beforeEach(() => {
     vi.resetAllMocks();
+    getTerminationReasonMock.mockReturnValue(null);
     ghDiffMock.mockResolvedValue('Diff from gh');
     ghPrViewMock.mockResolvedValue(`GitHub PR: #360
 Description:
@@ -704,5 +722,94 @@ No linked ticket here`);
     expect(initMock).toHaveBeenCalled();
     expect(processMessagesMock).toHaveBeenCalled();
     expect(cleanupMock).toHaveBeenCalled();
+  });
+
+  /**
+   * [[EXT-159]] — the discovery sub-run is a surface of its own, and it was the one that said
+   * nothing.
+   *
+   * Several endings leave `processMessages` NORMALLY rather than throwing: the interrupt drain
+   * giving up, the tool-error budget and the tool-loop guard ending the graph with
+   * `jumpTo: 'end'`, an Esc or abort closing the stream, a tool exception returned as the turn's
+   * answer, and a refusal or truncation classified from the provider's own metadata. Every one of
+   * them leaves the diff unset, and `prCommand` answers that with *"Change requirements discovery
+   * did not produce a diff"* and returns — so the `review` surface, which was the reason given for
+   * leaving this run unwired, never runs. One sentence for a dozen unrelated causes, with the
+   * discriminating fact sitting unread on the runner beside it.
+   *
+   * `runPrDiscovery` is what these cells drive, because that is where the reason is read; the
+   * `prCommand` half is pinned by its own file.
+   */
+  describe('saying why the discovery run ended', () => {
+    /** No linked ticket, so requirements stay empty and the discovery agent actually runs. */
+    const noRequirementsMetadata = `GitHub PR: #360
+Description:
+No linked ticket here`;
+
+    it('says why a run that ended abnormally ended, even though nothing threw', async () => {
+      ghPrViewMock.mockResolvedValue(noRequirementsMetadata);
+      processMessagesMock.mockResolvedValue(undefined);
+      const reason = terminationReason(
+        'runner.interrupt-guard-exhausted',
+        'control',
+        'interrupt_drain_guard'
+      );
+      getTerminationReasonMock.mockReturnValue(reason);
+
+      const { runPrDiscovery } = await import('#src/commands/prDiscovery.js');
+
+      await runPrDiscovery(config);
+
+      expect(displayWarningMock).toHaveBeenCalledWith(
+        `${TERMINATION_NOTICE_TITLE_PREFIX}too many tool approvals in one turn`
+      );
+      // The quotable token, read structurally: `category@site`, derived from the reason the runner
+      // handed over rather than from a sentence transcribed into this file.
+      expect(displayMock).toHaveBeenCalledWith(`  Reason code: ${terminationCode(reason)}`);
+    });
+
+    /**
+     * The control, and the reason wiring this run costs nothing: an ordinary discovery classifies
+     * `completed`, which `shouldAnnounceTermination` suppresses. So the review that follows a
+     * successful discovery is not preceded by a notice about the sub-run that fed it — the
+     * "second notice for one command" the exclusion was justified by does not exist.
+     */
+    it('says nothing when the discovery run simply finished', async () => {
+      ghPrViewMock.mockResolvedValue(noRequirementsMetadata);
+      processMessagesMock.mockResolvedValue(undefined);
+      getTerminationReasonMock.mockReturnValue(
+        terminationReason('runner.completed', 'control', 'completed')
+      );
+
+      const { runPrDiscovery } = await import('#src/commands/prDiscovery.js');
+
+      await runPrDiscovery(config);
+
+      expect(displayWarningMock).not.toHaveBeenCalledWith(
+        expect.stringContaining(TERMINATION_NOTICE_TITLE_PREFIX)
+      );
+      expect(displayMock).not.toHaveBeenCalledWith(expect.stringContaining('Reason code:'));
+    });
+
+    /**
+     * The notice is read in the `finally`, so a thrown ending carries it too. `prCommand`'s catch
+     * prints the provider's prose; this is the classification beside it, which is the half that
+     * makes a bug report tractable.
+     */
+    it('says why a run that threw ended, and still lets the error through', async () => {
+      ghPrViewMock.mockResolvedValue(noRequirementsMetadata);
+      processMessagesMock.mockRejectedValue(new Error('Agent processing failed: 429'));
+      const reason = terminationReason('runner.turn-error', 'exception', 'rate_limited');
+      getTerminationReasonMock.mockReturnValue(reason);
+
+      const { runPrDiscovery } = await import('#src/commands/prDiscovery.js');
+
+      await expect(runPrDiscovery(config)).rejects.toThrow('Agent processing failed: 429');
+
+      expect(displayWarningMock).toHaveBeenCalledWith(
+        `${TERMINATION_NOTICE_TITLE_PREFIX}the provider rate-limited the request`
+      );
+      expect(displayMock).toHaveBeenCalledWith(`  Reason code: ${terminationCode(reason)}`);
+    });
   });
 });
