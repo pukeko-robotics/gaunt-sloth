@@ -230,8 +230,9 @@ Which of those the agent can take on its own is decided by
 [the approvals mode](../guides/shell-tool-and-approvals.md#the-ladder-approvals):
 
 - At **Manual** and **Write**, every shell command comes to you before it runs, so `.aiignore` holds
-  against anything the agent does unattended — until you add a command to `approvals.allow`, which
-  is a standing yes for that command.
+  against anything the agent does unattended — until you tell it to always allow a command, which is
+  a standing yes for that command from then on. Answering *always allow* at the prompt does this as
+  surely as listing the command in `approvals.allow` does.
 - At **Assisted**, **Auto** and **Bypass**, a shell command can run without your seeing it. A
   command that happens to read an ignored file is judged like any other command, on its text, and
   nothing in it is checked against `.aiignore`.
