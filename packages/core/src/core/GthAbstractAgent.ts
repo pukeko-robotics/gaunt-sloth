@@ -44,7 +44,18 @@ import {
   materializeBinaryOutputs,
   renderAssistantContent,
 } from '#src/utils/binaryOutputUtils.js';
-import { detectRefusal, buildRefusalMessage, type RefusalInfo } from '#src/core/refusal.js';
+import {
+  classifyRefusal,
+  detectRefusal,
+  detectStopMetadata,
+  buildRefusalMessage,
+  type RefusalInfo,
+} from '#src/core/refusal.js';
+import {
+  terminationReason,
+  type GthTerminationReason,
+  type GthTerminationSite,
+} from '#src/core/terminationReason.js';
 import {
   answerTextOf,
   segmentAssistantContent,
@@ -307,6 +318,12 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
   private runStatsAcc: RunStatsAccumulator = createRunStatsAccumulator();
 
   /**
+   * [[EXT-159]] — why the current turn ended, set by whichever site inside this agent ended it.
+   * Reset at each turn boundary by {@link resetTerminationReason}, read by `GthAgentRunner`.
+   */
+  private terminationReason: GthTerminationReason | null = null;
+
+  /**
    * EXT-58 — the names of the tools registered with the graph at the last {@link init}, recorded by
    * {@link registerApprovalsAwareTools}. Read by `GthAgentRunner` to build the rater's
    * granted-built-in list (§4.4), so a suggestion can only ever name a tool the model actually has.
@@ -480,6 +497,49 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
   }
 
   /**
+   * [[EXT-159]] — forget the previous turn's termination reason. Called by `GthAgentRunner` at each
+   * turn boundary, for the same reason {@link resetRunStats} is.
+   */
+  resetTerminationReason(): void {
+    this.terminationReason = null;
+  }
+
+  /** [[EXT-159]] — why this turn ended, or `null` when no site inside this agent classified it. */
+  getTerminationReason(): GthTerminationReason | null {
+    return this.terminationReason;
+  }
+
+  /**
+   * [[EXT-159]] — record why the turn ended, **first-write-wins**.
+   *
+   * The sites that classify are nested: the metadata reader and the cancellation paths sit inside
+   * the stream, which sits inside the runner's catches. Last-write-wins would let each outer layer
+   * overwrite the truer inner classification with its own coarser one — which is exactly the funnel
+   * this taxonomy replaces, rebuilt one level up. Fail-soft: classification never throws into a run.
+   */
+  protected noteTermination(reason: GthTerminationReason): void {
+    try {
+      if (this.terminationReason) return;
+      this.terminationReason = reason;
+    } catch {
+      /* fail-soft: recording why a run ended must never be what ends it */
+    }
+  }
+
+  /**
+   * [[EXT-159]] — run the metadata feeder over a finished message and record what it found.
+   *
+   * The metadata reader is the half of the taxonomy that only works here, at the layer where a
+   * message's `response_metadata` is visible. Returns whether anything was classified.
+   */
+  protected noteStopMetadata(site: GthTerminationSite, message: unknown): boolean {
+    const stop = detectStopMetadata(message);
+    if (!stop) return false;
+    this.noteTermination(terminationReason(site, 'metadata', stop));
+    return true;
+  }
+
+  /**
    * GS2-16 — best-effort count of messages already in the checkpointed thread state, used by
    * {@link invoke} as the baseline so it harvests only THIS turn's new messages rather than the
    * whole accumulated conversation a checkpointer returns. Fail-soft: a missing `getState`, an odd
@@ -577,6 +637,11 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
         // (if declined) response as "Failed to get answer". A fallback-model attempt would hang
         // here (see the extension point in GthAgentRunner.processMessages), but no runtime
         // fallback-model config exists today, so we surface terminally.
+        // [[EXT-159]] — the metadata feeder, at the one layer that can see `response_metadata`.
+        // Records why the turn ended (a refusal, or an answer cut off against the output cap)
+        // before the refusal branch below decides what to SAY about it; a truncation says nothing
+        // and is classification only.
+        this.noteStopMetadata('agent.invoke-stop-metadata', finalMessage);
         const refusal = detectRefusal(finalMessage);
         if (refusal) {
           return this.surfaceRefusal(refusal);
@@ -619,6 +684,15 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
       debugLogError('invoke outer', error);
       if (error instanceof Error) {
         if (error?.name === 'ToolException') {
+          // [[EXT-159]] — a tool failure that becomes the turn's ANSWER ends the turn as much as a
+          // throw does, and it is the one ending whose diagnostic string is returned rather than
+          // raised, so nothing further up ever sees an error to classify.
+          this.noteTermination(
+            terminationReason('agent.invoke-tool-exception', 'exception', {
+              category: 'tool_error',
+              detail: error.name,
+            })
+          );
           this.statusUpdate(StatusLevel.ERROR, `Tool execution failed: ${error?.message}`);
           return `Tool execution failed: ${error?.message}`;
         }
@@ -682,6 +756,11 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
     // EXT-37: bound so the stream `start()` closure can surface a detected refusal (WARNING +
     // returns the message to enqueue) without a `this` reference.
     const surfaceRefusal = (info: RefusalInfo) => this.surfaceRefusal(info);
+    // [[EXT-159]] — bound for the same reason as the two above: the stream `start()` closure's
+    // `this` is the stream source, not the agent, and the sites that end this turn live in it.
+    const noteTermination = (reason: GthTerminationReason) => this.noteTermination(reason);
+    const noteStopMetadata = (site: GthTerminationSite, message: unknown) =>
+      this.noteStopMetadata(site, message);
     // TUI-C30 — compact per-tool-call indication for the plain surface (`name(args…)` + the
     // canonical 10-line greyed preview when each ToolMessage lands). Per-stream state; emits at
     // INFO level so the existing consoleLevel gate governs it like the historical tool notices.
@@ -829,12 +908,34 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
           // once at WARNING level (surfaceRefusal). Any partial content already streamed is kept;
           // the refusal notice follows it, and its explanation carries any model-provided text.
           if (refusalInfo) {
+            // [[EXT-159]] — classified through `classifyRefusal` rather than mapped here, so this
+            // site and the metadata feeder cannot come to disagree about what a refusal is.
+            noteTermination(
+              terminationReason(
+                'agent.stream-stop-metadata',
+                'metadata',
+                classifyRefusal(refusalInfo)
+              )
+            );
             controller.enqueue(surfaceRefusal(refusalInfo));
+          } else if (aggregatedChunk) {
+            // No refusal: the same reader still has something to say about an answer that was cut
+            // off against the output cap. Classification only — nothing is surfaced.
+            noteStopMetadata('agent.stream-stop-metadata', aggregatedChunk);
           }
           debugLog(`Stream completed. Total chunks: ${totalChunks}`);
           controller.close();
         } catch (error) {
           if (interruptState.escape || (error instanceof Error && error.name === 'AbortError')) {
+            // [[EXT-159]] — Esc, or a caller's abort. This turn ends with no error reaching the
+            // runner at all (the stream is CLOSED, not errored), so if this site does not classify
+            // it nothing downstream can: it is indistinguishable from a turn that simply finished.
+            noteTermination(
+              terminationReason('agent.stream-cancelled', 'control', {
+                category: 'cancelled',
+                detail: interruptState.escape ? 'escape' : 'AbortError',
+              })
+            );
             showInterruptMessage();
             controller.close();
           } else {
@@ -898,6 +999,11 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
         (e as Error).name === 'GraphInterrupt' ||
         (e as Error).name === 'AbortError'
       ) {
+        // [[EXT-159]] — two different endings share this branch and must not share a reason. A
+        // suspend is not a failure at all (the run is parked on an `interrupt()` and continues on
+        // a resume); an abort is the user stopping it. Both return CLEANLY, so this is the last
+        // point at which either is knowable.
+        this.noteTermination(this.classifyEventStreamEnd('agent.events-ended', e));
         debugLog('Graph suspended (GraphInterrupt) or aborted by caller');
         return;
       }
@@ -948,11 +1054,28 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
         (e as Error).name === 'GraphInterrupt' ||
         (e as Error).name === 'AbortError'
       ) {
+        // [[EXT-159]] — the resume path's twin of the same two endings; see {@link streamWithEvents}.
+        this.noteTermination(this.classifyEventStreamEnd('agent.events-resume-ended', e));
         debugLog('Graph suspended (GraphInterrupt) or aborted by caller');
         return;
       }
       throw e;
     }
+  }
+
+  /**
+   * [[EXT-159]] — which of the two clean endings a typed-event stream just took.
+   *
+   * Shared by {@link streamWithEvents} and {@link streamWithEventsResume} so the pair cannot drift:
+   * they catch the same union and owe the same distinction.
+   */
+  private classifyEventStreamEnd(site: GthTerminationSite, error: unknown): GthTerminationReason {
+    const suspended =
+      error instanceof GraphInterrupt || (error as Error | undefined)?.name === 'GraphInterrupt';
+    return terminationReason(site, suspended ? 'control' : 'exception', {
+      category: suspended ? 'suspended' : 'cancelled',
+      detail: suspended ? 'GraphInterrupt' : 'AbortError',
+    });
   }
 
   /**
@@ -1329,10 +1452,18 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
       refusalInfo = detectRefusal(aggregatedAIChunk);
     }
     if (refusalInfo) {
+      // [[EXT-159]] — the typed-event path's metadata site; classified through the same
+      // `classifyRefusal` the other two use.
+      this.noteTermination(
+        terminationReason('agent.events-stop-metadata', 'metadata', classifyRefusal(refusalInfo))
+      );
       debugLog(
         `Content-policy refusal detected on typed-event path (provider=${refusalInfo.provider} reason=${refusalInfo.reason})`
       );
       yield { type: 'text', delta: buildRefusalMessage(refusalInfo) };
+    } else if (aggregatedAIChunk) {
+      // No refusal, but the same reader still sees an answer cut off against the output cap.
+      this.noteStopMetadata('agent.events-stop-metadata', aggregatedAIChunk);
     }
   }
 

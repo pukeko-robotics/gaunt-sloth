@@ -1,5 +1,15 @@
 /**
- * EXT-37 — content-policy refusal detection for the agent run loop.
+ * Stop/finish-reason detection for the agent run loop — the **metadata feeder** of the
+ * [[EXT-159]] termination taxonomy.
+ *
+ * This module is the one reader of a message's stop/finish reason. It normalizes the per-provider
+ * spellings into two shapes: {@link detectRefusal}, whose {@link RefusalInfo} also drives the
+ * user-facing notice, and {@link detectStopMetadata}, which classifies the same metadata into the
+ * shared taxonomy for every consumer that only needs to know *why the turn ended*. There is
+ * deliberately no second reader of `response_metadata` beside it.
+ *
+ * Its counterpart is the exception classifier in `core/terminationReason.ts`: a reason that arrives
+ * as a thrown error is not in `response_metadata` at all, so nothing here can see it.
  *
  * A *successful* model response (HTTP 200) can carry a stop/finish reason that means the model — or
  * the provider's safety system — declined to answer. The content is usually empty, so without this
@@ -18,6 +28,7 @@
  */
 
 import { stripReasoningBlocks } from '#src/core/reasoningBlocks.js';
+import type { GthTerminationClassification } from '#src/core/terminationReason.js';
 
 /** One detected refusal, normalized across providers. */
 export interface RefusalInfo {
@@ -132,6 +143,87 @@ export function detectRefusal(message: unknown): RefusalInfo | null {
   }
 
   return null;
+}
+
+/**
+ * The provider spellings of "the answer hit the output cap", lower-cased.
+ *
+ * The same four places {@link detectRefusal} reads carry this one too, spelled per family: OpenAI's
+ * `finish_reason: 'length'`, Anthropic's and Bedrock's `stop_reason: 'max_tokens'`, Gemini's
+ * `finishReason: 'MAX_TOKENS'`, Ollama's `done_reason: 'length'`. LangChain normalizes none of it.
+ *
+ * Unlike a refusal, a truncation carries **no provider**: the token does not identify one. Both
+ * Anthropic and Gemini spell it `max_tokens` once case is normalised, and both OpenAI and Ollama
+ * spell it `length` — so naming a family from the token would be a guess stated as a fact. The raw
+ * token goes in `detail`, which is what is actually known.
+ */
+const TRUNCATION_REASONS: ReadonlySet<string> = new Set([
+  'length',
+  'max_tokens',
+  'maxtokens',
+  'model_length',
+]);
+
+/**
+ * Every stop/finish reason token a message carries, lower-cased, from both `response_metadata` and
+ * `additional_kwargs` and in both snake and camel case — the same four places {@link detectRefusal}
+ * looks, so the two detections can never come to disagree about where the metadata lives.
+ */
+function stopReasonTokens(message: unknown): string[] {
+  const meta = readField(message, 'response_metadata');
+  const kwargs = readField(message, 'additional_kwargs');
+  const tokens: string[] = [];
+  for (const key of ['finish_reason', 'finishReason', 'stop_reason', 'stopReason', 'done_reason']) {
+    for (const source of [meta, kwargs, message]) {
+      const value = readField(source, key);
+      if (typeof value === 'string' && value.length > 0) tokens.push(value.toLowerCase());
+    }
+  }
+  return tokens;
+}
+
+/**
+ * Inspect a finished model message and return an output-truncation classification when its
+ * stop/finish reason says the answer hit the output cap, else `null`.
+ *
+ * A truncated answer is not a refused one and not an error: the turn returns a *successful*
+ * response that simply stops mid-thought. Nothing is surfaced from here — the classification exists
+ * so a turn that ended this way is not indistinguishable from one the model finished.
+ */
+export function detectOutputTruncation(message: unknown): GthTerminationClassification | null {
+  if (!message || typeof message !== 'object') return null;
+  for (const token of stopReasonTokens(message)) {
+    if (TRUNCATION_REASONS.has(token)) {
+      return { category: 'output_truncated', detail: token };
+    }
+  }
+  return null;
+}
+
+/**
+ * The metadata feeder, as one call: classify a finished model message's stop/finish reason into the
+ * [[EXT-159]] taxonomy, or `null` when it says nothing worth recording.
+ *
+ * `null` for an ordinary end is deliberate. Only a *terminal and interesting* reason is reported —
+ * a refusal or a truncation — because every other end of a turn is classified by the site that
+ * actually ends it, and a reader that reported `completed` off a mid-turn tool round would pin the
+ * wrong reason before the real one happened.
+ */
+export function detectStopMetadata(message: unknown): GthTerminationClassification | null {
+  const refusal = detectRefusal(message);
+  if (refusal) return classifyRefusal(refusal);
+  return detectOutputTruncation(message);
+}
+
+/**
+ * The taxonomy classification a {@link RefusalInfo} stands for.
+ *
+ * Exported so a call site that already holds the detected {@link RefusalInfo} — because it needs
+ * the explanation text for the user-facing notice — records the same classification
+ * {@link detectStopMetadata} would, rather than re-deriving the mapping beside it.
+ */
+export function classifyRefusal(info: RefusalInfo): GthTerminationClassification {
+  return { category: 'content_refusal', provider: info.provider, detail: info.reason };
 }
 
 /**

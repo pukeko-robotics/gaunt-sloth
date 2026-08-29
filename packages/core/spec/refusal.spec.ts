@@ -194,3 +194,68 @@ describe('buildRefusalMessage', () => {
     expect(msg).toContain('no explanation');
   });
 });
+
+// [[EXT-159]] — the same reader, widened. `refusal.ts` is now the metadata FEEDER of the
+// termination taxonomy: one module reading a message's stop/finish reason, classifying it into the
+// shared vocabulary. These cells cover the second member it reads — an answer cut off against the
+// output cap — across the four spellings providers use for it, and pin the two negatives that keep
+// an ordinary turn from being reported as a termination reason at all.
+describe('detectStopMetadata — the metadata feeder', () => {
+  // No `provider` on a truncation, deliberately: the token does not identify one. Anthropic and
+  // Gemini both spell it `max_tokens` once case is normalised, and OpenAI and Ollama both spell it
+  // `length` — so naming a family here would be a guess stated as a fact.
+  it.each([
+    ['OpenAI finish_reason=length', { finish_reason: 'length' }, 'length'],
+    ['Anthropic stop_reason=max_tokens', { stop_reason: 'max_tokens' }, 'max_tokens'],
+    ['Bedrock stopReason=max_tokens', { stopReason: 'max_tokens' }, 'max_tokens'],
+    ['Gemini finishReason=MAX_TOKENS', { finishReason: 'MAX_TOKENS' }, 'max_tokens'],
+    ['Ollama done_reason=length', { done_reason: 'length' }, 'length'],
+  ])('classifies %s as output_truncated', async (_label, metadata, detail) => {
+    const { detectStopMetadata } = await import('#src/core/refusal.js');
+    const msg = new AIMessage({ content: 'half', response_metadata: metadata });
+    expect(detectStopMetadata(msg)).toEqual({ category: 'output_truncated', detail });
+  });
+
+  it('reads the same spellings out of additional_kwargs', async () => {
+    const { detectStopMetadata } = await import('#src/core/refusal.js');
+    const msg = new AIMessageChunk({
+      content: 'half',
+      additional_kwargs: { finish_reason: 'length' },
+    });
+    expect(detectStopMetadata(msg)?.category).toBe('output_truncated');
+  });
+
+  it('classifies a refusal through the SAME call, so there is one reader of the metadata', async () => {
+    const { detectStopMetadata } = await import('#src/core/refusal.js');
+    const msg = new AIMessage({
+      content: '',
+      response_metadata: { finish_reason: 'content_filter' },
+    });
+    expect(detectStopMetadata(msg)).toEqual({
+      category: 'content_refusal',
+      provider: 'openai',
+      detail: 'content_filter',
+    });
+  });
+
+  // Only a TERMINAL and INTERESTING reason is reported. An ordinary stop is classified by the site
+  // that ends the turn, and a reader that answered here would pin the wrong reason mid-round —
+  // before the real one had happened.
+  it('says nothing about an ordinary stop', async () => {
+    const { detectStopMetadata } = await import('#src/core/refusal.js');
+    const msg = new AIMessage({ content: 'done', response_metadata: { finish_reason: 'stop' } });
+    expect(detectStopMetadata(msg)).toBeNull();
+  });
+
+  it('says nothing about a tool-call round or a non-message', async () => {
+    const { detectStopMetadata } = await import('#src/core/refusal.js');
+    const toolRound = new AIMessage({
+      content: '',
+      response_metadata: { finish_reason: 'tool_calls' },
+    });
+    expect(detectStopMetadata(toolRound)).toBeNull();
+    expect(detectStopMetadata(new ToolMessage({ content: 'ok', tool_call_id: 'c1' }))).toBeNull();
+    expect(detectStopMetadata(undefined)).toBeNull();
+    expect(detectStopMetadata('a string')).toBeNull();
+  });
+});

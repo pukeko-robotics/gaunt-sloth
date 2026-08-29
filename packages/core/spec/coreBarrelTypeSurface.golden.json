@@ -262,6 +262,36 @@
       "arity": 0
     },
     {
+      "name": "GthTerminationCategory",
+      "file": "core/terminationReason.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "GthTerminationPosture",
+      "file": "core/terminationReason.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "GthTerminationReason",
+      "file": "core/terminationReason.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "GthTerminationRemedy",
+      "file": "core/terminationReason.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "GthTerminationSite",
+      "file": "core/terminationReason.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "GthTerminationSource",
+      "file": "core/terminationReason.d.ts",
+      "arity": 0
+    },
+    {
       "name": "GthToolResult",
       "file": "core/types.d.ts",
       "arity": 0

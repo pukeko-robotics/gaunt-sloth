@@ -38,6 +38,8 @@ import {
   GthAgentInterface,
   GthCommand,
   GthRunStats,
+  type GthTerminationReason,
+  type GthTerminationSite,
   Message,
   PendingToolInterrupt,
   StatusLevel,
@@ -68,6 +70,12 @@ import {
   AttackHaltError,
   NonInteractiveEscalationError,
 } from '#src/core/shell/approvalStop.js';
+import {
+  attachTerminationReason,
+  classifyThrownTermination,
+  terminationReason,
+  terminationReasonOf,
+} from '#src/core/terminationReason.js';
 import {
   applyDestructiveFloor,
   effectivePreflightFloorFinding,
@@ -364,6 +372,21 @@ export class GthAgentRunner {
    * {@link getRunStats} before cleanup. Defaults to an empty tally.
    */
   private lastRunStats: GthRunStats = { tools: [] };
+
+  /**
+   * [[EXT-159]] — why the current turn ended, as classified by the sites the RUNNER owns (the two
+   * exception wrappers, the approvals re-throws, the empty-response throws, the ordinary end of a
+   * turn). The agent owns the sites inside it and its answer outranks this one; see
+   * {@link getTerminationReason}.
+   */
+  private terminationReason: GthTerminationReason | null = null;
+
+  /**
+   * [[EXT-159]] — snapshot of the agent's own termination reason, for the same reason
+   * {@link lastRunStats} exists: {@link cleanup} nulls the agent, and the single-shot path reads
+   * the reason afterwards.
+   */
+  private agentTerminationReason: GthTerminationReason | null = null;
 
   /**
    * CFG-27 — the runtime, session-scoped approvals posture, seeded at {@link init} from
@@ -1050,6 +1073,8 @@ export class GthAgentRunner {
 
     // GS2-16: start this turn's analytics tally from zero (the runner is reused across turns).
     this.resetRunStats();
+    // [[EXT-159]] — the previous turn's termination reason goes with the previous turn's tally.
+    this.resetTerminationReason();
     // GS2-48 — record this turn's transcript tail for the crash handler.
     updateCrashContext({ transcriptTail: messages.slice(-CRASH_TRANSCRIPT_TAIL_MESSAGES) });
     // [[EXT-29]] §5 — a new user turn is the human being reached, so it ends any negotiation still
@@ -1083,11 +1108,21 @@ export class GthAgentRunner {
           // CFG-27 — an approvals STOP is not a stream failure: it is the gate deliberately
           // ending the run, and its message IS the explanation the spec requires it to carry.
           // Re-thrown unchanged (the outer catch does the same) so nothing buries it.
-          if (streamError instanceof ApprovalStopError) throw streamError;
+          if (streamError instanceof ApprovalStopError) {
+            this.noteApprovalStop('runner.stream-approval-stop', streamError);
+            throw streamError;
+          }
           // Handle streaming-specific errors
           debugLogError('Stream processing', streamError);
-          throw new Error(
-            `Stream processing failed: ${streamError instanceof Error ? streamError.message : String(streamError)}`
+          // [[EXT-159]] — classify the ORIGINAL error, not the wrapper built from it: the wrapper's
+          // message is where the diagnosis was being thrown away. The one reason is attached to the
+          // wrapper as well, so a catcher that only ever sees the re-thrown error still reads it.
+          const reason = this.classifyThrownAt('runner.stream-error', streamError);
+          throw attachTerminationReason(
+            new Error(
+              `Stream processing failed: ${streamError instanceof Error ? streamError.message : String(streamError)}`
+            ),
+            reason
           );
         }
         debugLog(`Stream completed. Total response length: ${result.length}`);
@@ -1116,12 +1151,25 @@ export class GthAgentRunner {
           const fallback = await this.agent.invoke(messages, this.runConfig);
           debugLog(`Fallback non-stream response length: ${fallback.length}`);
           if (fallback.trim().length === 0) {
-            throw new Error(
-              'Model returned an empty response after tool execution. Try again or switch to a more stable model.'
+            // [[EXT-159]] — the retry has already been spent here, so this is the terminal empty
+            // turn rather than the first one.
+            const reason = terminationReason(
+              'runner.empty-after-fallback',
+              'control',
+              'empty_response'
+            );
+            this.noteTermination(reason);
+            throw attachTerminationReason(
+              new Error(
+                'Model returned an empty response after tool execution. Try again or switch to a more stable model.'
+              ),
+              reason
             );
           }
+          this.noteCompleted('runner.completed');
           return fallback;
         }
+        this.noteCompleted('runner.completed');
         return result;
       } else {
         // Use non-streaming
@@ -1137,10 +1185,18 @@ export class GthAgentRunner {
         result += await this.resolveToolInterrupts();
         debugLog(`Non-stream response length: ${result.length}`);
         if (result.trim().length === 0) {
-          throw new Error(
-            'Model returned an empty response. Try again or switch to a more stable model.'
+          // [[EXT-159]] — the non-streaming path has no retry to spend, so an empty turn is
+          // terminal here at once.
+          const reason = terminationReason('runner.empty-invoke', 'control', 'empty_response');
+          this.noteTermination(reason);
+          throw attachTerminationReason(
+            new Error(
+              'Model returned an empty response. Try again or switch to a more stable model.'
+            ),
+            reason
           );
         }
+        this.noteCompleted('runner.completed');
         return result;
       }
     } catch (error) {
@@ -1148,14 +1204,25 @@ export class GthAgentRunner {
       // its own words: the command, the rating and its reason are the whole point of it. Wrapping
       // it as "Agent processing failed: …" would bury the explanation the spec requires it to
       // carry, so it is re-thrown unchanged.
-      if (error instanceof ApprovalStopError) throw error;
+      if (error instanceof ApprovalStopError) {
+        this.noteApprovalStop('runner.turn-approval-stop', error);
+        throw error;
+      }
       // Handle agent invocation errors
       debugLogError('Agent processing', error);
+      // [[EXT-159]] — the OUTER of two nested wrappers. On the streaming path the inner one has
+      // already classified this same failure and re-thrown, so `noteTermination`'s first-write-wins
+      // keeps the inner, truer site; on the non-streaming path this is the only classification
+      // there is. Both are reachable, so both classify.
+      const reason = this.classifyThrownAt('runner.turn-error', error);
       const originalMessage = error instanceof Error ? error.message : String(error);
       const enhancedMessage = enhanceVertexUnauthorizedMessage(originalMessage, this.config?.llm);
-      throw new Error(
-        `Agent processing failed: ${enhancedMessage}`,
-        error instanceof Error ? { cause: error } : undefined
+      throw attachTerminationReason(
+        new Error(
+          `Agent processing failed: ${enhancedMessage}`,
+          error instanceof Error ? { cause: error } : undefined
+        ),
+        reason
       );
     } finally {
       // [[TUI-C69]] §5.4 — the turn is over, so the argument is over. The reasoning is the same as
@@ -2983,6 +3050,8 @@ export class GthAgentRunner {
     }
     // GS2-16: start this turn's analytics tally from zero (the runner is reused across turns).
     this.resetRunStats();
+    // [[EXT-159]] — the previous turn's termination reason goes with the previous turn's tally.
+    this.resetTerminationReason();
     // GS2-48 — record this turn's transcript tail for the crash handler.
     updateCrashContext({ transcriptTail: messages.slice(-CRASH_TRANSCRIPT_TAIL_MESSAGES) });
     // [[EXT-29]] §5 — a new user turn is the human being reached, so it ends any negotiation still
@@ -3050,6 +3119,27 @@ export class GthAgentRunner {
       for (const id of unendedToolCalls) {
         yield { type: 'tool_result', id, content: noResult, isError: true };
       }
+      // [[EXT-159]] — the typed-event turn reached its own end. `signal?.aborted` is read again
+      // rather than reused from `noResult` above because a turn can be cancelled with no tool call
+      // outstanding, and that turn owes a reason just as much. First-write-wins keeps whatever the
+      // agent's own sites already said (a refusal, a suspend, an earlier abort).
+      if (signal?.aborted) {
+        this.noteTermination(
+          terminationReason('runner.events-cancelled', 'control', {
+            category: 'cancelled',
+            detail: 'signal',
+          })
+        );
+      } else {
+        this.noteCompleted('runner.events-completed');
+      }
+    } catch (error) {
+      // [[EXT-159]] — the typed-event path had NO catch at all, so a provider fault on the surface
+      // most users are looking at was the one termination nothing classified. Re-thrown UNCHANGED:
+      // this site adds a reason and takes nothing away, and the consumer's own error rendering is
+      // not this node's business.
+      this.classifyThrownAt('runner.events-error', error);
+      throw error;
     } finally {
       // [[TUI-C69]] §5.4 — **the turn is over, so the argument is over.** Until this existed the
       // panel was cleared only by the NEXT turn's `endNegotiation`, so a negotiation that CONVERGED
@@ -3063,6 +3153,12 @@ export class GthAgentRunner {
       // In `finally` because an abort and a thrown stream end the turn just as much as a return
       // does, and those are the paths where rows left standing are least likely to be noticed.
       this.clearNegotiationDisplay();
+      // [[EXT-159]] — the one ending that reaches NEITHER the end of the try NOR the catch: a
+      // consumer that stops consuming (breaking out of its `for await`, or calling `return()` on
+      // this generator). Nothing was wrong with the run and nothing failed, so no other site can
+      // speak for it, and without this the turn would end with no reason at all — the state that
+      // must mean "a site we missed".
+      this.noteTermination(terminationReason('runner.events-abandoned', 'control', 'abandoned'));
     }
   }
 
@@ -3126,6 +3222,108 @@ export class GthAgentRunner {
     }
   }
 
+  /**
+   * [[EXT-159]] — forget the previous turn's termination reason, on both this runner and the live
+   * agent, so a new turn starts with none. Called at the top of each `processMessages` /
+   * `processMessagesWithEvents`, alongside {@link resetRunStats}. Fail-soft.
+   */
+  private resetTerminationReason(): void {
+    this.terminationReason = null;
+    this.agentTerminationReason = null;
+    try {
+      this.agent?.resetTerminationReason?.();
+    } catch {
+      /* fail-soft: classification must never affect a run */
+    }
+  }
+
+  /**
+   * [[EXT-159]] — record why the turn ended, **first-write-wins**.
+   *
+   * The runner's two exception wrappers are NESTED, not alternatives: a stream fault is classified
+   * at the inner one, re-thrown, and caught again by the outer one. Under last-write-wins the outer
+   * site would overwrite the inner classification on every streamed failure — the funnel this
+   * taxonomy replaces, rebuilt one level up.
+   */
+  private noteTermination(reason: GthTerminationReason): void {
+    try {
+      if (this.terminationReason) return;
+      this.terminationReason = reason;
+    } catch {
+      /* fail-soft */
+    }
+  }
+
+  /**
+   * [[EXT-159]] — classify a thrown value at a runner site: record it here AND attach it to the
+   * error, then hand the error back so the throw reads as one expression.
+   *
+   * Both carriers matter. The runner's own field serves a caller holding the runner; the attached
+   * value serves every layer above that only ever sees the error — and neither is the message, so
+   * no user-facing string is the only carrier of the classification.
+   */
+  private classifyThrownAt(site: GthTerminationSite, error: unknown): GthTerminationReason {
+    // A reason already on the error was attached by an INNER site that saw the failure first, and
+    // that one is the truer classification — so it is inherited rather than replaced, and the two
+    // carriers cannot end up disagreeing about the same failure.
+    const existing = terminationReasonOf(error);
+    const reason =
+      existing ?? terminationReason(site, 'exception', classifyThrownTermination(error));
+    this.noteTermination(reason);
+    if (!existing) attachTerminationReason(error, reason);
+    return reason;
+  }
+
+  /**
+   * [[EXT-159]] — classify an approvals stop, which the generic classifier cannot see.
+   *
+   * The gate's errors are typed by their own subclass names, and their prose is the explanation
+   * rather than a diagnosis, so nothing in the exception classifier's grammar recognises one. It
+   * does not need to: this site reaches an `instanceof ApprovalStopError` branch, so it *knows*
+   * what ended the run, and stating the category is more honest than pattern-matching for it.
+   */
+  private noteApprovalStop(site: GthTerminationSite, error: unknown): void {
+    const reason = terminationReason(site, 'control', {
+      category: 'approval_stop',
+      detail: error instanceof Error ? error.name : undefined,
+    });
+    this.noteTermination(reason);
+    attachTerminationReason(error, reason);
+  }
+
+  /**
+   * [[EXT-159]] — record that the turn ended because the model finished.
+   *
+   * An ordinary completion is a termination too, and recording it is what makes "no reason" mean
+   * *a site nobody classified* rather than *nothing went wrong*. First-write-wins keeps a deeper
+   * site's answer — a refusal or a truncation is what really ended a turn that also returned text.
+   */
+  private noteCompleted(site: GthTerminationSite): void {
+    this.noteTermination(terminationReason(site, 'control', 'completed'));
+  }
+
+  /**
+   * [[EXT-159]] — why the just-finished turn ended, or `null` when nothing classified it.
+   *
+   * The agent's answer wins when it has one: its sites (the metadata reader, the cancellation and
+   * suspend paths, the run-ending middlewares) sit INSIDE the runner's catches, so the innermost
+   * classification is the true one. Never throws.
+   */
+  public getTerminationReason(): GthTerminationReason | null {
+    return this.captureAgentTerminationReason() ?? this.terminationReason;
+  }
+
+  /** [[EXT-159]] — read the live agent's reason into the snapshot (fail-soft). */
+  private captureAgentTerminationReason(): GthTerminationReason | null {
+    try {
+      const reason = this.agent?.getTerminationReason?.();
+      if (reason) this.agentTerminationReason = reason;
+    } catch {
+      /* fail-soft */
+    }
+    return this.agentTerminationReason;
+  }
+
   /** GS2-16 — read the live agent's run stats (fail-soft; empty tally if unavailable). */
   private captureRunStats(): GthRunStats {
     try {
@@ -3178,6 +3376,9 @@ export class GthAgentRunner {
     // GS2-16: snapshot the agent's run stats BEFORE nulling it, so a post-cleanup reader
     // (runSingleShot records history after calling cleanup) still gets this turn's analytics.
     this.lastRunStats = this.captureRunStats();
+    // [[EXT-159]] — and the agent's termination reason with it, for the same reason: the
+    // single-shot path asks why the run ended after the agent has already been nulled.
+    this.captureAgentTerminationReason();
     if (this.agent && 'cleanup' in this.agent && typeof this.agent.cleanup === 'function') {
       await this.agent.cleanup();
     }

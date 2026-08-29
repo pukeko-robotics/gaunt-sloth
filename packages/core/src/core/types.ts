@@ -2,6 +2,7 @@ import type { GthConfig } from '#src/config.js';
 import type { DeclaredToolAnnotations } from '#src/core/approvals/annotations.js';
 import type { ApprovalSubject } from '#src/core/approvals/matcher.js';
 import type { RaterNegotiationRound, ShellSafetyVerdict } from '#src/core/shell/rater.js';
+import type { GthTerminationReason } from '#src/core/terminationReason.js';
 import type { BaseMessage } from '@langchain/core/messages';
 import type { RunnableConfig } from '@langchain/core/runnables';
 import type { StructuredToolInterface } from '@langchain/core/tools';
@@ -48,6 +49,18 @@ export type {
 // that can name a round must be able to name what the alignment checker decided about it. The
 // checker's runtime surface stays at its deep path, exactly as the rater's does.
 export type { AlignmentDecision, AlignmentDecisionKind } from '#src/core/shell/alignment.js';
+// [[EXT-159]] — the declared type of {@link GthAgentInterface#getTerminationReason} and of
+// `GthAgentRunner.getTerminationReason()`, so an embedder that reads why a run ended can name what
+// it is holding. The taxonomy's runtime surface (the classifier, the posture table, the builder)
+// stays at its deep path, exactly as the rater's and the matcher's do.
+export type {
+  GthTerminationCategory,
+  GthTerminationPosture,
+  GthTerminationReason,
+  GthTerminationRemedy,
+  GthTerminationSite,
+  GthTerminationSource,
+} from '#src/core/terminationReason.js';
 
 export type Message = BaseMessage;
 
@@ -645,6 +658,24 @@ export interface GthAgentInterface {
    * the runner records no analytics for that turn. Reading must never throw.
    */
   getRunStats?(): GthRunStats;
+
+  /**
+   * [[EXT-159]] — forget the previous turn's termination reason so the next turn starts with none.
+   * Called by the runner at each turn boundary, alongside {@link resetRunStats}.
+   * Optional: an agent that classifies nothing simply omits it.
+   */
+  resetTerminationReason?(): void;
+
+  /**
+   * [[EXT-159]] — why the current turn ended, as classified by the sites inside the agent (the
+   * metadata reader, the cancellation and suspend paths, the run-ending middlewares), or `null`
+   * when none of them fired.
+   *
+   * **First-write-wins**, and the agent's answer outranks the runner's: these sites sit inside the
+   * runner's own catches, so the innermost classification is the true one and an outer wrapper must
+   * not overwrite it. Optional; reading must never throw.
+   */
+  getTerminationReason?(): GthTerminationReason | null;
 
   cleanup?(): Promise<void>;
 }

@@ -24,6 +24,7 @@ import {
 import { isShellCommandFailedError } from '#src/core/shell/ShellCommandFailedError.js';
 import { extractDebugRequestExtras, type DebugRequestExtras } from '#src/core/debugCapture.js';
 import { promoteTextEmittedToolCallMessage } from '#src/core/toolCallRepair/index.js';
+import { terminationReason, type GthTerminationReason } from '#src/core/terminationReason.js';
 import { AIMessage, ToolMessage } from '@langchain/core/messages';
 import { BaseCheckpointSaver } from '@langchain/langgraph';
 import {
@@ -68,7 +69,8 @@ export const MAX_CONSECUTIVE_TOOL_ERRORS = 5;
  * catches both same-tool and alternating-tool error loops with one robust rule.
  */
 export function createToolErrorBudgetMiddleware(
-  maxConsecutiveErrors: number = MAX_CONSECUTIVE_TOOL_ERRORS
+  maxConsecutiveErrors: number = MAX_CONSECUTIVE_TOOL_ERRORS,
+  onHalt?: (_reason: GthTerminationReason) => void
 ) {
   return createMiddleware({
     name: 'GthLeanToolErrorBudget',
@@ -115,6 +117,16 @@ export function createToolErrorBudgetMiddleware(
             (firstLine ? ` (last error: ${firstLine})` : '') +
             '. Do not repeat the same call: inspect the error, then change your approach — different ' +
             'arguments, a narrower path, or a different tool — or report the blocker to the user.';
+          // [[EXT-159]] — a run this middleware ends deliberately is a termination like any other,
+          // and the only thing that reaches the surface is the notice above: a sentence a consumer
+          // would have to pattern-match to learn what happened. The typed reason is the parallel
+          // channel, so the classification never depends on the wording.
+          onHalt?.(
+            terminationReason('middleware.tool-error-budget', 'control', {
+              category: 'tool_error_budget',
+              detail: `${consecutive} consecutive tool errors`,
+            })
+          );
           return { jumpTo: 'end', messages: [new AIMessage(notice)] };
         }
         return undefined;
@@ -237,7 +249,8 @@ export function toolCallSignature(name: string, args: unknown): string {
  */
 export function createToolLoopGuardMiddleware(
   options: ToolLoopGuardOptions = {},
-  onWarn?: (message: string) => void
+  onWarn?: (message: string) => void,
+  onHalt?: (_reason: GthTerminationReason) => void
 ) {
   const warn = options.warn ?? true;
   const halt = options.halt ?? false;
@@ -304,6 +317,15 @@ export function createToolLoopGuardMiddleware(
             'arguments to avoid a loop that keeps spending tokens without making progress. ' +
             'The same call cannot yield a different result: change your approach — different ' +
             'arguments, a narrower step, or a different tool — or report the blocker to the user.';
+          // [[EXT-159]] — the loop guard's twin of the error budget's site, and its own taxonomy
+          // member: "the agent repeated one call" and "the agent kept failing" are different facts
+          // about why the run ended, and only the notices tell them apart today.
+          onHalt?.(
+            terminationReason('middleware.tool-loop-guard', 'control', {
+              category: 'tool_loop_guard',
+              detail: `${streak} identical calls to ${currentName}`,
+            })
+          );
           return { jumpTo: 'end', messages: [new AIMessage(notice)] };
         }
 
@@ -616,7 +638,10 @@ export class GthLangChainAgent extends GthAbstractAgent {
     // recursionLimit (loop DETECTION proper is the separate EXT-36). Placed after the softeners and
     // before user middleware so it can't be bypassed. Lean backend only (per GS2-36 scope); the deep
     // backend keeps its own recursionLimit backstop.
-    const toolErrorBudget = createToolErrorBudgetMiddleware();
+    // [[EXT-159]] — the halt sink records WHY the run ended on the agent, where the runner reads it.
+    const toolErrorBudget = createToolErrorBudgetMiddleware(undefined, (reason) =>
+      this.noteTermination(reason)
+    );
 
     // EXT-36: the ORTHOGONAL loop guard — repeated identical (tool, args) / no-progress detection,
     // the sibling of GS2-36's error budget above. It catches the case GS2-36 explicitly leaves open:
@@ -637,7 +662,10 @@ export class GthLangChainAgent extends GthAbstractAgent {
       resolveToolLoopGuardOptions(this.config.toolLoopGuard),
       // WARN surfaces through the same TUI-safe status channel every other agent notice uses
       // (renderer-consumed, never raw stdout) so it can't leak over the Ink frame (TUI-C31).
-      (message) => statusUpdate(StatusLevel.WARNING, message)
+      (message) => statusUpdate(StatusLevel.WARNING, message),
+      // [[EXT-159]] — HALT ends the run, so it owes a reason; WARN does not end anything and sets
+      // none.
+      (reason) => this.noteTermination(reason)
     );
 
     // EXT-52: gate the opt-in run_shell_command tool behind the per-command approval interrupt —
