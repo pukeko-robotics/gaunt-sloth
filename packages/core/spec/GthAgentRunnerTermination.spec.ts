@@ -545,6 +545,38 @@ describe('[[EXT-159]] a reason at every GthAgentRunner termination site', () => 
       });
     });
 
+    /**
+     * The interaction the empty branch is most exposed to. A **suspended** graph yields no text
+     * either — `streamWithEvents` catches the `GraphInterrupt` and returns cleanly — so the runner
+     * now reaches its empty branch on a run that is merely parked. A parked run reported as "the
+     * model produced nothing" would be a new false statement of exactly the class this task
+     * removes, and it is the agent's own inner site that prevents it: the agent saw the interrupt,
+     * the runner only saw silence, and the innermost classification is the true one.
+     *
+     * Their postures are opposites, which is why this matters rather than being cosmetic:
+     * `suspended` says resume where you stopped, `empty_response` says ask again from the top.
+     */
+    it('a suspended turn that yielded no text is `suspended`, not empty', async () => {
+      mockAgent.streamWithEvents.mockImplementation(() => eventStreamOf([]));
+      mockAgent.getTerminationReason.mockReturnValue({
+        category: 'suspended',
+        site: 'agent.events-ended',
+        source: 'exception',
+        retryableAsIs: false,
+        retryableAfterRemedy: true,
+        remedy: 'resume',
+      });
+      const runner = await runnerFor(streamingConfig);
+
+      await drain(runner.processMessagesWithEvents(ask));
+
+      expect(runner.getTerminationReason()).toMatchObject({
+        site: 'agent.events-ended',
+        category: 'suspended',
+        remedy: 'resume',
+      });
+    });
+
     /** The `finally` runs on every path, so its site must not overwrite a real one. */
     it('does not let the abandoned site overwrite a completed turn', async () => {
       mockAgent.streamWithEvents.mockImplementation(() =>
