@@ -118,7 +118,9 @@ Step order inside the `release` job:
 4. `pnpm run build`.
 5. `./tag-packages.sh --push` — tags the current version (skips already-existing tags, so a
    re-dispatch of the same version is safe).
-6. `gh release create v<current>` (`--prerelease` when the current version has a prerelease suffix).
+6. `gh release create v<current>` (`--prerelease` when the current version has a prerelease suffix),
+   with the title and body taken from `release-notes/v<current>.md` — see
+   [GitHub Release](#github-release).
 7. **Publish all four** at the current version with `--tag <derived>`.
 8. **Only after publish succeeds:** post-bump — `pnpm run release:bump-and-commit` driven by the
    dispatch inputs, then `git push origin HEAD:main`.
@@ -245,8 +247,17 @@ as a standalone global install before publishing.
 ## GitHub Release
 
 The consolidated pipeline creates the GitHub Release automatically (`gh release create
-v<version>`, with `--prerelease` for prerelease versions) as its last step. You normally don't
-create releases by hand. If you ever need to:
+v<version>`, with `--prerelease` for prerelease versions). You normally don't create releases by
+hand.
+
+**Its title and body come from the release notes you wrote.** `scripts/release-notes-for.mjs`
+resolves `release-notes/v<version>.md` (the version with every dot replaced by an underscore),
+takes its `#` heading as the Release title, and passes the rest as the body — so write the notes
+before dispatching. A version with no notes file falls back to `--generate-notes`, which
+synthesises a body from merged pull requests: partial here, because branches land by local merge
+and usually open no PR, but better than an empty Release page.
+
+If you ever need to create one by hand:
 
 (if you have multiple accounts in gh, you may need to do `gh auth switch`)
 
