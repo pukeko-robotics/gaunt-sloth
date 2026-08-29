@@ -253,16 +253,19 @@ hand.
 **Its title and body come from the release notes you wrote.** `scripts/release-notes-for.mjs`
 resolves `release-notes/v<version>.md` (the version with every dot replaced by an underscore),
 takes its `#` heading as the Release title, and passes the rest as the body — so write the notes
-before dispatching. A version with no notes file falls back to `--generate-notes`, which
-synthesises a body from merged pull requests: partial here, because branches land by local merge
-and usually open no PR, but better than an empty Release page.
+before dispatching. See [release-notes/RELEASE-NOTES-HOWTO.md](../release-notes/RELEASE-NOTES-HOWTO.md).
+
+A version with no notes file gets a Release with an **empty body**. Nothing is synthesised to fill
+it: a body built from merged pull requests describes whatever happened to open one — branches here
+land by local merge and usually open none — so it reads as an account of the release while
+describing something else. Blank says nothing; that list says something untrue.
 
 If you ever need to create one by hand:
 
 (if you have multiple accounts in gh, you may need to do `gh auth switch`)
 
 ```bash
-gh release create v<version> --generate-notes        # or --notes-from-tag / --notes-file / --notes
+gh release create v<version> --notes-file release-notes/v<version_with_underscores>.md
 ```
 
 ## Viewing diff side by side

@@ -379,11 +379,14 @@ jobs:
           elif [ -n "$NOTES_BODY_FILE" ]; then
             gh release create "v${VERSION}" --title "$NOTES_TITLE" --notes-file "$NOTES_BODY_FILE" $PRE_FLAG
           else
-            # Deliberate fallback: nobody wrote release-notes/v<version>.md for this version, so let
-            # GitHub synthesise the body from merged PRs. That list is partial here — branches land
-            # by local merge and usually open no PR — but an empty Release body is worse, and this
-            # path only fires when a release was dispatched without notes.
-            gh release create "v${VERSION}" --title "$NOTES_TITLE" --generate-notes $PRE_FLAG
+            # Nobody wrote release-notes/v<version>.md for this version, so the Release ships with an
+            # empty body. GitHub's synthesised list of merged pull requests is NOT used: branches
+            # here land by local merge and usually open no PR, so that list describes whatever
+            # happened to arrive as one — a plausible-looking account of a release it does not
+            # describe. Blank says nothing; the generated list says something untrue.
+            # The empty body is stated explicitly rather than by omitting the flags, so this does not
+            # depend on `gh` deciding it cannot prompt.
+            gh release create "v${VERSION}" --title "$NOTES_TITLE" --notes "" $PRE_FLAG
           fi
       - name: Publish all packages to npmjs (current version)
         env:
