@@ -346,11 +346,26 @@ jobs:
         # tag-packages.sh skips already-existing tags, so a re-dispatch of the
         # same version is safe here.
         run: ./tag-packages.sh --push
+      - name: Resolve the release notes for this version
+        # The hand-written release-notes/v<version>.md (dots -> underscores) is what the Release
+        # page should show; scripts/release-notes-for.mjs turns it into a title (its H1) and a body
+        # (the rest), and reports both as step outputs. The logic is a script, not inline bash,
+        # because this step runs only on a real release dispatch — inline, it could be verified only
+        # by shipping a broken release. Unit-tested in packages/core/spec/releaseNotesFor.spec.ts.
+        id: notes
+        env:
+          VERSION: ${{ steps.current.outputs.version }}
+        run: node scripts/release-notes-for.mjs "$VERSION" --body-out "$RUNNER_TEMP/release-body.md"
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.current.outputs.version }}
           IS_PRERELEASE: ${{ steps.current.outputs.prerelease }}
+          # Through env, never spliced into the script below as a ${{ }} expression: an expression is
+          # substituted as TEXT before bash parses the block, so a title containing a backtick (as
+          # release-notes/v1_2_0.md's does) would run as command substitution in the release job.
+          NOTES_TITLE: ${{ steps.notes.outputs.title }}
+          NOTES_BODY_FILE: ${{ steps.notes.outputs.body_file }}
         run: |
           set -euo pipefail
           PRE_FLAG=""
@@ -361,8 +376,14 @@ jobs:
           # finds the Release already created by the first attempt — skip, don't die.
           if gh release view "v${VERSION}" >/dev/null 2>&1; then
             echo "Release v${VERSION} already exists — skipping creation (re-dispatch)"
+          elif [ -n "$NOTES_BODY_FILE" ]; then
+            gh release create "v${VERSION}" --title "$NOTES_TITLE" --notes-file "$NOTES_BODY_FILE" $PRE_FLAG
           else
-            gh release create "v${VERSION}" --title "v${VERSION}" --generate-notes $PRE_FLAG
+            # Deliberate fallback: nobody wrote release-notes/v<version>.md for this version, so let
+            # GitHub synthesise the body from merged PRs. That list is partial here — branches land
+            # by local merge and usually open no PR — but an empty Release body is worse, and this
+            # path only fires when a release was dispatched without notes.
+            gh release create "v${VERSION}" --title "$NOTES_TITLE" --generate-notes $PRE_FLAG
           fi
       - name: Publish all packages to npmjs (current version)
         env:

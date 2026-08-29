@@ -281,9 +281,17 @@ Release notes are stored in `release-notes/` and follow a consistent format.
 
 When creating release notes for a new version:
 
-1. **File naming**: Use the pattern `v{major}_{minor}_{patch}.md` (e.g., `v1_1_0.md`)
-2. **Title format**: `# v{major}.{minor}.{patch} {Brief Description}`
+1. **File naming**: `v` + the version with **every dot replaced by an underscore** + `.md`, so
+   `1.1.0` is `v1_1_0.md` and the prerelease `2.0.0-beta.3` is `v2_0_0-beta_3.md`
+2. **Title format**: `# v{version} {Brief Description}`
 3. **Style**: Keep language dry and factual, not excited or marketing-oriented
+
+**The release pipeline reads this file.** `scripts/release-notes-for.mjs` resolves it from the
+version being shipped: the `#` heading becomes the GitHub Release title and the rest becomes its
+body. A file named anything else is simply not found, and the Release falls back to a body GitHub
+synthesises from merged pull requests — partial here, since branches land by local merge and usually
+open no PR — with no error anywhere to say the notes were missed. Write the notes before dispatching
+a release.
 
 ### Structure
 

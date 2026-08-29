@@ -145,12 +145,16 @@ export default defineConfig({
         // takes for absolute Windows paths — so all of distTag.spec.ts failed on windows-latest
         // and only there (OPS-26). Externalized, Node imports the file natively and handles the
         // shebang per spec on every platform. Any spec importing a shebang'd script under
-        // scripts/ needs an entry here. distTag.spec.ts and evalGate.spec.ts each assert their
-        // own entry is in effect, so dropping one fails loudly everywhere rather than on the
-        // Windows cell alone.
+        // scripts/ needs an entry here. distTag.spec.ts, evalGate.spec.ts and
+        // releaseNotesFor.spec.ts each assert their own entry is in effect, so dropping one fails
+        // loudly everywhere rather than on the Windows cell alone.
         // The `(\?|$)` tail keeps the match alive when the resolved id carries a query suffix
         // (e.g. `?v=…`, or vitest's `_vitest_original` on an importActual path).
-        external: [/[\\/]scripts[\\/]dist-tag\.mjs(\?|$)/, /[\\/]scripts[\\/]eval-gate\.mjs(\?|$)/],
+        external: [
+          /[\\/]scripts[\\/]dist-tag\.mjs(\?|$)/,
+          /[\\/]scripts[\\/]eval-gate\.mjs(\?|$)/,
+          /[\\/]scripts[\\/]release-notes-for\.mjs(\?|$)/,
+        ],
       },
     },
     coverage: {
