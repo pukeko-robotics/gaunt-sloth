@@ -144,6 +144,25 @@ describe('[[EXT-159]] a reason at every GthAgentRunner termination site', () => 
       });
     });
 
+    /**
+     * The third of the three successful returns, and the one most easily left uncovered: the
+     * streamed turn that drained empty and was RESCUED by the non-streaming fallback. It is
+     * precisely where a missing reason breaks the invariant the `completed` site exists for — a
+     * successful turn reporting `null`, which this design says means *a site we missed*.
+     */
+    it('sets `completed` when the empty-stream fallback recovers the turn', async () => {
+      mockAgent.stream.mockResolvedValue(textStreamOf(['']));
+      mockAgent.invoke.mockResolvedValue('recovered by the fallback');
+      const runner = await runnerFor(streamingConfig);
+
+      await expect(runner.processMessages(ask)).resolves.toBe('recovered by the fallback');
+
+      expect(runner.getTerminationReason()).toMatchObject({
+        site: 'runner.completed',
+        category: 'completed',
+      });
+    });
+
     it('sets `completed` when a non-streaming turn returns an answer', async () => {
       mockAgent.invoke.mockResolvedValue('an answer');
       const runner = await runnerFor(invokeConfig);

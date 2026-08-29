@@ -405,7 +405,11 @@ function errorText(error: unknown): string {
     push(field(inner, 'type'));
     push(field(inner, 'code'));
   }
-  return parts.join('   ').toLowerCase();
+  // The separator is deliberately not a plain space: the prose patterns below are multi-word
+  // English, and joining two adjacent fragments with a space lets a pattern match ACROSS them —
+  // a fragment ending in "rate" beside one starting with "limit" would read as a rate limit.
+  // A newline cannot occur mid-pattern, so it breaks that adjacency without hiding anything.
+  return parts.join(' \n ').toLowerCase();
 }
 
 /** The HTTP status an SDK error carries, wherever it hangs it. Undefined when there is none. */
