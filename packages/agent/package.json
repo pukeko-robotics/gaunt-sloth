@@ -38,13 +38,13 @@
     "#src/*.js": "./dist/*.js"
   },
   "dependencies": {
-    "@a2a-js/sdk": "^1.0.1",
+    "@a2a-js/sdk": "^1.1.0",
     "@ag-ui/core": "^0.0.58",
     "@ag-ui/encoder": "^0.0.58",
     "@agentclientprotocol/sdk": "1.4.0",
     "@gaunt-sloth/core": "workspace:*",
     "@langchain/core": "^1.2.9",
-    "@langchain/langgraph": "^1.4.12",
+    "@langchain/langgraph": "^1.4.13",
     "@langchain/mcp-adapters": "^1.1.4",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "diff": "^9.0.0",
