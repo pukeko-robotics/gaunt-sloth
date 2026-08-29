@@ -53,6 +53,9 @@
  * that command does not contain. {@link approvalHostGroups} asks the item's own control of each
  * host — *does the call text contain it?* — and the ones that fail are labelled as such rather than
  * shown as though the call had written them. It reads: no extraction and no matcher moves.
+ * **Whoever writes the call can suppress the disclosure for free** — a trailing shell comment
+ * naming the folded spelling is enough — so read it as a signal on an unwitting call, never as a
+ * control on a deliberate one; {@link approvalHostGroups}'s docblock says why.
  *
  * **The hosts are framed, not allow-listed.** `core/shell/openWorld`'s `listHostsForFloorNote`
  * quotes a host only when it passes a character allow-list and a length bound, because that
@@ -211,6 +214,25 @@ export const APPROVAL_FOLDED_HOSTS_NOTE =
   '    The call above writes them with different characters.';
 
 /**
+ * [[EXT-156]] — the same row for the call whose displayed text is only PART of what it was read
+ * from, where the note above would be false.
+ *
+ * `approvalCallText` shows `args.command` alone whenever it is a string, and a `tool`/`mcpTool`
+ * call's hosts are read off all its arguments — so a host a sibling argument names is missing from
+ * the screen without having been folded from anything. The label still holds (the call as shown
+ * does not spell it) and only the reason changes, which is why this is a second NOTE and not a
+ * third group: splitting the hosts would tell a reader that two kinds of counterparty are at stake
+ * when there is one, and the thing they must not lose is the name.
+ *
+ * It claims only what is true of every call that reaches it: what is on screen is the command
+ * argument, and it is not all of them. It deliberately does NOT say the hosts came from the
+ * arguments it does not show — a `command` argument spelling a whole URL is read for a host like
+ * any other value, and would fold rather than hide.
+ */
+export const APPROVAL_UNSHOWN_HOSTS_NOTE =
+  '    The call above shows only its command argument, not all of them.';
+
+/**
  * The command a pending call would run, when the call carries one as a plain string.
  *
  * Deliberately keyed on the ARGUMENT rather than on the tool name: the two terminal surfaces have
@@ -225,6 +247,27 @@ function commandStringOf(pending: Pick<PendingToolInterrupt, 'args'>): string | 
 /** The text a surface shows as the call: the command, or the arguments it was given instead. */
 export function approvalCallText(pending: Pick<PendingToolInterrupt, 'args'>): string {
   return commandStringOf(pending) ?? JSON.stringify(pending.args);
+}
+
+/**
+ * Whether the text shown as the call is **only part of** what this call's hosts were read from.
+ *
+ * `approvalHosts` takes the structured-argument arm when the subject kind is `tool` or `mcpTool`,
+ * or when there is no string `command` at all. `approvalCallText` shows `args.command` whenever it
+ * is a string. **Those two conditions are not complements**, and the gap between them is a real
+ * shape: a `tool`/`mcpTool` call carrying a string `command` argument has its hosts read off ALL
+ * its arguments while the surface displays only that one — so a host named by a sibling argument is
+ * absent from the screen without being folded from anything. An MCP server free to name its own
+ * parameters may well expose a `command`, so the shape is constructible; how often a real server
+ * emits it is not established here, and this decides only which sentence the block prints.
+ *
+ * Neither branch moves. This asks which of the two the call is on, and nothing else reads it.
+ */
+function showsCommandArgumentOnly(
+  pending: Pick<PendingToolInterrupt, 'args' | 'subject'>
+): boolean {
+  const kind = pending.subject?.kind;
+  return (kind === 'tool' || kind === 'mcpTool') && commandStringOf(pending) !== undefined;
 }
 
 /**
@@ -322,21 +365,38 @@ function asciiLowerCase(text: string): string {
  * ASCII case, and ASCII case only — a host argument written `REGISTRY.npmjs.org` names the same
  * host and must not raise an alarm that trains readers to ignore this one.
  *
- * ## What the predicate is, and the one direction it errs in
+ * ## What the predicate is, and how it errs
  *
  * *Does the host occur in the call text?* — the item's own control, needing no offset mapping back
- * through NFKC (which is not length-preserving) and no second notion of what a host is.
+ * through NFKC (which is not length-preserving) and no second notion of what a host is. It is asked
+ * of the text the reader is actually shown, which is what makes the LABEL true of every host under
+ * it: the call as displayed really does not spell it.
  *
- * **It errs toward saying nothing, and the shape that suppresses it is measured rather than
- * feared.** The test is occurrence anywhere in the call text, so a call that also writes the folded
- * spelling somewhere else reads as written and says nothing. On the shell arm that takes the whole
- * folded URL, since the host there IS the URL — `echo https://registry.npmjs.org/x && curl
- * https://ｒegistry.npmjs.org/x` is suppressed while an incidental bare hostname elsewhere is not.
- * On the tool arm the host is a bare hostname, so a sibling argument mentioning it in prose is
- * enough. What would close it is a POSITIONAL test, and a positional test is a second notion of
- * where a host lives — the thing this must not grow. The residue is a suppressed disclosure on a
- * call that already cannot auto-approve ([[EXT-61]] floors it at `destructive` before the rater),
- * never a disclosure on a call that agrees.
+ * **The suppression direction is free, and it belongs to whoever wrote the call.** The test is
+ * occurrence anywhere in the call text, so a call that also writes the folded spelling somewhere
+ * else reads as written and says nothing. On the shell arm that takes the whole folded URL, since
+ * the host there IS the URL: `echo https://registry.npmjs.org/x && curl
+ * https://ｒegistry.npmjs.org/x` is suppressed while an incidental bare hostname elsewhere is not —
+ * **and so is a trailing `#` comment naming that URL, or a dead `echo`, or an unrelated argument,
+ * none of which change anything the command does.** On the tool arm the host is a bare hostname, so
+ * a sibling argument mentioning it in prose is enough. This is not an unlucky shape a reader may
+ * hope not to meet: an author who wants no disclosure appends one comment and gets none. What would
+ * close it is a POSITIONAL test, and a positional test is a second notion of where a host lives —
+ * the thing this must not grow. The residue is bounded rather than small: a suppressed disclosure
+ * on a call that already cannot auto-approve ([[EXT-61]] floors it at `destructive` before the
+ * rater).
+ *
+ * **The other direction is not "never fires"; it is "never fires for the wrong REASON", and that
+ * costs a second note row.** `approvalHosts` reads a `tool`/`mcpTool` call's hosts off ALL its
+ * arguments while `approvalCallText` displays `args.command` alone whenever it is a string, so
+ * there the shown text is a strict SUBSET of what the hosts came from — see
+ * `showsCommandArgumentOnly`. A host named by a sibling argument is then correctly labelled (the
+ * call as shown does not spell it) while *"the call above writes them with different characters"*
+ * would be false: it does not write them at all. So the label is one and the note is two, chosen by
+ * that predicate — the classification is never weakened to make one sentence fit both. Comparing
+ * against the serialised arguments instead would have "fixed" this by calling such a host WRITTEN,
+ * printing `Hosts this call names:` beside a displayed call that names nobody — which is [[EXT-156]]'s
+ * own defect reached by another route. Do not.
  *
  * ## Why the raw spelling is not reproduced here
  *
@@ -570,7 +630,14 @@ export function approvalRequestRows(
   // prose; only the host rows are framed, exactly as before.
   if (folded.length > 0) {
     push('danger', APPROVAL_FOLDED_HOSTS_LABEL);
-    push('chrome', APPROVAL_FOLDED_HOSTS_NOTE);
+    // One label, two reasons. The label is true of every host here — the call as SHOWN does not
+    // spell it — but the reason is not: where the surface displays `args.command` alone, a host a
+    // sibling argument names was never written with different characters, it was never written on
+    // screen at all. Saying the wrong one is how a reader concludes the block is guessing.
+    push(
+      'chrome',
+      showsCommandArgumentOnly(pending) ? APPROVAL_UNSHOWN_HOSTS_NOTE : APPROVAL_FOLDED_HOSTS_NOTE
+    );
     for (const host of folded) {
       for (const line of frameUntrustedText(host, { width }).lines) push('danger', line);
     }

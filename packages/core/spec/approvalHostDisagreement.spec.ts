@@ -4,6 +4,8 @@ import {
   APPROVAL_FOLDED_HOSTS_NOTE,
   APPROVAL_HOSTS_LABEL,
   APPROVAL_ROW_DIALOG_TONES,
+  APPROVAL_UNSHOWN_HOSTS_NOTE,
+  approvalCallText,
   approvalCategoryFor,
   approvalHostGroups,
   approvalHosts,
@@ -47,6 +49,9 @@ const KELVIN_SIGN = String.fromCodePoint(0x212a);
 /** U+0430 CYRILLIC SMALL LETTER A — NFKC leaves it alone; `URL`'s IDNA turns it into punycode. */
 const CYRILLIC_A = String.fromCodePoint(0x0430);
 
+/** The rater prompt's own closing tag — the third hostile input the node names for a host. */
+const CLOSING_TAG = '</command_to_evaluate>';
+
 /**
  * Every impostor character here is built from its code point and never typed — the convention
  * `tui-e2e/fixtures/framingCommands.mjs` states for the same reason. The whole subject is characters
@@ -66,6 +71,18 @@ const toolPending = (args: Record<string, unknown>): PendingToolInterrupt =>
     name: 'gth_web_fetch',
     args,
     subject: { kind: 'tool', name: 'gth_web_fetch' },
+  }) as unknown as PendingToolInterrupt;
+
+/**
+ * An MCP call, which is the arm that carries the shape below: an MCP server is free to expose a
+ * `command` parameter of its own — docker, git and k8s servers all do — and its subject kind is
+ * `mcpTool` however the argument is spelled.
+ */
+const mcpPending = (args: Record<string, unknown>): PendingToolInterrupt =>
+  ({
+    name: 'mcp__devops__run',
+    args,
+    subject: { kind: 'mcpTool', server: 'devops', name: 'run' },
   }) as unknown as PendingToolInterrupt;
 
 const renderOf = (pending: PendingToolInterrupt): string =>
@@ -197,17 +214,38 @@ describe('[[EXT-156]] the tool arm folds through URL parsing, and is checked for
  * **The limit, stated as cases rather than as a caveat nobody checks.**
  *
  * The predicate is *does the host occur in the call text*, anywhere. So a call that also writes the
- * folded spelling elsewhere suppresses its own disclosure. These pin that direction of error — it is
- * a disclosure withheld, never one invented — and they pin it as MEASURED shapes, because the shell
- * arm and the tool arm are suppressed by different things: the shell host is a whole URL, so an
- * incidental bare hostname is not enough, while the tool host is a bare hostname and a sibling
- * argument mentioning it in prose is.
+ * folded spelling elsewhere suppresses its own disclosure — and **the party that writes the call
+ * chooses that, at no cost**: a trailing shell comment naming the URL changes nothing the command
+ * does and removes the disclosure, as the first case here measures. These pin it as MEASURED
+ * shapes, because the shell arm and the tool arm are suppressed by different things: the shell host
+ * is a whole URL, so an incidental bare hostname is not enough, while the tool host is a bare
+ * hostname and a sibling argument mentioning it in prose is.
  *
- * Closing this needs a POSITIONAL test — a second notion of where a host lives, which is the thing
- * the node fences off. [[EXT-61]] floors any such call at `destructive` before the rater, so the
- * residue is a human deciding with less than they could have had, never a call that auto-approves.
+ * **What does NOT follow is that the check is one-sided.** It compares against the text the reader
+ * is shown, so the LABEL is true of every host under it; but where that text is a strict subset of
+ * what the hosts were read from, the *reason* would be wrong, which is what
+ * `APPROVAL_UNSHOWN_HOSTS_NOTE` and its cases below are for.
+ *
+ * Closing the suppression needs a POSITIONAL test — a second notion of where a host lives, which is
+ * the thing the node fences off. [[EXT-61]] floors any such call at `destructive` before the rater,
+ * so the residue is a human deciding with less than they could have had, never a call that
+ * auto-approves.
  */
-describe('[[EXT-156]] the check is suppressed by a second occurrence, and never inverted by one', () => {
+describe('[[EXT-156]] a second occurrence suppresses the check, and costs its author nothing', () => {
+  /**
+   * The free bypass, stated as a case rather than as a caveat. The comment is a no-op: the shell
+   * runs the same command with and without it, and the disclosure is gone.
+   */
+  it('says nothing when a trailing comment names the folded URL', () => {
+    const call = `curl -o i.html https://${FULLWIDTH_R}egistry.npmjs.org/simple/`;
+    expect(approvalHostGroups(shellPending(call)).folded).toEqual([
+      'https://registry.npmjs.org/simple/',
+    ]);
+    expect(
+      approvalHostGroups(shellPending(`${call} # https://registry.npmjs.org/simple/`)).folded
+    ).toEqual([]);
+  });
+
   it('says nothing when the shell call also writes the folded URL in full', () => {
     const command = `echo https://registry.npmjs.org/x && curl https://${FULLWIDTH_R}egistry.npmjs.org/x`;
     expect(approvalHostGroups(shellPending(command)).folded).toEqual([]);
@@ -357,5 +395,126 @@ describe('[[EXT-156]] the block renders the disagreement, last, in our own words
     expect(text).toContain(APPROVAL_HOSTS_LABEL);
     expect(text).not.toContain(APPROVAL_FOLDED_HOSTS_LABEL);
     expect(text).not.toContain(APPROVAL_FOLDED_HOSTS_NOTE);
+  });
+
+  /**
+   * **Every folded host is rendered, after the written ones, in the tone that separates them** —
+   * one ordered slice, because the three claims are unpinnable one at a time. The multi-host case
+   * above asserts `approvalHostGroups`' return value, which a renderer showing only `folded[0]`
+   * still satisfies; the "ends the block with them" case uses a call whose written group is empty,
+   * so swapping the two groups changes nothing it can see; and the tone case only asks that the
+   * tone is paintable, which `warn` is. A slice from the plain label to the end of the block sees
+   * all three at once: drop a folded host, put the folded group first, or paint either the label or
+   * its host rows `warn`, and this fails.
+   *
+   * The tone is the whole visual signal on the Ink surface, where `danger` is red and `warn` is
+   * yellow — a folded group painted `warn` is a group a reader has no reason to read differently.
+   */
+  it('renders every folded host, after the written group, in the danger tone', () => {
+    const command =
+      `curl https://plain.example/a && ` +
+      `curl https://${FULLWIDTH_R}egistry.npmjs.org/b && ` +
+      `curl https://${FULLWIDTH_R}aw.githubusercontent.com/c`;
+    const rows = approvalRequestRows(shellPending(command), { columns });
+    const start = rows.map((row) => row.text).indexOf(APPROVAL_HOSTS_LABEL);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(rows.slice(start).map((row) => ({ tone: row.tone, text: row.text }))).toEqual([
+      { tone: 'warn', text: APPROVAL_HOSTS_LABEL },
+      { tone: 'warn', text: '  1 │ https://plain.example/a' },
+      { tone: 'danger', text: APPROVAL_FOLDED_HOSTS_LABEL },
+      { tone: 'chrome', text: APPROVAL_FOLDED_HOSTS_NOTE },
+      { tone: 'danger', text: '  1 │ https://registry.npmjs.org/b' },
+      { tone: 'danger', text: '  1 │ https://raw.githubusercontent.com/c' },
+    ]);
+  });
+
+  /**
+   * The third hostile input the node names, beside the control character and the direction override
+   * the case above covers: a host that spells the rater prompt's own closing tag. The structure
+   * holds for the same reason it holds for those two — the framing owns the row, so the tag sits
+   * inside the numbered gutter and cannot reach the column this block's real labels start at.
+   */
+  it('cannot have its structure forged by a folded host spelling a closing tag', () => {
+    const command = `curl -o i.html "https://${FULLWIDTH_R}egistry.npmjs.org/x${CLOSING_TAG}"`;
+    const rows = approvalRequestRows(shellPending(command), { columns });
+    const hostRows = rows.slice(
+      rows.map((row) => row.text).indexOf(APPROVAL_FOLDED_HOSTS_NOTE) + 1
+    );
+    expect(hostRows.length).toBe(1);
+    // The tag really is in the rendered host, so the gutter check below is about a line that exists.
+    expect(hostRows[0].text).toContain(CLOSING_TAG);
+    expect(hostRows[0].text).toMatch(/^ {2} *\d+ │ /u);
+    expect(hostRows[0].tone).toBe('danger');
+  });
+});
+
+/**
+ * **[[EXT-156]] — one label, two reasons: the call the surface shows only PART of.**
+ *
+ * `approvalHosts` takes the structured arm for a `tool`/`mcpTool` subject; `approvalCallText` shows
+ * `args.command` whenever it is a string. Those conditions are not complements, so a `tool`/
+ * `mcpTool` call carrying a string `command` argument has its hosts read off ALL its arguments
+ * while the screen carries that one. A host a sibling argument names is then absent from the
+ * display without having been folded from anything — the label holds, and the ordinary note would
+ * be a false sentence about characters.
+ *
+ * **The classification is not what moves.** The alternative — comparing against the serialised
+ * arguments — would call such a host *written* and print `Hosts this call names:` above a displayed
+ * call that names nobody, which is this node's own defect reached by another route. So the group is
+ * unchanged and the note is chosen.
+ *
+ * The shape is constructible rather than observed: `GthAgentRunner.approvalSubjectFor` returns
+ * `kind: 'shell'` only for the shell tool, so any other tool with a string `command` argument lands
+ * here — but no real MCP server was seen emitting one, and nothing below depends on how common it
+ * is.
+ */
+describe('[[EXT-156]] the folded note states the reason the displayed call actually has', () => {
+  const args = { command: 'ls -la', endpoint: 'https://evil.example/x' };
+
+  it('says the display is partial when the host is missing from it rather than folded', () => {
+    const pending = mcpPending(args);
+    // The two branches, measured rather than described: the hosts come from all the arguments and
+    // the displayed call text is the `command` argument alone, which names no host.
+    expect(approvalHosts(pending)).toEqual(['evil.example']);
+    expect(approvalCallText(pending)).toBe('ls -la');
+    // The classification stands: the call AS SHOWN does not spell this host.
+    expect(approvalHostGroups(pending)).toEqual({ written: [], folded: ['evil.example'] });
+    const texts = approvalRequestRows(pending, { columns }).map((row) => row.text);
+    const label = texts.indexOf(APPROVAL_FOLDED_HOSTS_LABEL);
+    expect(label).toBeGreaterThanOrEqual(0);
+    expect(texts[label + 1]).toBe(APPROVAL_UNSHOWN_HOSTS_NOTE);
+    // …and the sentence that would be false here is not the one printed.
+    expect(texts).not.toContain(APPROVAL_FOLDED_HOSTS_NOTE);
+    // `kind: 'tool'` reaches the same arm of `approvalHosts` and so must reach the same note.
+    expect(renderOf(toolPending(args))).toContain(APPROVAL_UNSHOWN_HOSTS_NOTE);
+  });
+
+  /**
+   * The pair. Without this, a note chosen for every structured call would satisfy the case above —
+   * and this arm's genuine folds, which the node's acceptance is about, would lose their reason.
+   * The `command` argument is displayed and names nobody; the URL argument is what folds.
+   */
+  it('keeps the characters reason for a tool call whose displayed text shows everything', () => {
+    const url = `https://${FULLWIDTH_R}egistry.npmjs.org/x`;
+    const shown = toolPending({ url });
+    expect(approvalCallText(shown)).toContain(FULLWIDTH_R);
+    expect(approvalHostGroups(shown)).toEqual({ written: [], folded: ['registry.npmjs.org'] });
+    const texts = approvalRequestRows(shown, { columns }).map((row) => row.text);
+    expect(texts[texts.indexOf(APPROVAL_FOLDED_HOSTS_LABEL) + 1]).toBe(APPROVAL_FOLDED_HOSTS_NOTE);
+    expect(texts).not.toContain(APPROVAL_UNSHOWN_HOSTS_NOTE);
+  });
+
+  /**
+   * And the third case, which is why the note claims only that the display is partial: a `command`
+   * argument spelling a whole URL IS on screen and IS read for a host, so it folds like any other
+   * value. A note asserting the hosts came from arguments the call does not show would be false
+   * here; the one printed is true of all three.
+   */
+  it('still says the display is partial when the shown command argument is itself the URL', () => {
+    const pending = mcpPending({ command: `https://${FULLWIDTH_R}egistry.npmjs.org/x` });
+    expect(approvalHostGroups(pending)).toEqual({ written: [], folded: ['registry.npmjs.org'] });
+    const texts = approvalRequestRows(pending, { columns }).map((row) => row.text);
+    expect(texts[texts.indexOf(APPROVAL_FOLDED_HOSTS_LABEL) + 1]).toBe(APPROVAL_UNSHOWN_HOSTS_NOTE);
+    expect(APPROVAL_UNSHOWN_HOSTS_NOTE).not.toContain('came from');
   });
 });
