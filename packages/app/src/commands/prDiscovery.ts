@@ -262,11 +262,18 @@ export async function runPrDiscovery(config: GthConfig): Promise<PrDiscoveryResu
     // while the discriminating fact sat unread on this runner: the exact shape this node exists to
     // remove.
     //
-    // In the `finally`, so the endings that DO throw are announced too: `prCommand`'s catch prints
-    // the provider's prose, and the classification is the half a bug report needs beside it. A
-    // successful discovery costs nothing — it classifies `completed`, which
-    // `shouldAnnounceTermination` suppresses — so the review that follows is not preceded by a
-    // notice about the sub-run that fed it.
+    // In the `finally`, so the endings that DO throw are announced too. Note the ORDER that buys:
+    // the `finally` unwinds ahead of `prCommand`'s catch, so the notice prints FIRST and the
+    // provider's prose (or the approvals negotiation transcript) follows it — a heading, then the
+    // detail, rather than `reviewModule`'s error-then-notice.
+    //
+    // A successful discovery costs nothing: it classifies `completed`, which
+    // `shouldAnnounceTermination` suppresses, so the review that follows is not preceded by a
+    // notice about the sub-run that fed it. The one case that does print twice is a discovery that
+    // ended abnormally AFTER the agent had already set a diff — `prCommand` then continues to the
+    // review, and the user sees this notice and later the review's own. That is two runs with two
+    // different endings, each stating its own, which is the intended reading rather than a
+    // duplicate.
     //
     // Read after `cleanup()` for the reason `reviewModule` reads it there: the agent is gone by
     // here and the runner snapshots its innermost classification at cleanup.
