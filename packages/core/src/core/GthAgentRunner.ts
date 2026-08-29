@@ -1269,10 +1269,17 @@ export class GthAgentRunner {
     if (!agent.getPendingToolInterrupts || !agent.streamResume) return '';
 
     let resumedText = '';
+    // [[EXT-159]] — which way the loop left decides what ended the turn, and only the loop knows.
+    // Falling out of the bound and draining cleanly are different endings; a caller sees the same
+    // returned string either way, so a caller cannot tell them apart.
+    let drained = false;
     // Bound the loop defensively so a misbehaving graph that re-suspends forever cannot spin.
     for (let guard = 0; guard < 100; guard++) {
       const pending = await agent.getPendingToolInterrupts(runConfig);
-      if (pending.length === 0) break;
+      if (pending.length === 0) {
+        drained = true;
+        break;
+      }
 
       const decisions: ToolApprovalDecision[] = [];
       for (const tool of pending) {
@@ -1281,6 +1288,16 @@ export class GthAgentRunner {
 
       const stream = await agent.streamResume({ decisions }, runConfig);
       resumedText += await this.drainTextStream(stream);
+    }
+    // [[EXT-159]] — the runtime gave up, and the turn ends here because of that. It still returns
+    // into `processMessages`, which then reports an ordinary completion (or an empty turn) at its
+    // own site — so routing to an enumerated site is no defence: that site would state a category
+    // that is affirmatively false. Noting it HERE, before those sites run, is what makes
+    // first-write-wins keep the one fact they cannot see.
+    if (!drained) {
+      this.noteTermination(
+        terminationReason('runner.interrupt-guard-exhausted', 'control', 'interrupt_drain_guard')
+      );
     }
     return resumedText;
   }
@@ -3086,6 +3103,22 @@ export class GthAgentRunner {
       // error result says, and never with the tick and the word `done`, which no arm of this loop
       // could make true.
       const unendedToolCalls = new Set<string>();
+      // [[EXT-159]] — did this turn produce an ANSWER? Grammar member (2), "the model produced
+      // nothing", had two sites on the string path and none here, so an empty typed-event turn —
+      // the node's own motivating symptom, on the surface users actually watch — reported
+      // `completed`, i.e. a legitimate hand-back.
+      //
+      // `text` is the exact analogue of the string path's `result.trim().length === 0`: that path
+      // enqueues only `answerTextOf(chunk.content)`, which drops reasoning segments, and this path
+      // splits the same segments into `text` (answer) and `reasoning_delta` (not the answer). So a
+      // reasoning-only turn is empty on BOTH surfaces, and they cannot disagree about one turn.
+      // Testing each delta rather than the concatenation is equivalent: if every delta is blank
+      // their join is blank, and one non-blank delta makes the join non-blank.
+      //
+      // This is CLASSIFICATION only. The string path's empty-stream retry / `invoke` fallback is
+      // still deliberately not duplicated here (see this method's docblock) — naming what happened
+      // is not fixing it.
+      let sawAnswerText = false;
       const tracking = async function* (
         source: AsyncGenerator<AgentStreamEvent>
       ): AsyncGenerator<AgentStreamEvent> {
@@ -3093,6 +3126,7 @@ export class GthAgentRunner {
           if (event.type === 'tool_start') unendedToolCalls.add(event.id);
           else if (event.type === 'tool_end' || event.type === 'tool_result')
             unendedToolCalls.delete(event.id);
+          else if (event.type === 'text' && event.delta.trim().length > 0) sawAnswerText = true;
           yield event;
         }
       };
@@ -3130,6 +3164,11 @@ export class GthAgentRunner {
             detail: 'signal',
           })
         );
+      } else if (!sawAnswerText) {
+        // A turn that ended having said nothing did NOT complete, and saying it did is worse than
+        // saying nothing: this design defines an ABSENT reason as "a site we missed", and a
+        // present-but-false one silences that detector at the one case it was built for.
+        this.noteTermination(terminationReason('runner.events-empty', 'control', 'empty_response'));
       } else {
         this.noteCompleted('runner.events-completed');
       }
@@ -3188,11 +3227,19 @@ export class GthAgentRunner {
     if (!agent || !runConfig) return;
     if (!agent.getPendingToolInterrupts || !agent.streamWithEventsResume) return;
 
+    // [[EXT-159]] — see {@link resolveToolInterrupts}: which way the loop left is the fact that
+    // distinguishes this ending, and it is discarded unless the loop itself records it. An abort
+    // `return`s below and never reaches the note, which is right — a cancelled turn was stopped by
+    // the user, not by this bound.
+    let drained = false;
     // Bound the loop defensively so a misbehaving graph that re-suspends forever cannot spin.
     for (let guard = 0; guard < 100; guard++) {
       if (signal?.aborted) return;
       const pending = await agent.getPendingToolInterrupts(runConfig);
-      if (pending.length === 0) break;
+      if (pending.length === 0) {
+        drained = true;
+        break;
+      }
 
       const decisions: ToolApprovalDecision[] = [];
       for (const tool of pending) {
@@ -3200,6 +3247,15 @@ export class GthAgentRunner {
       }
 
       yield* agent.streamWithEventsResume({ decisions }, runConfig, [], signal);
+    }
+    if (!drained) {
+      this.noteTermination(
+        terminationReason(
+          'runner.events-interrupt-guard-exhausted',
+          'control',
+          'interrupt_drain_guard'
+        )
+      );
     }
   }
 

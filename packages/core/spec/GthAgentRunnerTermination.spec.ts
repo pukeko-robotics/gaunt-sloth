@@ -33,6 +33,12 @@ const mockAgent = {
   invoke: vi.fn(),
   stream: vi.fn(),
   streamWithEvents: vi.fn(),
+  // [[EXT-159]] — the tool-approval interrupt surface. Present so the drain loops actually run
+  // (they no-op outright on an agent lacking these), and defaulted in `beforeEach` to "nothing
+  // pending", which is the ordinary case every other cell here wants.
+  getPendingToolInterrupts: vi.fn(),
+  streamResume: vi.fn(),
+  streamWithEventsResume: vi.fn(),
   cleanup: vi.fn(),
   // [[EXT-159]] — the stub agent deliberately classifies NOTHING, so every reason a cell reads is
   // the runner's own. An agent that answered would win (its sites are inner), which would make
@@ -93,6 +99,7 @@ describe('[[EXT-159]] a reason at every GthAgentRunner termination site', () => 
     setProjectDir(projectDir);
     statusUpdateCallback = vi.fn();
     mockAgent.getTerminationReason.mockReturnValue(null);
+    mockAgent.getPendingToolInterrupts.mockResolvedValue([]);
 
     const base = {
       contentSource: 'file',
@@ -449,6 +456,95 @@ describe('[[EXT-159]] a reason at every GthAgentRunner termination site', () => 
       });
     });
 
+    /**
+     * Grammar member (2), "the model produced nothing", had two sites on the string path and NONE
+     * here — so the node's own motivating symptom, "the agent just stopped" with nothing on
+     * screen, on the surface the node argues users actually watch, reported `completed`: a
+     * legitimate hand-back. A present-but-false reason is worse than an absent one, because this
+     * design defines an absent reason as "a site we missed" and a populated field never triggers
+     * that.
+     *
+     * Classification only — no retry or `invoke` fallback is added to this path.
+     */
+    it('runner.events-empty — sets `empty_response` when the event turn yields no text at all', async () => {
+      mockAgent.streamWithEvents.mockImplementation(() => eventStreamOf([]));
+      const runner = await runnerFor(streamingConfig);
+
+      await drain(runner.processMessagesWithEvents(ask));
+
+      expect(runner.getTerminationReason()).toMatchObject({
+        site: 'runner.events-empty',
+        category: 'empty_response',
+        // Unlike `runner.empty-after-fallback`, the as-is retry here has never been spent: this
+        // path deliberately has none. So the category's own posture is accurate at this site.
+        retryableAsIs: true,
+      });
+    });
+
+    /**
+     * A turn that only ever ran tools said nothing either. This is the SAME rule the string path
+     * applies — that path accumulates `answerTextOf(...)`, which is answer segments only, so a
+     * turn whose whole output was tool traffic is empty there too.
+     */
+    it('runner.events-empty — a turn of pure tool traffic said nothing', async () => {
+      mockAgent.streamWithEvents.mockImplementation(() =>
+        eventStreamOf([
+          { type: 'tool_start', id: 't1', name: 'run_shell_command' },
+          { type: 'tool_result', id: 't1', content: 'ok' },
+        ])
+      );
+      const runner = await runnerFor(streamingConfig);
+
+      await drain(runner.processMessagesWithEvents(ask));
+
+      expect(runner.getTerminationReason()).toMatchObject({
+        site: 'runner.events-empty',
+        category: 'empty_response',
+      });
+    });
+
+    /**
+     * Reasoning is not the answer, and the two surfaces must not disagree about one turn. The
+     * string path enqueues `answerTextOf(chunk.content)`, which drops reasoning segments outright,
+     * so a reasoning-only turn is empty there; the event path splits the same segments into `text`
+     * and `reasoning_delta`. Keying on `text` is what keeps the two rulings identical.
+     */
+    it('runner.events-empty — reasoning alone is not an answer', async () => {
+      mockAgent.streamWithEvents.mockImplementation(() =>
+        eventStreamOf([
+          { type: 'reasoning_start' },
+          { type: 'reasoning_delta', delta: 'thinking about it' },
+          { type: 'reasoning_end' },
+        ])
+      );
+      const runner = await runnerFor(streamingConfig);
+
+      await drain(runner.processMessagesWithEvents(ask));
+
+      expect(runner.getTerminationReason()).toMatchObject({
+        site: 'runner.events-empty',
+        category: 'empty_response',
+      });
+    });
+
+    /** And whitespace is not an answer either — the string path's own `result.trim()` rule. */
+    it('runner.events-empty — whitespace-only text is not an answer', async () => {
+      mockAgent.streamWithEvents.mockImplementation(() =>
+        eventStreamOf([
+          { type: 'text', delta: '  ' },
+          { type: 'text', delta: '\n' },
+        ])
+      );
+      const runner = await runnerFor(streamingConfig);
+
+      await drain(runner.processMessagesWithEvents(ask));
+
+      expect(runner.getTerminationReason()).toMatchObject({
+        site: 'runner.events-empty',
+        category: 'empty_response',
+      });
+    });
+
     /** The `finally` runs on every path, so its site must not overwrite a real one. */
     it('does not let the abandoned site overwrite a completed turn', async () => {
       mockAgent.streamWithEvents.mockImplementation(() =>
@@ -459,6 +555,140 @@ describe('[[EXT-159]] a reason at every GthAgentRunner termination site', () => 
       await drain(runner.processMessagesWithEvents(ask));
 
       expect(runner.getTerminationReason()).toMatchObject({ category: 'completed' });
+    });
+
+    /**
+     * A cancelled turn usually has nothing to show for itself, so the empty branch must not eat
+     * the cancellation: the user stopping it is the truer fact, and the two have opposite
+     * postures — `empty_response` invites a retry and `cancelled` forbids one.
+     */
+    it('a cancelled turn that produced nothing is still `cancelled`, not empty', async () => {
+      const ac = new AbortController();
+      mockAgent.streamWithEvents.mockImplementation(() =>
+        (async function* (): AsyncGenerator<AgentStreamEvent> {
+          ac.abort();
+        })()
+      );
+      const runner = await runnerFor(streamingConfig);
+
+      await drain(runner.processMessagesWithEvents(ask, ac.signal));
+
+      expect(runner.getTerminationReason()).toMatchObject({
+        site: 'runner.events-cancelled',
+        category: 'cancelled',
+      });
+    });
+  });
+
+  /**
+   * [[EXT-159]] — the tool-approval drain loops bound themselves at 100 resume rounds. Falling out
+   * of that bound ends the turn because the RUNTIME gave up, and both loops then return into a
+   * caller that reports its own ordinary ending. Reaching an enumerated site is no defence when
+   * that site states a category that is affirmatively false, so each loop records the one fact
+   * only it can see: which way it left.
+   */
+  describe('the interrupt-drain guard exhausting', () => {
+    /** Always pending, never drained — the shape a graph that re-suspends forever presents. */
+    function alwaysPending() {
+      mockAgent.getPendingToolInterrupts.mockResolvedValue([
+        { id: 'call-1', name: 'run_shell_command', args: { command: 'ls' } },
+      ]);
+    }
+
+    async function drainEvents(stream: AsyncGenerator<AgentStreamEvent>): Promise<void> {
+      for await (const _event of stream) void _event;
+    }
+
+    it('runner.interrupt-guard-exhausted — the string path reports the bound, not `completed`', async () => {
+      alwaysPending();
+      mockAgent.stream.mockResolvedValue(textStreamOf(['hi']));
+      mockAgent.streamResume.mockImplementation(() => textStreamOf(['more']));
+      const runner = await runnerFor(streamingConfig);
+
+      await runner.processMessages(ask);
+
+      expect(runner.getTerminationReason()).toMatchObject({
+        site: 'runner.interrupt-guard-exhausted',
+        category: 'interrupt_drain_guard',
+        // Repeating the turn re-suspends the same way and exhausts the same bound.
+        retryableAsIs: false,
+        retryableAfterRemedy: true,
+        remedy: 'change-request',
+      });
+    });
+
+    it('runner.events-interrupt-guard-exhausted — and so does the typed-event path', async () => {
+      alwaysPending();
+      mockAgent.streamWithEvents.mockImplementation(() =>
+        eventStreamOf([{ type: 'text', delta: 'hi' }])
+      );
+      mockAgent.streamWithEventsResume.mockImplementation(() =>
+        eventStreamOf([{ type: 'text', delta: 'more' }])
+      );
+      const runner = await runnerFor(streamingConfig);
+
+      await drainEvents(runner.processMessagesWithEvents(ask));
+
+      expect(runner.getTerminationReason()).toMatchObject({
+        site: 'runner.events-interrupt-guard-exhausted',
+        category: 'interrupt_drain_guard',
+      });
+    });
+
+    /**
+     * The precedence the fix rests on. The turn returns a non-empty answer, so `processMessages`
+     * reaches `noteCompleted('runner.completed')` immediately afterwards — under last-write-wins
+     * that would overwrite the bound and restore the false `completed` this cell exists to
+     * prevent. Noting inside the loop, ahead of the caller's own site, is what first-write-wins
+     * then keeps.
+     */
+    it('the bound outranks the ordinary completion that follows it', async () => {
+      alwaysPending();
+      mockAgent.stream.mockResolvedValue(textStreamOf(['hi']));
+      mockAgent.streamResume.mockImplementation(() => textStreamOf(['more']));
+      const runner = await runnerFor(streamingConfig);
+
+      const result = await runner.processMessages(ask);
+
+      expect(result.length).toBeGreaterThan(0);
+      expect(runner.getTerminationReason()).not.toMatchObject({ category: 'completed' });
+    });
+
+    /** A drain that finishes normally is not a bound being hit, and must say nothing at all. */
+    it('says nothing when the drain completes with no pending interrupts', async () => {
+      mockAgent.getPendingToolInterrupts.mockResolvedValue([]);
+      mockAgent.stream.mockResolvedValue(textStreamOf(['hi']));
+      const runner = await runnerFor(streamingConfig);
+
+      await runner.processMessages(ask);
+
+      expect(runner.getTerminationReason()).toMatchObject({
+        site: 'runner.completed',
+        category: 'completed',
+      });
+    });
+
+    /**
+     * An aborted drain `return`s out of the loop before the bound is reached, so a turn the user
+     * stopped is never blamed on the guard.
+     */
+    it('an aborted event drain reports the cancellation, not the bound', async () => {
+      const ac = new AbortController();
+      alwaysPending();
+      mockAgent.streamWithEvents.mockImplementation(() =>
+        (async function* (): AsyncGenerator<AgentStreamEvent> {
+          yield { type: 'text', delta: 'hi' };
+          ac.abort();
+        })()
+      );
+      const runner = await runnerFor(streamingConfig);
+
+      await drainEvents(runner.processMessagesWithEvents(ask, ac.signal));
+
+      expect(runner.getTerminationReason()).toMatchObject({
+        site: 'runner.events-cancelled',
+        category: 'cancelled',
+      });
     });
   });
 

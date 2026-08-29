@@ -72,6 +72,16 @@ export type GthTerminationCategory =
   | 'tool_error_budget'
   /** The tool-loop guard ended a no-progress identical-call loop. */
   | 'tool_loop_guard'
+  /**
+   * The tool-approval interrupt drain gave up: the graph re-suspended on a gated tool call more
+   * times in one turn than the drain loop is willing to resume, so the RUNTIME ended the turn.
+   *
+   * Deliberately not `recursion_limit`, which states that the graph hit *its* recursion limit — a
+   * different bound, owned by LangGraph, with a different knob. Reporting one for the other would
+   * be the same false-category defect this taxonomy exists to remove, and `site` is what separates
+   * the two surfaces this bound has.
+   */
+  | 'interrupt_drain_guard'
   /** A tool threw, and the failure ended the turn. */
   | 'tool_error'
   /** The graph suspended on an `interrupt()` and is waiting to be resumed. */
@@ -106,14 +116,20 @@ export type GthTerminationSite =
   | 'runner.stream-error'
   /** The turn threw. */
   | 'runner.turn-error'
+  /** The string path's tool-approval drain ran out of resume rounds. */
+  | 'runner.interrupt-guard-exhausted'
   /** `GthAgentRunner.processMessagesWithEvents` drained its stream to the end. */
   | 'runner.events-completed'
+  /** The typed-event turn ended having yielded no answer text at all. */
+  | 'runner.events-empty'
   /** The typed-event turn ended because its signal was aborted. */
   | 'runner.events-cancelled'
   /** The typed-event turn threw. */
   | 'runner.events-error'
   /** The consumer stopped consuming the typed-event turn before it ended. */
   | 'runner.events-abandoned'
+  /** The typed-event path's tool-approval drain ran out of resume rounds. */
+  | 'runner.events-interrupt-guard-exhausted'
   /** The metadata reader fired on the non-streaming `invoke` path. */
   | 'agent.invoke-stop-metadata'
   /** The metadata reader fired on the string-streaming path. */
@@ -162,7 +178,17 @@ export type GthTerminationRemedy =
   /** Nothing is wrong: the run is parked and can be continued where it stopped. */
   | 'resume';
 
-/** The retry posture of a category — the two facts, plus the remedy the second one refers to. */
+/**
+ * The retry posture of a category — the two facts, plus the remedy the second one refers to.
+ *
+ * **Posture is per-CATEGORY, so anything acting on a reason must read its `site` as well.** One
+ * table decides the posture precisely so no site can invent its own, and the price of that is that
+ * the table cannot know how far a given site already got. The standing example is
+ * `empty_response`, which is `retryableAsIs: true` because an empty turn usually is worth asking
+ * again — yet `runner.empty-after-fallback` is reached only *because* that as-is retry was already
+ * spent, while `runner.events-empty` is reached with it never spent at all. A consumer reading the
+ * posture flags alone would retry the first of those a second time.
+ */
 export interface GthTerminationPosture {
   /** Is sending the identical request again a sane thing to do? */
   retryableAsIs: boolean;
@@ -211,6 +237,13 @@ const POSTURE: Readonly<Record<GthTerminationCategory, GthTerminationPosture>> =
   // approach is exactly what each guard's own notice asks the model for.
   tool_error_budget: { retryableAsIs: false, retryableAfterRemedy: true, remedy: 'change-request' },
   tool_loop_guard: { retryableAsIs: false, retryableAfterRemedy: true, remedy: 'change-request' },
+  // The same turn re-suspends the same way, so repeating it exhausts the same bound. Asking for
+  // less gated work in one turn is what gets under it.
+  interrupt_drain_guard: {
+    retryableAsIs: false,
+    retryableAfterRemedy: true,
+    remedy: 'change-request',
+  },
   tool_error: { retryableAsIs: false, retryableAfterRemedy: true, remedy: 'change-request' },
   // Not a failure at all: the run is parked mid-flight and continues where it stopped.
   suspended: { retryableAsIs: false, retryableAfterRemedy: true, remedy: 'resume' },
@@ -505,7 +538,14 @@ export function classifyThrownTermination(error: unknown): GthTerminationClassif
     if (containsAny(text, NETWORK_PATTERNS)) return { category: 'network_error' };
     if (containsAny(text, PROVIDER_ERROR_PATTERNS)) return { category: 'provider_error' };
     if (status === 400 || containsAny(text, INVALID_REQUEST_PATTERNS)) {
-      return { category: 'invalid_request', detail: status === undefined ? undefined : '400' };
+      // `detail` is the raw token the classification was made from, so it states the status the
+      // response ACTUALLY had. A 402 or 409 whose prose matches the patterns reaches this branch
+      // too (it is past the 429/401/403/408/5xx arms), and stamping a flat '400' on one would put
+      // a false statement in the field that exists to record what was seen.
+      return {
+        category: 'invalid_request',
+        detail: status === undefined ? undefined : String(status),
+      };
     }
 
     return { category: 'unknown', ...(name === undefined ? {} : { detail: name }) };

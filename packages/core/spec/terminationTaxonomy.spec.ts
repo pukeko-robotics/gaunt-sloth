@@ -77,6 +77,7 @@ describe('[[EXT-159]] retryability is two facts, not a boolean', () => {
       'approval_stop',
       'tool_error_budget',
       'tool_loop_guard',
+      'interrupt_drain_guard',
       'tool_error',
       'suspended',
       'recursion_limit',
@@ -99,6 +100,24 @@ describe('[[EXT-159]] retryability is two facts, not a boolean', () => {
       retryableAfterRemedy: false,
     });
     expect(terminationPosture('rate_limited').remedy).toBe('back-off');
+  });
+
+  /**
+   * The interrupt drain's own bound is NOT the graph's recursion limit. They are different bounds
+   * owned by different layers with different knobs, and `recursion_limit`'s own meaning is that
+   * the graph hit its limit — which, at the drain, did not happen. Reporting one for the other
+   * would be the false-category defect this taxonomy exists to remove, so it is a member of its
+   * own and `site` separates the two surfaces it has.
+   */
+  it('the interrupt-drain bound is its own member, distinct from the graph recursion limit', () => {
+    expect(terminationPosture('interrupt_drain_guard')).toEqual({
+      retryableAsIs: false,
+      retryableAfterRemedy: true,
+      remedy: 'change-request',
+    });
+    expect(
+      terminationReason('runner.interrupt-guard-exhausted', 'control', 'interrupt_drain_guard')
+    ).toMatchObject({ category: 'interrupt_drain_guard' });
   });
 
   /** Unclassified is not "probably fine": nothing is known, so nothing is offered. */
@@ -187,6 +206,27 @@ describe('[[EXT-159]] the exception feeder', () => {
     ['a plain 400', Object.assign(new Error('bad'), { status: 400 }), 'invalid_request'],
   ])('classifies %s', (_label, error, expected) => {
     expect(classifyThrownTermination(error).category).toBe(expected);
+  });
+
+  /**
+   * `detail` is documented as the raw token the classification was made from, so it must state the
+   * status the response actually had. A non-500 status whose prose matches the invalid-request
+   * patterns reaches that branch too — it is past the 429/401/403/408/5xx arms — and stamping a
+   * flat `'400'` on one would put a false statement in the field that exists to record what was
+   * seen. The 400 case is the control: it must keep reporting 400.
+   */
+  it('records the status an invalid request actually carried, not a flat 400', () => {
+    const conflict = Object.assign(new Error('invalid request: already exists'), { status: 409 });
+    expect(classifyThrownTermination(conflict)).toMatchObject({
+      category: 'invalid_request',
+      detail: '409',
+    });
+
+    const realBadRequest = Object.assign(new Error('bad'), { status: 400 });
+    expect(classifyThrownTermination(realBadRequest)).toMatchObject({
+      category: 'invalid_request',
+      detail: '400',
+    });
   });
 
   /** The payload SDKs nest under `error` / `response` is read, not only the top-level message. */
