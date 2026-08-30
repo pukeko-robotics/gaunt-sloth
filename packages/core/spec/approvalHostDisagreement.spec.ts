@@ -501,11 +501,20 @@ describe('[[EXT-156]] the folded note states the reason the displayed call actua
   /**
    * The pair. Without this, a note chosen for every structured call would satisfy the case above —
    * and this arm's genuine folds, which the node's acceptance is about, would lose their reason.
-   * The `command` argument is displayed and names nobody; the URL argument is what folds.
+   * This call carries no `command` at all, so the surface serialises every argument it has: the
+   * display holds the whole of them, and what folded is a character.
+   *
+   * **The second argument is deliberate and is what keeps this cell discriminating.** With one
+   * argument the predicate would be false twice over — no `command` AND nothing unshown — and a
+   * mutation dropping either half would still pass here. Carrying a sibling leaves the missing
+   * `command` as the only reason, so this is the cell that pins it.
    */
   it('keeps the characters reason for a tool call whose displayed text shows everything', () => {
     const url = `https://${FULLWIDTH_R}egistry.npmjs.org/x`;
-    const shown = toolPending({ url });
+    const shown = toolPending({ url, note: 'nothing to see here' });
+    // The two halves of the discriminator, asserted: more than one argument, and no `command`.
+    expect(Object.keys(shown.args).length).toBeGreaterThan(1);
+    expect(shown.args.command).toBeUndefined();
     expect(approvalCallText(shown)).toContain(FULLWIDTH_R);
     expect(approvalHostGroups(shown)).toEqual({ written: [], folded: ['registry.npmjs.org'] });
     const texts = approvalRequestRows(shown, { columns }).map((row) => row.text);
