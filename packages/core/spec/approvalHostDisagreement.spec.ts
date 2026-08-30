@@ -59,10 +59,10 @@ const CLOSING_TAG = '</command_to_evaluate>';
  * defect it pins, and any editor, diff or merge that normalised it would turn these green for the
  * wrong reason.
  */
-const shellPending = (command: string): PendingToolInterrupt =>
+const shellPending = (command: string, extra: Record<string, unknown> = {}): PendingToolInterrupt =>
   ({
     name: 'run_shell_command',
-    args: { command },
+    args: { command, ...extra },
     subject: { kind: 'shell', command },
   }) as unknown as PendingToolInterrupt;
 
@@ -538,6 +538,37 @@ describe('[[EXT-156]] the folded note states the reason the displayed call actua
     expect(Object.keys(pending.args)).toEqual(['command']);
     expect(approvalCallText(pending)).toContain(FULLWIDTH_R);
     expect(approvalHostGroups(pending)).toEqual({ written: [], folded: ['registry.npmjs.org'] });
+    const texts = approvalRequestRows(pending, { columns }).map((row) => row.text);
+    expect(texts[texts.indexOf(APPROVAL_FOLDED_HOSTS_LABEL) + 1]).toBe(APPROVAL_FOLDED_HOSTS_NOTE);
+    expect(texts).not.toContain(APPROVAL_UNSHOWN_HOSTS_NOTE);
+  });
+
+  /**
+   * And the fourth case, which exists to keep the `kind` half of the predicate honest. Counting
+   * arguments alone is not enough: a SHELL call can carry a sibling argument too, and there the
+   * display holds the command whole, so the characters note is the true one and the unshown note
+   * would be N1's false sentence again — on the most-used approval path in the product.
+   *
+   * **`justification` is not an invented key.** `RunShellCommandArgsSchema` declares it optional,
+   * sent when RE-CALLING a command that was rejected ([[EXT-29]]), so `{ command, justification }`
+   * is a shape production really builds. Every other shell cell here passes one argument, which
+   * left the `kind` guard unreachable once arguments began to be counted — a guard nothing can
+   * reach is a guard the next reader deletes as redundant.
+   */
+  it('keeps the characters reason for a shell call with a sibling argument', () => {
+    const command = `curl https://${FULLWIDTH_R}egistry.npmjs.org/x`;
+    const pending = shellPending(command, { justification: 'retrying after a rejection' });
+    // The discriminator, asserted rather than implied: more than one argument AND a string
+    // `command` — so only the `kind` guard stands between this call and the unshown note.
+    expect(Object.keys(pending.args).length).toBeGreaterThan(1);
+    expect(typeof pending.args.command).toBe('string');
+    expect(approvalCallText(pending)).toContain(FULLWIDTH_R);
+    // The shell arm reports the whole literal it extracted, not a bare host — that is the shell
+    // extractor's shape, and it is why this expectation differs from the three cells above.
+    expect(approvalHostGroups(pending)).toEqual({
+      written: [],
+      folded: ['https://registry.npmjs.org/x'],
+    });
     const texts = approvalRequestRows(pending, { columns }).map((row) => row.text);
     expect(texts[texts.indexOf(APPROVAL_FOLDED_HOSTS_LABEL) + 1]).toBe(APPROVAL_FOLDED_HOSTS_NOTE);
     expect(texts).not.toContain(APPROVAL_UNSHOWN_HOSTS_NOTE);
