@@ -224,10 +224,16 @@ export const APPROVAL_FOLDED_HOSTS_NOTE =
  * third group: splitting the hosts would tell a reader that two kinds of counterparty are at stake
  * when there is one, and the thing they must not lose is the name.
  *
- * It claims only what is true of every call that reaches it: what is on screen is the command
- * argument, and it is not all of them. It deliberately does NOT say the hosts came from the
- * arguments it does not show — a `command` argument spelling a whole URL is read for a host like
- * any other value, and would fold rather than hide.
+ * It claims two things, and the predicate that picks it enforces both: what is on screen is the
+ * command argument, and it is not all of them. `showsCommandArgumentOnly` is what makes the second
+ * half true rather than merely plausible — the row is printed only for a call that carries an
+ * argument besides `command`, so there really is a "them" and the screen really does hold one of
+ * it. A call whose `command` is its ONLY argument gets the characters note instead: its arguments
+ * are all on screen, and what the reader cannot see there is a character, not an argument.
+ *
+ * It deliberately does NOT say the hosts came from the arguments it does not show — a `command`
+ * argument spelling a whole URL is read for a host like any other value, and folds rather than
+ * hides.
  */
 export const APPROVAL_UNSHOWN_HOSTS_NOTE =
   '    The call above shows only its command argument, not all of them.';
@@ -261,13 +267,31 @@ export function approvalCallText(pending: Pick<PendingToolInterrupt, 'args'>): s
  * parameters may well expose a `command`, so the shape is constructible; how often a real server
  * emits it is not established here, and this decides only which sentence the block prints.
  *
- * Neither branch moves. This asks which of the two the call is on, and nothing else reads it.
+ * **Being on that arm is not sufficient, and the second condition is what the name promises.** A
+ * `tool`/`mcpTool` call whose `command` IS its only argument has its whole arguments on screen: the
+ * display is not part of anything, it is the lot. A note saying otherwise sends the reader looking
+ * for arguments that do not exist while the character that folded sits on the line above — this
+ * module's own defect, moved onto the arm that was supposed to be the remedy. So the call must also
+ * carry something besides `command`, which is the literal truth condition of the sentence this
+ * picks.
+ *
+ * **An argument COUNT, and not a comparison of texts, for a measured reason.** Asking whether the
+ * displayed text differs from the serialised arguments cannot answer this: `{"command":"…"}` is a
+ * different string from `…` on every call that reaches here, the one-argument call included. A
+ * comparison that did answer it would have to be asked per HOST, which is a bigger question than
+ * choosing a sentence and is not asked here.
+ *
+ * Neither branch moves, and nothing else reads this: it picks a sentence.
  */
 function showsCommandArgumentOnly(
   pending: Pick<PendingToolInterrupt, 'args' | 'subject'>
 ): boolean {
   const kind = pending.subject?.kind;
-  return (kind === 'tool' || kind === 'mcpTool') && commandStringOf(pending) !== undefined;
+  return (
+    (kind === 'tool' || kind === 'mcpTool') &&
+    commandStringOf(pending) !== undefined &&
+    Object.keys(pending.args).length > 1
+  );
 }
 
 /**
@@ -386,17 +410,25 @@ function asciiLowerCase(text: string): string {
  * on a call that already cannot auto-approve ([[EXT-61]] floors it at `destructive` before the
  * rater).
  *
- * **The other direction is not "never fires"; it is "never fires for the wrong REASON", and that
- * costs a second note row.** `approvalHosts` reads a `tool`/`mcpTool` call's hosts off ALL its
- * arguments while `approvalCallText` displays `args.command` alone whenever it is a string, so
- * there the shown text is a strict SUBSET of what the hosts came from — see
- * `showsCommandArgumentOnly`. A host named by a sibling argument is then correctly labelled (the
+ * **The other direction costs a second note row, and the label is what the two of them share.**
+ * `approvalHosts` reads a `tool`/`mcpTool` call's hosts off ALL its arguments while
+ * `approvalCallText` displays `args.command` alone whenever it is a string, so the shown text is
+ * SOMETIMES less than what the hosts came from — when the call carries an argument besides
+ * `command`, and only then; see `showsCommandArgumentOnly`. On a call whose `command` is its only
+ * argument the display is the whole of them, and the ordinary characters note is the true one
+ * there. A host named by a sibling argument is correctly labelled (the
  * call as shown does not spell it) while *"the call above writes them with different characters"*
  * would be false: it does not write them at all. So the label is one and the note is two, chosen by
  * that predicate — the classification is never weakened to make one sentence fit both. Comparing
  * against the serialised arguments instead would have "fixed" this by calling such a host WRITTEN,
  * printing `Hosts this call names:` beside a displayed call that names nobody — which is [[EXT-156]]'s
  * own defect reached by another route. Do not.
+ *
+ * **The note is one per BLOCK; the reason is one per HOST.** A call can fold one host by characters
+ * and keep another off the screen behind an argument it does not display, and one row cannot say
+ * both — so a call carrying an argument besides `command` states the partial display, and the
+ * reader is left to the label for the other. The label is true of every host under it either way
+ * and no host moves between the groups, so what that reader loses is a reason, never a name.
  *
  * ## Why the raw spelling is not reproduced here
  *

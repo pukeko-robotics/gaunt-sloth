@@ -463,6 +463,11 @@ describe('[[EXT-156]] the block renders the disagreement, last, in our own words
  * call that names nobody, which is this node's own defect reached by another route. So the group is
  * unchanged and the note is chosen.
  *
+ * **"Only part of" is a property of the CALL, not of the arm it is on.** A `tool`/`mcpTool` call
+ * whose `command` is its only argument shows all of them, so there the partial-display note is a
+ * false sentence and the characters note is the true one — the third cell below. The predicate asks
+ * for a sibling argument for exactly that reason, and that cell reds if it stops asking.
+ *
  * The shape is constructible rather than observed: `GthAgentRunner.approvalSubjectFor` returns
  * `kind: 'shell'` only for the shell tool, so any other tool with a string `command` argument lands
  * here — but no real MCP server was seen emitting one, and nothing below depends on how common it
@@ -485,6 +490,10 @@ describe('[[EXT-156]] the folded note states the reason the displayed call actua
     expect(texts[label + 1]).toBe(APPROVAL_UNSHOWN_HOSTS_NOTE);
     // …and the sentence that would be false here is not the one printed.
     expect(texts).not.toContain(APPROVAL_FOLDED_HOSTS_NOTE);
+    // Nor does the note claim a provenance it cannot have: the hosts are read from every argument,
+    // the displayed one included, so "came from the arguments you cannot see" would be false on the
+    // call in the third cell below. It says the display is partial and stops there.
+    expect(APPROVAL_UNSHOWN_HOSTS_NOTE).not.toContain('came from');
     // `kind: 'tool'` reaches the same arm of `approvalHosts` and so must reach the same note.
     expect(renderOf(toolPending(args))).toContain(APPROVAL_UNSHOWN_HOSTS_NOTE);
   });
@@ -505,16 +514,23 @@ describe('[[EXT-156]] the folded note states the reason the displayed call actua
   });
 
   /**
-   * And the third case, which is why the note claims only that the display is partial: a `command`
-   * argument spelling a whole URL IS on screen and IS read for a host, so it folds like any other
-   * value. A note asserting the hosts came from arguments the call does not show would be false
-   * here; the one printed is true of all three.
+   * And the third case, which is the one the predicate has to ask a second question to get right: a
+   * `command` argument spelling a whole URL IS on screen and IS read for a host, so it folds like
+   * any other value — and it is the ONLY argument, so nothing is left out of the display at all.
+   * *"Not all of them"* is false where there is no them, and it would send the reader hunting for
+   * arguments that do not exist while the impostor character sits on the line above. What is
+   * unshown here is a character, so the characters note is the true one.
    */
-  it('still says the display is partial when the shown command argument is itself the URL', () => {
+  it('keeps the characters reason when the shown command argument is the only argument', () => {
     const pending = mcpPending({ command: `https://${FULLWIDTH_R}egistry.npmjs.org/x` });
+    // The discriminator, asserted rather than implied: one argument, and the screen carries it
+    // whole. This is the `tool`/`mcpTool` arm with a string `command`, so the cell above's note is
+    // one condition away — and that condition is what this pins.
+    expect(Object.keys(pending.args)).toEqual(['command']);
+    expect(approvalCallText(pending)).toContain(FULLWIDTH_R);
     expect(approvalHostGroups(pending)).toEqual({ written: [], folded: ['registry.npmjs.org'] });
     const texts = approvalRequestRows(pending, { columns }).map((row) => row.text);
-    expect(texts[texts.indexOf(APPROVAL_FOLDED_HOSTS_LABEL) + 1]).toBe(APPROVAL_UNSHOWN_HOSTS_NOTE);
-    expect(APPROVAL_UNSHOWN_HOSTS_NOTE).not.toContain('came from');
+    expect(texts[texts.indexOf(APPROVAL_FOLDED_HOSTS_LABEL) + 1]).toBe(APPROVAL_FOLDED_HOSTS_NOTE);
+    expect(texts).not.toContain(APPROVAL_UNSHOWN_HOSTS_NOTE);
   });
 });
