@@ -382,6 +382,29 @@ describe('detectRefusal — Gemini (CFG-41)', () => {
     });
   });
 
+  // CFG-33's thought-strip, on a REAL Gemini trigger. That fix folds the text parts minus the ones
+  // Gemini marks `thought: true`, so the refusal notice cannot quote the model's private thinking
+  // back to the user as its stated explanation — but until the key half above, no Gemini message
+  // was ever detected as a refusal, so the strip had never run for one. The CFG-33 cell reaches it
+  // through `stop_reason: 'refusal'`, which is Anthropic's spelling and a shape Gemini never sends.
+  // This is the composition: Gemini's own trigger, Gemini's own thought-marked content, and the
+  // string `buildRefusalMessage` puts in front of a user.
+  it('strips a Gemini thought summary from a refusal Gemini itself triggered', () => {
+    const chunk = new AIMessageChunk({
+      content: [
+        { thought: true, type: 'text', text: 'The user seems to want something I should refuse. ' },
+        { type: 'text', text: 'I cannot help with that.' },
+      ],
+      response_metadata: { model_provider: 'google' },
+      additional_kwargs: { finishReason: 'SAFETY' },
+    });
+    expect(detectRefusal(chunk)).toEqual({
+      provider: 'google',
+      reason: 'safety',
+      explanation: 'I cannot help with that.',
+    });
+  });
+
   // The feeder end-to-end: a Gemini refusal reaches the shared taxonomy as a content_refusal
   // naming google, not as an unclassified empty turn.
   it('classifies a Gemini refusal into the termination taxonomy', async () => {
