@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AIMessage, AIMessageChunk, ToolMessage } from '@langchain/core/messages';
+import { concat } from '@langchain/core/utils/stream';
 import { detectRefusal, buildRefusalMessage } from '#src/core/refusal.js';
 
 // EXT-37 — the per-provider refusal-shape normalizer. Covers the three stop/finish-reason shapes
@@ -257,5 +258,143 @@ describe('detectStopMetadata — the metadata feeder', () => {
     expect(detectStopMetadata(new ToolMessage({ content: 'ok', tool_call_id: 'c1' }))).toBeNull();
     expect(detectStopMetadata(undefined)).toBeNull();
     expect(detectStopMetadata('a string')).toBeNull();
+  });
+});
+
+// CFG-41 — a Gemini refusal was missed TWICE OVER, and the order is what these cells pin. The KEY
+// was wrong before the tokens were: `detectRefusal` read `finish_reason` / `stop_reason` /
+// `stopReason` and never camelCase `finishReason`, which is the only place @langchain/google's
+// streamed chunk puts it (`response_metadata` carries `model_provider` and nothing else there).
+// So adding the tokens alone would have left them on a branch that never ran for Gemini.
+//
+// The first two cells are a DISCRIMINATING PAIR: each isolates one half by holding the other half
+// already-working, so a fix to only one of them cannot make both pass.
+describe('detectRefusal — Gemini (CFG-41)', () => {
+  // KEY half, isolated: a token detectRefusal ALREADY recognised, under the camelCase key it did
+  // not read. Fails while the key is unread, whatever is in the token set.
+  it('reads a camelCase finishReason (key half — token already recognised)', () => {
+    const msg = new AIMessage({
+      content: '',
+      additional_kwargs: { finishReason: 'content_filter' },
+    });
+    expect(detectRefusal(msg)?.reason).toBe('content_filter');
+  });
+
+  // TOKEN half, isolated: a key detectRefusal ALREADY read, carrying a token it did not recognise.
+  // Fails while SAFETY is absent from the token set, whatever keys are read.
+  it('recognises SAFETY (token half — key already read)', () => {
+    const msg = new AIMessage({ content: '', response_metadata: { finish_reason: 'SAFETY' } });
+    expect(detectRefusal(msg)).toEqual({
+      provider: 'google',
+      reason: 'safety',
+      explanation: '',
+    });
+  });
+
+  // Both halves at once — the shape @langchain/google 0.2.3 actually emits on the streaming path
+  // (`_streamResponseChunks`: response_metadata = { model_provider }, the reason camelCase in
+  // additional_kwargs). This is what the node measured live.
+  it('detects the real streamed Gemini chunk shape', () => {
+    const chunk = new AIMessageChunk({
+      content: '',
+      response_metadata: { model_provider: 'google' },
+      additional_kwargs: { finishReason: 'SAFETY', finishMessage: 'Blocked for safety.' },
+    });
+    expect(detectRefusal(chunk)).toEqual({
+      provider: 'google',
+      reason: 'safety',
+      explanation: '',
+    });
+  });
+
+  // REACHABILITY at the site the agent actually inspects. GthAbstractAgent calls detectRefusal on
+  // the AGGREGATED chunk as well as on each chunk, and Gemini streams the reason on its last chunk
+  // only — so the aggregate is where a real refusal is seen. Asserting it here proves the fix
+  // survives `concat`, which merges additional_kwargs rather than replacing them.
+  it('detects on the aggregated chunk the agent inspects', () => {
+    const text = new AIMessageChunk({
+      content: 'I will not ',
+      response_metadata: { model_provider: 'google' },
+    });
+    const last = new AIMessageChunk({
+      content: 'help with that.',
+      response_metadata: { model_provider: 'google' },
+      additional_kwargs: { finishReason: 'PROHIBITED_CONTENT' },
+    });
+    const aggregated = concat(text, last);
+    expect(detectRefusal(aggregated)).toEqual({
+      provider: 'google',
+      reason: 'prohibited_content',
+      explanation: 'I will not help with that.',
+    });
+  });
+
+  // The whole content-policy set, taken from @langchain/google 0.2.3's own `mapGeminiFinishReason`
+  // (utils/stream_events.js) — every reason that package classifies as `content_filter`. Shipping
+  // only the two the node names would leave the identical defect alive for the other seven.
+  it.each([
+    'SAFETY',
+    'RECITATION',
+    'LANGUAGE',
+    'BLOCKLIST',
+    'PROHIBITED_CONTENT',
+    'SPII',
+    'IMAGE_SAFETY',
+    'IMAGE_PROHIBITED_CONTENT',
+    'IMAGE_RECITATION',
+  ])('detects Gemini finishReason=%s', (reason) => {
+    const chunk = new AIMessageChunk({
+      content: '',
+      additional_kwargs: { finishReason: reason },
+    });
+    expect(detectRefusal(chunk)).toEqual({
+      provider: 'google',
+      reason: reason.toLowerCase(),
+      explanation: '',
+    });
+  });
+
+  // The negative control for the widening. Matching is now case-insensitive, and the pre-existing
+  // negative list is all lower-case — so it cannot fail if the widening goes too far. These are
+  // Gemini's own non-refusal reasons in Gemini's own casing.
+  it.each(['STOP', 'TOOL_CALLS', 'MAX_TOKENS', 'FINISH_REASON_UNSPECIFIED', 'OTHER'])(
+    'returns null for a normal Gemini finishReason (%s)',
+    (reason) => {
+      const chunk = new AIMessageChunk({
+        content: 'ok',
+        additional_kwargs: { finishReason: reason },
+      });
+      expect(detectRefusal(chunk)).toBeNull();
+    }
+  );
+
+  // detectRefusal runs BEFORE detectOutputTruncation inside detectStopMetadata, so a widened
+  // refusal set could swallow a truncation. MAX_TOKENS must stay a truncation.
+  it('leaves Gemini MAX_TOKENS classified as a truncation, not a refusal', async () => {
+    const { detectStopMetadata } = await import('#src/core/refusal.js');
+    const chunk = new AIMessageChunk({
+      content: 'half an answer',
+      additional_kwargs: { finishReason: 'MAX_TOKENS' },
+    });
+    expect(detectStopMetadata(chunk)).toEqual({
+      category: 'output_truncated',
+      detail: 'max_tokens',
+    });
+  });
+
+  // The feeder end-to-end: a Gemini refusal reaches the shared taxonomy as a content_refusal
+  // naming google, not as an unclassified empty turn.
+  it('classifies a Gemini refusal into the termination taxonomy', async () => {
+    const { detectStopMetadata } = await import('#src/core/refusal.js');
+    const chunk = new AIMessageChunk({
+      content: '',
+      response_metadata: { model_provider: 'google' },
+      additional_kwargs: { finishReason: 'SAFETY' },
+    });
+    expect(detectStopMetadata(chunk)).toEqual({
+      category: 'content_refusal',
+      provider: 'google',
+      detail: 'safety',
+    });
   });
 });

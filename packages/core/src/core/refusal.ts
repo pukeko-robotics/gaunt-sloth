@@ -33,8 +33,15 @@ import type { GthTerminationClassification } from '#src/core/terminationReason.j
 /** One detected refusal, normalized across providers. */
 export interface RefusalInfo {
   /** Best-effort provider family the signal came from (for logging / the surfaced message). */
-  provider: 'openai' | 'anthropic' | 'bedrock' | 'unknown';
-  /** The raw stop/finish reason token that flagged the refusal (e.g. `content_filter`). */
+  provider: 'openai' | 'anthropic' | 'bedrock' | 'google' | 'unknown';
+  /**
+   * The stop/finish reason token that flagged the refusal, lower-cased (e.g. `content_filter`).
+   *
+   * Lower-cased rather than raw because the token's case is a per-provider spelling, not a fact:
+   * Gemini shouts `SAFETY` where OpenAI writes `content_filter`, and this value is matched, logged
+   * and carried into the taxonomy's `detail` — the same normalization
+   * {@link detectOutputTruncation} already applies to its own token.
+   */
   reason: string;
   /** Any model-provided explanation text (empty string when the refusal carried none). */
   explanation: string;
@@ -77,10 +84,59 @@ function extractRefusalText(message: unknown): string {
 }
 
 /**
+ * The finish reasons Gemini uses when its safety system declined, lower-cased.
+ *
+ * Taken from `@langchain/google`'s own `mapGeminiFinishReason` — every reason that package
+ * classifies as a `content_filter`, rather than the two a bug report happened to name. The set is
+ * Gemini's, so nothing here can widen another provider's detection.
+ *
+ * Both spellings of the multi-word members are listed because the provider lists both.
+ */
+const GEMINI_REFUSAL_REASONS: ReadonlySet<string> = new Set([
+  'safety',
+  'recitation',
+  'language',
+  'blocklist',
+  'prohibited_content',
+  'prohibited-content',
+  'spii',
+  'image_safety',
+  'image-safety',
+  'image_prohibited_content',
+  'image-prohibited-content',
+  'image_recitation',
+  'image-recitation',
+]);
+
+/**
+ * The first string value among `keys` × `sources`, lower-cased — key-major, so an earlier key wins
+ * over an earlier source, else `undefined`.
+ *
+ * Skipping non-strings rather than stopping at the first *present* value is deliberate: a provider
+ * that writes a structured value under one spelling must not hide the plain token another spelling
+ * carries. Lower-casing here is what lets every comparison below be written once, in one case.
+ */
+function firstReasonToken(
+  sources: readonly unknown[],
+  keys: readonly string[]
+): string | undefined {
+  for (const key of keys) {
+    for (const source of sources) {
+      const value = readField(source, key);
+      if (typeof value === 'string' && value.length > 0) return value.toLowerCase();
+    }
+  }
+  return undefined;
+}
+
+/**
  * Inspect a finished model message (an `AIMessage` / `AIMessageChunk`, or any object exposing
  * `response_metadata` / `additional_kwargs`) and return a {@link RefusalInfo} when its stop/finish
  * reason indicates a content-policy refusal, else `null`. Defensive: any non-message / unexpected
  * shape yields `null`, so a normal turn is never mistaken for a refusal.
+ *
+ * Reasons are compared lower-cased, because the case is a provider's spelling and not a fact —
+ * Gemini shouts `SAFETY` where OpenAI writes `content_filter`.
  *
  * Covered shapes:
  *  - OpenAI-family `finish_reason: 'content_filter'` (also under `additional_kwargs`).
@@ -91,25 +147,22 @@ function extractRefusalText(message: unknown): string {
  *  - Bedrock Converse content filter: `stopReason`/`stop_reason`/`finish_reason` ===
  *    `'content_filtered'` (EXT-41 — a distinct `StopReason` enum value from `guardrail_intervened`
  *    that was previously mapped to `null`, i.e. a silent empty turn / false negative).
+ *  - Gemini's safety reasons ({@link GEMINI_REFUSAL_REASONS}) under **camelCase `finishReason`**
+ *    (CFG-41). That key is the half that has to come first: `@langchain/google`'s streamed chunk
+ *    puts `model_provider` and nothing else in `response_metadata` and the reason only in
+ *    `additional_kwargs.finishReason`, so a token added without the key would sit on a branch that
+ *    never ran for Gemini.
  */
 export function detectRefusal(message: unknown): RefusalInfo | null {
   if (!message || typeof message !== 'object') return null;
 
   const meta = readField(message, 'response_metadata');
   const kwargs = readField(message, 'additional_kwargs');
+  const sources = [meta, kwargs];
 
-  // Gather the stop/finish reason from every place providers surface it.
-  const finishReason =
-    readField(meta, 'finish_reason') ?? readField(kwargs, 'finish_reason') ?? undefined;
-  const stopReasonSnake =
-    readField(meta, 'stop_reason') ?? readField(kwargs, 'stop_reason') ?? undefined;
-  const stopReasonCamel =
-    readField(meta, 'stopReason') ?? readField(kwargs, 'stopReason') ?? undefined;
-
-  const asString = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
-  const finish = asString(finishReason);
-  const stopSnake = asString(stopReasonSnake);
-  const stopCamel = asString(stopReasonCamel);
+  // Gather the stop/finish reason from every place providers surface it, in both spellings.
+  const finish = firstReasonToken(sources, ['finish_reason', 'finishReason']);
+  const stop = firstReasonToken(sources, ['stop_reason', 'stopReason']);
 
   const explanation = extractRefusalText(message);
 
@@ -118,13 +171,12 @@ export function detectRefusal(message: unknown): RefusalInfo | null {
     return { provider: 'openai', reason: 'content_filter', explanation };
   }
   // Anthropic refusal stop reason.
-  if (stopSnake === 'refusal' || stopCamel === 'refusal') {
+  if (stop === 'refusal') {
     return { provider: 'anthropic', reason: 'refusal', explanation };
   }
   // Bedrock Converse guardrail intervention (camelCase `stopReason`, or snake / finish variants).
   if (
-    stopCamel === 'guardrail_intervened' ||
-    stopSnake === 'guardrail_intervened' ||
+    stop === 'guardrail_intervened' ||
     finish === 'guardrail_intervened' ||
     readField(kwargs, 'amazon-bedrock-guardrailAction') === 'INTERVENED' ||
     readField(meta, 'amazon-bedrock-guardrailAction') === 'INTERVENED'
@@ -134,12 +186,13 @@ export function detectRefusal(message: unknown): RefusalInfo | null {
   // EXT-41 — Bedrock Converse content filter. A distinct `StopReason` enum value from
   // `guardrail_intervened` (both live in the same AWS Converse `StopReason` enum); previously
   // unmapped, so a content-filtered turn returned `null` → the silent empty-turn false negative.
-  if (
-    stopCamel === 'content_filtered' ||
-    stopSnake === 'content_filtered' ||
-    finish === 'content_filtered'
-  ) {
+  if (stop === 'content_filtered' || finish === 'content_filtered') {
     return { provider: 'bedrock', reason: 'content_filtered', explanation };
+  }
+  // CFG-41 — Gemini's safety system. Keyed on the finish reason only: these tokens are Gemini's
+  // own, and Gemini never spells the reason as a stop reason.
+  if (finish !== undefined && GEMINI_REFUSAL_REASONS.has(finish)) {
+    return { provider: 'google', reason: finish, explanation };
   }
 
   return null;
@@ -148,7 +201,7 @@ export function detectRefusal(message: unknown): RefusalInfo | null {
 /**
  * The provider spellings of "the answer hit the output cap", lower-cased.
  *
- * The same four places {@link detectRefusal} reads carry this one too, spelled per family: OpenAI's
+ * The places {@link detectRefusal} reads carry this one too, spelled per family: OpenAI's
  * `finish_reason: 'length'`, Anthropic's and Bedrock's `stop_reason: 'max_tokens'`, Gemini's
  * `finishReason: 'MAX_TOKENS'`, Ollama's `done_reason: 'length'`. LangChain normalizes none of it.
  *
@@ -165,9 +218,17 @@ const TRUNCATION_REASONS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Every stop/finish reason token a message carries, lower-cased, from both `response_metadata` and
- * `additional_kwargs` and in both snake and camel case — the same four places {@link detectRefusal}
- * looks, so the two detections can never come to disagree about where the metadata lives.
+ * Every stop/finish reason token a message carries, lower-cased, from `response_metadata`,
+ * `additional_kwargs` and the message itself, in both snake and camel case.
+ *
+ * This reader is deliberately **wider** than {@link detectRefusal}'s, and the two differences are
+ * the point rather than drift. It also takes `done_reason` (Ollama's spelling, which carries a
+ * truncation and never a refusal) and the message's own top level, because a truncation is
+ * classified from whatever token is present; a refusal is claimed from a token whose *meaning* is
+ * known, so widening its reader would start reporting refusals a provider never declared. What the
+ * two must never disagree on is the **spelling** of a key, which is what CFG-41 cost: camelCase
+ * `finishReason` was read here and not there, so a Gemini refusal was truncation-classifiable and
+ * refusal-invisible at the same time.
  */
 function stopReasonTokens(message: unknown): string[] {
   const meta = readField(message, 'response_metadata');
