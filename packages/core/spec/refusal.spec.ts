@@ -421,3 +421,85 @@ describe('detectRefusal — Gemini (CFG-41)', () => {
     });
   });
 });
+
+// CFG-41 peer review. The rules `detectRefusal` uses to RESOLVE a finish/stop reason out of a
+// message — which spellings count, which key wins, which source wins, what happens to a non-string
+// — were each documented in a comment and asserted by nothing: every one of them could be inverted
+// with the suite still green. Each cell below pins exactly one of those decisions, and each was
+// proved to fail when its own decision is inverted rather than assumed to cover it.
+describe('detectRefusal — the finish/stop reason resolution rules', () => {
+  // Each stop spelling is INDEPENDENTLY sufficient, which is what the covered-shapes docstring
+  // claims. Reading a single first-match value across both spellings instead lets a benign reason
+  // sitting in the same bag shadow a refusing one, so a refusal the detector used to catch becomes
+  // a silent null. Both orders are asserted: neither spelling may be the only one that counts.
+  it.each([
+    { label: 'an Anthropic refusal', token: 'refusal', provider: 'anthropic' },
+    {
+      label: 'a Bedrock guardrail intervention',
+      token: 'guardrail_intervened',
+      provider: 'bedrock',
+    },
+    { label: 'a Bedrock content filter', token: 'content_filtered', provider: 'bedrock' },
+  ])('a benign stop reason in the other spelling cannot hide $label', ({ token, provider }) => {
+    const camelRefuses = new AIMessage({
+      content: '',
+      response_metadata: { stop_reason: 'end_turn', stopReason: token },
+    });
+    const snakeRefuses = new AIMessage({
+      content: '',
+      response_metadata: { stopReason: 'end_turn', stop_reason: token },
+    });
+    expect(detectRefusal(camelRefuses)).toEqual({ provider, reason: token, explanation: '' });
+    expect(detectRefusal(snakeRefuses)).toEqual({ provider, reason: token, explanation: '' });
+  });
+
+  // A present but NON-STRING value is skipped and the search continues, rather than the search
+  // stopping at the first *present* value. The pre-existing malformed-input cell cannot pin this:
+  // with no second source carrying a real token there is nothing for the non-string to shadow, so
+  // that cell passes under both behaviours. This one carries both.
+  it('a non-string reason does not shadow a real one in the other source', () => {
+    const msg = new AIMessage({
+      content: '',
+      response_metadata: { finish_reason: { nested: true } },
+      additional_kwargs: { finish_reason: 'content_filter' },
+    });
+    expect(detectRefusal(msg)).toEqual({
+      provider: 'openai',
+      reason: 'content_filter',
+      explanation: '',
+    });
+  });
+
+  // Key precedence: the search is key-major, so snake `finish_reason` wins over camelCase
+  // `finishReason` across BOTH sources. Both values here are refusal tokens, so the cell pins which
+  // one wins rather than pinning a miss. This is also the known, deliberately unfixed residual — a
+  // *benign* snake value still shadows a refusing camel one — and changing that is a widening of
+  // its own that must update this cell.
+  it('reads snake finish_reason before camelCase finishReason', () => {
+    const msg = new AIMessage({
+      content: '',
+      response_metadata: { finish_reason: 'content_filter', finishReason: 'SAFETY' },
+    });
+    expect(detectRefusal(msg)).toEqual({
+      provider: 'openai',
+      reason: 'content_filter',
+      explanation: '',
+    });
+  });
+
+  // Source order: for one key, `response_metadata` is searched before `additional_kwargs`. Both
+  // values are refusal tokens again, so the assertion is about which source wins and not about
+  // whether anything is detected at all.
+  it('reads response_metadata before additional_kwargs for the same key', () => {
+    const msg = new AIMessage({
+      content: '',
+      response_metadata: { finish_reason: 'content_filter' },
+      additional_kwargs: { finish_reason: 'guardrail_intervened' },
+    });
+    expect(detectRefusal(msg)).toEqual({
+      provider: 'openai',
+      reason: 'content_filter',
+      explanation: '',
+    });
+  });
+});

@@ -162,7 +162,14 @@ export function detectRefusal(message: unknown): RefusalInfo | null {
 
   // Gather the stop/finish reason from every place providers surface it, in both spellings.
   const finish = firstReasonToken(sources, ['finish_reason', 'finishReason']);
-  const stop = firstReasonToken(sources, ['stop_reason', 'stopReason']);
+  // The two stop spellings are gathered as SEPARATE values and every branch below tests both, so
+  // each spelling is independently sufficient — which is what the covered-shapes list above claims.
+  // Collapsing them into one first-match value looks equivalent and is not: a benign `stop_reason`
+  // in the same bag would then hide a refusing `stopReason`, turning a detected refusal into a
+  // silent `null`. A false negative is the one direction this detector must never acquire, so the
+  // three lines a collapse saves are not for sale.
+  const stopSnake = firstReasonToken(sources, ['stop_reason']);
+  const stopCamel = firstReasonToken(sources, ['stopReason']);
 
   const explanation = extractRefusalText(message);
 
@@ -171,12 +178,13 @@ export function detectRefusal(message: unknown): RefusalInfo | null {
     return { provider: 'openai', reason: 'content_filter', explanation };
   }
   // Anthropic refusal stop reason.
-  if (stop === 'refusal') {
+  if (stopSnake === 'refusal' || stopCamel === 'refusal') {
     return { provider: 'anthropic', reason: 'refusal', explanation };
   }
   // Bedrock Converse guardrail intervention (camelCase `stopReason`, or snake / finish variants).
   if (
-    stop === 'guardrail_intervened' ||
+    stopCamel === 'guardrail_intervened' ||
+    stopSnake === 'guardrail_intervened' ||
     finish === 'guardrail_intervened' ||
     readField(kwargs, 'amazon-bedrock-guardrailAction') === 'INTERVENED' ||
     readField(meta, 'amazon-bedrock-guardrailAction') === 'INTERVENED'
@@ -186,7 +194,11 @@ export function detectRefusal(message: unknown): RefusalInfo | null {
   // EXT-41 — Bedrock Converse content filter. A distinct `StopReason` enum value from
   // `guardrail_intervened` (both live in the same AWS Converse `StopReason` enum); previously
   // unmapped, so a content-filtered turn returned `null` → the silent empty-turn false negative.
-  if (stop === 'content_filtered' || finish === 'content_filtered') {
+  if (
+    stopSnake === 'content_filtered' ||
+    stopCamel === 'content_filtered' ||
+    finish === 'content_filtered'
+  ) {
     return { provider: 'bedrock', reason: 'content_filtered', explanation };
   }
   // CFG-41 — Gemini's safety system. Keyed on the finish reason only: these tokens are Gemini's
