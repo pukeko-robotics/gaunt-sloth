@@ -292,7 +292,8 @@ export type NoticeTone = 'info' | 'warn';
  * Applied by {@link displayNotice} at render time and never written into the notice VALUE: the same
  * `title` travels to the Ink TUI, ACP and AG-UI, and a marker baked into the value would reach all
  * of them as data rather than as presentation. AG-UI keeps the classification by shipping the whole
- * notice object; ACP receives the title and body joined into one text block. The Ink TUI marks tone
+ * notice object, and so does ACP, in `_meta` (see `acpTerminationMeta`) — what ACP joins into one
+ * text block is the human-readable half, not the classification. The Ink TUI marks tone
  * by COLOUR ALONE (`CommandNotice`'s yellow-vs-cyan title), so under `NO_COLOR` a warn notice there
  * is indistinguishable from an info one — a known TUI-C14 residual, NOT something this marker
  * covers.

@@ -75,7 +75,8 @@ and `displayTermination` for why a run ended. Nothing else may write a line of o
   marker the rest of the CLI already uses, applied at render time and never written into the notice
   value: the marker is presentation, and a glyph baked into the value would travel to every consumer
   of it. AG-UI keeps the classification intact by other means — it ships the whole notice object
-  rather than rendered text — while ACP receives the title and body joined into one text block.
+  rather than rendered text — and so does ACP, which carries it in `_meta`; what ACP joins into one
+  text block is the human-readable half, not the classification.
   **The Ink TUI is not covered:** its only tone channel is colour (a yellow-vs-cyan title), so under
   `NO_COLOR` a warn notice renders identically to an info one. That is a known TUI-C14 residual and
   this rule does not close it. Colour is the first thing a surface loses; severity that exists only

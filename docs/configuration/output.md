@@ -139,7 +139,7 @@ The approval prompt is not filtered by this. It is a question rather than a stat
 filter that applied to it line by line would leave you a severity heading with no command under it.
 See [the shell tool and approvals](../guides/shell-tool-and-approvals.md#where-the-prompt-is-written).
 
-The notice that says why a run ended is not filtered either, for the same reason. It carries the
+The notice that says why a run ended is not filtered either. It carries the
 reason code you would quote in a bug report, and the session log that would otherwise hold it is off
 by default.
 
