@@ -38,8 +38,9 @@ export interface FrontendImageInjectionOptions {
    * Provider selecting the vision-block shape. Derived by the registry factory from
    * `gthConfig.modelProviderType` (the raw `llm.type`), falling back to `llm._llmType()`. One of
    * gth's provider strings (`anthropic`, `openai`, `openrouter`, `deepseek`, `xai`, `groq`,
-   * `ollama`, `google-genai`, `vertexai`, `huggingface`, …); unknown values fall to the standard
-   * base64 block.
+   * `ollama`, `google-genai`, `vertexai`, `huggingface`, …) or a model class's own `_llmType()`
+   * label, which is a different namespace and need not coincide with any of them (`google`,
+   * `xai-responses`); unknown values fall to the standard base64 block.
    */
   provider: string;
   /**
@@ -55,9 +56,11 @@ export interface FrontendImageInjectionOptions {
  *   - **ollama** → `{ type:'image_url', image_url:'<data-URL string>' }`. ChatOllama's
  *     `convertToOllamaMessages` only handles `image_url` blocks (extractBase64FromDataUrl); the
  *     LangChain standard `source_type` block throws "Unsupported content type: image".
- *   - **OpenAI-compatible** (`openai`, `openrouter`, `deepseek`, `xai`, `groq`, `huggingface` —
- *     served by an OpenAI-compatible Chat Completions API, whichever LangChain class fronts it) →
- *     `{ type:'image_url', image_url:{ url:'<data-URL>' } }`.
+ *   - **`image_url`-consuming converters** (`openai`, `openrouter`, `deepseek`, `xai`, `groq`,
+ *     `huggingface`, `xai-responses`) → `{ type:'image_url', image_url:{ url:'<data-URL>' } }`.
+ *     The grouping is by what the converter CONSUMES, not by client family: the first six are
+ *     served by an OpenAI-compatible Chat Completions API whichever LangChain class fronts them,
+ *     while `xai-responses` reaches the same block by a different route entirely (below).
  *     This native OpenAI shape is correct on BOTH the Completions API AND the Responses API (GS2-74
  *     flips reasoning-capable openai models to Responses). A raw `source_type` standard block
  *     serialises to an *invalid* image part on the Responses path, so we emit the provider-native
@@ -75,6 +78,24 @@ export interface FrontendImageInjectionOptions {
  *     `@deprecated`: "Don't use data content blocks") rewrites it, which is precisely the
  *     auto-conversion the through-line below refuses to depend on, and which yields a bare, invalid
  *     `image_url` part the moment the same block reaches a Responses endpoint.
+ *     `xai-responses` (CFG-45) is the same emitted block for an UNRELATED reason, and it is the case
+ *     that shows why this switch exists. It is `ChatXAIResponses._llmType()`, reachable only via
+ *     `resolveVisionProvider`'s `_llmType()` fallback (gth's own `xai` provider builds `ChatXAI`),
+ *     and that class extends `BaseChatModel` directly with its OWN converter — no OpenAI client and
+ *     no `@langchain/core` data-block conversion anywhere on the path. Its human-message branch
+ *     (`@langchain/xai@1.4.10` `dist/converters/responses.js`) recognises exactly `text` and
+ *     `image_url` and rewrites every other part to `{ type:'input_text', text:'' }`. A
+ *     `globalThis.fetch`-capture probe (no network — that class calls the global fetch directly and
+ *     accepts no injectable client) measured four blocks against `https://api.x.ai/v1/responses`:
+ *     the standard base64 block arrived as `{"type":"input_text","text":""}` — the image SILENTLY
+ *     DESTROYED in-process, never rejected — while `image_url:{url}` arrived as the vendor's
+ *     declared `{"type":"input_image","image_url":"data:…","detail":"auto"}`. Emitting the wire
+ *     shape `{ type:'input_image', … }` from here was measured too and is destroyed identically:
+ *     the translation is the converter's to make, so pre-empting it defeats it.
+ *     Not establishable offline, and stated rather than assumed: whether `api.x.ai` accepts a
+ *     `data:` URL in `input_image.image_url`, whose vendor type documents it as a public URL. The
+ *     ruling does not rest on that — the standard block is provably destroyed before any request is
+ *     built, while this block provably survives into the vendor's own declared image item.
  *   - **anthropic** → the provider-native block `{ type:'image', source:{ type:'base64',
  *     media_type, data } }`. The LangChain standard block is NOT usable here (RC-32): in
  *     `@langchain/anthropic`'s `_formatContentBlocks`, the `isDataContentBlock` branch yields its
@@ -114,6 +135,12 @@ export function imageBlockFor(provider: string, mimeType: string, data: string) 
     case 'xai':
     case 'groq':
     case 'huggingface':
+    // `xai-responses` (CFG-45) shares the emitted BLOCK with the group above but not its reason, so
+    // it is listed apart. `ChatXAIResponses` is not an OpenAI-compatible client at all — it extends
+    // `BaseChatModel` directly and ships its own converter, which consumes an `image_url` part and
+    // rewrites it to the vendor's `input_image` wire item itself. Emitting `input_image` here would
+    // NOT short-circuit that translation; it would defeat it (measurement in the docblock above).
+    case 'xai-responses':
       return { type: 'image_url' as const, image_url: { url: dataUrl } };
     case 'anthropic':
       return {
@@ -138,6 +165,13 @@ export function imageBlockFor(provider: string, mimeType: string, data: string) 
     // caller (a `beforeModel` hook) has no way to recover. What it stops doing is failing SILENTLY:
     // an unrecognised non-empty label is recorded, so the next wrong-shaped block leaves a trace
     // instead of being discovered by reading the switch.
+    // The `xai-responses` case STRENGTHENS this ruling rather than revising it. That label can only
+    // arrive from a module config building an arbitrary LangChain class, so the population reaching
+    // this arm is exactly the one whose `_llmType()` labels are unenumerable by construction — the
+    // population a throw would break. What generalises instead is the failure MODE the probe found:
+    // an unrecognised part is not rejected by a converter, it is quietly rewritten to an empty text
+    // part, so a wrong block costs a silent blind answer rather than an error anyone would see.
+    // That is what this log line exists to leave a trace of.
     default:
       if (provider) {
         debugLog(

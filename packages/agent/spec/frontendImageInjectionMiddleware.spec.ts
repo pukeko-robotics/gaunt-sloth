@@ -131,10 +131,38 @@ describe('imageBlockFor — per-provider vision block shape', () => {
     expect(block).not.toHaveProperty('mime_type');
   });
 
-  // CONTROL for the cell above: this one passes both before and after CFG-45's change. It pins the
-  // ruling that the fallback arm stays permissive (it must NOT throw — `resolveVisionProvider`
+  // CFG-45 (the second, stronger case) — `xai-responses` is `ChatXAIResponses._llmType()`, which
+  // `resolveVisionProvider` yields for a module config that builds that class. Unlike every other
+  // arm here this one is NOT justified by an OpenAI-compatible client: `ChatXAIResponses` extends
+  // `BaseChatModel` directly and ships its OWN converter, whose human-message branch recognises
+  // exactly two part types (`text`, `image_url`) and rewrites EVERYTHING ELSE to
+  // `{ type:'input_text', text:'' }` — a silent drop, not a rejection. A `globalThis.fetch`-capture
+  // probe of the installed `@langchain/xai@1.4.10` (no network; the class calls the global fetch
+  // directly and takes no injectable client) measured all four candidate blocks against
+  // `https://api.x.ai/v1/responses`:
+  //   standard base64 block          → {"type":"input_text","text":""}   ← the image is DESTROYED
+  //   image_url:{url}                → {"type":"input_image","image_url":"data:…","detail":"auto"}
+  //   image_url:'<data-URL string>'  → the same valid input_image part
+  //   type:'input_image' emitted RAW → {"type":"input_text","text":""}   ← ALSO destroyed
+  // So the correct block to EMIT is `image_url:{url}` even though the correct block on the WIRE is
+  // `input_image`: xAI's converter performs that translation itself, and a block that pre-empts it
+  // reproduces the very defect being fixed. That last leg is why this cell also asserts the emitted
+  // type is not `input_image`.
+  it('xai-responses uses image_url:{url}, which xAI converts to input_image (CFG-45)', () => {
+    const block = imageBlockFor('xai-responses', IMG.mimeType, IMG.data);
+    expect(block).toEqual({ type: 'image_url', image_url: { url: DATA_URL } });
+    // The standard-block keys are what the xAI converter's catch-all silently discards.
+    expect(block).not.toHaveProperty('source_type');
+    expect(block).not.toHaveProperty('mime_type');
+    // And we must NOT emit the wire shape ourselves — measured to be discarded just as silently.
+    expect(block.type).not.toBe('input_image');
+  });
+
+  // CONTROL for the two cells above: this one passes both before and after CFG-45's change. It pins
+  // the ruling that the fallback arm stays permissive (it must NOT throw — `resolveVisionProvider`
   // returns `''` for a module config whose model has no usable `_llmType()`), and `huggingface` is
   // deliberately no longer in this list: it used to be, which is how the wrong shape was pinned.
+  // `xai-responses` was never in it, so removing nothing here is also part of the record.
   it('an unknown provider (fake / "") falls back to the base64 block', () => {
     for (const provider of ['fake', '']) {
       expect(imageBlockFor(provider, IMG.mimeType, IMG.data)).toEqual({

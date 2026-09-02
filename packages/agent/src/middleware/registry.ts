@@ -43,13 +43,16 @@ type PredefinedMiddlewareFactory = (
  * standard block; and `huggingface` reports `openai`, which since CFG-45 selects the same
  * OpenAI-native `image_url:{url}` block its configured `type` now does, so either path agrees.
  *
- * One label still does NOT agree, and this fallback is the only path it can arrive on:
- * `ChatXAIResponses` reports `xai-responses`, which matches no case and so takes `imageBlockFor`'s
- * fallback arm — while that function's own docstring records that a standard block serialises to an
- * INVALID image part on the Responses path. gth itself only ever constructs `ChatXAI`, so this is
- * reachable only from a module config that builds the Responses class itself. Still open in
- * [[CFG-45]]; the fallback now debug-logs the unenumerated label rather than serving it silently.
- * Do not add a branch for it by analogy — measure it, as CFG-45 did for `huggingface`.
+ * One label does not agree, and this fallback is the only path it can arrive on: `ChatXAIResponses`
+ * reports `xai-responses`. gth's own `xai` provider only ever constructs `ChatXAI`, and a JSON
+ * `llm.type` of `xai-responses` cannot load (the loader imports `#src/providers/<type>.js`, and no
+ * such module exists), so this label reaches `imageBlockFor` only from a module config that builds
+ * the Responses class itself — which is exactly why `modelProviderType` is unset there and this
+ * fallback runs. CFG-45 measured it and `imageBlockFor` now enumerates it alongside the
+ * `image_url`-consuming converters: `ChatXAIResponses` ships its own converter, which turns an
+ * `image_url` part into the vendor's `input_image` item and silently rewrites anything else to an
+ * empty text part. Any label still NOT enumerated there gets the standard block and a debug-log
+ * line. Do not add a branch by analogy — measure it, as CFG-45 did for both of these.
  */
 function resolveVisionProvider(gthConfig: GthConfig): string {
   if (gthConfig.modelProviderType) return gthConfig.modelProviderType;
