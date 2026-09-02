@@ -57,12 +57,13 @@ and `displayTermination` for why a run ended. Nothing else may write a line of o
   across both. Redirect one and the reader keeps a heading with no substance while the file keeps
   the substance with no heading; neither half is wrong and neither is usable. Passing the tone as an
   argument is what decouples the two, exactly as `DialogTone` does for a dialog.
-- **stderr, because a notice is commentary on the run and not the run's output.** It is where the
-  loudest of the ordinary helpers already wrote, it is not block-buffered, and it leaves stdout
-  carrying what the command produced. It also keeps a notice on the same stream as the approval
-  dialog it sits beside, which two streams could reorder. The cost is the dialog's cost: piping
-  stdout no longer captures a notice — the terminal still shows it, `2>` still collects it, and an
-  enabled session log still records it.
+- **stderr, because a notice is commentary on the run and not the run's output.** It is where
+  `displayWarning` already wrote, and that is the only one of the ordinary helpers that does — even
+  `displayError`, the loudest of them, is red but goes to stdout. It is not block-buffered, and it
+  leaves stdout carrying what the command produced. It also keeps a notice on the same stream as the
+  approval dialog it sits beside, which two streams could reorder. The cost is the dialog's cost:
+  piping stdout no longer captures a notice — the terminal still shows it, `2>` still collects it,
+  and an enabled session log still records it.
 - **The gate is per notice, never per line.** `display` filters at `StatusLevel.DISPLAY` and
   `displayWarning` at `StatusLevel.WARNING`, so a per-line filter is how a quieted console comes to
   print a title with nothing under it. `displayNotice` decides once, before the first line. A notice
@@ -70,11 +71,15 @@ and `displayTermination` for why a run ended. Nothing else may write a line of o
   whose absence the reader cannot recover — the termination notice carries the code a bug report
   quotes, and the session log that would otherwise hold it is off by default. The session log is
   written unconditionally either way, so a quieted console never costs the transcript a notice.
-- **Severity survives with no colour.** A `warn` notice's title carries the `⚠` marker the rest of
-  the CLI already uses, applied at render time and never written into the notice value — the same
-  value travels to the Ink TUI, ACP and AG-UI, which mark severity their own way and would show it
-  twice. Colour is the first thing a surface loses; severity that exists only in the colour is
-  severity a piped or monochrome reader never receives.
+- **Severity survives with no colour on the plain surface.** A `warn` notice's title carries the `⚠`
+  marker the rest of the CLI already uses, applied at render time and never written into the notice
+  value: the marker is presentation, and a glyph baked into the value would travel to every consumer
+  of it. AG-UI keeps the classification intact by other means — it ships the whole notice object
+  rather than rendered text — while ACP receives the title and body joined into one text block.
+  **The Ink TUI is not covered:** its only tone channel is colour (a yellow-vs-cyan title), so under
+  `NO_COLOR` a warn notice renders identically to an info one. That is a known TUI-C14 residual and
+  this rule does not close it. Colour is the first thing a surface loses; severity that exists only
+  in the colour is severity a piped or monochrome reader never receives.
 
 ## `/approvals` — the session's approvals mode (DL-4 transparency)
 

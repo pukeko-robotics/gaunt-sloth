@@ -290,8 +290,12 @@ export type NoticeTone = 'info' | 'warn';
  * adds no second vocabulary for the same idea.
  *
  * Applied by {@link displayNotice} at render time and never written into the notice VALUE: the same
- * `title` travels to the Ink TUI, ACP and AG-UI, which mark severity their own way, and a marker
- * baked into the value would appear twice there.
+ * `title` travels to the Ink TUI, ACP and AG-UI, and a marker baked into the value would reach all
+ * of them as data rather than as presentation. AG-UI keeps the classification by shipping the whole
+ * notice object; ACP receives the title and body joined into one text block. The Ink TUI marks tone
+ * by COLOUR ALONE (`CommandNotice`'s yellow-vs-cyan title), so under `NO_COLOR` a warn notice there
+ * is indistinguishable from an info one — a known TUI-C14 residual, NOT something this marker
+ * covers.
  */
 export const NOTICE_WARN_MARKER = '⚠ ';
 
@@ -323,10 +327,12 @@ export type NoticeGate = StatusLevel | 'always';
  * So a notice takes its title and its lines together and writes them through one call. The split
  * cannot be reintroduced by a caller, because a caller no longer chooses per line.
  *
- * **stderr, because a notice is commentary on the run and not the run's output.** It is what the
- * ordinary helpers' loudest half already does, it is unbuffered, and it leaves stdout carrying only
- * what the command produced — so `gth ask … > answer.txt` gets an answer file that is the answer,
- * with the whole explanation of a bad ending still on the screen and still collectable with `2>`.
+ * **stderr, because a notice is commentary on the run and not the run's output.** It is where
+ * `displayWarning` already writes, and that is the only one of the ordinary helpers that does —
+ * even `displayError`, the loudest of them, is red but goes to stdout. It is unbuffered, and it
+ * leaves stdout carrying only what the command produced — so `gth ask … > answer.txt` gets an
+ * answer file that is the answer, with the whole explanation of a bad ending still on the screen
+ * and still collectable with `2>`.
  * It also keeps a notice on the same stream as the approval dialog it sits beside on the readline
  * surface ({@link displayDialogLine}); split across two, those two related blocks can arrive in an
  * order neither of them was written in.

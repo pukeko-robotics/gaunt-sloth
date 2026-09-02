@@ -139,6 +139,17 @@ The approval prompt is not filtered by this. It is a question rather than a stat
 filter that applied to it line by line would leave you a severity heading with no command under it.
 See [the shell tool and approvals](../guides/shell-tool-and-approvals.md#where-the-prompt-is-written).
 
+The notice that says why a run ended is not filtered either, for the same reason. It carries the
+reason code you would quote in a bug report, and the session log that would otherwise hold it is off
+by default.
+
+Every other notice — the short block a slash command prints as its feedback — is filtered as a
+whole, never line by line, so quieting the console drops a notice's title and its body together
+rather than leaving you a heading with nothing under it. An informational notice is shown at `debug`
+and `info`; a warning notice from `debug` through `warning`. From `display` onwards, then, a slash
+command whose feedback is informational prints nothing at all. An enabled session log records every
+notice in full either way, whatever the level.
+
 ## Colour (useColour, NO_COLOR, FORCE_COLOR)
 
 Turn colour off for a single run, without touching your config:

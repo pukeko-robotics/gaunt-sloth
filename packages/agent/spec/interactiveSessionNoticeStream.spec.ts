@@ -219,7 +219,11 @@ describe('interactiveSessionModule — [[EXT-165]] a command notice is written t
     const warnTitle = err.find((line) => line.includes('Mouse unavailable'));
     const infoTitle = err.find((line) => line.includes('Session status'));
 
-    // No colour was applied at all — the harness is not a TTY, so this compares the plain text.
+    // No colour was applied at all, so this compares the plain text. NOT because of TTY-ness,
+    // which never reaches the decision: `colorText` asks `su.getUseColour()`, whose backing
+    // `useColour` defaults to false and is only ever set by `setUseColour` — called from
+    // `mergeConfig` inside `initConfig`, which this file mocks. Changing the mock's `isTTY`
+    // would not affect this.
     expect(warnTitle).toBe('⚠ Mouse unavailable');
     expect(infoTitle).toBe('Session status');
     expect(warnTitle).not.toBe(infoTitle);
