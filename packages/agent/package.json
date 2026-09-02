@@ -39,8 +39,8 @@
   },
   "dependencies": {
     "@a2a-js/sdk": "^1.1.0",
-    "@ag-ui/core": "^0.0.58",
-    "@ag-ui/encoder": "^0.0.58",
+    "@ag-ui/core": "^0.0.59",
+    "@ag-ui/encoder": "^0.0.59",
     "@agentclientprotocol/sdk": "1.4.0",
     "@gaunt-sloth/core": "workspace:*",
     "@langchain/core": "^1.2.9",
