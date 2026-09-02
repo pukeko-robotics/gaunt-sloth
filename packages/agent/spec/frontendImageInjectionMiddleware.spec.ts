@@ -125,10 +125,11 @@ describe('imageBlockFor — per-provider vision block shape', () => {
   // part there, where the Responses API requires `input_image`).
   it('huggingface uses the OpenAI-native image_url:{url} block, not the standard one (CFG-45)', () => {
     const block = imageBlockFor('huggingface', IMG.mimeType, IMG.data);
+    // Exhaustive, so it already pins the absence of the standard-block keys (`source_type`,
+    // `mime_type`) that would force the deprecated auto-conversion. Assertions naming them
+    // individually were removed for the same reason as in the `xai-responses` cell below: below an
+    // exhaustive `toEqual` they cannot fail independently.
     expect(block).toEqual({ type: 'image_url', image_url: { url: DATA_URL } });
-    // The standard-block keys are what force the deprecated auto-conversion — none may be present.
-    expect(block).not.toHaveProperty('source_type');
-    expect(block).not.toHaveProperty('mime_type');
   });
 
   // CFG-45 (the second, stronger case) — `xai-responses` is `ChatXAIResponses._llmType()`, which
