@@ -646,6 +646,13 @@ What goes in there:
 - for interactive `chat` / `code` sessions, the conversation's own state, so a session can be picked
   up again with its context intact rather than started over.
 
+**The second one is the broader of the two, and worth reading before you decide.** A session's state
+is what the agent was actually working with, so it includes **tool results verbatim** — the contents
+of files that were read, the output of commands that were run, what an MCP server returned. It is
+stored as-is and not redacted, because a session that came back with its evidence edited would no
+longer be the session you left. If your work reads material you would rather not have sitting in a
+local database, use the switch below to turn recording off.
+
 **It stays on your machine.** Nothing here touches the network, there is no telemetry, and the file
 is a plain SQLite database under your home directory that you can inspect or delete at any time.
 
