@@ -52,6 +52,10 @@ const consoleUtilsMock = vi.hoisted(() => ({
   displayError: vi.fn(),
   displayInfo: vi.fn(),
   displayLaunchBanner: vi.fn(),
+  // [[EXT-165]] — the ONE writer both notice renderers on this surface go through (the termination
+  // notice and `printNotice`). Omitted, `displayTermination` throws into its own fail-soft catch
+  // and every cell below passes with nothing in front of the user.
+  displayNotice: vi.fn(),
   displayWarning: vi.fn(),
   flushSessionLog: vi.fn(),
   formatInputPrompt: vi.fn((v: string) => v),
@@ -114,7 +118,21 @@ const sessionConfig = {
   exitMessage: 'exit hint',
 } as unknown as SessionConfig;
 
-/** Everything the session put in front of a person. */
+/**
+ * The NOTICES the session put in front of a person — each flattened title-then-body, from the one
+ * call that carried both.
+ *
+ * [[EXT-165]] — read only from `displayNotice`, never from the per-line helpers, and that is the
+ * property rather than a detail. A notice rendered the old way makes no call here at all, so a
+ * regression that put the title and the body back on two streams reds these cells; a reader that
+ * also scanned `display`/`displayWarning`/`displayInfo` would go green on exactly that regression.
+ */
+const noticesShown = (): string[] =>
+  consoleUtilsMock.displayNotice.mock.calls.map((call) =>
+    [String(call[0]), ...(call[1] as readonly string[])].join('\n')
+  );
+
+/** Everything the session put in front of a person through the ordinary PER-LINE helpers. */
 const saidToUser = (): string =>
   [
     ...consoleUtilsMock.displayWarning.mock.calls,
@@ -157,9 +175,12 @@ describe('[[EXT-159]] SURFACE — the readline session says why the turn ended',
 
     await runOneTurn();
 
-    expect(saidToUser()).toContain(TERMINATION_NOTICE_TITLE_PREFIX);
+    // One notice, title and body together, so a redirect cannot keep the heading and lose the code.
+    expect(noticesShown()).toHaveLength(1);
+    expect(noticesShown()[0]).toContain(TERMINATION_NOTICE_TITLE_PREFIX);
     // The quotable code, which is the fact a bug report needs and the sentence is derived from.
-    expect(saidToUser()).toContain('cancelled@runner.events-cancelled');
+    expect(noticesShown()[0]).toContain('cancelled@runner.events-cancelled');
+    expect(saidToUser()).not.toContain(TERMINATION_NOTICE_TITLE_PREFIX);
   });
 
   it('states a provider fault with the classification the wrapped sentence never carried', async () => {
@@ -173,9 +194,12 @@ describe('[[EXT-159]] SURFACE — the readline session says why the turn ended',
 
     await runOneTurn();
 
-    expect(saidToUser()).toContain('rate_limited@runner.stream-error');
-    // And what to do about it, read off the posture the taxonomy already decided.
-    expect(saidToUser()).toContain('Wait a moment');
+    expect(noticesShown()).toHaveLength(1);
+    expect(noticesShown()[0]).toContain('rate_limited@runner.stream-error');
+    // And what to do about it, read off the posture the taxonomy already decided. In the SAME
+    // notice as the code above: the remedy is useless to a reader who did not receive the code.
+    expect(noticesShown()[0]).toContain('Wait a moment');
+    expect(saidToUser()).not.toContain('rate_limited@runner.stream-error');
   });
 
   it('adds nothing to a turn that simply finished', async () => {
@@ -185,6 +209,7 @@ describe('[[EXT-159]] SURFACE — the readline session says why the turn ended',
 
     await runOneTurn();
 
+    expect(noticesShown()).toEqual([]);
     expect(saidToUser()).not.toContain(TERMINATION_NOTICE_TITLE_PREFIX);
   });
 

@@ -20,6 +20,7 @@ const jiraIssueLegacyMock = vi.hoisted(() => vi.fn());
 const displayInfoMock = vi.hoisted(() => vi.fn());
 const displayWarningMock = vi.hoisted(() => vi.fn());
 const displayMock = vi.hoisted(() => vi.fn());
+const displayNoticeMock = vi.hoisted(() => vi.fn());
 const debugLogMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@gaunt-sloth/core/core/GthAgentRunner.js', () => ({
@@ -37,14 +38,16 @@ vi.mock('@gaunt-sloth/core/core/GthAgentRunner.js', () => ({
   }),
 }));
 
-// `display` belongs here for the same reason `getTerminationReason` does above: the termination
-// notice writes its body lines through it, and a factory that omits it makes the renderer throw
-// into the fail-soft catch instead of rendering — a cell failing by absence rather than by
-// assertion.
+// `displayNotice` belongs here for the same reason `getTerminationReason` does above: it is the
+// single writer the termination notice goes through ([[EXT-165]]), and a factory that omits it
+// makes the renderer throw into the fail-soft catch instead of rendering — a cell failing by
+// absence rather than by assertion, which is silence a `toHaveBeenCalledWith` cannot tell from a
+// notice that was never meant to appear.
 vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => ({
   defaultStatusCallback: vi.fn(),
   display: displayMock,
   displayInfo: displayInfoMock,
+  displayNotice: displayNoticeMock,
   displayWarning: displayWarningMock,
 }));
 
@@ -760,12 +763,22 @@ No linked ticket here`;
 
       await runPrDiscovery(config);
 
-      expect(displayWarningMock).toHaveBeenCalledWith(
-        `${TERMINATION_NOTICE_TITLE_PREFIX}too many tool approvals in one turn`
+      // [[EXT-165]] — asserted as ONE call, because that is the property: the title and the body
+      // are handed to a single writer together, so no redirect can keep one and discard the other.
+      // Split back across `displayWarning` + `display` this reds on the call count, which is what
+      // a pair of separate `toHaveBeenCalledWith`s could not see.
+      expect(displayNoticeMock).toHaveBeenCalledWith(
+        `${TERMINATION_NOTICE_TITLE_PREFIX}too many tool approvals in one turn`,
+        // The quotable token, read structurally: `category@site`, derived from the reason the
+        // runner handed over rather than from a sentence transcribed into this file.
+        expect.arrayContaining([`Reason code: ${terminationCode(reason)}`]),
+        expect.objectContaining({ gate: 'always' })
       );
-      // The quotable token, read structurally: `category@site`, derived from the reason the runner
-      // handed over rather than from a sentence transcribed into this file.
-      expect(displayMock).toHaveBeenCalledWith(`  Reason code: ${terminationCode(reason)}`);
+      // And nowhere else: a body line reaching the stdout helpers is the split coming back.
+      expect(displayMock).not.toHaveBeenCalledWith(expect.stringContaining('Reason code:'));
+      expect(displayWarningMock).not.toHaveBeenCalledWith(
+        expect.stringContaining(TERMINATION_NOTICE_TITLE_PREFIX)
+      );
     });
 
     /**
@@ -785,6 +798,11 @@ No linked ticket here`;
 
       await runPrDiscovery(config);
 
+      expect(displayNoticeMock).not.toHaveBeenCalledWith(
+        expect.stringContaining(TERMINATION_NOTICE_TITLE_PREFIX),
+        expect.anything(),
+        expect.anything()
+      );
       expect(displayWarningMock).not.toHaveBeenCalledWith(
         expect.stringContaining(TERMINATION_NOTICE_TITLE_PREFIX)
       );
@@ -806,10 +824,15 @@ No linked ticket here`;
 
       await expect(runPrDiscovery(config)).rejects.toThrow('Agent processing failed: 429');
 
-      expect(displayWarningMock).toHaveBeenCalledWith(
-        `${TERMINATION_NOTICE_TITLE_PREFIX}the provider rate-limited the request`
+      expect(displayNoticeMock).toHaveBeenCalledWith(
+        `${TERMINATION_NOTICE_TITLE_PREFIX}the provider rate-limited the request`,
+        expect.arrayContaining([`Reason code: ${terminationCode(reason)}`]),
+        expect.objectContaining({ gate: 'always' })
       );
-      expect(displayMock).toHaveBeenCalledWith(`  Reason code: ${terminationCode(reason)}`);
+      expect(displayMock).not.toHaveBeenCalledWith(expect.stringContaining('Reason code:'));
+      expect(displayWarningMock).not.toHaveBeenCalledWith(
+        expect.stringContaining(TERMINATION_NOTICE_TITLE_PREFIX)
+      );
     });
   });
 });

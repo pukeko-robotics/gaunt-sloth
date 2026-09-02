@@ -527,7 +527,10 @@ describe('consoleUtils', () => {
           gate: 'always',
         });
         expect(systemUtilsMock.error).toHaveBeenCalledTimes(2);
-        expect(systemUtilsMock.error).toHaveBeenNthCalledWith(1, '⚠ Run ended: the provider failed');
+        expect(systemUtilsMock.error).toHaveBeenNthCalledWith(
+          1,
+          '⚠ Run ended: the provider failed'
+        );
         expect(systemUtilsMock.error).toHaveBeenNthCalledWith(
           2,
           '  Reason code: provider_error@site'

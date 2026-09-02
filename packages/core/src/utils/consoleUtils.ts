@@ -352,12 +352,14 @@ export function displayNotice(
   options: { tone?: NoticeTone; gate?: NoticeGate } = {}
 ): void {
   const tone = options.tone ?? 'info';
-  const gate =
-    options.gate ?? (tone === 'warn' ? StatusLevel.WARNING : StatusLevel.INFO);
+  const gate = options.gate ?? (tone === 'warn' ? StatusLevel.WARNING : StatusLevel.INFO);
   // Decided ONCE, for the whole notice, before anything is written.
   const show = gate === 'always' || shouldDisplayLevel(gate);
   const rows: Array<{ text: string; colour: keyof typeof ANSI_COLORS | null }> = [
-    { text: tone === 'warn' ? `${NOTICE_WARN_MARKER}${title}` : title, colour: NOTICE_TONE_COLOURS[tone] },
+    {
+      text: tone === 'warn' ? `${NOTICE_WARN_MARKER}${title}` : title,
+      colour: NOTICE_TONE_COLOURS[tone],
+    },
     ...lines.map((line) => ({ text: `  ${line}`, colour: null })),
   ];
   for (const row of rows) {

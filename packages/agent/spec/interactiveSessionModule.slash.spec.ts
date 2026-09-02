@@ -39,6 +39,10 @@ const consoleUtilsMock = {
   displayError: vi.fn(),
   displayInfo: vi.fn(),
   displayLaunchBanner: vi.fn(),
+  // [[EXT-165]] — `printNotice` renders every command notice through this one writer, which takes
+  // the title and the body together. It has to be in the factory: without it the renderer throws
+  // and the cells below assert against an empty transcript.
+  displayNotice: vi.fn(),
   displayWarning: vi.fn(),
   flushSessionLog: vi.fn(),
   formatInputPrompt: vi.fn((v: string) => v),
@@ -141,7 +145,15 @@ const sessionConfig = {
   exitMessage: 'exit hint',
 } as unknown as SessionConfig;
 
-/** All display* output joined, so copy assertions don't depend on which channel a line used. */
+/**
+ * All output joined, so copy assertions don't depend on which channel a line used.
+ *
+ * [[EXT-165]] — a notice now arrives as ONE `displayNotice(title, lines)` call rather than as a
+ * title through one helper and a body through another, so it is flattened back to lines here. This
+ * helper is deliberately channel-blind and therefore CANNOT see the split coming back; the cell
+ * `a command notice reaches ONE writer, title and body together` below is what pins that, and the
+ * stream itself is pinned at process level by `interactiveSessionNoticeStream.spec.ts`.
+ */
 const allOutput = (): string =>
   [
     ...consoleUtilsMock.display.mock.calls,
@@ -149,7 +161,20 @@ const allOutput = (): string =>
     ...consoleUtilsMock.displayWarning.mock.calls,
   ]
     .map((c) => String(c[0]))
+    .concat(
+      consoleUtilsMock.displayNotice.mock.calls.flatMap((c) => [
+        String(c[0]),
+        ...(c[1] as readonly string[]).map((line) => `  ${line}`),
+      ])
+    )
     .join('\n');
+
+/** Every notice this session rendered, as the writer received it. */
+const noticeCalls = (): Array<{ title: string; lines: readonly string[] }> =>
+  consoleUtilsMock.displayNotice.mock.calls.map((c) => ({
+    title: String(c[0]),
+    lines: c[1] as readonly string[],
+  }));
 
 const runSession = async (...userInputs: string[]) => {
   inputs = [...userInputs];
@@ -195,6 +220,39 @@ describe('interactiveSessionModule shared slash-command registry (GS2-8)', () =>
     expect(out).toContain('Model: test-model');
     expect(out).toContain('Turns so far: 0');
     expect(runnerInstanceMock.processMessages).not.toHaveBeenCalled();
+  });
+
+  /**
+   * [[EXT-165]] — **the structural claim the copy cells above cannot make.**
+   *
+   * Every assertion in this file reads `allOutput()`, which is channel-blind on purpose so a copy
+   * assertion does not break when a line changes helper. That blindness is exactly why it would
+   * stay green if `printNotice` went back to a title through `displayWarning`/`displayInfo` and a
+   * body through `display` — the words would all still be there, on two streams. So the claim is
+   * made here instead, and in two halves, because either half alone is satisfiable by the broken
+   * code: the notice reached the single writer as ONE call carrying title AND body, and none of
+   * that notice reached the per-line helpers.
+   */
+  it('a command notice reaches ONE writer, title and body together', async () => {
+    await runSession('/status', 'exit');
+
+    const notices = noticeCalls();
+    expect(notices).toHaveLength(1);
+    expect(notices[0].title).toBe('Session status');
+    // The body is the substance — a reader who kept only the title has a heading and no status.
+    expect(notices[0].lines.some((line) => line.startsWith('Mode: chat'))).toBe(true);
+    expect(notices[0].lines.some((line) => line.startsWith('Turns so far: 0'))).toBe(true);
+
+    // And nowhere else. A split would put the title through one of these and the body through
+    // `display`; this is the half that reds when it comes back.
+    const perLine = [
+      ...consoleUtilsMock.display.mock.calls,
+      ...consoleUtilsMock.displayInfo.mock.calls,
+      ...consoleUtilsMock.displayWarning.mock.calls,
+    ].map((c) => String(c[0]));
+    expect(perLine).not.toContain('Session status');
+    expect(perLine.some((line) => line.includes('Mode: chat'))).toBe(false);
+    expect(perLine.some((line) => line.includes('Turns so far:'))).toBe(false);
   });
 
   it('/help lists the SHARED registry — the renamed /verbose and the new /quit included', async () => {

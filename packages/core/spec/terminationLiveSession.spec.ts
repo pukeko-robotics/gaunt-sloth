@@ -44,6 +44,11 @@ const consoleUtilsMock = vi.hoisted(() => ({
   display: vi.fn(),
   displaySuccess: vi.fn(),
   displayError: vi.fn(),
+  // [[EXT-165]] — the ONE writer a termination notice goes through. It has to be here for the
+  // same reason `getTerminationReason` has to be on the runner double: `displayTermination` is
+  // fail-soft, so an omitted export is not a loud missing-mock error but a swallowed throw, and
+  // every cell below would then pass with nothing in front of the user.
+  displayNotice: vi.fn(),
   displayWarning: vi.fn(),
   defaultStatusCallback: vi.fn(),
   initSessionLogging: vi.fn(),
@@ -85,7 +90,23 @@ const rateLimited = terminationReason('runner.stream-error', 'exception', {
   detail: '429',
 });
 
-/** The lines the surface actually put in front of a person, in order. */
+/**
+ * The NOTICES the surface put in front of a person — each one flattened title-then-body, from the
+ * single call that carried both.
+ *
+ * [[EXT-165]] — read only from `displayNotice`, never from the per-line helpers, and that is the
+ * point rather than a detail. A notice rendered the old way (`displayWarning(title)` then
+ * `display('  ' + line)`) makes no call here at all, so a regression that put the two halves back
+ * on two streams reds these cells; a reader that also scanned `display`/`displayWarning` would go
+ * green on exactly that regression, which is the assertion-that-cannot-fail this project keeps
+ * finding.
+ */
+const noticesShown = (): string[] =>
+  consoleUtilsMock.displayNotice.mock.calls.map((call) =>
+    [String(call[0]), ...(call[1] as readonly string[])].join('\n')
+  );
+
+/** The lines the surface put in front of a person through the ordinary PER-LINE helpers. */
 const saidToUser = (): string[] => [
   ...consoleUtilsMock.displayWarning.mock.calls.map((call) => String(call[0])),
   ...consoleUtilsMock.display.mock.calls.map((call) => String(call[0])),
@@ -108,7 +129,12 @@ describe('[[EXT-159]] the reason reaches the live session — core’s non-inter
 
       await runSingleShot('s', '', 'go', config);
 
-      expect(saidToUser().join('\n')).toContain(TERMINATION_NOTICE_TITLE_PREFIX);
+      // One notice, carrying its title AND the quotable code — not two halves a redirect could
+      // separate. The per-line helpers must have received none of it.
+      expect(noticesShown()).toHaveLength(1);
+      expect(noticesShown()[0]).toContain(TERMINATION_NOTICE_TITLE_PREFIX);
+      expect(noticesShown()[0]).toContain('rate_limited@runner.stream-error');
+      expect(saidToUser().join('\n')).not.toContain(TERMINATION_NOTICE_TITLE_PREFIX);
     });
 
     /**
@@ -140,6 +166,7 @@ describe('[[EXT-159]] the reason reaches the live session — core’s non-inter
 
       const result = await runSingleShot('s', '', 'go', config);
 
+      expect(noticesShown()).toEqual([]);
       expect(saidToUser().join('\n')).not.toContain(TERMINATION_NOTICE_TITLE_PREFIX);
       // Recorded even so: an ordinary completion IS a termination, and recording it is what makes
       // an absent reason mean "a site we missed" rather than "nothing went wrong".
@@ -159,6 +186,7 @@ describe('[[EXT-159]] the reason reaches the live session — core’s non-inter
       const result = await runSingleShot('s', '', 'go', config);
 
       expect(result.terminationReason).toBeNull();
+      expect(noticesShown()).toEqual([]);
       expect(saidToUser().join('\n')).not.toContain(TERMINATION_NOTICE_TITLE_PREFIX);
     });
 
@@ -185,7 +213,10 @@ describe('[[EXT-159]] the reason reaches the live session — core’s non-inter
 
       const turns = await runConversation('ask', 'c', ['first'], config);
 
-      expect(saidToUser().join('\n')).toContain(TERMINATION_NOTICE_TITLE_PREFIX);
+      expect(noticesShown()).toHaveLength(1);
+      expect(noticesShown()[0]).toContain(TERMINATION_NOTICE_TITLE_PREFIX);
+      expect(noticesShown()[0]).toContain('rate_limited@runner.stream-error');
+      expect(saidToUser().join('\n')).not.toContain(TERMINATION_NOTICE_TITLE_PREFIX);
       expect(turns).toHaveLength(1);
       expect(turns[0].terminationReason).toMatchObject({
         category: 'rate_limited',

@@ -49,6 +49,9 @@ const consoleUtilsMock = vi.hoisted(() => ({
   displayError: vi.fn(),
   displayDebug: vi.fn(),
   displayInfo: vi.fn(),
+  // [[EXT-165]] — the ONE writer a termination notice goes through. Omitted, `displayTermination`
+  // throws into its own fail-soft catch and every cell below passes with nothing on screen.
+  displayNotice: vi.fn(),
   displayWarning: vi.fn(),
   defaultStatusCallback: vi.fn(),
   initSessionLogging: vi.fn(),
@@ -105,7 +108,21 @@ const mockConfig = {
   >,
 } as GthConfig;
 
-/** Everything the surface put in front of a person. */
+/**
+ * The NOTICES the surface put in front of a person — each flattened title-then-body, from the one
+ * call that carried both.
+ *
+ * [[EXT-165]] — read only from `displayNotice`, never from the per-line helpers, and that is the
+ * property rather than a detail. A notice rendered the old way makes no call here at all, so a
+ * regression that put the title and the body back on two streams reds these cells; a reader that
+ * also scanned `display`/`displayWarning` would go green on exactly that regression.
+ */
+const noticesShown = (): string[] =>
+  consoleUtilsMock.displayNotice.mock.calls.map((call) =>
+    [String(call[0]), ...(call[1] as readonly string[])].join('\n')
+  );
+
+/** Everything the surface put in front of a person through the ordinary PER-LINE helpers. */
 const saidToUser = (): string =>
   [
     ...consoleUtilsMock.displayWarning.mock.calls,
@@ -132,10 +149,14 @@ describe('[[EXT-159]] SURFACE — the review / pr verb says why the run ended', 
 
     await review('src', 'preamble', 'a diff', mockConfig);
 
-    expect(saidToUser()).toContain(TERMINATION_NOTICE_TITLE_PREFIX);
+    // One notice, title and body together — the halves cannot be separated by a redirect, and the
+    // per-line helpers (which the surface still uses for the review's own output) got none of it.
+    expect(noticesShown()).toHaveLength(1);
+    expect(noticesShown()[0]).toContain(TERMINATION_NOTICE_TITLE_PREFIX);
     // Read off the runner, not the screen: the value is the carrier and the sentence is derived.
     expect(runnerInstanceMock.getTerminationReason).toHaveBeenCalled();
-    expect(saidToUser()).toContain(`${overflow.category}@${overflow.site}`);
+    expect(noticesShown()[0]).toContain(`${overflow.category}@${overflow.site}`);
+    expect(saidToUser()).not.toContain(TERMINATION_NOTICE_TITLE_PREFIX);
   });
 
   /**
@@ -155,7 +176,8 @@ describe('[[EXT-159]] SURFACE — the review / pr verb says why the run ended', 
 
     await review('src', 'preamble', 'a diff', mockConfig);
 
-    expect(saidToUser()).toContain('output_truncated@agent.stream-stop-metadata');
+    expect(noticesShown().join('\n')).toContain('output_truncated@agent.stream-stop-metadata');
+    expect(saidToUser()).not.toContain('output_truncated@agent.stream-stop-metadata');
   });
 
   it('adds nothing to a review that simply finished', async () => {
@@ -166,6 +188,7 @@ describe('[[EXT-159]] SURFACE — the review / pr verb says why the run ended', 
 
     await review('src', 'preamble', 'a diff', mockConfig);
 
+    expect(noticesShown()).toEqual([]);
     expect(saidToUser()).not.toContain(TERMINATION_NOTICE_TITLE_PREFIX);
   });
 

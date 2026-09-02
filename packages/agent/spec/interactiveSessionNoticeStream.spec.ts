@@ -68,7 +68,15 @@ vi.mock('@gaunt-sloth/core/core/GthAgentRunner.js', () => ({
 }));
 
 vi.mock('@langchain/core/messages', () => ({ HumanMessage: vi.fn() }));
-vi.mock('@langchain/langgraph', () => ({ MemorySaver: vi.fn() }));
+// Partial, via `importOriginal`, deliberately: a wholesale factory here names the exports this
+// file happened to need on the day it was written, and core's session checkpointer imports others
+// (`BaseCheckpointSaver`) that it never mentioned. The failure is not a red assertion but a
+// module-load error, so the three cells below stop running while still LOOKING like a spec that
+// covers them — and the next import core adds would do it again.
+vi.mock('@langchain/langgraph', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@langchain/langgraph')>()),
+  MemorySaver: vi.fn(),
+}));
 vi.mock('#src/resolvers.js', () => ({ createResolvers: vi.fn() }));
 
 const sessionConfig = {
@@ -152,9 +160,8 @@ describe('interactiveSessionModule — [[EXT-165]] a command notice is written t
    * the title's colour picking its stream, so a title on stderr and its body on stdout.
    */
   it('CONTROL: the old title/body pairing still tears across both descriptors', async () => {
-    const { display, displayWarning, displayInfo } = await import(
-      '@gaunt-sloth/core/utils/consoleUtils.js'
-    );
+    const { display, displayWarning, displayInfo } =
+      await import('@gaunt-sloth/core/utils/consoleUtils.js');
     const written = await captureFds(() => {
       displayWarning('warn-title-control');
       display('  body-control');
