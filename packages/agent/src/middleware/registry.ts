@@ -38,19 +38,18 @@ type PredefinedMiddlewareFactory = (
  * — and falls back to the live model's `_llmType()` only when it is absent (module configs).
  * `_llmType()` is the model class's own label rather than the gth provider namespace, so the two
  * only mostly agree. Where they do: `openrouter`/`deepseek`/`xai`/`groq`/`ollama`/`anthropic` each
- * report their own name, which `imageBlockFor` matches directly, and both Gemini providers report
- * `google`, which lands on the default branch — the same standard block its `google-genai`/
- * `vertexai` cases return.
+ * report their own name, which `imageBlockFor` matches directly; both Gemini providers report
+ * `google`, which `imageBlockFor` enumerates alongside `google-genai`/`vertexai` for the same
+ * standard block; and `huggingface` reports `openai`, which since CFG-45 selects the same
+ * OpenAI-native `image_url:{url}` block its configured `type` now does, so either path agrees.
  *
- * Two labels do NOT agree, and this fallback is the only path either can arrive on:
- *   - `huggingface` reports `openai`, so the fallback emits `image_url:{url}` where the configured
- *     `type` would take the default standard block. Which of the two the HF router actually accepts
- *     is unmeasured — see [[CFG-45]]. Do not add a branch by analogy.
- *   - `ChatXAIResponses` reports `xai-responses`, which matches no case and so takes the default
- *     standard block — while `imageBlockFor`'s own docstring records that a standard block
- *     serialises to an INVALID image part on the Responses path. gth itself only ever constructs
- *     `ChatXAI`, so this is reachable only from a module config that builds the Responses class
- *     itself.
+ * One label still does NOT agree, and this fallback is the only path it can arrive on:
+ * `ChatXAIResponses` reports `xai-responses`, which matches no case and so takes `imageBlockFor`'s
+ * fallback arm — while that function's own docstring records that a standard block serialises to an
+ * INVALID image part on the Responses path. gth itself only ever constructs `ChatXAI`, so this is
+ * reachable only from a module config that builds the Responses class itself. Still open in
+ * [[CFG-45]]; the fallback now debug-logs the unenumerated label rather than serving it silently.
+ * Do not add a branch for it by analogy — measure it, as CFG-45 did for `huggingface`.
  */
 function resolveVisionProvider(gthConfig: GthConfig): string {
   if (gthConfig.modelProviderType) return gthConfig.modelProviderType;

@@ -99,8 +99,12 @@ describe('imageBlockFor — per-provider vision block shape', () => {
     });
   });
 
-  it('google-genai / vertexai use the standard base64 block', () => {
-    for (const provider of ['google-genai', 'vertexai']) {
+  // `google` is what BOTH Gemini providers' `_llmType()` reports (each builds `@langchain/google`'s
+  // `ChatGoogle`), so `resolveVisionProvider` yields it for a module config. CFG-45 enumerated it
+  // explicitly rather than leaving it to the fallback arm; this cell is a regression guard on that
+  // enumerated case (behaviour-identical, so it passes before and after — not failing evidence).
+  it('google-genai / vertexai / google use the standard base64 block', () => {
+    for (const provider of ['google-genai', 'vertexai', 'google']) {
       expect(imageBlockFor(provider, IMG.mimeType, IMG.data)).toEqual({
         type: 'image',
         source_type: 'base64',
@@ -110,8 +114,29 @@ describe('imageBlockFor — per-provider vision block shape', () => {
     }
   });
 
-  it('an unknown provider (huggingface / fake / "") falls back to the base64 block', () => {
-    for (const provider of ['huggingface', 'fake', '']) {
+  // CFG-45 — measured, not inferred from the class hierarchy. gth's `huggingface` provider builds a
+  // plain `ChatOpenAI` pinned to the HF router's OpenAI-compatible **Chat Completions** endpoint
+  // (`https://router.huggingface.co/v1`), and `openai@7.6.0`'s own request types accept exactly one
+  // image part there: `{ type:'image_url', image_url:{ url } }`. A fetch-capture probe against the
+  // installed `@langchain/openai@1.5.10` confirmed it end to end, and also confirmed the standard
+  // block only *reaches* that same wire shape by way of `@langchain/core`'s `@deprecated`
+  // data-content-block conversion — the generic auto-conversion this file's through-line refuses to
+  // depend on, and which is INVALID on the Responses path (the probe emitted a bare `image_url`
+  // part there, where the Responses API requires `input_image`).
+  it('huggingface uses the OpenAI-native image_url:{url} block, not the standard one (CFG-45)', () => {
+    const block = imageBlockFor('huggingface', IMG.mimeType, IMG.data);
+    expect(block).toEqual({ type: 'image_url', image_url: { url: DATA_URL } });
+    // The standard-block keys are what force the deprecated auto-conversion — none may be present.
+    expect(block).not.toHaveProperty('source_type');
+    expect(block).not.toHaveProperty('mime_type');
+  });
+
+  // CONTROL for the cell above: this one passes both before and after CFG-45's change. It pins the
+  // ruling that the fallback arm stays permissive (it must NOT throw — `resolveVisionProvider`
+  // returns `''` for a module config whose model has no usable `_llmType()`), and `huggingface` is
+  // deliberately no longer in this list: it used to be, which is how the wrong shape was pinned.
+  it('an unknown provider (fake / "") falls back to the base64 block', () => {
+    for (const provider of ['fake', '']) {
       expect(imageBlockFor(provider, IMG.mimeType, IMG.data)).toEqual({
         type: 'image',
         source_type: 'base64',

@@ -18,6 +18,7 @@
 import { createMiddleware, type AgentMiddleware } from 'langchain';
 import { HumanMessage, isToolMessage } from '@langchain/core/messages';
 import type { MessageContent } from '@langchain/core/messages';
+import { debugLog } from '@gaunt-sloth/core/utils/debugUtils.js';
 
 /**
  * The tool-result envelope a frontend capture tool posts back as the ToolMessage's (string) content:
@@ -54,13 +55,26 @@ export interface FrontendImageInjectionOptions {
  *   - **ollama** → `{ type:'image_url', image_url:'<data-URL string>' }`. ChatOllama's
  *     `convertToOllamaMessages` only handles `image_url` blocks (extractBase64FromDataUrl); the
  *     LangChain standard `source_type` block throws "Unsupported content type: image".
- *   - **OpenAI-compatible** (`openai`, `openrouter`, `deepseek`, `xai`, `groq` — served by an
- *     OpenAI-compatible Chat Completions API, whichever LangChain class fronts it) →
+ *   - **OpenAI-compatible** (`openai`, `openrouter`, `deepseek`, `xai`, `groq`, `huggingface` —
+ *     served by an OpenAI-compatible Chat Completions API, whichever LangChain class fronts it) →
  *     `{ type:'image_url', image_url:{ url:'<data-URL>' } }`.
  *     This native OpenAI shape is correct on BOTH the Completions API AND the Responses API (GS2-74
  *     flips reasoning-capable openai models to Responses). A raw `source_type` standard block
  *     serialises to an *invalid* image part on the Responses path, so we emit the provider-native
  *     shape rather than lean on `@langchain/core`'s (deprecated, internal) auto-conversion.
+ *     `huggingface` (CFG-45) belongs here by MEASUREMENT, not by "it constructs a `ChatOpenAI`":
+ *     a fetch-capture probe of the installed `@langchain/openai` (no network — the client's `fetch`
+ *     was stubbed), built exactly as `providers/huggingface.ts` builds it, showed the request going
+ *     to `https://router.huggingface.co/v1/chat/completions` — the Completions path, never
+ *     Responses, since nothing on the HF path sets `useResponsesApi` and the library's own
+ *     model-name flip matches only OpenAI-specific ids — and `openai@7.6.0`'s
+ *     `ChatCompletionContentPart` union accepts exactly one image part there: `image_url:{url}`.
+ *     There is no `input_image` part on that endpoint, so the OpenAI *Responses* shape does not
+ *     apply. The same probe showed the standard block ALSO arriving as `image_url:{url}` on the
+ *     Completions path — but only because `@langchain/core`'s `convertToProviderContentBlock` (now
+ *     `@deprecated`: "Don't use data content blocks") rewrites it, which is precisely the
+ *     auto-conversion the through-line below refuses to depend on, and which yields a bare, invalid
+ *     `image_url` part the moment the same block reaches a Responses endpoint.
  *   - **anthropic** → the provider-native block `{ type:'image', source:{ type:'base64',
  *     media_type, data } }`. The LangChain standard block is NOT usable here (RC-32): in
  *     `@langchain/anthropic`'s `_formatContentBlocks`, the `isDataContentBlock` branch yields its
@@ -70,17 +84,27 @@ export interface FrontendImageInjectionOptions {
  *     defaults to the literal `image/jpeg`. Every frame is therefore sent twice, and a non-JPEG
  *     capture 400s outright on the mislabelled copy. The native block is recognised earlier by
  *     `_isAnthropicImageBlockParam` and passed through untouched, exactly once.
- *   - **google-genai / vertexai** (and any unknown/default) → the LangChain standard base64 data
- *     content block `{ type:'image', source_type:'base64', mime_type, data }`, which those native
- *     converters decode directly and which is the most broadly decodable fallback.
+ *   - **Gemini** (`google-genai`, `vertexai`, and the `google` label both of them report from
+ *     `_llmType()`) → the LangChain standard base64 data content block
+ *     `{ type:'image', source_type:'base64', mime_type, data }`, which those native converters
+ *     decode directly.
+ *   - **anything else** → the same standard block, as a last-resort fallback rather than as a
+ *     Gemini alias (see the `default` arm below).
  *
  * The through-line: emit what the target provider's converter consumes natively rather than lean on
  * a generic auto-conversion — the same lesson as GS2-75 on the OpenAI Responses path.
  *
- * Pure and exported so each provider branch can be unit-tested directly.
+ * Exported so each provider branch can be unit-tested directly; its only effect beyond the returned
+ * block is one debug-log line on the fallback arm.
  */
 export function imageBlockFor(provider: string, mimeType: string, data: string) {
   const dataUrl = `data:${mimeType};base64,${data}`;
+  const standardBlock = {
+    type: 'image' as const,
+    source_type: 'base64' as const,
+    mime_type: mimeType,
+    data,
+  };
   switch (provider) {
     case 'ollama':
       return { type: 'image_url' as const, image_url: dataUrl };
@@ -89,21 +113,40 @@ export function imageBlockFor(provider: string, mimeType: string, data: string) 
     case 'deepseek':
     case 'xai':
     case 'groq':
+    case 'huggingface':
       return { type: 'image_url' as const, image_url: { url: dataUrl } };
     case 'anthropic':
       return {
         type: 'image' as const,
         source: { type: 'base64' as const, media_type: mimeType, data },
       };
+    // The Gemini labels are enumerated DELIBERATELY, and separately from `default` below. CFG-45:
+    // while `default` doubled as the Gemini arm, every provider string nobody had enumerated was
+    // served a Gemini-shaped block silently — which is how `huggingface` sat on the wrong shape
+    // unnoticed. `google` is what BOTH gth Gemini providers' `_llmType()` reports (each builds
+    // `@langchain/google`'s `ChatGoogle`), and it is the label `resolveVisionProvider` falls back to
+    // for a module config, so it is enumerated here rather than left to the fallback.
     case 'google-genai':
     case 'vertexai':
+    case 'google':
+      return standardBlock;
+    // CFG-45 ruling — `default` STAYS a permissive fallback and must not throw. `provider` is
+    // `resolveVisionProvider`'s output, which is `''` whenever a module config supplies an already-
+    // built LLM whose `_llmType()` is missing or throws, and the binary-content-injection middleware
+    // documents that `''` means "emit the standard base64 block". Throwing would turn a
+    // possibly-suboptimal block into a hard failure on configurations that work today, and the
+    // caller (a `beforeModel` hook) has no way to recover. What it stops doing is failing SILENTLY:
+    // an unrecognised non-empty label is recorded, so the next wrong-shaped block leaves a trace
+    // instead of being discovered by reading the switch.
     default:
-      return {
-        type: 'image' as const,
-        source_type: 'base64' as const,
-        mime_type: mimeType,
-        data,
-      };
+      if (provider) {
+        debugLog(
+          `imageBlockFor: provider "${provider}" is not enumerated; emitting the standard base64 ` +
+            `image block. If its converter does not decode that block natively, add a MEASURED ` +
+            `case for it (CFG-45) rather than one by analogy.`
+        );
+      }
+      return standardBlock;
   }
 }
 
