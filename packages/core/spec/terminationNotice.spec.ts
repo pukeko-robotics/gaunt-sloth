@@ -215,36 +215,61 @@ describe('[[EXT-159]] rendering a termination reason for a person', () => {
     });
   });
 
+  /**
+   * [[EXT-165]] — the notice reaches the screen as ONE call to the ONE notice writer.
+   *
+   * These cells spy on `displayNotice` rather than on the title/body pair this used to make, and
+   * that is the point rather than an adaptation: while the title went through `displayWarning` and
+   * the body through `display`, the two halves took different streams and different level gates, so
+   * a redirect kept one and a quieted console dropped the other. Asserting the whole notice is
+   * handed over in a single call is what stops it being split again here.
+   *
+   * **Which descriptor that call lands on is asserted where it can be measured** — in a real
+   * process with two separate pipes, `packages/core/spec/noticeStreamProcess.e2e.spec.ts`. A spy
+   * cannot see a stream: it replaces the very mapping that is the claim.
+   */
   describe('displaying it on a console surface', () => {
-    let warned: string[];
-    let shown: string[];
+    let notices: Array<{ title: string; lines: readonly string[]; gate?: unknown; tone?: unknown }>;
 
     beforeEach(async () => {
-      warned = [];
-      shown = [];
+      notices = [];
       const consoleUtils = await import('#src/utils/consoleUtils.js');
-      vi.spyOn(consoleUtils, 'displayWarning').mockImplementation((m: string) => {
-        warned.push(m);
-      });
-      vi.spyOn(consoleUtils, 'display').mockImplementation((m: string) => {
-        shown.push(m);
-      });
+      vi.spyOn(consoleUtils, 'displayNotice').mockImplementation(
+        (title: string, lines: readonly string[], options = {}) => {
+          notices.push({ title, lines, ...options });
+        }
+      );
     });
 
     afterEach(() => vi.restoreAllMocks());
 
-    it('shows the title and the body when the ending is worth reporting', () => {
+    it('hands the title and the body to one writer, as one notice', () => {
       const reason = terminationReason('runner.stream-error', 'exception', 'provider_error');
 
       expect(displayTermination(reason)).toBe(true);
-      expect(warned).toEqual([terminationNotice(reason).title]);
-      expect(shown.join('\n')).toContain(terminationCode(reason));
+      expect(notices.length).toBe(1);
+      expect(notices[0].title).toBe(terminationNotice(reason).title);
+      expect(notices[0].lines.join('\n')).toContain(terminationCode(reason));
+      // The whole body, not a prefix of it: the retry advice is the line a user acts on.
+      expect(notices[0].lines).toEqual(terminationNotice(reason).lines);
+    });
+
+    /**
+     * **Never level-gated.** {@link terminationCode} is the token a bug report is built from, and
+     * the two places it would otherwise survive — the session log and the debug log — are both off
+     * by default, so a gate here is a reason code that reaches nobody. Only an abnormal ending
+     * reaches this function at all, so nothing ordinary is made louder by it.
+     */
+    it('asks for the notice to survive any console level', () => {
+      expect(displayTermination(reasonFor('provider_error'))).toBe(true);
+      expect(notices[0].gate).toBe('always');
+      // Warn-toned, which is what puts the marker in the text as well as the colour.
+      expect(notices[0].tone).toBe('warn');
     });
 
     it('says nothing at all when the model simply finished', () => {
       expect(displayTermination(reasonFor('completed'))).toBe(false);
-      expect(warned).toEqual([]);
-      expect(shown).toEqual([]);
+      expect(notices).toEqual([]);
     });
 
     /**
@@ -255,8 +280,7 @@ describe('[[EXT-159]] rendering a termination reason for a person', () => {
      */
     it('writes an unclassified ending to the log and shows the user nothing', () => {
       expect(displayTermination(null)).toBe(false);
-      expect(warned).toEqual([]);
-      expect(shown).toEqual([]);
+      expect(notices).toEqual([]);
     });
   });
 });

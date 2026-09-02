@@ -273,6 +273,100 @@ export function displayDialogLine(message: string, tone: DialogTone = 'plain'): 
 }
 
 /**
+ * How loud a NOTICE is — the title's colour, and the marker that says the same thing in the text.
+ *
+ * Two tones, matching the `SlashCommandNotice` vocabulary the surfaces already build notices with,
+ * so a builder's tone passes straight through instead of being re-derived here.
+ */
+export type NoticeTone = 'info' | 'warn';
+
+/**
+ * The warn tone, said in the text rather than in the colour.
+ *
+ * Colour is the first thing a surface loses — `NO_COLOR`, a pipe, a monochrome terminal, a reader
+ * who cannot distinguish yellow from grey — and a severity that exists only in the colour is a
+ * severity those readers never receive. `⚠` is the marker the rest of the CLI already uses for
+ * exactly this (`core/shell/escalationSeverity`, `core/toolDisplay`, `core/shell/framing`), so this
+ * adds no second vocabulary for the same idea.
+ *
+ * Applied by {@link displayNotice} at render time and never written into the notice VALUE: the same
+ * `title` travels to the Ink TUI, ACP and AG-UI, which mark severity their own way, and a marker
+ * baked into the value would appear twice there.
+ */
+export const NOTICE_WARN_MARKER = '⚠ ';
+
+const NOTICE_TONE_COLOURS: Record<NoticeTone, keyof typeof ANSI_COLORS> = {
+  info: 'dim',
+  warn: 'yellow',
+};
+
+/**
+ * When `consoleLevel` may silence a notice: at a {@link StatusLevel}, or never.
+ *
+ * A level here gates the WHOLE notice — see {@link displayNotice} — so it can never mean "some of
+ * this notice".
+ */
+export type NoticeGate = StatusLevel | 'always';
+
+/**
+ * Print one whole NOTICE — a title and its body lines — **on stderr**.
+ *
+ * ## One notice, one stream
+ *
+ * A notice is a title that names something and body lines that are the substance of it; neither
+ * half is usable alone. Written through the ordinary helpers it is written across BOTH streams,
+ * because those bind colour to stream: a title coloured with `displayWarning` is yellow AND stderr,
+ * while `display` body lines are stdout. On a terminal both go to the same place and nothing shows;
+ * redirect one and the notice tears in half — the reader keeps *"Run ended"* with no reason code
+ * while the file keeps the reason code with no notice.
+ *
+ * So a notice takes its title and its lines together and writes them through one call. The split
+ * cannot be reintroduced by a caller, because a caller no longer chooses per line.
+ *
+ * **stderr, because a notice is commentary on the run and not the run's output.** It is what the
+ * ordinary helpers' loudest half already does, it is unbuffered, and it leaves stdout carrying only
+ * what the command produced — so `gth ask … > answer.txt` gets an answer file that is the answer,
+ * with the whole explanation of a bad ending still on the screen and still collectable with `2>`.
+ * It also keeps a notice on the same stream as the approval dialog it sits beside on the readline
+ * surface ({@link displayDialogLine}); split across two, those two related blocks can arrive in an
+ * order neither of them was written in.
+ *
+ * The session log gets every line UNCONDITIONALLY, gate or no gate, so a quieted console never
+ * costs the transcript a notice it did not show.
+ *
+ * ## The gate is per NOTICE, never per line
+ *
+ * `gate` is checked once, before the first line is written, and decides the whole notice. That is
+ * the property, not an implementation detail: the level filter applied per line is what let a
+ * quieted console print a title with no body under it (and, at `display` level, a body with no
+ * title over it), which still looks like a whole notice and is not one.
+ *
+ * `'always'` is for a notice whose absence cannot be recovered by the reader — the termination
+ * notice carries the one token a bug report needs, and the session log that would otherwise hold it
+ * is off by default. A notice the user asked for by typing a command is not that: it is gated at
+ * its own tone's level, and re-running the command after un-quieting the console brings it back.
+ */
+export function displayNotice(
+  title: string,
+  lines: readonly string[],
+  options: { tone?: NoticeTone; gate?: NoticeGate } = {}
+): void {
+  const tone = options.tone ?? 'info';
+  const gate =
+    options.gate ?? (tone === 'warn' ? StatusLevel.WARNING : StatusLevel.INFO);
+  // Decided ONCE, for the whole notice, before anything is written.
+  const show = gate === 'always' || shouldDisplayLevel(gate);
+  const rows: Array<{ text: string; colour: keyof typeof ANSI_COLORS | null }> = [
+    { text: tone === 'warn' ? `${NOTICE_WARN_MARKER}${title}` : title, colour: NOTICE_TONE_COLOURS[tone] },
+    ...lines.map((line) => ({ text: `  ${line}`, colour: null })),
+  ];
+  for (const row of rows) {
+    writeToSessionLog(row.text + '\n');
+    if (show) su.error(row.colour ? colorText(row.text, row.colour) : row.text);
+  }
+}
+
+/**
  * Display a debug message to the console and log it.
  * This function also integrates with debugUtils to output logs when at debug level.
  * Note: There is also a dedicated debug() function in debugUtils for more detailed logging.

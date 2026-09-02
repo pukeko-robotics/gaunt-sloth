@@ -5,6 +5,7 @@ import {
   displayDialogLine,
   displayInfo,
   displayLaunchBanner,
+  displayNotice,
   displayWarning,
   flushSessionLog,
   formatInputPrompt,
@@ -92,8 +93,13 @@ import {
  * So the rule for this file is mechanical: **inside the approval dialog and the attack banner, use
  * `displayDialogLine` and pass the tone.** A `display`/`displayInfo`/`displayWarning`/`displayError`
  * call added among them is the defect coming back, and the stream test covering these two callbacks
- * is what catches it. Everything OUTSIDE them — notices, banners, the session's own chatter — keeps
- * the ordinary helpers.
+ * is what catches it.
+ *
+ * **A command notice has the same rule and its own writer**: [[EXT-165]] — every line of one goes
+ * through `displayNotice`, which takes the title and the body TOGETHER so no caller can put them on
+ * two streams, and which takes the tone as a separate argument for the same reason as above. The
+ * session's own single-line chatter — the launch banner, the degrade pointers, an incidental
+ * `result.message` — keeps the ordinary helpers: one line cannot be torn in half.
  *
  * The tone is the observable an assertion can bite on, too: a change that made `catastrophic` look
  * like `destructive` would have to pass both the same tone, which a test can see.
@@ -556,17 +562,18 @@ export async function createInteractiveSession(
       turnCount += 1; // GS2-8 — feeds the /status turn counter
     };
 
-    // GS2-8 — render a structured command notice on the plain-text surface: tone-matched title
-    // (warn ⇒ yellow), then the body lines indented under it.
+    // GS2-8 — render a structured command notice on the plain-text surface: tone-matched title,
+    // then the body lines indented under it.
+    //
+    // [[EXT-165]] — through `displayNotice`, which writes the WHOLE notice to one stream. Rendered
+    // line by line through the ordinary helpers, the title took its stream from its colour while
+    // the body took another, so a redirected session kept one half and discarded the other; and
+    // because the two halves were filtered at different levels, a quieted console showed a title
+    // with no body under it (or, at `display` level, a body with no title over it). The tone is
+    // passed through rather than turned into a helper choice here — that mapping is what coupled
+    // colour to stream.
     const printNotice = (notice: SlashCommandNotice) => {
-      if (notice.tone === 'warn') {
-        displayWarning(notice.title);
-      } else {
-        displayInfo(notice.title);
-      }
-      for (const line of notice.lines) {
-        display(`  ${line}`);
-      }
+      displayNotice(notice.title, notice.lines, { tone: notice.tone ?? 'info' });
     };
 
     const endSession = async () => {

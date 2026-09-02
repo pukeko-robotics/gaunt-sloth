@@ -394,6 +394,164 @@ describe('consoleUtils', () => {
       );
     });
 
+    /**
+     * [[EXT-165]] — `displayNotice` takes a notice's title and its body TOGETHER, so the level
+     * filter applies to the notice rather than to each line of it.
+     *
+     * Per line is what the two renderers used to get, and it fails in both directions: at
+     * `consoleLevel: warning` a notice printed its warn-toned title with the body filtered out from
+     * under it, and at `consoleLevel: display` an info notice printed its body with the title
+     * filtered out from over it. Half a notice still looks like a whole one, which is why the
+     * decision is taken once here, before the first line is written.
+     *
+     * Which DESCRIPTOR the lines land on is asserted in
+     * `packages/core/spec/noticeStreamProcess.e2e.spec.ts`: these mocks stand exactly where the
+     * stream mapping is, so they cannot see it.
+     */
+    describe('displayNotice (EXT-165) — the gate is per notice, never per line', () => {
+      it('writes the whole notice through one stream writer, title marked by tone', async () => {
+        const { displayNotice } = await import('#src/utils/consoleUtils.js');
+
+        displayNotice('Approvals posture', ['Mode: write', 'Refusals: 1'], { tone: 'warn' });
+
+        // One writer for every line: `error` is the stderr-side primitive `displayDialogLine`
+        // already uses, and nothing went to the stdout-side ones.
+        expect(systemUtilsMock.error).toHaveBeenCalledTimes(3);
+        expect(systemUtilsMock.error).toHaveBeenNthCalledWith(1, '⚠ Approvals posture');
+        expect(systemUtilsMock.error).toHaveBeenNthCalledWith(2, '  Mode: write');
+        expect(systemUtilsMock.error).toHaveBeenNthCalledWith(3, '  Refusals: 1');
+        expect(systemUtilsMock.log).not.toHaveBeenCalled();
+        expect(systemUtilsMock.info).not.toHaveBeenCalled();
+        expect(systemUtilsMock.warn).not.toHaveBeenCalled();
+      });
+
+      /**
+       * The tone in the TEXT, with colour off. `getUseColour` is false throughout this file, so a
+       * marker that lived only in the ANSI wrapper would leave these two titles identical in shape
+       * — which is the monochrome reader's experience of a colour-only severity.
+       */
+      it('marks a warn title and leaves an info one unmarked, with no colour applied', async () => {
+        const { displayNotice } = await import('#src/utils/consoleUtils.js');
+
+        displayNotice('Same Words', ['body'], { tone: 'warn' });
+        displayNotice('Same Words', ['body'], { tone: 'info' });
+
+        const titles = systemUtilsMock.error.mock.calls
+          .map((call) => String(call[0]))
+          .filter((line) => line.includes('Same Words'));
+        expect(titles).toEqual(['⚠ Same Words', 'Same Words']);
+        expect(titles[0]).not.toBe(titles[1]);
+      });
+
+      it.each([
+        ['warning', StatusLevel.WARNING],
+        ['error', StatusLevel.ERROR],
+      ])(
+        'drops an info notice ENTIRELY at consoleLevel %s — neither title nor body',
+        async (_name, level) => {
+          const { displayNotice, display, setConsoleLevel } =
+            await import('#src/utils/consoleUtils.js');
+          setConsoleLevel(level);
+
+          displayNotice('Session status', ['Mode: code'], { tone: 'info' });
+          expect(systemUtilsMock.error).not.toHaveBeenCalled();
+
+          // CONTROL for the OTHER direction, and it is load-bearing: the body lines used to go
+          // through `display`, whose DISPLAY-level gate is open at neither of these levels. This
+          // proves the level actually took effect rather than the call having silently done
+          // nothing.
+          display('the body line, through the gated helper');
+          expect(systemUtilsMock.log).not.toHaveBeenCalled();
+        }
+      );
+
+      /**
+       * The mirror trap, and the one neither renderer's author saw: `display` is open at DISPLAY
+       * level while `displayInfo` is not, so an info notice used to print its BODY with no title
+       * over it. The control here is the inverse of the one above — `display` must be heard, or
+       * this cell would pass on a console that was silent for an unrelated reason.
+       */
+      it('drops an info notice entirely at consoleLevel display, where its body used to print alone', async () => {
+        const { displayNotice, display, setConsoleLevel } =
+          await import('#src/utils/consoleUtils.js');
+        setConsoleLevel(StatusLevel.DISPLAY);
+
+        display('CONTROL: the gated helper is audible at this level');
+        expect(systemUtilsMock.log).toHaveBeenCalledWith(
+          'CONTROL: the gated helper is audible at this level'
+        );
+
+        displayNotice('Session status', ['Mode: code'], { tone: 'info' });
+        expect(systemUtilsMock.error).not.toHaveBeenCalled();
+      });
+
+      it('keeps a warn notice WHOLE at consoleLevel warning, where its body used to be dropped', async () => {
+        const { displayNotice, display, setConsoleLevel } =
+          await import('#src/utils/consoleUtils.js');
+        setConsoleLevel(StatusLevel.WARNING);
+
+        // CONTROL: the helper the body used to travel through is silent here — which is exactly
+        // how a title arrived with nothing under it.
+        display('the body line, through the gated helper');
+        expect(systemUtilsMock.log).not.toHaveBeenCalled();
+
+        displayNotice('Run ended: the provider failed', ['Reason code: provider_error@site'], {
+          tone: 'warn',
+        });
+        expect(systemUtilsMock.error).toHaveBeenCalledTimes(2);
+        expect(systemUtilsMock.error).toHaveBeenNthCalledWith(
+          2,
+          '  Reason code: provider_error@site'
+        );
+      });
+
+      /**
+       * `gate: 'always'` — the termination notice's setting, pinned at TWO levels for the reason
+       * [[EXT-105]] recorded: a guard reinstated at DISPLAY level is silent at both, but one
+       * reinstated at ERROR level still prints at ERROR, and only STREAM catches that one. One
+       * level would leave a plausible mutation alive.
+       */
+      it.each([
+        ['error', StatusLevel.ERROR],
+        ['stream', StatusLevel.STREAM],
+      ])('delivers an always-gated notice whole at consoleLevel %s', async (_name, level) => {
+        const { displayNotice, display, setConsoleLevel } =
+          await import('#src/utils/consoleUtils.js');
+        setConsoleLevel(level);
+
+        display('the body line, through the gated helper');
+        expect(systemUtilsMock.log).not.toHaveBeenCalled();
+
+        displayNotice('Run ended: the provider failed', ['Reason code: provider_error@site'], {
+          tone: 'warn',
+          gate: 'always',
+        });
+        expect(systemUtilsMock.error).toHaveBeenCalledTimes(2);
+        expect(systemUtilsMock.error).toHaveBeenNthCalledWith(1, '⚠ Run ended: the provider failed');
+        expect(systemUtilsMock.error).toHaveBeenNthCalledWith(
+          2,
+          '  Reason code: provider_error@site'
+        );
+      });
+
+      /**
+       * The session log keeps the whole notice whether or not the console showed it — the same
+       * unconditional write `displayDialogLine` makes, for the same reason: the gated helpers put
+       * their log write BEHIND the guard, so a quieted console cost the transcript the lines too.
+       */
+      it('records a silenced notice in the session log in full', async () => {
+        const { displayNotice, setConsoleLevel } = await import('#src/utils/consoleUtils.js');
+        setConsoleLevel(StatusLevel.ERROR);
+
+        displayNotice('Session status', ['Mode: code'], { tone: 'info' });
+
+        expect(systemUtilsMock.error).not.toHaveBeenCalled();
+        expect(systemUtilsMock.writeToLogStream).toHaveBeenCalledTimes(2);
+        expect(systemUtilsMock.writeToLogStream).toHaveBeenNthCalledWith(1, 'Session status\n');
+        expect(systemUtilsMock.writeToLogStream).toHaveBeenNthCalledWith(2, '  Mode: code\n');
+      });
+    });
+
     describe('display', () => {
       it('should display plain message and log to session', async () => {
         // Import the function after mocks are set up

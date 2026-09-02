@@ -30,7 +30,7 @@ import type {
   GthTerminationReason,
   GthTerminationRemedy,
 } from '#src/core/terminationReason.js';
-import { display, displayWarning } from '#src/utils/consoleUtils.js';
+import { displayNotice } from '#src/utils/consoleUtils.js';
 import { debugLog } from '#src/utils/debugUtils.js';
 
 /**
@@ -212,14 +212,21 @@ export function terminationLogLine(reason: GthTerminationReason | null): string 
  *
  * Fail-soft in the strongest sense: explaining a failure must never become a second failure, so
  * every path here is wrapped and a throw is swallowed.
+ *
+ * **The whole notice, on one stream, at any console level.** Written through
+ * {@link displayNotice}, so the title and the body cannot land on different streams and cannot be
+ * filtered apart. `gate: 'always'` because {@link terminationCode} is the token a user quotes in a
+ * bug report and there is nowhere else they will find it: the session log is off by default and the
+ * debug log is not what anyone reads. A notice they cannot recover is not a notice worth quieting —
+ * and only a run that ended abnormally reaches here at all, since
+ * {@link shouldAnnounceTermination} declines the ordinary ones.
  */
 export function displayTermination(reason: GthTerminationReason | null): boolean {
   try {
     debugLog(terminationLogLine(reason));
     if (!reason || !shouldAnnounceTermination(reason)) return false;
     const notice = terminationNotice(reason);
-    displayWarning(notice.title);
-    for (const line of notice.lines) display(`  ${line}`);
+    displayNotice(notice.title, notice.lines, { tone: 'warn', gate: 'always' });
     return true;
   } catch {
     return false;
