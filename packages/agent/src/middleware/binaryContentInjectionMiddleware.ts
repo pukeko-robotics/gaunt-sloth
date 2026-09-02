@@ -150,7 +150,12 @@ export function createBinaryContentInjectionMiddleware(
             // Images go through the per-provider builder so OpenAI reasoning models (Responses API,
             // GS2-74) get a valid `image_url` block instead of the standard `source_type` data block,
             // which @langchain/openai mis-serialises to an invalid Responses image part (GS2-75).
-            // file/video/audio keep the standard block (they already convert correctly).
+            // file/video/audio keep the standard block. NOT because that is correct everywhere —
+            // measured 2026-09-03 (CFG-45), xAI's Responses converter rewrites every part it does
+            // not recognise to `{type:'input_text', text:''}`, so these are silently destroyed
+            // there exactly as a wrong-shaped image was. They keep it because there is no better
+            // block to emit: xAI's union offers only `input_file{file_id}` and gth has no upload
+            // path to produce that id. Needs its own node; do not read this line as "these are fine".
             const contentBlock =
               binaryData.formatType === 'image'
                 ? imageBlockFor(provider, binaryData.media_type, binaryData.data)

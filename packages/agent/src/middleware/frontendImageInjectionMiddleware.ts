@@ -162,13 +162,17 @@ export function imageBlockFor(provider: string, mimeType: string, data: string) 
     // built LLM whose `_llmType()` is missing or throws, and the binary-content-injection middleware
     // documents that `''` means "emit the standard base64 block". Throwing would turn a
     // possibly-suboptimal block into a hard failure on configurations that work today, and the
-    // caller (a `beforeModel` hook) has no way to recover. What it stops doing is failing SILENTLY:
-    // an unrecognised non-empty label is recorded, so the next wrong-shaped block leaves a trace
-    // instead of being discovered by reading the switch.
+    // caller (a `beforeModel` hook) has no way to recover. What it adds is a TRACE: an unrecognised
+    // non-empty label is written to `debugLog`, so the next wrong-shaped block is discoverable in a
+    // `/debug-dump` instead of only by reading the switch. That is not the same as "no longer
+    // silent" — `debugLog` is a ring buffer a user never sees unless they go looking, so a user
+    // hitting this still sees nothing wrong.
     // The `xai-responses` case STRENGTHENS this ruling rather than revising it. That label can only
     // arrive from a module config building an arbitrary LangChain class, so the population reaching
-    // this arm is exactly the one whose `_llmType()` labels are unenumerable by construction — the
-    // population a throw would break. What generalises instead is the failure MODE the probe found:
+    // this arm INCLUDES one whose `_llmType()` labels are unenumerable by construction — the
+    // population a throw would break. Not "exactly": a JSON config can also reach here with an
+    // arbitrary `llm.type` (`availableDefaultConfigs` does not gate the loader), which is one grep
+    // away from disproving a stronger claim. What generalises instead is the failure MODE the probe found:
     // an unrecognised part is not rejected by a converter, it is quietly rewritten to an empty text
     // part, so a wrong block costs a silent blind answer rather than an error anyone would see.
     // That is what this log line exists to leave a trace of.

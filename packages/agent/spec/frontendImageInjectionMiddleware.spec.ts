@@ -150,12 +150,13 @@ describe('imageBlockFor — per-provider vision block shape', () => {
   // type is not `input_image`.
   it('xai-responses uses image_url:{url}, which xAI converts to input_image (CFG-45)', () => {
     const block = imageBlockFor('xai-responses', IMG.mimeType, IMG.data);
+    // This `toEqual` is exhaustive, so it already pins every deviation that matters here: the
+    // standard-block keys the xAI converter's catch-all discards (`source_type`, `mime_type`), and
+    // the wire shape `input_image`, which is discarded just as silently because the translation is
+    // the converter's to make, not ours. Assertions naming those individually were REMOVED rather
+    // than kept as documentation: sitting below an exhaustive `toEqual` they could not fail
+    // independently, and an assertion that cannot fail is the defect class this repo keeps finding.
     expect(block).toEqual({ type: 'image_url', image_url: { url: DATA_URL } });
-    // The standard-block keys are what the xAI converter's catch-all silently discards.
-    expect(block).not.toHaveProperty('source_type');
-    expect(block).not.toHaveProperty('mime_type');
-    // And we must NOT emit the wire shape ourselves — measured to be discarded just as silently.
-    expect(block.type).not.toBe('input_image');
   });
 
   // CONTROL for the two cells above: this one passes both before and after CFG-45's change. It pins
