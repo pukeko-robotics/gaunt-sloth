@@ -1,4 +1,4 @@
-# v2.0.0-beta.5
+# v2.0.0-beta.6
 
 - Session history now records by default. Every run writes a row to `~/.gsloth/history.db` on your
   own machine — the store `gth history list` / `search` / `show` and `gth insights` read — and
