@@ -7,7 +7,9 @@
 # ordinary work. It leaves uncovered the shapes the anchor cannot reach — the quoted
 # interpreter-wrapper forms `sh -c "rm -rf /"` and `bash -c "mkfs …"`, the compound-command openers
 # `CMD_POS` does not model (`(rm -rf /)`), and the wrapper flags that take a space-separated value
-# (`xargs -a FILE rm -rf`). The BARE `xargs rm -rf /` is not among those: `WRAPPER_ARMS` covers it,
+# (`xargs -a FILE rm -rf` — but that exemplar is degenerate: its miss is over-determined, and the
+# flag run is not the operative reason. See the `am-05` note below before citing it for the flag
+# category). The BARE `xargs rm -rf /` is not among those: `WRAPPER_ARMS` covers it,
 # so the floor refuses it. Only `bash -c "mkfs …"` is a COST of the anchoring — the other three were
 # already uncovered before it, measured against the pre-EXT-62 patterns reconstructed from
 # `9a823096^`.
