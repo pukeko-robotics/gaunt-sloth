@@ -25,10 +25,33 @@ interface EmittedSchema {
   description?: string;
   anyOf?: { type?: string }[];
   items?: EmittedSchema;
-  type?: string;
+  type?: string | string[];
   minItems?: number;
   default?: unknown;
 }
+
+/**
+ * The set of JSON-Schema types a node admits, read from EITHER spelling of a union.
+ *
+ * A nullable is emitted as `anyOf: [{type: T}, {type: 'null'}]` by some zod versions and as
+ * `type: [T, 'null']` by others (4.5 switched to the second). The two are the same schema, and
+ * `@langchain/google` collapses the second into Gemini's own `nullable: true`, so what this
+ * module contracts to do is admit a given SET of types — not spell the union one particular way.
+ * Reading the set is what keeps these guards pinned to the contract instead of to a zod release,
+ * and it asserts the set EXACTLY, which the previous `arrayContaining` on branches did not.
+ */
+const admittedTypes = (node: EmittedSchema | undefined): string[] => {
+  const branches = node?.anyOf?.flatMap((branch) => (branch.type ? [branch.type] : [])) ?? [];
+  const declared = node?.type;
+  const types = branches.length
+    ? branches
+    : Array.isArray(declared)
+      ? declared
+      : declared
+        ? [declared]
+        : [];
+  return [...new Set(types)].sort();
+};
 
 const emit = (schema: z.ZodType<unknown>): EmittedSchema =>
   toJsonSchema(schema) as unknown as EmittedSchema;
@@ -48,9 +71,7 @@ describe('structuredOutputBoundary — the wire shape', () => {
     // The pair that satisfies OpenAI's strict rule ("`required` must include every key in
     // `properties`") while still giving the model a legal way to say "nothing here".
     expect(wire.required).toEqual(expect.arrayContaining(['outcome', 'suggestedTool']));
-    expect(wire.properties?.suggestedTool.anyOf).toEqual(
-      expect.arrayContaining([{ type: 'string' }, { type: 'null' }])
-    );
+    expect(admittedTypes(wire.properties?.suggestedTool)).toEqual(['null', 'string']);
   });
 
   it('carries every `.describe()` into the emitted schema, by its actual text', () => {
@@ -75,9 +96,7 @@ describe('structuredOutputBoundary — the wire shape', () => {
 
     expect(wire.required).toEqual(expect.arrayContaining(['outcome', 'suggestedTool']));
     expect(wire.properties?.suggestedTool.description).toBe('SUGGEST-DESC');
-    expect(wire.properties?.suggestedTool.anyOf).toEqual(
-      expect.arrayContaining([{ type: 'null' }])
-    );
+    expect(admittedTypes(wire.properties?.suggestedTool)).toEqual(['null', 'string']);
   });
 
   it('leaves a schema with no optional field untouched, by identity', () => {
@@ -185,9 +204,7 @@ describe('structuredOutputBoundary — nested optionals', () => {
     const item = wireOf(Picks).properties?.picks.items;
 
     expect(item?.required).toEqual(expect.arrayContaining(['id', 'relation', 'annotation']));
-    expect(item?.properties?.annotation.anyOf).toEqual(
-      expect.arrayContaining([{ type: 'string' }, { type: 'null' }])
-    );
+    expect(admittedTypes(item?.properties?.annotation)).toEqual(['null', 'string']);
   });
 
   it('keeps every nested description', () => {
@@ -298,9 +315,7 @@ describe('structuredOutputBoundary — an optional inside a wrapper', () => {
 
     // What we ASK the provider for…
     expect(wire.required).toEqual(['opt']);
-    expect(wire.properties?.opt.anyOf).toEqual(
-      expect.arrayContaining([{ type: 'string' }, { type: 'null' }])
-    );
+    expect(admittedTypes(wire.properties?.opt)).toEqual(['null', 'string']);
     // …and what we must therefore ACCEPT.
     expect(parsed.success).toBe(true);
     if (!parsed.success) return;
@@ -314,9 +329,7 @@ describe('structuredOutputBoundary — an optional inside a wrapper', () => {
     const parsed = structuredOutputBoundary(ReadOnly).safeParse({ opt: null });
 
     expect(wire.required).toEqual(['opt']);
-    expect(wire.properties?.opt.anyOf).toEqual(
-      expect.arrayContaining([{ type: 'string' }, { type: 'null' }])
-    );
+    expect(admittedTypes(wire.properties?.opt)).toEqual(['null', 'string']);
     expect(parsed.success).toBe(true);
     if (!parsed.success) return;
     expect(parsed.data.opt).toBeUndefined();
