@@ -71,6 +71,37 @@ export function openConversationSafe(
 }
 
 /**
+ * GS2-20 — record, ON DISK, that a conversation can no longer be resumed, by clearing its thread
+ * link. Called once per session, the first time a checkpoint write fails after the store opened.
+ *
+ * The session itself keeps running and the user is told; this is the half that has to outlive the
+ * process. A checkpoint chain that stopped growing mid-conversation is still a well-formed chain,
+ * so nothing a later `--resume` could inspect would reveal that it is truncated — the refusal has
+ * to be written down at the moment the writing broke.
+ *
+ * Fail-soft, like its neighbours: the session is already degraded, and a failure here must not turn
+ * that into a second error.
+ */
+export function markConversationUnresumableSafe(
+  config: HistoryConfigView,
+  conversationId: number
+): void {
+  try {
+    if (!isHistoryEnabled(config)) return;
+    const dbPath = resolveHistoryDbPath(config.history?.dbPath);
+    const store = openHistoryStore(dbPath, { create: false });
+    if (!store) return;
+    try {
+      store.clearConversationThread(conversationId);
+    } finally {
+      store.close();
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
  * GS2-20 — the reverse trip: from a conversation id (what `gth history list` prints and a user
  * types) to the LangGraph thread whose checkpoint holds its state, or `null` when there isn't one.
  *

@@ -29,10 +29,23 @@ import fs from 'node:fs';
  * run report" — an opaque failure that says nothing about the directory that caused it. A stale
  * directory in the OS temp folder is harmless; losing the run's report is not.
  *
- * The cost is that the warning goes to **stderr, which nothing parses**. `run-tui-e2e.js` captures
- * stdout only, on purpose: folding stderr in would let an async write interleave mid-line and break
- * the line-anchored match it uses to find flakes. So a handle that genuinely never got released
- * would surface here as a warning a human has to read, not as a failed gate.
+ * **Not throwing must not mean not failing, and a stream cannot carry that news. Measured:** these
+ * hooks run in a workerpool CHILD PROCESS, and although the pool is configured `stdio: 'inherit'`
+ * it also sets `emitStdStreams`, so workerpool captures both of the worker's streams and hands them
+ * to the pool owner as per-test payloads. The ListReporter prints a test's captured `stdout` only
+ * for a test it is already REPORTING (`base.js` `_printFailures`), and `afterAllWorker`'s output is
+ * attached to no test at all. So a `process.stderr.write` from here reaches neither the run's log
+ * nor a human: it is discarded. A probe writing to both streams from this function, with a
+ * filesystem control proving the function ran, produced ZERO hits in the runner's captured output.
+ *
+ * So the exhausted-retry report travels by FILE. `run-tui-e2e.js` — which runs in the parent process
+ * and owns the child's environment — points {@link GTH_E2E_LEAK_REPORT} at a scratch path before
+ * spawning, and fails the run if anything is written there. That is a hard gate with no
+ * worker-level crash and no stream to interleave. The stderr line is kept for a run driven by hand,
+ * where it does reach a terminal.
+ *
+ * With no such variable set the behaviour is exactly what it was, so any other caller of the
+ * harness still works.
  *
  * @param {string} dir the throwaway home to remove
  */
@@ -46,5 +59,14 @@ export function removeTmpHome(dir) {
         `  Leaving it behind rather than failing the run. If this repeats, something in the ` +
         `session under test is holding a file open past process exit.\n`
     );
+    // Its own try/catch, and deliberately so: a failure to REPORT the leak must not become the
+    // worker-killing throw that the retry exists to avoid. A lost report is a quieter gate; a
+    // thrown one costs the whole run's report.
+    try {
+      const report = process.env.GTH_E2E_LEAK_REPORT;
+      if (report) fs.appendFileSync(report, `${dir}\t${reason}\n`);
+    } catch {
+      /* ignore */
+    }
   }
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
   analyseRun,
+  describeLeakReport,
   githubAnnotations,
   repoPath,
   stepSummaryMarkdown,
@@ -215,6 +216,52 @@ describe('QA-13 tui-e2e flake reporter', () => {
     it('pluralises the job summary heading', () => {
       const two = [...flaky, ...flaky];
       expect(stepSummaryMarkdown(two, { os: 'linux' })).toContain('2 flaky TUI e2e tests on linux');
+    });
+  });
+
+  /**
+   * GS2-20 — the leak gate. A `gth` session holds `<HOME>/.gsloth/history.db` open for its whole
+   * life, and the suite's throwaway HOME cannot be removed on win32 while that handle is alive.
+   * Retrying the removal is the fix, but it also means a handle that is NEVER released stops being
+   * a failure — and the win32 cell is the only detector we have, because POSIX removes the directory
+   * regardless. So an exhausted retry is written to a file and the runner fails the run on it.
+   *
+   * The report cannot travel on a stream: those hooks run in a workerpool child whose captured
+   * output the reporter prints only for a test it is already reporting, and never for
+   * `afterAllWorker`. Measured with a filesystem control — zero hits on either stream.
+   */
+  describe('describeLeakReport', () => {
+    it('says nothing when nothing failed', () => {
+      // The control, and the one that matters most: this gate runs on EVERY green run, so a
+      // function that reported a leak from an empty or whitespace-only file would turn the whole
+      // PTY suite red for every developer, immediately.
+      expect(describeLeakReport('')).toBeNull();
+      expect(describeLeakReport('\n')).toBeNull();
+      expect(describeLeakReport('  \n\n  \n')).toBeNull();
+    });
+
+    it('names every directory that survived its retries, with the reason', () => {
+      const report = describeLeakReport(
+        'C:\\Users\\runner\\AppData\\Local\\Temp\\gth-e2e-attack-home-a1\tEPERM: operation not permitted\n' +
+          'C:\\Users\\runner\\AppData\\Local\\Temp\\gth-e2e-attack-home-b2\tEBUSY: resource busy\n'
+      );
+      expect(report).not.toBeNull();
+      expect(report).toContain('2 throwaway HOME directories');
+      expect(report).toContain('gth-e2e-attack-home-a1');
+      expect(report).toContain('EPERM: operation not permitted');
+      expect(report).toContain('gth-e2e-attack-home-b2');
+      expect(report).toContain('EBUSY: resource busy');
+      // The message has to say what it MEANS, not just what happened: the reader is mid-merge on a
+      // red Windows cell and the useful sentence is the one naming the likely cause.
+      expect(report).toContain('holding a file open');
+      expect(report).toContain('not a slow disk');
+    });
+
+    it('handles a single entry, and one with no reason attached', () => {
+      expect(describeLeakReport('/tmp/gth-e2e-menu-x\tEPERM\n')).toContain(
+        '1 throwaway HOME directory'
+      );
+      expect(describeLeakReport('/tmp/gth-e2e-menu-x\n')).toContain('/tmp/gth-e2e-menu-x');
     });
   });
 });

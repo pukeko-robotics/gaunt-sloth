@@ -9,11 +9,18 @@
 // genuinely-failed tests), which is the right exit code but leaves the flake as one yellow line
 // in a green job that nobody opens. See tui-e2e-report.mjs for why this is done by parsing.
 import { spawn } from 'node:child_process';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { analyseRun, githubAnnotations, repoPath, stepSummaryMarkdown } from './tui-e2e-report.mjs';
+import {
+  analyseRun,
+  describeLeakReport,
+  githubAnnotations,
+  repoPath,
+  stepSummaryMarkdown,
+} from './tui-e2e-report.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const e2eDir = path.join(here, 'tui-e2e');
@@ -26,6 +33,15 @@ const bin = createRequire(import.meta.url).resolve('@microsoft/tui-test');
 // mid-test. Setting it from *our* TTY-ness reproduces the old value exactly. In CI nothing is a
 // TTY and chalk keys off the CI vendor instead, which is unchanged either way.
 const env = { ...process.env, ...(process.stdout.isTTY ? { FORCE_COLOR: '1' } : {}) };
+
+// GS2-20 — the channel a suite reports an unremovable throwaway HOME on. It has to be a FILE: those
+// removals happen in a workerpool child whose stdout/stderr the reporter prints only for a test it
+// is already reporting, and not at all for `afterAllWorker`, so a stream write from there is
+// discarded (measured with a filesystem control, zero hits on either stream). The parent owns the
+// child's environment, so handing down a path is the one channel that always arrives.
+const leakReportDir = mkdtempSync(path.join(os.tmpdir(), 'gth-e2e-leak-'));
+const leakReportPath = path.join(leakReportDir, 'unremovable-homes.tsv');
+env.GTH_E2E_LEAK_REPORT = leakReportPath;
 
 // Only stdout is captured for parsing. The list reporter writes the summary and the numbered
 // headers exclusively to stdout; stderr carries just the fatal paths (a bad filter, the global
@@ -52,6 +68,24 @@ child.on('close', (code) => {
   // Concatenate as Buffers before decoding: a multi-byte character split across two chunks would
   // be corrupted by decoding each chunk separately.
   const analysis = analyseRun(Buffer.concat(stdoutChunks).toString('utf8'));
+
+  // GS2-20 — checked BEFORE the report analysis, because a leak is a cause and "the flake check went
+  // blind" is at most a symptom of one: if a hook did fail, its message is the one worth printing.
+  let leak = null;
+  try {
+    leak = describeLeakReport(readFileSync(leakReportPath, 'utf8'));
+  } catch {
+    // No file means no hook ever failed, which is the ordinary case — the fixture only creates it
+    // when a removal has already exhausted its retries.
+  }
+  rmSync(leakReportDir, { recursive: true, force: true });
+
+  if (leak) {
+    process.stderr.write(`\n✗ tui-e2e ${leak}\n`);
+    // Never mask the child's own verdict: a red run that also leaked stays red for its own reason.
+    process.exitCode = childCode === 0 ? 1 : childCode;
+    return;
+  }
 
   if (analysis.problem) {
     // The flake check has gone blind. Reporting "no flakes" here would be a green light from a

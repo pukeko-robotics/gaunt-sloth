@@ -33,7 +33,8 @@ vi.mock('node:fs', () => fsMock);
 // Mock systemUtils module
 const systemUtilsMock = {
   getCurrentWorkDir: vi.fn(),
-  // GS2-7: singleShot now records opt-in history and reads the project dir for the record.
+  // GS2-7: singleShot records history and reads the project dir for the record. GS2-20 made that
+  // recording the default, so this runs on an ordinary config rather than only an opted-in one.
   getProjectDir: vi.fn(() => '/project'),
   // [[TUI-C71]] — a run-ending approvals stop is framed against the terminal width before it is
   // printed, so this surface reports one. A FIXED width rather than the real `process.stdout`:

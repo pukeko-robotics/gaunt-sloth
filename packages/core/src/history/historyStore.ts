@@ -378,6 +378,33 @@ export class HistoryStore {
   }
 
   /**
+   * GS2-20 — cut a conversation's link to its LangGraph thread, so it can never be resumed again.
+   *
+   * Called when a checkpoint write has failed mid-session. What is on disk at that point is a
+   * TRUNCATED but well-formed chain: the super-steps before the failure committed, the ones after
+   * did not, and nothing about the rows says so. A resume would replay that half-conversation as
+   * though it were the whole thing — a resume that looks right and is not, which is the one outcome
+   * this ticket exists to prevent. Clearing the link is what makes the refusal durable; a flag in
+   * the failing process dies with it and the NEXT process is the one that would be misled.
+   *
+   * `thread_id = NULL` rather than a sentinel: {@link getConversationThreadId} already answers
+   * `null` for it, so every reader refuses for the same reason it refuses an unknown id, with no
+   * new state to special-case. The cost is that "the writes failed" then looks identical to "this
+   * conversation never had a thread" — a listing concern, not this one's, and both are correctly
+   * un-resumable either way.
+   *
+   * Fail-soft like everything else here: a failure to record the failure must not raise a second
+   * one into a session that is already degraded.
+   */
+  clearConversationThread(conversationId: number): void {
+    try {
+      this.db.prepare(`UPDATE conversations SET thread_id = NULL WHERE id = ?`).run(conversationId);
+    } catch {
+      /* ignore: the session is already degrading; this must not add an error of its own */
+    }
+  }
+
+  /**
    * Persist one session and its full-text index entry. Returns the new row id, or `null` on any
    * error (the run continues regardless). The two inserts run in a transaction so a failure can't
    * leave the FTS index out of sync with the base table.

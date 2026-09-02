@@ -116,6 +116,43 @@ export function analyseRun(raw) {
   };
 }
 
+/**
+ * GS2-20 — read the leak report `fixtures/tmpHome.mjs` writes when it could not remove a suite's
+ * throwaway `HOME` even after retrying, and turn it into a failure message. `null` means no leak.
+ *
+ * A file rather than a stream because a stream does not arrive: the hooks that remove those
+ * directories run in a workerpool child whose captured output the reporter prints only for a test
+ * it is already reporting, and never at all for `afterAllWorker`. Measured, not assumed.
+ *
+ * Why this is a hard failure and not a warning: a `gth` session holds `<HOME>/.gsloth/history.db`
+ * open for its whole life, and this suite is the only place that would notice a handle never being
+ * released — the removal succeeds on POSIX regardless, so win32 is the sole detector. Retrying made
+ * that detector quieter, and this is what makes it loud again without a worker-level crash.
+ *
+ * @param {string} raw contents of the report file (empty when nothing failed)
+ * @returns {string | null}
+ */
+export function describeLeakReport(raw) {
+  const lines = raw
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (lines.length === 0) return null;
+  const detail = lines
+    .map((line) => {
+      const [dir, ...rest] = line.split('\t');
+      return `    ${dir}${rest.length > 0 ? ` — ${rest.join(' ')}` : ''}`;
+    })
+    .join('\n');
+  return (
+    `${lines.length} throwaway HOME director${lines.length === 1 ? 'y' : 'ies'} could not be ` +
+    `removed even after retrying:\n${detail}\n` +
+    `  Something in the session under test is still holding a file open well after the process was ` +
+    `killed — most likely the session's SQLite history/checkpoint connection. This is a real handle ` +
+    `leak, not a slow disk: the retries already wait several seconds.`
+  );
+}
+
 /** Repo-relative path for an entry. Headers are relative to the tui-e2e dir the runner ran in. */
 export function repoPath(entry, testDir = 'packages/app/tui-e2e') {
   return `${testDir}/${entry.file}`;

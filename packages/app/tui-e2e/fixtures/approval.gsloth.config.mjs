@@ -78,7 +78,10 @@ export async function configure() {
   return {
     llm: new ScriptedShellCallingModel({}),
     modelDisplayName: 'scripted-e2e',
-    // Hermetic and quiet: no per-run md log in the fixtures dir, no history store writes.
+    // Hermetic and quiet: no per-run md log in the fixtures dir. History is NOT off here — GS2-20
+    // made recording the default, so a session on this fixture writes `<HOME>/.gsloth/history.db`.
+    // What keeps that out of the repo is the throwaway HOME the suite clamps, removed afterwards by
+    // `fixtures/tmpHome.mjs`.
     writeOutputToFile: false,
     // CFG-27 — `write` is set EXPLICITLY, not inherited. This suite exercises the EXT-52 HUMAN
     // approval seam (interrupt → <ApprovalPrompt> → resume), and `write` is the rung that gates

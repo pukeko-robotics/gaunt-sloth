@@ -556,8 +556,18 @@ export async function createTuiSession(
   // Its notice goes into `startupAdvisories` rather than to the console, because everything from
   // here on is inside Ink's alternate screen — a `displayWarning` would be painted over, or swapped
   // away with the screen, and the user would never learn their session is not resumable.
+  //
+  // GS2-20: the checkpointer notifies at TWO different times, and `startupAdvisories` only works for
+  // one of them. An open failure happens synchronously inside the call below, before Ink exists, so
+  // it lands in the advisories the App is rendered with. A WRITE failure happens mid-session, long
+  // after that array was read — pushing to it then would put the notice nowhere. So the notice is
+  // routed through a reassignable hook: advisories until the status bridge exists, the bridge
+  // afterwards, which reaches the mounted App's transcript as a WARNING system message.
+  let emitNotice = (message: string): void => {
+    startupAdvisories.push(message);
+  };
   const checkpointer = openSessionCheckpointerSafe(config, {
-    notify: (message) => startupAdvisories.push(message),
+    notify: (message) => emitNotice(message),
   });
   // GS2-19: one conversation per TUI session; each completed turn (logTurn) is stamped with its id
   // so the whole chat groups under one conversation. Fail-soft (undefined when history is off or the
@@ -573,12 +583,22 @@ export async function createTuiSession(
       model: config.modelDisplayName,
       threadId: checkpointer.threadId,
     }) ?? undefined;
+
+  // GS2-20: tell the checkpointer which row to mark unresumable if a checkpoint write fails later.
+  // Optional call — a spec that stubs the checkpointer with a plain object has nothing to bind.
+  checkpointer.bindConversation?.(conversationId);
+
   const logFileName = getCommandOutputFilePath(config, sessionConfig.mode);
   if (logFileName) {
     initSessionLogging(logFileName, config.streamSessionInferenceLog);
   }
 
   const bridge = createStatusBridge();
+  // GS2-20: from here on a checkpointer notice goes to the mounted App instead of the startup
+  // advisories. An emit between this line and the render below reaches no listener and is dropped —
+  // harmless only because nothing writes a checkpoint before `runner.init` returns, which is after
+  // the App is mounted. Move either and this needs rethinking.
+  emitNotice = (message: string): void => bridge.emit(StatusLevel.WARNING, message);
   // TUI-C20: the resolvers are hoisted so the debug bridge can read the SAME MCP instructions the
   // agent captured (via getMcpServerInstructions) for the /debug MCP tab — not a second capture.
   const resolvers = createResolvers();

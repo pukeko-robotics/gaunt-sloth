@@ -8,12 +8,19 @@
  * `MISSING_CHECKPOINTER` in the middle of a turn — a failure with no relationship to what the user
  * was doing. So a database this session cannot open costs exactly one thing, resumability, and the
  * user is told that plainly rather than discovering it later.
+ *
+ * **A write that fails later costs the same one thing.** This module owns the degrade policy the
+ * saver reports into: one notice per session, and — the part that has to outlive the process — the
+ * conversation's thread link cleared on disk, so a later resume refuses it. A checkpoint chain that
+ * stopped growing mid-conversation is still well-formed, so without that mark the next `--resume`
+ * would load a truncated conversation and present it as complete.
  */
 import { randomUUID } from 'node:crypto';
 import { BaseCheckpointSaver, MemorySaver } from '@langchain/langgraph';
 import { openCheckpointSaver } from '#src/history/checkpointSaver.js';
 import { isHistoryEnabled, type HistoryConfigView } from '#src/history/historyEnabled.js';
 import { resolveHistoryDbPath } from '#src/history/historyStore.js';
+import { markConversationUnresumableSafe } from '#src/history/recordSession.js';
 import { displayWarning } from '#src/utils/consoleUtils.js';
 
 /** The checkpointer a session drives, plus what the session needs to know about it. */
@@ -31,6 +38,20 @@ export interface SessionCheckpointer {
    * whose thread id was never written is a listing entry that can never be resumed.
    */
   threadId: string;
+  /**
+   * Name the conversation row this session's turns group under, so a later checkpoint-write failure
+   * can mark it unresumable ON DISK. Call once, immediately after `openConversationSafe`; passing
+   * `undefined` (history off, or the row could not be opened) is fine and simply leaves nothing to
+   * mark. Safe to call before or after a failure has already happened — a failure that arrives
+   * first is applied here instead. Never throws.
+   *
+   * **Optional on the interface, and called with `?.`**, because a dozen-odd specs stub
+   * `openSessionCheckpointerSafe` with a plain object literal to keep a session off the real
+   * database. Requiring it would break every one of them at runtime for no gain: a stub that omits
+   * it simply has no conversation to mark, which is the correct behaviour for a test that is not
+   * about this.
+   */
+  bindConversation?(conversationId: number | undefined): void;
   /** Release the underlying connection (a no-op when the saver is in memory). Never throws. */
   close(): void;
 }
@@ -64,12 +85,41 @@ export function openSessionCheckpointerSafe(
     saver: new MemorySaver(),
     durable: false,
     threadId,
+    bindConversation: () => {},
     close: () => {},
   });
+
+  // GS2-20 — the degrade path. A checkpoint write that fails mid-session drops the write and lets
+  // the turn continue; these two closures are the "loudly" half. They are declared before the saver
+  // because the saver is handed `degrade` at construction.
+  //
+  // The two facts are tracked separately on purpose. `degraded` is what happened; `conversationId`
+  // is where to write it down, and it is not known yet — the conversation row is opened by the
+  // caller AFTER this returns, because the row has to carry the thread id minted just above. So a
+  // failure can precede the binding, and `applyMark` is called from both sides to close that gap.
+  let degraded = false;
+  let conversationId: number | undefined;
+  const applyMark = (): void => {
+    if (!degraded || conversationId === undefined) return;
+    markConversationUnresumableSafe(config, conversationId);
+  };
+  const degrade = (): void => {
+    // Once per session, not once per write: a full disk fails every super-step, and a notice per
+    // write would bury the turn the user is still having under its own error report.
+    if (degraded) return;
+    degraded = true;
+    notify(
+      'Could not save this conversation to the conversation store, so it will not be resumable ' +
+        'later — the rest of this session is unaffected and your work is not lost. The usual cause ' +
+        'is a full or read-only disk. Set `history.enabled: false` in your config to stop trying.'
+    );
+    applyMark();
+  };
+
   try {
     if (!isHistoryEnabled(config)) return inMemory();
     const dbPath = resolveHistoryDbPath(config.history?.dbPath, /* ensureDir */ true);
-    const saver = openCheckpointSaver(dbPath);
+    const saver = openCheckpointSaver(dbPath, { onWriteFailure: degrade });
     if (!saver) {
       notify(
         `Could not open the conversation store at ${dbPath}, so this session will not be ` +
@@ -82,6 +132,10 @@ export function openSessionCheckpointerSafe(
       saver,
       durable: true,
       threadId,
+      bindConversation: (id) => {
+        conversationId = id;
+        applyMark();
+      },
       close: () => saver.close(),
     };
   } catch {

@@ -47,7 +47,7 @@ describe('history/conversations (GS2-19)', () => {
       store.close();
     });
 
-    it('groups N turns through the opt-in bridge (openConversationSafe + recordSessionSafe)', () => {
+    it('groups N turns through the fail-soft bridge (openConversationSafe + recordSessionSafe)', () => {
       const dbPath = resolve(dir, 'history.db');
       const config = { history: { enabled: true, dbPath } };
       const conversationId = openConversationSafe(config, { command: 'code', model: 'gpt-5' });
@@ -79,7 +79,7 @@ describe('history/conversations (GS2-19)', () => {
       store.close();
     });
 
-    it('a conversation opened via the opt-in bridge with zero turns is likewise suppressed', () => {
+    it('a conversation opened via the fail-soft bridge with zero turns is likewise suppressed', () => {
       const dbPath = resolve(dir, 'history.db');
       const config = { history: { enabled: true, dbPath } };
       // openConversationSafe commits the row, but no recordSessionSafe follows.

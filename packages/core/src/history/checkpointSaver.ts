@@ -21,14 +21,26 @@
  * is no shared DDL, so the store's per-call open (which re-runs its own migration every time)
  * cannot race this module's long-lived connection over the same schema.
  *
- * **Failure posture.** {@link openCheckpointSaver} is fail-soft — it returns `null` rather than
- * throwing when the DB cannot be opened or the tables cannot be created, which is what lets the
- * session fall back to a `MemorySaver` (see `openSessionCheckpointerSafe` in
- * `sessionCheckpointer.ts`). Once open, reads and writes are NOT swallowed: a checkpointer that
- * silently drops a write reports a resumed session as empty and turns a suspended tool approval
- * into a graph that cannot be resumed, which is a worse failure than a loud one. The realistic
- * failures — a read-only filesystem, a missing directory, a corrupt file — are all open-time, and a
- * concurrent writer is absorbed by `busy_timeout` instead.
+ * **Failure posture: degrade, loudly.** {@link openCheckpointSaver} is fail-soft — it returns `null`
+ * rather than throwing when the DB cannot be opened or the tables cannot be created, which is what
+ * lets the session fall back to a `MemorySaver` (see `openSessionCheckpointerSafe` in
+ * `sessionCheckpointer.ts`). A write that fails AFTER that — a full disk, a filesystem that went
+ * read-only under a live handle — is caught here and reported through
+ * {@link CheckpointSaverOptions.onWriteFailure} instead of propagating.
+ *
+ * Neither of the two obvious postures is right, and the reason is worth keeping. **Swallowing**
+ * would report a resumed session as empty and turn a suspended tool approval into a graph nobody
+ * can resume — silent and wrong. **Throwing** propagates out of `agent.invoke()` into the session's
+ * outer catch and ends the session, which since GS2-20 made history the default would mean a full
+ * disk takes down the live session of a user who never asked for the feature; recording a
+ * conversation must not become a new way to lose one. So the third posture: the write is dropped,
+ * the turn continues, the user is told once, and the conversation is marked **unresumable on disk**
+ * — that last part is what stops a silent drop from becoming a resume of a truncated conversation,
+ * and it is why this differs from the history RECORDER, which merely swallows. A missing turn in a
+ * listing is a gap; a half-restored graph presented as whole is a lie.
+ *
+ * Reads are still loud: nothing is degraded by a failed `getTuple`, and a resume that cannot read
+ * must not pretend the thread was empty.
  */
 import { DatabaseSync } from 'node:sqlite';
 import { BaseCheckpointSaver, copyCheckpoint } from '@langchain/langgraph';
@@ -122,6 +134,17 @@ function toCheckpointRow(row: Record<string, unknown>): CheckpointRow {
   };
 }
 
+/** Options for {@link openCheckpointSaver}. */
+export interface CheckpointSaverOptions {
+  /**
+   * Called when a `put` / `putWrites` could not reach the database. The write is dropped and the
+   * turn continues; the handler's job is to tell the user and to record that this conversation can
+   * no longer be resumed. Called on EVERY failed write — the once-per-session rule belongs to the
+   * handler, which is the layer that knows what a session is.
+   */
+  onWriteFailure?: (error: unknown) => void;
+}
+
 /**
  * A LangGraph `BaseCheckpointSaver` persisting to a `node:sqlite` database.
  *
@@ -131,9 +154,25 @@ function toCheckpointRow(row: Record<string, unknown>): CheckpointRow {
 export class GthSqliteSaver extends BaseCheckpointSaver {
   private db: DatabaseSync;
 
-  private constructor(db: DatabaseSync) {
+  private onWriteFailure: (error: unknown) => void;
+
+  private constructor(db: DatabaseSync, onWriteFailure?: (error: unknown) => void) {
     super();
     this.db = db;
+    this.onWriteFailure = onWriteFailure ?? (() => {});
+  }
+
+  /**
+   * Report a dropped write, and never let the reporting itself become the failure. A handler that
+   * throws here would land back inside `agent.invoke()` and end the turn — the exact outcome the
+   * degrade posture exists to avoid, arriving from the code that implements it.
+   */
+  private reportWriteFailure(error: unknown): void {
+    try {
+      this.onWriteFailure(error);
+    } catch {
+      /* ignore */
+    }
   }
 
   /**
@@ -141,7 +180,7 @@ export class GthSqliteSaver extends BaseCheckpointSaver {
    * an unopenable, read-only or corrupt DB — so the caller can fall back to a `MemorySaver` without
    * a try/catch of its own.
    */
-  static open(dbPath: string): GthSqliteSaver | null {
+  static open(dbPath: string, options: CheckpointSaverOptions = {}): GthSqliteSaver | null {
     let db: DatabaseSync | undefined;
     try {
       db = new DatabaseSync(dbPath);
@@ -174,7 +213,7 @@ export class GthSqliteSaver extends BaseCheckpointSaver {
           PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id, task_id, idx)
         );
       `);
-      return new GthSqliteSaver(db);
+      return new GthSqliteSaver(db, options.onWriteFailure);
     } catch {
       try {
         db?.close();
@@ -216,11 +255,20 @@ export class GthSqliteSaver extends BaseCheckpointSaver {
       ]);
     }
     const tuple: CheckpointTuple = { config, checkpoint, metadata, pendingWrites };
-    // The parent link is NOT optional decoration. `BaseCheckpointSaver.getDeltaChannelHistory`
-    // reconstructs a delta channel by walking `getTuple` → `parentConfig` up the ancestor chain; a
-    // tuple without it terminates that walk at the first checkpoint, and the channel comes back
-    // seeded empty. On the messages channel that reads as "the transcript is there but the tool
-    // result is missing", which is exactly the shape a message-presence assertion waves through.
+    // The parent link is part of the interface, not optional decoration:
+    // `BaseCheckpointSaver.getDeltaChannelHistory` reconstructs a DELTA channel by walking
+    // `getTuple` → `parentConfig` up the ancestor chain, and a tuple without it terminates that walk
+    // at the first checkpoint.
+    //
+    // **What that costs depends on the state schema, and on THIS graph it costs less than it looks.**
+    // The agent's `messages` channel stores a full array in `channel_values`, not a delta, so every
+    // checkpoint already carries the whole transcript and a broken walk cannot produce the
+    // "transcript present, tool result missing" shape. Dropping the link here reddens the
+    // parent-link test and nothing else — measured, not assumed. The reason to keep returning it is
+    // the conditional one: a state schema that puts any channel behind a binary operator (a reducer
+    // accumulating deltas, which `add_messages` is NOT under the current serialization) would
+    // reconstruct that channel from the ancestor chain, and then a missing parent silently seeds it
+    // empty. Correct now, and load-bearing the moment the schema changes.
     if (row.parent_checkpoint_id != null) {
       tuple.parentConfig = {
         configurable: {
@@ -347,28 +395,38 @@ export class GthSqliteSaver extends BaseCheckpointSaver {
       );
     }
     const checkpointNs = stringField(config, 'checkpoint_ns') ?? '';
-    const [checkpointType, serializedCheckpoint] = await this.serde.dumpsTyped(
-      copyCheckpoint(checkpoint)
-    );
-    const [metadataType, serializedMetadata] = await this.serde.dumpsTyped(metadata);
-    if (checkpointType !== metadataType) {
-      throw new Error('Failed to serialize the checkpoint and its metadata to the same type.');
-    }
-    this.db
-      .prepare(
-        `INSERT OR REPLACE INTO checkpoints
+    try {
+      const [checkpointType, serializedCheckpoint] = await this.serde.dumpsTyped(
+        copyCheckpoint(checkpoint)
+      );
+      const [metadataType, serializedMetadata] = await this.serde.dumpsTyped(metadata);
+      if (checkpointType !== metadataType) {
+        throw new Error('Failed to serialize the checkpoint and its metadata to the same type.');
+      }
+      this.db
+        .prepare(
+          `INSERT OR REPLACE INTO checkpoints
            (thread_id, checkpoint_ns, checkpoint_id, parent_checkpoint_id, type, checkpoint, metadata)
          VALUES (?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        threadId,
-        checkpointNs,
-        checkpoint.id,
-        checkpointIdOf(config) || null,
-        checkpointType,
-        serializedCheckpoint,
-        serializedMetadata
-      );
+        )
+        .run(
+          threadId,
+          checkpointNs,
+          checkpoint.id,
+          checkpointIdOf(config) || null,
+          checkpointType,
+          serializedCheckpoint,
+          serializedMetadata
+        );
+    } catch (error) {
+      this.reportWriteFailure(error);
+    }
+    // Returned whether or not the row landed, and that is not an oversight. LangGraph takes this
+    // config as the parent of the NEXT super-step, so a failure here leaves the next successful
+    // write pointing at a `parent_checkpoint_id` that was never stored — a chain with a hole in it.
+    // What makes that safe is the handler above, which marks the conversation unresumable on disk:
+    // nothing will ever walk this chain again. Returning a config that names a checkpoint we did
+    // not write is the lesser evil against throwing, which ends the user's session.
     return {
       configurable: {
         thread_id: threadId,
@@ -394,38 +452,59 @@ export class GthSqliteSaver extends BaseCheckpointSaver {
       );
     }
     const checkpointNs = stringField(config, 'checkpoint_ns') ?? '';
-    // Two statements, chosen per write by the sign of its slot, because the two halves of the
-    // contract differ: an ordinary write (idx >= 0) is insert-ONCE, so a retried super-step writing
-    // the same slot again must leave the first value alone, while a reserved channel
-    // ({@link WRITES_IDX_MAP}) is replace-on-write, so the newest error / interrupt / resume wins.
-    // One blanket `INSERT OR REPLACE` would get the ordinary case wrong and one blanket
-    // `INSERT OR IGNORE` the reserved one, and either divergence is visible only on a resume.
-    const insertOnce = this.db.prepare(
-      `INSERT OR IGNORE INTO checkpoint_writes
+    try {
+      // Two statements, chosen per write by the sign of its slot, because the two halves of the
+      // contract differ: an ordinary write (idx >= 0) is insert-ONCE, so a retried super-step
+      // writing the same slot again must leave the first value alone, while a reserved channel
+      // ({@link WRITES_IDX_MAP}) is replace-on-write, so the newest error / interrupt / resume wins.
+      // One blanket `INSERT OR REPLACE` would get the ordinary case wrong and one blanket
+      // `INSERT OR IGNORE` the reserved one, and either divergence is visible only on a resume.
+      const insertOnce = this.db.prepare(
+        `INSERT OR IGNORE INTO checkpoint_writes
          (thread_id, checkpoint_ns, checkpoint_id, task_id, idx, channel, type, value)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    );
-    const replace = this.db.prepare(
-      `INSERT OR REPLACE INTO checkpoint_writes
-         (thread_id, checkpoint_ns, checkpoint_id, task_id, idx, channel, type, value)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    );
-    for (let position = 0; position < writes.length; position++) {
-      const [channel, value] = writes[position];
-      const reserved = WRITES_IDX_MAP[channel];
-      const idx = reserved ?? position;
-      const [type, serialized] = await this.serde.dumpsTyped(value);
-      const statement = idx < 0 ? replace : insertOnce;
-      statement.run(
-        threadId,
-        checkpointNs,
-        checkpointId,
-        taskId,
-        idx,
-        channel,
-        type,
-        serialized as Uint8Array
       );
+      const replace = this.db.prepare(
+        `INSERT OR REPLACE INTO checkpoint_writes
+         (thread_id, checkpoint_ns, checkpoint_id, task_id, idx, channel, type, value)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      );
+      // **Not wrapped in a transaction, deliberately.** A failure partway through this loop leaves
+      // the earlier writes of the same task committed, which LangGraph tolerates: `putWrites` is
+      // insert-once per (task, idx), so the retry that follows re-writes the same slots and the
+      // survivors are ignored rather than duplicated. A transaction would buy atomicity across the
+      // task's slots at the cost of holding a write lock across `dumpsTyped` — serialization, inside
+      // the lock, on a file the history recorder also opens every turn. That is the trade to revisit
+      // if a reserved-channel write ever has to land atomically with an ordinary one; today none
+      // does. Under the degrade posture a torn task is doubly harmless: the conversation is marked
+      // unresumable, so nothing will read these rows again.
+      for (let position = 0; position < writes.length; position++) {
+        const [channel, value] = writes[position];
+        // `Object.hasOwn`, not a plain index, because a channel name is arbitrary text arriving
+        // from the graph: `WRITES_IDX_MAP['constructor']` resolves up the PROTOTYPE CHAIN to
+        // `Object`, and `toString` / `valueOf` likewise, so a plain read would hand `idx` a function
+        // and take the reserved-vs-positional branch on it. `Object.freeze` does not help — it seals
+        // the own properties and leaves the prototype reachable. Upstream's `WRITES_IDX_MAP` has the
+        // same shape; that is a reason to keep the mirror, not to keep the defect.
+        const reserved = Object.hasOwn(WRITES_IDX_MAP, channel)
+          ? WRITES_IDX_MAP[channel]
+          : undefined;
+        const idx = reserved ?? position;
+        const [type, serialized] = await this.serde.dumpsTyped(value);
+        const statement = idx < 0 ? replace : insertOnce;
+        statement.run(
+          threadId,
+          checkpointNs,
+          checkpointId,
+          taskId,
+          idx,
+          channel,
+          type,
+          serialized as Uint8Array
+        );
+      }
+    } catch (error) {
+      this.reportWriteFailure(error);
     }
   }
 
@@ -439,6 +518,9 @@ export class GthSqliteSaver extends BaseCheckpointSaver {
  * Fail-soft open of the durable checkpoint saver. Returns `null` (never throws) when the DB cannot
  * be opened or its tables cannot be created.
  */
-export function openCheckpointSaver(dbPath: string): GthSqliteSaver | null {
-  return GthSqliteSaver.open(dbPath);
+export function openCheckpointSaver(
+  dbPath: string,
+  options: CheckpointSaverOptions = {}
+): GthSqliteSaver | null {
+  return GthSqliteSaver.open(dbPath, options);
 }

@@ -4,9 +4,10 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import type { SessionConfig } from '#src/modules/interactiveSessionModule.js';
 
-// GS2-18 — the readline (`--no-tui`) interactive path must persist each turn via the opt-in,
-// fail-soft history recorder at its turn boundary (same as the single-shot + Ink-TUI paths):
-// records a session when `history.enabled`, and records NOTHING (creates no DB) by default.
+// GS2-18 — the readline (`--no-tui`) interactive path must persist each turn via the fail-soft
+// history recorder at its turn boundary (same as the single-shot + Ink-TUI paths).
+// GS2-20 — recording is ON by default: a session records unless `history.enabled` is `false`, and
+// that opt-out is the case where nothing is written and no DB is created.
 // GS2-16 — the recorded row carries the live token/tool analytics read from the runner.
 //
 // The recorder + store are REAL here (temp DB); everything else (readline, runner, agent) is

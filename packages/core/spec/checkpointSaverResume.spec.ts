@@ -25,6 +25,7 @@ import { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { tool } from '@langchain/core/tools';
 import { createAgent } from 'langchain';
 import { z } from 'zod';
+import { DatabaseSync } from 'node:sqlite';
 import { openCheckpointSaver, type GthSqliteSaver } from '#src/history/checkpointSaver.js';
 
 /** The value only the tool knows. Nothing else in the graph can produce it. */
@@ -239,15 +240,68 @@ describe('GS2-20: durable checkpointer (real createAgent graph over node:sqlite)
     expect(capped[0].checkpoint.id).toBe(ids[0]);
   });
 
-  it('deleteThread removes one thread and leaves the others', async () => {
+  it('deleteThread removes one thread and leaves the others — pending writes included', async () => {
     const dbPath = resolve(dir, 'history.db');
     const saver = openSaver(dbPath);
     await say(saver, 'thread-keep', 'look up the code');
     await say(saver, 'thread-drop', 'look up the code');
 
+    // Pending writes live in a SECOND table, cleared by a SECOND statement. With no row in it,
+    // deleting that statement outright changes nothing observable and the mutation survives — which
+    // is what the review measured. So give both threads a pending write and count the rows directly.
+    const latestCheckpointId = async (threadId: string): Promise<string> => {
+      const tuple = await saver.getTuple({ configurable: { thread_id: threadId } });
+      return tuple!.checkpoint.id;
+    };
+    for (const threadId of ['thread-keep', 'thread-drop']) {
+      await saver.putWrites(
+        {
+          configurable: {
+            thread_id: threadId,
+            checkpoint_ns: '',
+            checkpoint_id: await latestCheckpointId(threadId),
+          },
+        },
+        [['__interrupt__', `suspended-on-${threadId}`]],
+        'task-1'
+      );
+    }
+    // A second connection, so the count is read off the FILE rather than through the same object
+    // whose behaviour is under test.
+    const audit = new DatabaseSync(dbPath);
+    const writeRows = (threadId: string): number =>
+      Number(
+        (
+          audit
+            .prepare(`SELECT COUNT(*) AS n FROM checkpoint_writes WHERE thread_id = ?`)
+            .get(threadId) as { n: number }
+        ).n
+      );
+    // Not a fixed count: the real graph writes its own pending slots as it runs, so how many rows a
+    // turn leaves is the graph's business. What matters is that there ARE some, and how many survive.
+    const keepBefore = writeRows('thread-keep');
+    expect(writeRows('thread-drop')).toBeGreaterThan(0);
+    expect(keepBefore).toBeGreaterThan(0);
+
     await saver.deleteThread('thread-drop');
     expect(await saver.getTuple({ configurable: { thread_id: 'thread-drop' } })).toBeUndefined();
     expect(await saver.getTuple({ configurable: { thread_id: 'thread-keep' } })).toBeDefined();
+    expect(writeRows('thread-drop')).toBe(0);
+    // The control: a delete that took the whole table would satisfy the line above and fail here.
+    expect(writeRows('thread-keep')).toBe(keepBefore);
+    audit.close();
+  });
+
+  it('sets busy_timeout on its connection, so a concurrent writer waits instead of failing', () => {
+    const saver = openSaver(resolve(dir, 'history.db'));
+    // White-box, and deliberately so. `busy_timeout` is per-CONNECTION state: a second connection
+    // cannot observe it, so there is no black-box read. The behavioural alternative — hold a write
+    // lock elsewhere and prove a `put` waits rather than throwing SQLITE_BUSY — cannot be written
+    // in-process, because `node:sqlite` is synchronous and the statement that blocks also blocks the
+    // timer that would release the lock. Reading the pragma back off the saver's own handle is the
+    // only assertion available that goes red when the pragma is dropped (the default is 0).
+    const { db } = saver as unknown as { db: DatabaseSync };
+    expect(db.prepare(`PRAGMA busy_timeout`).get()).toEqual({ timeout: 5000 });
   });
 
   it('does not open a database it cannot create, and says so by returning null', () => {
@@ -308,6 +362,37 @@ describe('GS2-20: checkpoint write slots', () => {
     await saver.putWrites(config, [['__interrupt__', 'stale']], 'task-1');
     await saver.putWrites(config, [['__interrupt__', 'live']], 'task-1');
     expect(await storedWrites()).toEqual([['__interrupt__', 'live']]);
+  });
+
+  it('gives a channel named after an Object prototype member an ordinary positional slot', async () => {
+    // A channel name is arbitrary text arriving from the graph, and `constructor` / `toString` are
+    // INHERITED properties of every object literal — so a plain `WRITES_IDX_MAP[channel]` answers
+    // with `Object` or a function rather than `undefined`, and `?? position` never fires. The slot
+    // then goes to SQLite as a function. This asserts the ordinary contract instead: positional,
+    // insert-once, first value wins.
+    // Both in ONE call, so they take positions 0 and 1; a second call re-writes the same two slots
+    // and must be ignored, which is the ordinary insert-once rule a reserved slot would break.
+    await saver.putWrites(
+      config,
+      [
+        ['constructor', 'first'],
+        ['toString', 'first'],
+      ],
+      'task-proto'
+    );
+    await saver.putWrites(
+      config,
+      [
+        ['constructor', 'second'],
+        ['toString', 'second'],
+      ],
+      'task-proto'
+    );
+    const stored = new Map(await storedWrites());
+    expect(stored.get('constructor')).toBe('first');
+    expect(stored.get('toString')).toBe('first');
+    // The control: two channels, two distinct positional slots — not one clobbering the other.
+    expect(stored.size).toBe(2);
   });
 
   it('keeps writes from different tasks side by side', async () => {

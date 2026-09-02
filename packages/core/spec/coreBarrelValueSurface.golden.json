@@ -418,6 +418,10 @@
       "kind": "function"
     },
     {
+      "name": "markConversationUnresumableSafe",
+      "kind": "function"
+    },
+    {
       "name": "normalizeBuiltInTools",
       "kind": "function"
     },

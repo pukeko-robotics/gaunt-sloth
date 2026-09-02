@@ -178,6 +178,10 @@ export async function createInteractiveSession(
       threadId: checkpointer.threadId,
     }) ?? undefined;
 
+  // GS2-20: tell the checkpointer which row to mark unresumable if a checkpoint write fails later.
+  // Optional call — a spec that stubs the checkpointer with a plain object has nothing to bind.
+  checkpointer.bindConversation?.(conversationId);
+
   // Initialize Runner
 
   const logFileName = getCommandOutputFilePath(config, sessionConfig.mode);

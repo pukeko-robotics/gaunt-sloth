@@ -193,7 +193,7 @@ describe('runConversation', () => {
     expect(results[0].error).toContain('conv-stop-marker');
   });
 
-  it('records opt-in per-turn history (fail-soft) for each turn that ran', async () => {
+  it('records per-turn history (fail-soft, on by default) for each turn that ran', async () => {
     gthAgentRunnerInstanceMock.processMessages
       .mockResolvedValueOnce('a1')
       .mockResolvedValueOnce('a2');
