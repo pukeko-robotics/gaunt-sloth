@@ -1127,17 +1127,26 @@ describe('EXT-88 — a `null` suggestion is the answer the wire schema asks for'
     const emitted = z.toJSONSchema(
       structuredOutputBoundary(ShellSafetyVerdictSchema).wireSchema
     ) as {
-      properties: Record<string, { description?: string; anyOf?: { type?: string }[] }>;
+      properties: Record<
+        string,
+        { description?: string; anyOf?: { type?: string }[]; type?: string | string[] }
+      >;
       required: string[];
     };
     const field = emitted.properties.suggestedTool;
+    // A nullable is spelled `anyOf: [{type: T}, {type: 'null'}]` by some zod versions and
+    // `type: [T, 'null']` by others; both are the same schema. Read the SET of admitted types so
+    // this tripwire stays pinned to what the provider is told, not to a zod release's spelling.
+    const branches = field.anyOf?.flatMap((branch) => (branch.type ? [branch.type] : [])) ?? [];
+    const declared = Array.isArray(field.type) ? field.type : field.type ? [field.type] : [];
+    const admitted = [...new Set(branches.length ? branches : declared)].sort();
 
     expect(field.description).toBe(ShellSafetyVerdictSchema.shape.suggestedTool.description);
     expect(field.description).toMatch(/^OPTIONAL\./);
     expect(field.description).toMatch(/the exact name of that tool/);
     // …and the model is told `null` is a legal answer, on a key it is REQUIRED to answer — which is
     // the pair that satisfies a strict `json_schema` provider instead of being rewritten by one.
-    expect(field.anyOf).toEqual(expect.arrayContaining([{ type: 'null' }, { type: 'string' }]));
+    expect(admitted).toEqual(['null', 'string']);
     expect(emitted.required).toEqual(
       expect.arrayContaining(['outcome', 'reason', 'suggestedTool'])
     );
