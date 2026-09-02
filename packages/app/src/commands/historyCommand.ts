@@ -8,7 +8,7 @@ import {
 import { display, displayInfo, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 
 /**
- * GS2-7 (B20) / GS2-19 — the `gth history` command group over the local, opt-in session store.
+ * GS2-7 (B20) / GS2-19 — the `gth history` command group over the local session store.
  *
  * - `gth history search <query...>` — FTS5 full-text search across past turns; each hit shows the
  *   parent conversation it belongs to (GS2-19).
@@ -17,7 +17,8 @@ import { display, displayInfo, displayWarning } from '@gaunt-sloth/core/utils/co
  * - `gth history show <id>` — print a whole conversation thread, all turns in order (GS2-19).
  *
  * All are READ-ONLY and fail-soft: they open the store with `create: false`, so a missing DB
- * (history never enabled) simply reports "no history yet" instead of materialising an empty file.
+ * (nothing recorded yet, or history turned off) simply reports "no history yet" instead of
+ * materialising an empty file.
  * (Opening still migrates a pre-GS2-19 DB in place — see {@link HistoryStore} migrate.) The DB
  * defaults to the global `~/.gsloth/history.db`; `--db <path>` overrides it. Local only — nothing
  * here touches the network.
@@ -25,7 +26,7 @@ import { display, displayInfo, displayWarning } from '@gaunt-sloth/core/utils/co
 export function historyCommand(program: Command): void {
   const history = program
     .command('history')
-    .description('Search and list locally-recorded session history (opt-in; local only)')
+    .description('Search and list locally-recorded session history (local only)')
     .addHelpText(
       'after',
       '\n' +
@@ -45,7 +46,8 @@ export function historyCommand(program: Command): void {
       const store = openHistoryStore(resolveHistoryDbPath(options.db), { create: false });
       if (!store) {
         displayWarning(
-          'No session history found. Enable it with `history.enabled: true` in your config.'
+          'No session history found. Recording is on by default; `history.enabled: false` in your ' +
+            'config turns it off.'
         );
         return;
       }
@@ -68,7 +70,8 @@ export function historyCommand(program: Command): void {
       const store = openHistoryStore(resolveHistoryDbPath(options.db), { create: false });
       if (!store) {
         displayWarning(
-          'No session history found. Enable it with `history.enabled: true` in your config.'
+          'No session history found. Recording is on by default; `history.enabled: false` in your ' +
+            'config turns it off.'
         );
         return;
       }
@@ -91,7 +94,8 @@ export function historyCommand(program: Command): void {
       const store = openHistoryStore(resolveHistoryDbPath(options.db), { create: false });
       if (!store) {
         displayWarning(
-          'No session history found. Enable it with `history.enabled: true` in your config.'
+          'No session history found. Recording is on by default; `history.enabled: false` in your ' +
+            'config turns it off.'
         );
         return;
       }

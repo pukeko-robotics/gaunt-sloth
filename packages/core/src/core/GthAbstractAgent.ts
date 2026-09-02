@@ -681,7 +681,7 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
         const priorMessageCount = await this.getStateMessageCount(runConfig);
         const response = await this.agent.invoke({ messages }, runConfig);
         // Harvest token usage + invoked tool names from THIS turn's new messages only (fail-soft)
-        // so the opt-in history recorder can populate `gth insights`.
+        // so the local history recorder can populate `gth insights`.
         // TUI-C32 residual f — the streaming path renders the compact per-tool indication via
         // streamFromInput's observer; the non-streaming invoke path (`streamOutput: false`) had
         // none, so a plain-surface tool call surfaced nothing after the legacy fs notices were

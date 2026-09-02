@@ -51,6 +51,25 @@ const rlQuestionMock = vi.fn(async (prompt: string) => {
   if (typeof prompt === 'string' && prompt.includes('>')) return mainAnswers.shift() ?? 'exit';
   return approvalAnswers.shift() ?? '';
 });
+// GS2-20 — the history recorder is stubbed: this spec does not test history, and with
+// recording on by default a config naming no `dbPath` would resolve the user's real
+// `~/.gsloth/history.db` and write to it. Plain functions, not vi.fn, so a
+// `vi.resetAllMocks()` in beforeEach cannot strip their return values.
+vi.mock('@gaunt-sloth/core/history/recordSession.js', () => ({
+  openConversationSafe: () => null,
+  recordSessionSafe: () => null,
+  lookupConversationThreadSafe: () => null,
+}));
+// …and the checkpointer with it, for the same reason: the real one opens (and therefore creates)
+// that same database.
+vi.mock('@gaunt-sloth/core/history/sessionCheckpointer.js', () => ({
+  openSessionCheckpointerSafe: () => ({
+    saver: {},
+    durable: false,
+    threadId: 'test-thread-id',
+    close: () => {},
+  }),
+}));
 vi.mock('@gaunt-sloth/core/utils/systemUtils.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gaunt-sloth/core/utils/systemUtils.js')>()),
   createInterface: vi.fn(() => ({ question: rlQuestionMock, close: vi.fn() })),

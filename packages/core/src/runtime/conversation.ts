@@ -125,6 +125,11 @@ export async function runConversation(
     const messages: Message[] = [];
 
     try {
+      // GS2-20 — considered for the durable saver and deliberately kept in memory, and this one is
+      // structural rather than a deferral: the loop below calls `resetThread()` before every turn so
+      // each turn's replay of the full `messages` array is the sole history. A durable saver would
+      // therefore write a new thread per turn and never read one back. Making this surface resumable
+      // means changing how it drives history, not which saver it is handed.
       await runner.init(command, config, new MemorySaver(), {
         displayCommand: options?.displayCommand,
       });
@@ -173,7 +178,8 @@ export async function runConversation(
           /* fail-soft */
         }
 
-        // GS2-7 (B20): opt-in, fail-soft per-turn session history. A no-op unless `history.enabled`.
+        // GS2-7 (B20): local, fail-soft per-turn session history. A no-op when `history.enabled` is
+        // false.
         recordSessionSafe(config, {
           command,
           project: getProjectDir(),

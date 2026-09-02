@@ -138,7 +138,6 @@ Failed to resolve link to "EvalReporter" in comment for @gaunt-sloth/eval-report
 Failed to resolve link to "EvalReporter" in comment for @gaunt-sloth/eval-reporter-teamcity.
 Failed to resolve link to "EvalReporter" in comment for @gaunt-sloth/eval-reporter-teamcity.index.js
 Failed to resolve link to "GthAbstractAgent" in comment for @gaunt-sloth/core.core/types.GthCompiledGraph
-Failed to resolve link to "GthAbstractAgent" in comment for @gaunt-sloth/core.providers/geminiThinking.disableGeminiThoughtSummaries
 Failed to resolve link to "GthAgentRunner" in comment for @gaunt-sloth/agent.modules/acp/acpPermissions.js
 Failed to resolve link to "GthAgentRunner" in comment for @gaunt-sloth/core.core/gthLeanAgentFactory.gthLeanAgentFactory
 Failed to resolve link to "GthAgentRunner" in comment for @gaunt-sloth/core.core/types.ApprovalOutcomeCallback
@@ -264,7 +263,6 @@ Failed to resolve link to "normalizeCommand" in comment for @gaunt-sloth/core.co
 Failed to resolve link to "parseChecklistArgs" in comment for gaunt-sloth.tui/components/LiveTurn.ChecklistPanel
 Failed to resolve link to "pickReasoningDelta" in comment for @gaunt-sloth/core.core/reasoningBlocks
 Failed to resolve link to "recordSessionSafe" in comment for @gaunt-sloth/core.core/types.GthRunStats
-Failed to resolve link to "recordSessionSafe" in comment for @gaunt-sloth/core.history/historyStore
 Failed to resolve link to "resolveAgentFactory" in comment for @gaunt-sloth/core.core/gthLeanAgentFactory.gthLeanAgentFactory
 Failed to resolve link to "resolveConfigPath" in comment for @gaunt-sloth/review.index.findProjectConfigPath
 Failed to resolve link to "resolveExtendsChain" in comment for @gaunt-sloth/review.index.validateConfig
@@ -390,6 +388,7 @@ The comment for @gaunt-sloth/core.core/shell/rater.preflightFloorFinding links t
 The comment for @gaunt-sloth/core.core/toolCallRepair/promote.promoteTextEmittedToolCallMessage links to "AIMessage" which was resolved but is not included in the documentation. To fix this warning export it or add { "@langchain/core": { "AIMessage": "#" }} to the externalSymbolLinkMappings option
 The comment for @gaunt-sloth/core.core/toolDisplay.setToolDisplayConfig links to "getDefaultSecrets" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "getDefaultSecrets": "#" }} to the externalSymbolLinkMappings option
 The comment for @gaunt-sloth/core.core/toolDisplay.summariseToolCall links to "formatParamValue" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "formatParamValue": "#" }} to the externalSymbolLinkMappings option
+The comment for @gaunt-sloth/core.history/checkpointSaver.GthSqliteSaver.getDeltaChannelHistory links to "DeltaChannelHistory" which was resolved but is not included in the documentation. To fix this warning export it or add { "@langchain/langgraph-checkpoint": { "DeltaChannelHistory": "#" }} to the externalSymbolLinkMappings option
 The comment for @gaunt-sloth/core.providers/geminiSchemaSanitizer.GEMINI_SUPPORTED_SCHEMA_KEYWORDS links to "sanitizeNode" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "sanitizeNode": "#" }} to the externalSymbolLinkMappings option
 The comment for @gaunt-sloth/core.providers/geminiSchemaSanitizer.sanitizeGeminiToolSchema links to "resolveComposition" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "resolveComposition": "#" }} to the externalSymbolLinkMappings option
 The comment for @gaunt-sloth/core.providers/geminiSchemaSanitizer.sanitizeGeminiToolSchema links to "resolveComposition" which was resolved but is not included in the documentation. To fix this warning export it or add { "@gaunt-sloth/core": { "resolveComposition": "#" }} to the externalSymbolLinkMappings option

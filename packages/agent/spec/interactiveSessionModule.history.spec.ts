@@ -79,7 +79,9 @@ vi.mock('@gaunt-sloth/core/core/GthAgentRunner.js', () => ({
 }));
 
 vi.mock('@langchain/core/messages', () => ({ HumanMessage: vi.fn() }));
-vi.mock('@langchain/langgraph', () => ({ MemorySaver: vi.fn() }));
+// GS2-20 — `@langchain/langgraph` is deliberately NOT stubbed in this file. The checkpointer is
+// real here for the same reason the recorder and the store are: this spec is what proves the two
+// halves of a session's persistence are wired to one switch and to one thread id.
 vi.mock('#src/resolvers.js', () => ({ createResolvers: vi.fn(() => ({})) }));
 vi.mock('#src/core/resolveAgentFactory.js', () => ({ resolveAgentFactory: vi.fn(() => vi.fn()) }));
 
@@ -166,17 +168,54 @@ describe('interactiveSessionModule readline history recording (GS2-18 / GS2-16)'
     store.close();
   });
 
-  it('records NOTHING and creates no DB when history is disabled (default-off)', async () => {
+  it('records, and checkpoints, when history config is ABSENT (the default run)', async () => {
     const dbPath = resolve(dir, 'history.db');
     initConfigMock.mockResolvedValue({
       streamSessionInferenceLog: false,
       modelDisplayName: 'test-model',
-      // history absent → default run
+      // No `enabled` key: the default is on, and this is the case that says so.
+      history: { dbPath },
+    });
+
+    const { createInteractiveSession } = await import('#src/modules/interactiveSessionModule.js');
+    await createInteractiveSession(sessionConfig, {});
+
+    expect(existsSync(dbPath)).toBe(true);
+    const { openHistoryStore } = await import('@gaunt-sloth/core/history/historyStore.js');
+    const store = openHistoryStore(dbPath, { create: false })!;
+    expect(store.listRecent(10)).toHaveLength(1);
+
+    // GS2-20 — the conversation carries the thread its state is checkpointed under, and the runner
+    // was told to drive that same thread. Those two being the SAME id is the link a resume travels;
+    // either one alone is a conversation nobody can get back into.
+    const conversations = store.listConversations();
+    expect(conversations).toHaveLength(1);
+    const threadId = conversations[0].threadId;
+    expect(threadId).toBeTypeOf('string');
+    store.close();
+
+    const initOptions = runnerInstanceMock.init.mock.calls[0][3];
+    expect(initOptions?.threadId).toBe(threadId);
+    // …and it is the DURABLE saver that was handed over, not a memory one.
+    const { GthSqliteSaver } = await import('@gaunt-sloth/core/history/checkpointSaver.js');
+    expect(runnerInstanceMock.init.mock.calls[0][2]).toBeInstanceOf(GthSqliteSaver);
+  });
+
+  it('records NOTHING and creates no DB when history.enabled is false (the opt-out)', async () => {
+    const dbPath = resolve(dir, 'history.db');
+    initConfigMock.mockResolvedValue({
+      streamSessionInferenceLog: false,
+      modelDisplayName: 'test-model',
+      history: { enabled: false, dbPath },
     });
 
     const { createInteractiveSession } = await import('#src/modules/interactiveSessionModule.js');
     await createInteractiveSession(sessionConfig, {});
 
     expect(existsSync(dbPath)).toBe(false);
+    // The session still got a saver — never none, or the first gated tool call throws
+    // MISSING_CHECKPOINTER mid-turn — it is simply one that does not outlive the process.
+    const { MemorySaver } = await import('@langchain/langgraph');
+    expect(runnerInstanceMock.init.mock.calls[0][2]).toBeInstanceOf(MemorySaver);
   });
 });

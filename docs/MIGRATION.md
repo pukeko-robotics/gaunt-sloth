@@ -73,7 +73,8 @@ these before you upgrade.
 
 There are also behaviour changes that raise no validation error, so nothing tells you at load time
 that your output or your files have moved: the array merge across config layers (section D), the
-`writeOutputToFile` default (section E), and the `output.header` default (section K).
+`writeOutputToFile` default (section E), the `output.header` default (section K), and the
+`history.enabled` default (section L).
 
 ---
 
@@ -633,6 +634,35 @@ the interactive TUI is unaffected — it always renders the full preamble. If yo
 captured stdout, `"none"` remains the byte-clean rung. See
 [Configuration → Run header](configuration/output.md#run-header-outputheader).
 
+## L. `history.enabled` now defaults to `true` (behaviour change)
+
+Session history used to be off unless you asked for it. It is now on unless you turn it off, so
+**every run writes to `~/.gsloth/history.db` on your own machine.**
+
+What goes in there:
+
+- one row per turn — the prompt, the response, the command, the model, and token/tool counts — which
+  is what `gth history list` / `search` / `show` and `gth insights` read back; and
+- for interactive `chat` / `code` sessions, the conversation's own state, so a session can be picked
+  up again with its context intact rather than started over.
+
+**It stays on your machine.** Nothing here touches the network, there is no telemetry, and the file
+is a plain SQLite database under your home directory that you can inspect or delete at any time.
+
+To turn it off — no recording, no stored conversation state, and runs behave exactly as they did:
+
+```json
+{
+  "history": {
+    "enabled": false
+  }
+}
+```
+
+To keep it on but put the file elsewhere, set `history.dbPath`. A config that already sets
+`history.enabled` either way is unaffected; only configs that never mentioned the key change
+behaviour.
+
 ## Interactive slash commands (renames)
 
 Inside `chat`/`code` sessions (both the TUI and the plain `--no-tui` readline surface, which now
@@ -677,4 +707,6 @@ share one command registry):
 10. Convert any `output.header: false` / `true` to `"none"` / `"debug"`. If you never set the key,
     check whether you want the new `"compact"` default (one attribution line, no preamble) or
     `"debug"` to keep the preamble you had (K).
-11. Run `gth config validate` (and optionally `gth config print`) to confirm the result.
+11. Decide whether you want local session history, which is now on by default and writes to
+    `~/.gsloth/history.db`; set `history.enabled: false` if you do not (L).
+12. Run `gth config validate` (and optionally `gth config print`) to confirm the result.

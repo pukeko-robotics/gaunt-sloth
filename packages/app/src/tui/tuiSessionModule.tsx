@@ -29,6 +29,7 @@ import {
   openConversationSafe,
   recordSessionSafe,
 } from '@gaunt-sloth/core/history/recordSession.js';
+import { openSessionCheckpointerSafe } from '@gaunt-sloth/core/history/sessionCheckpointer.js';
 import { openHistoryStore, resolveHistoryDbPath } from '@gaunt-sloth/core/history/historyStore.js';
 import {
   formatConversationList,
@@ -38,7 +39,6 @@ import {
 import type { GthConfig } from '@gaunt-sloth/core/config.js';
 import type { GthRunStats } from '@gaunt-sloth/core/core/types.js';
 import { HumanMessage } from '@langchain/core/messages';
-import { MemorySaver } from '@langchain/langgraph';
 import { createResolvers } from '@gaunt-sloth/agent/resolvers.js';
 import { resolveAgentFactory } from '@gaunt-sloth/agent/core/resolveAgentFactory.js';
 import { GthAbstractAgent } from '@gaunt-sloth/core/core/GthAbstractAgent.js';
@@ -547,15 +547,31 @@ export async function createTuiSession(
   // TUI honours NO_COLOR / FORCE_COLOR / `useColour` exactly as the plain surface does instead of
   // leaving chalk (which implements none of them but FORCE_COLOR) to decide on its own.
   applyTuiColour(config.useColour);
-  const checkpointSaver = new MemorySaver();
+  // GS2-20: the session's checkpointer — durable (SQLite, beside the history store) when history is
+  // on and the DB opens, so this session's LangGraph state outlives the process and the conversation
+  // can be resumed with its tools and pending work intact. The fallback is a MemorySaver, never the
+  // absence of one: with the tool-approval interrupt this surface installs, no saver at all throws
+  // MISSING_CHECKPOINTER on the first gated call.
+  //
+  // Its notice goes into `startupAdvisories` rather than to the console, because everything from
+  // here on is inside Ink's alternate screen — a `displayWarning` would be painted over, or swapped
+  // away with the screen, and the user would never learn their session is not resumable.
+  const checkpointer = openSessionCheckpointerSafe(config, {
+    notify: (message) => startupAdvisories.push(message),
+  });
   // GS2-19: one conversation per TUI session; each completed turn (logTurn) is stamped with its id
-  // so the whole chat groups under one conversation. Opt-in / fail-soft (undefined unless history
-  // is enabled and the store opened); turns fall back to per-turn conversations otherwise.
+  // so the whole chat groups under one conversation. Fail-soft (undefined when history is off or the
+  // store did not open); turns fall back to per-turn conversations otherwise.
+  //
+  // GS2-20: it carries the thread id too — the link from the conversation `gth history list` prints
+  // to the checkpoint holding this session's state. Written before the runner exists, because
+  // `runner.init` can throw partway and a conversation with no thread recorded can never be resumed.
   const conversationId =
     openConversationSafe(config, {
       command: sessionConfig.mode,
       project: getProjectDir(),
       model: config.modelDisplayName,
+      threadId: checkpointer.threadId,
     }) ?? undefined;
   const logFileName = getCommandOutputFilePath(config, sessionConfig.mode);
   if (logFileName) {
@@ -588,7 +604,9 @@ export async function createTuiSession(
   let mouseSession: MouseSession | undefined;
 
   try {
-    await runner.init(sessionConfig.mode, agentConfig, checkpointSaver);
+    await runner.init(sessionConfig.mode, agentConfig, checkpointer.saver, {
+      threadId: checkpointer.threadId,
+    });
 
     // Any MCP server that failed to connect during init (resolveTools ran inside runner.init).
     // Captured here so the persistent NoticeBar can name it — otherwise the only signal is a
@@ -668,8 +686,8 @@ export async function createTuiSession(
       }
       const durationMs = turnStartedAt > 0 ? Date.now() - turnStartedAt : undefined;
 
-      // GS2-7 (B20): opt-in, fail-soft history — records each completed turn as a session when
-      // `history.enabled`. Independent of the per-run md log (so it works even with
+      // GS2-7 (B20): local, fail-soft history — records each completed turn as a session unless
+      // `history.enabled` is false. Independent of the per-run md log (so it works even with
       // writeOutputToFile off) and fully guarded, so it never affects the session.
       // GS2-16 threads token/tool/duration analytics; costUsd is left unset (no reliable price).
       recordSessionSafe(config, {
@@ -842,5 +860,9 @@ export async function createTuiSession(
     // TUI-C31 (d): the TUI has unmounted (normal exit or throw) — restore the headless stdout
     // sink so any later tool output is no longer suppressed once Ink no longer owns the frame.
     setToolOutputSuppressed(false);
+    // GS2-20: release the checkpoint DB connection here, where both the normal exit and the throw
+    // path pass through. On win32 an unclosed handle blocks the file from being replaced or
+    // reopened until the process exits.
+    checkpointer.close();
   }
 }

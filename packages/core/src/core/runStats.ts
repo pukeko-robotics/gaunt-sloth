@@ -1,7 +1,7 @@
 /**
  * @packageDocumentation
  * GS2-16 — pure, fail-soft helpers that harvest per-run analytics (token usage + invoked tool
- * names) from LangChain messages, so the opt-in history recorder can populate `gth insights`
+ * names) from LangChain messages, so the local history recorder can populate `gth insights`
  * with real numbers instead of zeros.
  *
  * The extraction is deliberately structural and defensive (duck-typed reads guarded by a

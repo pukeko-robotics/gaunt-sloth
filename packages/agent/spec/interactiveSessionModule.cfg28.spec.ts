@@ -26,6 +26,15 @@ const rlQuestionMock = vi.fn(async (prompt: string) => {
   return '';
 });
 const rlCloseMock = vi.fn();
+// GS2-20 — the history recorder is stubbed: this spec does not test history, and with
+// recording on by default a config naming no `dbPath` would resolve the user's real
+// `~/.gsloth/history.db` and write to it. Plain functions, not vi.fn, so a
+// `vi.resetAllMocks()` in beforeEach cannot strip their return values.
+vi.mock('@gaunt-sloth/core/history/recordSession.js', () => ({
+  openConversationSafe: () => null,
+  recordSessionSafe: () => null,
+  lookupConversationThreadSafe: () => null,
+}));
 vi.mock('@gaunt-sloth/core/utils/systemUtils.js', () => ({
   createInterface: vi.fn(() => ({ question: rlQuestionMock, close: rlCloseMock })),
   error: vi.fn(),
@@ -121,6 +130,18 @@ vi.mock('@gaunt-sloth/core/core/GthAgentRunner.js', () => ({
 // ── langchain + agent-internal deps (kept inert) ──────────────────────────────
 vi.mock('@langchain/core/messages', () => ({ HumanMessage: vi.fn() }));
 vi.mock('@langchain/langgraph', () => ({ MemorySaver: vi.fn() }));
+// GS2-20 — the session's checkpointer comes from this seam. Stubbed here so the spec does not
+// load the real SQLite saver (which needs more of @langchain/langgraph than the stub above
+// provides, and would open a database this spec has no interest in). A plain function, not a
+// vi.fn, so a `vi.resetAllMocks()` in beforeEach cannot strip its return value.
+vi.mock('@gaunt-sloth/core/history/sessionCheckpointer.js', () => ({
+  openSessionCheckpointerSafe: () => ({
+    saver: {},
+    durable: false,
+    threadId: 'test-thread-id',
+    close: () => {},
+  }),
+}));
 vi.mock('#src/resolvers.js', () => ({ createResolvers: vi.fn() }));
 
 const sessionConfig = {

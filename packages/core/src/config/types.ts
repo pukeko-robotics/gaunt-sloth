@@ -124,10 +124,11 @@ export interface GthConfig {
    */
   agent?: { backend?: 'lean' };
   /**
-   * GS2-7 (B20) — local, opt-in session history store. DEFAULT OFF (absent = disabled): a default
-   * run persists nothing and behaves exactly as before. When `enabled`, each run is recorded to a
-   * local SQLite DB (`~/.gsloth/history.db` by default, overridable via `dbPath`) for
-   * `gth history search` / `gth insights`. Local only — no telemetry leaves the machine.
+   * GS2-7 (B20) / GS2-20 — local session history store. DEFAULT ON (absent = enabled): each run is
+   * recorded to a local SQLite DB (`~/.gsloth/history.db` by default, overridable via `dbPath`) for
+   * `gth history search` / `gth insights`, and interactive sessions checkpoint their graph state
+   * into the same file so a conversation can be resumed. `enabled: false` turns both off and
+   * restores the stateless identity. Local only — no telemetry leaves the machine.
    */
   history?: { enabled?: boolean; dbPath?: string };
   /**

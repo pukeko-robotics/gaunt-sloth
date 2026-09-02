@@ -414,6 +414,10 @@
       "kind": "function"
     },
     {
+      "name": "lookupConversationThreadSafe",
+      "kind": "function"
+    },
+    {
       "name": "normalizeBuiltInTools",
       "kind": "function"
     },

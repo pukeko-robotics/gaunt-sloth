@@ -470,6 +470,11 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
         // graphs suspended in it, and `sessions` holds several at once; one shared saver would pool
         // every session's checkpoint threads, so a `session/close` could clear state another
         // session is still parked on.
+        //
+        // GS2-20 — considered for the durable saver and deliberately left in memory for now. An ACP
+        // session is a conversation a user would want to resume, so this surface WILL take it; the
+        // work is the ACP client's own session/load handshake rather than a swap of this argument,
+        // and it is [[EXT-134]]'s, not GS2-20's.
         await runner.init(resolveAcpSessionCommand(config), config, new MemorySaver());
 
         const sessionId = randomUUID();
