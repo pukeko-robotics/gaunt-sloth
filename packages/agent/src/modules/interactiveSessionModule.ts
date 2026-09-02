@@ -787,5 +787,11 @@ export async function createInteractiveSession(
       error(`Error in ${sessionConfig.mode} command: ${err}`);
     }
     exit(1);
+  } finally {
+    // GS2-20: the backstop, not the usual door. `endSession` closes the connection as soon as the
+    // session ends, which is what releases the file promptly; this is here so that a future exit
+    // path added to the loop cannot silently stop closing it. Closing twice is safe — the saver's
+    // close swallows, and `sessionCheckpointer.spec.ts` pins that.
+    checkpointer.close();
   }
 }

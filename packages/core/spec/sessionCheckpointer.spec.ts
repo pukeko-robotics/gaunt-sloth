@@ -154,4 +154,31 @@ describe('GS2-20: openSessionCheckpointerSafe', () => {
       memory.close();
     }).not.toThrow();
   });
+
+  /**
+   * GS2-20 — the assertion the double-close test above cannot make. `not.toThrow()` is satisfied by
+   * a `close()` that does nothing at all, so on its own it is evidence that closing is harmless
+   * rather than evidence that it happens.
+   *
+   * This matters off-Linux and not in an abstract way: on win32 a file with a live handle cannot be
+   * deleted or replaced, so a `close()` that quietly stopped releasing the connection would leave
+   * every session's database locked for as long as the process ran, and the first thing to notice
+   * would be a PTY suite failing to remove its throwaway HOME. Asking the saver to read *after* the
+   * close is what distinguishes the two: it succeeds while the connection is open and fails once it
+   * is gone.
+   */
+  it('close() releases the connection rather than merely dropping the reference', async () => {
+    const dbPath = resolve(dir, 'history.db');
+    const checkpointer = openSessionCheckpointerSafe({ history: { dbPath } }, { notify });
+    expect(checkpointer.durable).toBe(true);
+    const config = { configurable: { thread_id: checkpointer.threadId } };
+
+    // Open: the saver answers (an empty thread is `undefined`, which is an answer).
+    await expect(checkpointer.saver.getTuple(config)).resolves.toBeUndefined();
+
+    checkpointer.close();
+
+    // Closed: the same call now fails, because the connection it needs is gone.
+    await expect(checkpointer.saver.getTuple(config)).rejects.toThrow();
+  });
 });

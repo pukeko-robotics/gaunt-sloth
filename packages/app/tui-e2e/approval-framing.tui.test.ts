@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test, expect } from '@microsoft/tui-test';
+import { removeTmpHome } from './fixtures/tmpHome.mjs';
 
 /**
  * [[TUI-C26]] task 1 PTY e2e: **what the approval dialog actually puts on a terminal** when the
@@ -102,7 +103,7 @@ const framingSuite = (name: string, config: string, rows: number): void => {
     columns: 120,
     rows,
   });
-  test.afterAll(() => fs.rmSync(tmpHome, { recursive: true, force: true }));
+  test.afterAll(() => removeTmpHome(tmpHome));
   void name;
 };
 

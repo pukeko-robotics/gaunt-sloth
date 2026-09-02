@@ -9,6 +9,7 @@ import {
   STOP_COMMAND,
   STOP_REASON,
 } from './fixtures/stopFixtures.mjs';
+import { removeTmpHome } from './fixtures/tmpHome.mjs';
 
 /**
  * [[TUI-C71]] PTY e2e: **what a run-ending approvals stop puts on the terminal.**
@@ -252,7 +253,7 @@ test.describe('gth code TUI — [[TUI-C71]] the halt message is framed in the tr
   });
 
   test.afterAll(() => {
-    fs.rmSync(tmpHome, { recursive: true, force: true });
+    removeTmpHome(tmpHome);
   });
 
   /**
@@ -301,7 +302,7 @@ test.describe('gth code readline — [[TUI-C71]] the halt message is framed on t
   });
 
   test.afterAll(() => {
-    fs.rmSync(tmpHome, { recursive: true, force: true });
+    removeTmpHome(tmpHome);
   });
 
   /**
@@ -361,7 +362,7 @@ test.describe('gth exec — [[TUI-C71]] §6.2, the message that is all anyone se
   });
 
   test.afterAll(() => {
-    fs.rmSync(tmpHome, { recursive: true, force: true });
+    removeTmpHome(tmpHome);
   });
 
   /**

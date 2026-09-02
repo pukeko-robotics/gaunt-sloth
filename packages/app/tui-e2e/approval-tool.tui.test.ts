@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test, expect } from '@microsoft/tui-test';
+import { removeTmpHome } from './fixtures/tmpHome.mjs';
 
 /**
  * [[TUI-C67]] PTY e2e: **a gated call that is not a shell command is announced as what it is.**
@@ -75,7 +76,7 @@ test.describe('gth code TUI — [[TUI-C67]] a gated non-shell tool call names th
   });
 
   test.afterAll(() => {
-    fs.rmSync(tmpHome, { recursive: true, force: true });
+    removeTmpHome(tmpHome);
   });
 
   test('a gated write_file call is announced as the write_file tool, never as a shell command', async ({
@@ -141,7 +142,7 @@ test.describe('gth code TUI — [[TUI-C88]] a gated MCP tool call names the serv
   });
 
   test.afterAll(() => {
-    fs.rmSync(tmpHome, { recursive: true, force: true });
+    removeTmpHome(tmpHome);
   });
 
   test('a gated MCP tool call is announced with its server, never as a bare tool or a shell command', async ({

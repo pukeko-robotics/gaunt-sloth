@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test, expect } from '@microsoft/tui-test';
+import { removeTmpHome } from './fixtures/tmpHome.mjs';
 
 /**
  * [[TUI-C100]] PTY e2e: **a call held at the approval gate must not render as done.**
@@ -71,7 +72,7 @@ test.describe('gth code TUI — [[TUI-C100]] a gated call with a returning sibli
   });
 
   test.afterAll(() => {
-    fs.rmSync(tmpHome, { recursive: true, force: true });
+    removeTmpHome(tmpHome);
   });
 
   test('does not claim the gated call is done while the prompt is open, and shows its real outcome after', async ({
@@ -148,7 +149,7 @@ test.describe('gth code TUI — [[TUI-C100]] the approved gated call still reach
   });
 
   test.afterAll(() => {
-    fs.rmSync(tmpHome, { recursive: true, force: true });
+    removeTmpHome(tmpHome);
   });
 
   /**
@@ -198,7 +199,7 @@ test.describe('gth code TUI — [[TUI-C99]] a mid-turn gate reads in the order i
   });
 
   test.afterAll(() => {
-    fs.rmSync(tmpHome, { recursive: true, force: true });
+    removeTmpHome(tmpHome);
   });
 
   /**

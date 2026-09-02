@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test, expect } from '@microsoft/tui-test';
 import { SHELL_ALLOWLIST_FILE, SHELL_DENYLIST_FILE } from '@gaunt-sloth/core/constants.js';
+import { removeTmpHome } from './fixtures/tmpHome.mjs';
 
 /**
  * [[TUI-C26]] task 2 PTY e2e: **the escalation menu, and how severe the escalation looks, on a real
@@ -84,7 +85,7 @@ const menuSuite = (config: string): void => {
   test.beforeAll(clearProjectStores);
   test.afterAll(() => {
     clearProjectStores();
-    fs.rmSync(tmpHome, { recursive: true, force: true });
+    removeTmpHome(tmpHome);
   });
 };
 

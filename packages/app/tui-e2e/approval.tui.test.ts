@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test, expect } from '@microsoft/tui-test';
+import { removeTmpHome } from './fixtures/tmpHome.mjs';
 
 /**
  * EXT-52 PTY e2e: the per-command shell-approval prompt on the LEAN (default) backend, in a real
@@ -51,7 +52,7 @@ test.describe('gth code TUI — EXT-52 lean shell approval prompt (real agent, s
   });
 
   test.afterAll(() => {
-    fs.rmSync(tmpHome, { recursive: true, force: true });
+    removeTmpHome(tmpHome);
   });
 
   // Approve once ([o]): the gated command SUSPENDS on the approval prompt (no output yet), then
@@ -116,7 +117,7 @@ test.describe('gth code TUI — EXT-52 reject keeps the command from running', (
   });
 
   test.afterAll(() => {
-    fs.rmSync(tmpHome, { recursive: true, force: true });
+    removeTmpHome(tmpHome);
   });
 
   test('rejecting the approval prompt: the command never executes, the agent is told, the turn concludes', async ({
@@ -156,7 +157,7 @@ test.describe('gth code TUI — EXT-52/CFG-27 rung switching restores prompting 
   });
 
   test.afterAll(() => {
-    fs.rmSync(tmpHome, { recursive: true, force: true });
+    removeTmpHome(tmpHome);
   });
 
   // The exact live finding EXT-52 fixes: the session approval switch used to be a placebo on lean.
@@ -231,7 +232,7 @@ test.describe('gth code TUI — EXT-70 §6 the menu names what it will store, an
   });
 
   test.afterAll(() => {
-    fs.rmSync(tmpHome, { recursive: true, force: true });
+    removeTmpHome(tmpHome);
   });
 
   /**
@@ -310,7 +311,7 @@ test.describe('gth code TUI — EXT-70 §4.7.1 the trust affordance', () => {
   });
 
   test.afterAll(() => {
-    fs.rmSync(tmpHome, { recursive: true, force: true });
+    removeTmpHome(tmpHome);
   });
 
   /**
