@@ -118,6 +118,10 @@ export async function runSingleShot(
     let responseText = '';
     const startedAt = Date.now();
     try {
+      // GS2-20 — considered for the durable saver and deliberately kept in memory. A single-shot run
+      // is one prompt and one answer, both already recorded as a 1-turn conversation; there is no
+      // second turn for a checkpoint to serve. Resuming one is really "start a session seeded from
+      // it", which is a different feature from re-entering a graph.
       await runner.init(command, config, new MemorySaver(), {
         displayCommand: options?.displayCommand,
       });
@@ -173,7 +177,8 @@ export async function runSingleShot(
       /* fail-soft: analytics must never affect this run */
     }
 
-    // GS2-7 (B20): opt-in, fail-soft session history. A no-op unless `history.enabled`; never throws
+    // GS2-7 (B20): local, fail-soft session history. A no-op when `history.enabled` is false; never
+    // throws
     // (recordSessionSafe is fully guarded) so a DB problem can't abort or alter this run.
     // GS2-16 threads token/tool analytics; costUsd is intentionally left unset (no reliable price).
     recordSessionSafe(config, {

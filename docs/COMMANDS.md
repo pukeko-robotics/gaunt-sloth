@@ -1105,7 +1105,7 @@ gth history search <query...> [--limit <n>] [--db <path>]
 gth history show <id> [--db <path>]
 ```
 
-Recording is **opt-in and local only** — nothing here touches the network. Sessions are stored only when `history.enabled: true` is set in your config; with no store present these commands report that there is no history yet rather than creating one. The store defaults to `~/.gsloth/history.db` (overridable via the `history.dbPath` config key or the `--db` flag).
+Recording is **on by default and local only** — nothing here touches the network. Set `history.enabled: false` in your config to turn it off; with no store present these commands report that there is no history yet rather than creating one. The store defaults to `~/.gsloth/history.db` (overridable via the `history.dbPath` config key or the `--db` flag), and interactive `chat`/`code` sessions keep their conversation state in the same file.
 
 ### Subcommands
 - `history list` - List the most recent conversations, grouped with a turn count and timespan.
@@ -1140,7 +1140,7 @@ Show local analytics over recorded session history.
 gth insights [--db <path>]
 ```
 
-Read-only analytics over the same opt-in [`history`](#history) store — token and cost totals, a top-tool tally, and a per-command breakdown. Local only: nothing leaves the machine, and with no store present it reports that there is no history yet rather than creating one. Enable recording with `history.enabled: true` in your config.
+Read-only analytics over the same [`history`](#history) store — token and cost totals, a top-tool tally, and a per-command breakdown. Local only: nothing leaves the machine, and with no store present it reports that there is no history yet rather than creating one. Recording is on by default; `history.enabled: false` in your config turns it off.
 
 ### Options
 - `--db <path>` - Path to the history DB (defaults to `~/.gsloth/history.db`).

@@ -235,6 +235,10 @@ export async function runPrDiscovery(config: GthConfig): Promise<PrDiscoveryResu
     // Per run, not per process: this saver's only job is to hold the graph one discovery run
     // suspends on, and that run dies with the runner it is created beside. `MemorySaver` is what
     // every other surface that drives a gating-capable agent hands the runner.
+    //
+    // GS2-20 — considered for the durable saver and deliberately kept in memory. This is an internal
+    // helper run inside `gth pr`, not a conversation the user had; there is nothing here anyone
+    // would ask to resume, and persisting it would put rows in the store with no listing entry.
     await runner.init(
       undefined,
       getPrDiscoveryAgentConfig(config, discoveryConfig),

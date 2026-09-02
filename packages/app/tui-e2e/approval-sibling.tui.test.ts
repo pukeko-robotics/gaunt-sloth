@@ -2,6 +2,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test, expect } from '@microsoft/tui-test';
+import { removeTmpHome, settleSessionsAfterEach } from './fixtures/tmpHome.mjs';
+
+// [[GS2-20]] Every session below opens a database inside its throwaway HOME, and the harness's
+// kill does not wait for the process to die. Settle each session before any afterAll removes the
+// directory it was writing into. File-scoped: one call covers every describe in this file.
+settleSessionsAfterEach(test);
 
 /**
  * [[TUI-C100]] PTY e2e: **a call held at the approval gate must not render as done.**
@@ -71,7 +77,7 @@ test.describe('gth code TUI — [[TUI-C100]] a gated call with a returning sibli
   });
 
   test.afterAll(() => {
-    fs.rmSync(tmpHome, { recursive: true, force: true });
+    removeTmpHome(tmpHome);
   });
 
   test('does not claim the gated call is done while the prompt is open, and shows its real outcome after', async ({
@@ -148,7 +154,7 @@ test.describe('gth code TUI — [[TUI-C100]] the approved gated call still reach
   });
 
   test.afterAll(() => {
-    fs.rmSync(tmpHome, { recursive: true, force: true });
+    removeTmpHome(tmpHome);
   });
 
   /**
@@ -198,7 +204,7 @@ test.describe('gth code TUI — [[TUI-C99]] a mid-turn gate reads in the order i
   });
 
   test.afterAll(() => {
-    fs.rmSync(tmpHome, { recursive: true, force: true });
+    removeTmpHome(tmpHome);
   });
 
   /**

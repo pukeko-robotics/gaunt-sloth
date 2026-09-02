@@ -1,6 +1,6 @@
 {
   "name": "@gaunt-sloth/core",
-  "version": "2.0.0-beta.5",
+  "version": "2.0.0-beta.6",
   "description": "Core utilities and types for Gaunt Sloth",
   "license": "MIT",
   "author": "Andrew Kondratev",
@@ -42,7 +42,7 @@
     "jsonc-parser": "^3.3.1",
     "langchain": "^1.5.10",
     "string-width": "^8.2.2",
-    "zod": "^4.4.3"
+    "zod": "^4.5.4"
   },
   "peerDependencies": {
     "@langchain/anthropic": "^1.5.0",

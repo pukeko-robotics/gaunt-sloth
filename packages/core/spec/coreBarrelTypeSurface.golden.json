@@ -303,7 +303,7 @@
     },
     {
       "name": "HistoryConfigView",
-      "file": "history/recordSession.d.ts",
+      "file": "history/historyEnabled.d.ts",
       "arity": 0
     },
     {

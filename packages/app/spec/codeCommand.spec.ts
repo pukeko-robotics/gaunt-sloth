@@ -4,9 +4,31 @@ import { display, displayInfo } from '#src/utils/consoleUtils.js';
 import type { Interface as ReadlineInterface } from 'node:readline/promises';
 import { createInterface } from 'node:readline/promises';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
-import { MemorySaver } from '@langchain/langgraph';
 import { FakeStreamingChatModel } from '@langchain/core/utils/testing';
 import type { GthConfig } from '#src/config.js';
+
+// GS2-20 — the session's checkpointer comes from this seam. Stubbed so the spec neither loads the
+// real SQLite saver nor, with history now on by default, opens the user's own `~/.gsloth`
+// database on a config that names no `dbPath`. A plain function, not a vi.fn, so a
+// `vi.resetAllMocks()` cannot strip its return value.
+vi.mock('@gaunt-sloth/core/history/sessionCheckpointer.js', () => ({
+  openSessionCheckpointerSafe: () => ({
+    saver: {},
+    durable: false,
+    threadId: 'test-thread-id',
+    close: () => {},
+  }),
+}));
+// …and the recorder, which is the half that actually reaches the disk here. This file stubs
+// `node:fs` with an `existsSync` that always answers true, so `ensureGlobalGslothDir` believes
+// `~/.gsloth` is already there and never creates it — which means a throwaway HOME looks clean
+// while a real developer machine, where that directory DOES exist, gets the session written into
+// its own store. Stub the bridge rather than trusting the environment.
+vi.mock('@gaunt-sloth/core/history/recordSession.js', () => ({
+  openConversationSafe: () => null,
+  recordSessionSafe: () => null,
+  lookupConversationThreadSafe: () => null,
+}));
 
 // Mock modules
 // Partial mock (spread the real module): the shared slash-command registry reads the real
@@ -157,7 +179,8 @@ describe('codeCommand', () => {
     expect(gthAgentRunnerInstanceMock.init).toHaveBeenCalledWith(
       'code',
       expect.any(Object),
-      expect.any(MemorySaver)
+      expect.any(Object),
+      { threadId: 'test-thread-id' }
     );
   });
 
@@ -199,7 +222,8 @@ describe('codeCommand', () => {
     expect(gthAgentRunnerInstanceMock.init).toHaveBeenCalledWith(
       'code',
       expect.any(Object),
-      expect.any(MemorySaver)
+      expect.any(Object),
+      { threadId: 'test-thread-id' }
     );
 
     // The system prompt lives in the agent graph (createAgent({ systemPrompt })); the interactive

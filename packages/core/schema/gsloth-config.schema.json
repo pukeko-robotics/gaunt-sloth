@@ -524,13 +524,9 @@
       "type": "boolean"
     },
     "writeOutputToFile": {
-      "anyOf": [
-        {
-          "type": "boolean"
-        },
-        {
-          "type": "string"
-        }
+      "type": [
+        "boolean",
+        "string"
       ]
     },
     "writeBinaryOutputsToFile": {
@@ -558,13 +554,9 @@
       "type": "number"
     },
     "consoleLevel": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "number"
-        }
+      "type": [
+        "string",
+        "number"
       ]
     },
     "customTools": {

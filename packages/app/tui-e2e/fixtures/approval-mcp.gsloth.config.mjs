@@ -61,7 +61,10 @@ export async function configure() {
   return {
     llm: new ScriptedMcpCallingModel({}),
     modelDisplayName: 'scripted-e2e',
-    // Hermetic and quiet: no per-run md log in the fixtures dir, no history store writes.
+    // Hermetic and quiet: no per-run md log in the fixtures dir. History is NOT off here — GS2-20
+    // made recording the default, so a session on this fixture writes `<HOME>/.gsloth/history.db`.
+    // What keeps that out of the repo is the throwaway HOME clamped by `approval-tool.tui.test.ts`
+    // (this fixture's only caller), removed afterwards by `fixtures/tmpHome.mjs`.
     writeOutputToFile: false,
     // No rung grants a tool with no access class, and `manual` is the deterministic rung that asks
     // the human directly rather than routing through a rater.

@@ -61,7 +61,10 @@ export async function configure() {
   return {
     llm: new ScriptedWriteCallingModel({}),
     modelDisplayName: 'scripted-e2e',
-    // Hermetic and quiet: no per-run md log in the fixtures dir, no history store writes.
+    // Hermetic and quiet: no per-run md log in the fixtures dir. History is NOT off here — GS2-20
+    // made recording the default, so a session on this fixture writes `<HOME>/.gsloth/history.db`.
+    // What keeps that out of the repo is the throwaway HOME the suite clamps, removed afterwards by
+    // `fixtures/tmpHome.mjs`.
     writeOutputToFile: false,
     // The rung is the point, not a default: `manual` is the only one whose grant does not cover the
     // write access class, so it is the rung at which a file write is put to a human at all.
