@@ -49,10 +49,11 @@ import {
  *   and they catch any provider that later adopts groq's hoisting.
  *
  * Which of those actually run anywhere is a smaller list than which were measured. In the small
- * matrix: xai, inception, openrouter, xai-build, google-genai-flash-lite, huggingface.
+ * matrix: anthropic, xai, inception, openrouter, google-genai-flash-lite, huggingface — and the same
+ * set minus openrouter runs non-gating at a release (`release.yml`'s `integration-tests-small`).
  * `.github/workflows/integration-tests-platforms.yml` adds macOS/Windows × openrouter, and the local
- * `pnpm run it ollama xx-small` pre-merge gate adds ollama. **anthropic is measured but is a leg in
- * no workflow** — its config exists and `pnpm run it anthropic xx-small` runs by hand.
+ * `pnpm run it ollama xx-small` pre-merge gate adds ollama. **xai-build is measured but is a leg in
+ * no workflow** — its config exists and `pnpm run it xai-build xx-small` runs by hand.
  *
  * ## Why programmatic rather than a spawned CLI run
  *
