@@ -359,3 +359,114 @@ describe('GS2-20: a checkpoint write that fails mid-session', () => {
     expect(threadIdInNewProcess(dbPath, conversationId)).toBe(checkpointer.threadId);
   });
 });
+
+/**
+ * GS2-20 — releasing the connection when the session is ended by a signal rather than by returning.
+ *
+ * A session closes its checkpointer in a `finally`, and a signal never reaches one. `systemUtils`
+ * answers `SIGINT`/`SIGTERM` with `process.exit(0)`, which unwinds no `try`/`finally`; a `SIGHUP`
+ * from a closing terminal window has no handler at all and terminates outright. On POSIX the OS
+ * tidies up either way, so nothing notices — on win32 a live handle is what stops the file being
+ * deleted or replaced, which is the same class of defect as a session outliving its kill.
+ *
+ * These tests drive the REAL process hooks the module installs. Firing a listener directly is the
+ * only way to exercise an exit path without ending the test run, and it is faithful: it is exactly
+ * what `process.exit()` does. Each test removes the listeners it found, so nothing is left
+ * installed for the rest of the suite.
+ */
+describe('GS2-20: a session ended by a signal still releases the database', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    dir = mkdtempSync(resolve(tmpdir(), 'gsloth-signal-'));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** The connection behind a durable checkpointer, to ask directly whether it is still open. */
+  const connection = (checkpointer: SessionCheckpointer): DatabaseSync =>
+    (checkpointer.saver as unknown as { db: DatabaseSync }).db;
+
+  /**
+   * Load a FRESH copy of the module, so its "hooks already installed" latch is unset and the
+   * listener it registers is unambiguously the one this test is about. Without this the assertion
+   * would depend on whether some earlier test in the file had already opened a durable saver.
+   *
+   * A module reset re-runs every module in the graph, and `systemUtils` registers process hooks of
+   * its own in its module body — so the newly-added listeners are not all ours. Tests here assert
+   * on {@link ours} and clean up the whole difference, so nothing is left behind either way.
+   */
+  const freshModule = async () => {
+    vi.resetModules();
+    return import('#src/history/sessionCheckpointer.js');
+  };
+
+  /** The listeners this module added, picked out of everything a module reset re-registered. */
+  const ours = (listeners: readonly unknown[], name: string): unknown[] =>
+    listeners.filter((listener) => (listener as { name?: string }).name === name);
+
+  it('closes the connection from the exit hook — the path SIGINT and SIGTERM actually take', async () => {
+    const before = process.listeners('exit');
+    const { openSessionCheckpointerSafe: open } = await freshModule();
+    const checkpointer = open({ history: { dbPath: resolve(dir, 'history.db') } });
+    const added = process.listeners('exit').filter((listener) => !before.includes(listener));
+    const hooks = ours(added, 'closeAll');
+
+    try {
+      expect(checkpointer.durable).toBe(true);
+      // The control for the assertion below: registered exactly once, not once per session and not
+      // zero times. A hook that was never installed would make the closing assertion pass for the
+      // wrong reason if the connection happened to be closed already.
+      expect(hooks).toHaveLength(1);
+
+      // Discriminating pair, first half: the connection is open and usable right now.
+      expect(await turn(checkpointer, 'hello')).toBe('saw 1');
+      expect(() => connection(checkpointer).prepare('SELECT 1')).not.toThrow();
+
+      (hooks[0] as () => void)();
+
+      // Second half: after the hook runs, the handle is gone. `node:sqlite` refuses to prepare a
+      // statement on a closed database, which is the same signal a win32 file lock would clear on.
+      expect(() => connection(checkpointer).prepare('SELECT 1')).toThrow(/not open/i);
+    } finally {
+      for (const listener of added) process.off('exit', listener as () => void);
+      checkpointer.close();
+    }
+  });
+
+  it('registers a SIGHUP handler too, because nothing else in the process does', async () => {
+    const before = process.listeners('SIGHUP');
+    const { openSessionCheckpointerSafe: open } = await freshModule();
+    const checkpointer = open({ history: { dbPath: resolve(dir, 'history.db') } });
+    const added = process.listeners('SIGHUP').filter((listener) => !before.includes(listener));
+
+    try {
+      expect(checkpointer.durable).toBe(true);
+      expect(ours(added, 'onHangup')).toHaveLength(1);
+    } finally {
+      for (const listener of added) process.off('SIGHUP', listener as () => void);
+      checkpointer.close();
+    }
+  });
+
+  it('leaves the exit hook nothing to close once the session closed normally', async () => {
+    const before = process.listeners('exit');
+    const { openSessionCheckpointerSafe: open } = await freshModule();
+    const checkpointer = open({ history: { dbPath: resolve(dir, 'history.db') } });
+    const added = process.listeners('exit').filter((listener) => !before.includes(listener));
+    const hooks = ours(added, 'closeAll');
+
+    try {
+      expect(hooks).toHaveLength(1);
+      checkpointer.close();
+      // The ordinary path already closed it, so the hook must be a no-op rather than a second close
+      // — and above all it must not throw while the process is on its way out.
+      expect(() => (hooks[0] as () => void)()).not.toThrow();
+    } finally {
+      for (const listener of added) process.off('exit', listener as () => void);
+    }
+  });
+});

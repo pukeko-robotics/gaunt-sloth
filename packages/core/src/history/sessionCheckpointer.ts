@@ -75,6 +75,57 @@ export interface OpenSessionCheckpointerOptions {
  * - the database would not open — the user asked for persistence and did not get it, so
  *   {@link OpenSessionCheckpointerOptions.notify} says so.
  */
+/**
+ * Every durable checkpointer currently open in this process, as its own close function.
+ *
+ * A session normally closes its connection in a `finally`, but a process killed by a signal never
+ * reaches one: `systemUtils` answers `SIGINT`/`SIGTERM` with `process.exit(0)`, which unwinds no
+ * `try`/`finally` at all, and a `SIGHUP` — a user closing the terminal window — terminates without
+ * running anything. Leaving the database open until the OS tears the process down is harmless on
+ * POSIX and not on win32, where a live handle blocks the file from being deleted or replaced.
+ */
+const openSavers = new Set<() => void>();
+
+/** Installed at most once per process, on the first durable checkpointer. */
+let terminationHooksInstalled = false;
+
+/**
+ * Close every open checkpointer on the way out of the process.
+ *
+ * `exit` rather than a `SIGINT`/`SIGTERM` handler of our own, deliberately: `systemUtils` registers
+ * its signal handlers when it is first imported, which is long before any session starts, and they
+ * call `process.exit(0)`. Node runs signal listeners in registration order, so a later listener of
+ * ours would never be reached — but `process.exit()` does run `exit` listeners, so that one hook
+ * covers `SIGINT`, `SIGTERM`, an explicit exit and a normal return alike. `SIGHUP` has no such
+ * handler anywhere and so needs its own.
+ */
+function ensureTerminationHooks(): void {
+  if (terminationHooksInstalled) return;
+  terminationHooksInstalled = true;
+
+  const closeAll = (): void => {
+    for (const close of [...openSavers]) {
+      try {
+        close();
+      } catch {
+        // Nothing useful can be done about a failed close while the process is already leaving.
+      }
+    }
+    openSavers.clear();
+  };
+
+  process.on('exit', closeAll);
+
+  const onHangup = (): void => {
+    // Remove ourselves first so the default disposition applies again and the process dies with the
+    // status it would have had. Swallowing a hangup would leave a session running invisibly.
+    process.off('SIGHUP', onHangup);
+    closeAll();
+    process.kill(process.pid, 'SIGHUP');
+  };
+  process.on('SIGHUP', onHangup);
+}
+
 export function openSessionCheckpointerSafe(
   config: HistoryConfigView,
   options: OpenSessionCheckpointerOptions = {}
@@ -128,6 +179,18 @@ export function openSessionCheckpointerSafe(
       );
       return inMemory();
     }
+    // GS2-20 — hold the connection open only as long as the session actually runs. `saver.close()`
+    // is itself fail-soft, so the guard is about not counting a closed saver as open rather than
+    // about a double close throwing.
+    let closed = false;
+    const closeOnce = (): void => {
+      if (closed) return;
+      closed = true;
+      saver.close();
+    };
+    openSavers.add(closeOnce);
+    ensureTerminationHooks();
+
     return {
       saver,
       durable: true,
@@ -136,7 +199,10 @@ export function openSessionCheckpointerSafe(
         conversationId = id;
         applyMark();
       },
-      close: () => saver.close(),
+      close: () => {
+        openSavers.delete(closeOnce);
+        closeOnce();
+      },
     };
   } catch {
     // Reaching here means something outside the saver's own fail-soft open threw — resolving the

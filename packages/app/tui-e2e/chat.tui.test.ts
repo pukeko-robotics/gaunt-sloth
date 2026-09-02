@@ -3,6 +3,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { test, expect } from '@microsoft/tui-test';
 import type { Terminal } from '@microsoft/tui-test';
+import { settleSessionsAfterEach } from './fixtures/tmpHome.mjs';
+
+// [[GS2-20]] The fixture-agent sessions here return before the checkpointer opens, so they hold no
+// database — but they are still killed without a wait, and the suites below remove their throwaway
+// directories with a bare rmSync that would take the worker down with it if one ever failed.
+// Settling the session first removes the race rather than relying on it being lost harmlessly.
+settleSessionsAfterEach(test);
 
 // tui-test keeps process.cwd() at the invocation dir (this folder); the cli lives one level up.
 const e2eDir = process.cwd();

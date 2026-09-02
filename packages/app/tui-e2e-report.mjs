@@ -117,40 +117,114 @@ export function analyseRun(raw) {
 }
 
 /**
- * GS2-20 — read the leak report `fixtures/tmpHome.mjs` writes when it could not remove a suite's
- * throwaway `HOME` even after retrying, and turn it into a failure message. `null` means no leak.
+ * GS2-20 — read the report `fixtures/tmpHome.mjs` writes, and turn it into a failure message.
+ * `null` means the run was clean.
  *
- * A file rather than a stream because a stream does not arrive: the hooks that remove those
- * directories run in a workerpool child whose captured output the reporter prints only for a test
- * it is already reporting, and never at all for `afterAllWorker`. Measured, not assumed.
+ * A file rather than a stream because a stream does not arrive: these hooks run in a workerpool
+ * child whose captured output the reporter prints only for a test it is already reporting, and
+ * never at all for `afterAllWorker`. Measured, not assumed.
  *
  * Why this is a hard failure and not a warning: a `gth` session holds `<HOME>/.gsloth/history.db`
  * open for its whole life, and this suite is the only place that would notice a handle never being
- * released — the removal succeeds on POSIX regardless, so win32 is the sole detector. Retrying made
- * that detector quieter, and this is what makes it loud again without a worker-level crash.
+ * released — the removal succeeds on POSIX regardless, so win32 is the sole detector.
+ *
+ * **The report carries two independent findings, and the message must not merge them**, because
+ * they have different causes and different fixes:
+ *
+ * - `still-running` — a session did not exit within the wait after being killed. The removal that
+ *   follows was racing a live process, and no amount of retrying the removal is the fix.
+ * - `unremovable` — a directory would not delete. Since every session is settled before any of
+ *   these hooks run, a live session of ours is excluded by construction, which leaves a handle
+ *   that outlived the process holding it.
  *
  * @param {string} raw contents of the report file (empty when nothing failed)
+ * @param {Record<string, string>} [outcomes] per-directory result of re-attempting the removal
+ *   once the whole run has exited, keyed by directory. A directory that deletes cleanly then was
+ *   locked only transiently; one that still will not delete is holding.
  * @returns {string | null}
  */
-export function describeLeakReport(raw) {
-  const lines = raw
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-  if (lines.length === 0) return null;
-  const detail = lines
-    .map((line) => {
-      const [dir, ...rest] = line.split('\t');
-      return `    ${dir}${rest.length > 0 ? ` — ${rest.join(' ')}` : ''}`;
-    })
-    .join('\n');
-  return (
-    `${lines.length} throwaway HOME director${lines.length === 1 ? 'y' : 'ies'} could not be ` +
-    `removed even after retrying:\n${detail}\n` +
-    `  Something in the session under test is still holding a file open well after the process was ` +
-    `killed — most likely the session's SQLite history/checkpoint connection. This is a real handle ` +
-    `leak, not a slow disk: the retries already wait several seconds.`
-  );
+/**
+ * The directories the report says would not delete, so the caller can try them again once the whole
+ * run has exited. Separated from {@link describeLeakReport} so the retry lives in the parent
+ * process — where no worker, and therefore no session, can still be running.
+ *
+ * @param {string} raw contents of the report file
+ * @returns {string[]}
+ */
+export function leakedDirs(raw) {
+  const dirs = [];
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    try {
+      const record = JSON.parse(trimmed);
+      if (record.kind === 'unremovable' && typeof record.dir === 'string') dirs.push(record.dir);
+    } catch {
+      // Handled, and reported, by describeLeakReport.
+    }
+  }
+  return dirs;
+}
+
+export function describeLeakReport(raw, outcomes = {}) {
+  const records = [];
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    try {
+      records.push(JSON.parse(trimmed));
+    } catch {
+      // A row we cannot parse is still evidence that a hook reported something, so it must not be
+      // silently dropped — that would turn a garbled report into a green run.
+      records.push({ kind: 'unparseable', raw: trimmed });
+    }
+  }
+  if (records.length === 0) return null;
+
+  const stillRunning = records.filter((r) => r.kind === 'still-running');
+  const unremovable = records.filter((r) => r.kind === 'unremovable');
+  const unparseable = records.filter((r) => r.kind === 'unparseable');
+  const parts = [];
+
+  if (stillRunning.length > 0) {
+    const waits = stillRunning.map((r) => `${r.waitedMs}ms`).join(', ');
+    parts.push(
+      `${stillRunning.length} session(s) were STILL RUNNING after the harness killed them and the ` +
+        `suite waited for them to exit (waited: ${waits}).\n` +
+        `  The kill is a bare process.kill(pid, 9) that does not wait, so anything the session had ` +
+        `open was still open. Whatever else this run reports, that is the first thing to fix: a ` +
+        `removal cannot be made reliable while it races a live process.`
+    );
+  }
+
+  if (unremovable.length > 0) {
+    const detail = unremovable
+      .map((r) => {
+        const outcome = outcomes[r.dir];
+        return `    ${r.dir} — ${r.reason}${outcome ? ` [${outcome}]` : ''}`;
+      })
+      .join('\n');
+    const context =
+      stillRunning.length > 0
+        ? `  At least one session outlived its kill in this run, so these may simply be that race.`
+        : `  Every session in this run was confirmed exited before its directory was removed, so a ` +
+          `live session of ours is not what is holding these. What is left is a handle that ` +
+          `outlived the process that opened it, or a scanner on the host holding the file briefly.`;
+    parts.push(
+      `${unremovable.length} throwaway HOME director${unremovable.length === 1 ? 'y' : 'ies'} ` +
+        `could not be removed:\n${detail}\n${context}`
+    );
+  }
+
+  if (unparseable.length > 0) {
+    parts.push(
+      `${unparseable.length} report row(s) could not be read, which means a hook reported ` +
+        `something this cannot describe:\n` +
+        unparseable.map((r) => `    ${r.raw}`).join('\n')
+    );
+  }
+
+  return parts.join('\n');
 }
 
 /** Repo-relative path for an entry. Headers are relative to the tui-e2e dir the runner ran in. */

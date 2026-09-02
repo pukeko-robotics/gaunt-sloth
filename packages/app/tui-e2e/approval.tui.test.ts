@@ -2,7 +2,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test, expect } from '@microsoft/tui-test';
-import { removeTmpHome } from './fixtures/tmpHome.mjs';
+import { removeTmpHome, settleSessionsAfterEach } from './fixtures/tmpHome.mjs';
+
+// [[GS2-20]] Every session below opens a database inside its throwaway HOME, and the harness's
+// kill does not wait for the process to die. Settle each session before any afterAll removes the
+// directory it was writing into. File-scoped: one call covers every describe in this file.
+settleSessionsAfterEach(test);
 
 /**
  * EXT-52 PTY e2e: the per-command shell-approval prompt on the LEAN (default) backend, in a real

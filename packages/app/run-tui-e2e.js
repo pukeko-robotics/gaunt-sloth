@@ -9,7 +9,7 @@
 // genuinely-failed tests), which is the right exit code but leaves the flake as one yellow line
 // in a green job that nobody opens. See tui-e2e-report.mjs for why this is done by parsing.
 import { spawn } from 'node:child_process';
-import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +18,7 @@ import {
   analyseRun,
   describeLeakReport,
   githubAnnotations,
+  leakedDirs,
   repoPath,
   stepSummaryMarkdown,
 } from './tui-e2e-report.mjs';
@@ -71,12 +72,35 @@ child.on('close', (code) => {
 
   // GS2-20 — checked BEFORE the report analysis, because a leak is a cause and "the flake check went
   // blind" is at most a symptom of one: if a hook did fail, its message is the one worth printing.
-  let leak = null;
+  // Read first, and only the read is allowed to mean "nothing happened". Folding the analysis into
+  // the same try would let a throw inside it be mistaken for an absent file, which is a green run.
+  let raw = null;
   try {
-    leak = describeLeakReport(readFileSync(leakReportPath, 'utf8'));
+    raw = readFileSync(leakReportPath, 'utf8');
   } catch {
-    // No file means no hook ever failed, which is the ordinary case — the fixture only creates it
-    // when a removal has already exhausted its retries.
+    // No file means no hook ever reported anything, which is the ordinary case — the fixture only
+    // creates it when a session outlived its kill or a removal exhausted its retries.
+  }
+  let leak = null;
+  if (raw !== null) {
+    // Re-attempt each removal now that the run is over. This is the one place it can be done with
+    // no worker alive, and it separates the two things the hook cannot tell apart: a directory that
+    // deletes cleanly here was locked only while the run was going, whereas one that still refuses
+    // is genuinely held. They are different defects and the message says which it saw.
+    const outcomes = {};
+    for (const dir of leakedDirs(raw)) {
+      if (!existsSync(dir)) {
+        outcomes[dir] = 'already gone by run end';
+        continue;
+      }
+      try {
+        rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+        outcomes[dir] = 'removable once the run had exited — a transient lock, not a leak';
+      } catch (err) {
+        outcomes[dir] = `STILL locked after the run exited: ${err.message}`;
+      }
+    }
+    leak = describeLeakReport(raw, outcomes);
   }
   rmSync(leakReportDir, { recursive: true, force: true });
 
