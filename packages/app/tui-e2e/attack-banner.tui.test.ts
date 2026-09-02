@@ -3,6 +3,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { test, expect } from '@microsoft/tui-test';
 import type { Terminal } from '@microsoft/tui-test';
+import { removeTmpHome, settleSessionsAfterEach } from './fixtures/tmpHome.mjs';
+
+// [[GS2-20]] Every session below opens a database inside its throwaway HOME, and the harness's
+// kill does not wait for the process to die. Settle each session before any afterAll removes the
+// directory it was writing into. File-scoped: one call covers every describe in this file.
+settleSessionsAfterEach(test);
 
 /**
  * [[TUI-C68]] PTY e2e: **the §6.1 attack banner**, in a real `gth code` session driven by a
@@ -155,7 +161,7 @@ test.describe('gth code TUI — [[TUI-C68]] §6.1 the banner appears and says wh
   });
 
   test.afterAll(() => {
-    fs.rmSync(tmpHome, { recursive: true, force: true });
+    removeTmpHome(tmpHome);
   });
 
   /**
@@ -225,7 +231,7 @@ test.describe('gth code TUI — [[TUI-C68]] §1 the phrase runs exactly one comm
   });
 
   test.afterAll(() => {
-    fs.rmSync(tmpHome, { recursive: true, force: true });
+    removeTmpHome(tmpHome);
   });
 
   /**
@@ -282,7 +288,7 @@ test.describe('gth code TUI — [[TUI-C68]] §1 everything that is not the phras
   });
 
   test.afterAll(() => {
-    fs.rmSync(tmpHome, { recursive: true, force: true });
+    removeTmpHome(tmpHome);
   });
 
   /**
@@ -337,7 +343,7 @@ test.describe('gth code TUI — [[TUI-C68]] §1 aborting from inside a partly ty
   });
 
   test.afterAll(() => {
-    fs.rmSync(tmpHome, { recursive: true, force: true });
+    removeTmpHome(tmpHome);
   });
 
   /**
@@ -408,7 +414,7 @@ test.describe('gth chat readline — [[TUI-C68]] §5 the banner on the plain sur
   });
 
   test.afterAll(() => {
-    fs.rmSync(tmpHome, { recursive: true, force: true });
+    removeTmpHome(tmpHome);
   });
 
   /**

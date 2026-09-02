@@ -136,6 +136,9 @@ export async function review(
     // this package a dependency on the agent package to reach a backend seam would invert it.
     const runner = new GthAgentRunner(defaultStatusCallback, effectiveResolvers);
     try {
+      // GS2-20 — considered for the durable saver and deliberately kept in memory. A review is a
+      // one-shot run over a diff, not a conversation: it ends with its verdict and there is no next
+      // turn to come back to. Its output is already persisted, as the review file.
       await runner.init(command, config, new MemorySaver());
       await runner.processMessages(messages);
     } catch (error) {

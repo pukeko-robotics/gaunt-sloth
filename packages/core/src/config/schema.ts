@@ -867,8 +867,15 @@ export const rawGthConfigSchema = z.looseObject({
       backend: z.enum(['lean']).optional(),
     })
     .optional(),
-  // GS2-7 (B20) — local, opt-in session history. DEFAULT OFF: absent or `enabled: false` means
-  // nothing is persisted and runs behave exactly as before (stateless identity preserved).
+  // GS2-7 (B20) / GS2-20 — local session history: the per-turn records `gth history` reads and the
+  // durable LangGraph checkpoints a resume needs, both under the user's own `~/.gsloth` dir and
+  // neither leaving the machine. DEFAULT ON: absent means enabled, and `enabled: false` is the
+  // opt-out that restores the stateless identity.
+  //
+  // The default deliberately lives in the READER (`isHistoryEnabled`) and not in a `.default(true)`
+  // here. A schema default would be emitted into the published JSON Schema — a hosted artifact
+  // stamped per release — to state something the schema does not decide, and it would make an
+  // absent key indistinguishable from an explicit `true` at every other site that reads config.
   history: z
     .object({
       enabled: z.boolean().optional(),

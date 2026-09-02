@@ -43,6 +43,7 @@ import {
   openConversationSafe,
   recordSessionSafe,
 } from '@gaunt-sloth/core/history/recordSession.js';
+import { openSessionCheckpointerSafe } from '@gaunt-sloth/core/history/sessionCheckpointer.js';
 import {
   createInterface,
   error,
@@ -60,7 +61,6 @@ import type {
   PendingToolInterrupt,
 } from '@gaunt-sloth/core/core/types.js';
 import { type BaseMessage, HumanMessage } from '@langchain/core/messages';
-import { MemorySaver } from '@langchain/langgraph';
 import { createResolvers } from '#src/resolvers.js';
 import { resolveAgentFactory } from '#src/core/resolveAgentFactory.js';
 import {
@@ -159,18 +159,34 @@ export async function createInteractiveSession(
   message?: string
 ) {
   const config = { ...(await initConfig(commandLineConfigOverrides)) };
-  const checkpointSaver = new MemorySaver();
+
+  // GS2-20: the session's checkpointer. Durable (SQLite, in the same file as the history store) when
+  // history is on and the DB opens, so the LangGraph state this session builds outlives the process
+  // and the conversation can be resumed with its tools and pending work intact; a MemorySaver — with
+  // a notice — when it cannot be. Never no saver: with a tool-approval interrupt installed, the
+  // absence of one throws MISSING_CHECKPOINTER mid-turn.
+  const checkpointer = openSessionCheckpointerSafe(config);
 
   // GS2-19: open ONE conversation for this interactive session up-front; every turn below is stamped
-  // with its id so a multi-turn chat groups under one conversation (not N unrelated rows). Opt-in /
-  // fail-soft: a no-op returning undefined unless `history.enabled`, in which case turns fall back to
-  // per-turn 1-turn conversations. Never affects a default run.
+  // with its id so a multi-turn chat groups under one conversation (not N unrelated rows). Fail-soft:
+  // a no-op returning undefined when `history.enabled: false`, in which case turns fall back to
+  // per-turn 1-turn conversations.
+  //
+  // GS2-20: it also carries the thread id, which is the link a resume travels — from the id
+  // `gth history list` prints, to the checkpoint holding this session's state. Written HERE, before
+  // the runner exists, because `runner.init` can throw partway and a conversation whose thread was
+  // never recorded is an entry that can never be resumed.
   const conversationId =
     openConversationSafe(config, {
       command: sessionConfig.mode,
       project: getProjectDir(),
       model: config.modelDisplayName,
+      threadId: checkpointer.threadId,
     }) ?? undefined;
+
+  // GS2-20: tell the checkpointer which row to mark unresumable if a checkpoint write fails later.
+  // Optional call — a spec that stubs the checkpointer with a plain object has nothing to bind.
+  checkpointer.bindConversation?.(conversationId);
 
   // Initialize Runner
 
@@ -188,7 +204,9 @@ export async function createInteractiveSession(
   );
 
   try {
-    await runner.init(sessionConfig.mode, config, checkpointSaver);
+    await runner.init(sessionConfig.mode, config, checkpointer.saver, {
+      threadId: checkpointer.threadId,
+    });
     const rl = createInterface({ input, output });
     let shouldExit = false;
     // GS2-8 — the readline surface shares the SAME command registry as the Ink TUI (one source
@@ -522,10 +540,10 @@ export async function createInteractiveSession(
       // (which yielded a second, non-first system message that Anthropic rejects).
       const messages: BaseMessage[] = [new HumanMessage(userInput)];
 
-      // GS2-18: wire the readline (`--no-tui`) interactive path into the opt-in history recorder
-      // at its turn boundary, matching the single-shot and Ink-TUI paths. Fail-soft and
-      // default-OFF (recordSessionSafe is a no-op unless `history.enabled`), so a default run is
-      // unchanged. GS2-16 threads live token/tool/duration analytics; costUsd stays unset.
+      // GS2-18: wire the readline (`--no-tui`) interactive path into the local history recorder
+      // at its turn boundary, matching the single-shot and Ink-TUI paths. Fail-soft, and a no-op
+      // when `history.enabled` is false. GS2-16 threads live token/tool/duration analytics; costUsd
+      // stays unset.
       const startedAt = Date.now();
       const responseText = await runner.processMessages(messages);
       // [[EXT-159]] — say why the turn ended, before the prompt comes back.
@@ -581,6 +599,7 @@ export async function createInteractiveSession(
       shouldExit = true;
       await runner.cleanup();
       stopSessionLogging();
+      checkpointer.close();
       rl.close();
     };
 
@@ -766,6 +785,7 @@ export async function createInteractiveSession(
   } catch (err) {
     await runner.cleanup();
     stopSessionLogging();
+    checkpointer.close();
     // [[TUI-C71]] — **the `-m` path lands here, not on the loop's handler.** `processMessage` is
     // called once directly for `gth chat -m …` / `gth code -m …`, outside the interactive loop's
     // try/catch, so a run-ending approvals stop on that invocation reaches this outermost catch
@@ -778,5 +798,11 @@ export async function createInteractiveSession(
       error(`Error in ${sessionConfig.mode} command: ${err}`);
     }
     exit(1);
+  } finally {
+    // GS2-20: the backstop, not the usual door. `endSession` closes the connection as soon as the
+    // session ends, which is what releases the file promptly; this is here so that a future exit
+    // path added to the loop cannot silently stop closing it. Closing twice is safe — the saver's
+    // close swallows, and `sessionCheckpointer.spec.ts` pins that.
+    checkpointer.close();
   }
 }

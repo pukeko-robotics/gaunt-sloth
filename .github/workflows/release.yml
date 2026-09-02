@@ -202,9 +202,10 @@ jobs:
     # automatic gate can currently do.
     #
     # A matrix value is a config FILE name under packages/app/integration-tests/configs/, not a
-    # provider type, which is why xai/xai-build and google-genai-flash-lite are separate legs. Every
-    # name must also be in setup-config.js's validConfigs, and a config earns a leg only once the
-    # whole xx-small suite is green on it.
+    # provider type — `google-genai-flash-lite` is the `google-genai` provider pinned to one model —
+    # so one provider can have several legs, and a config can exist with no leg at all. Every name
+    # must also be in setup-config.js's validConfigs, and a config earns a leg only once the whole
+    # xx-small suite is green on it.
     needs: lint-and-unit
     runs-on: ubuntu-latest
     permissions:
@@ -214,7 +215,7 @@ jobs:
       fail-fast: false
       matrix:
         node-version: [24.x]
-        provider: [anthropic, groq, inception, xai, xai-build, google-genai-flash-lite, huggingface]
+        provider: [anthropic, groq, inception, xai, google-genai-flash-lite, huggingface]
       # Three at a time because of GitHub runner capacity, not provider rate limits — do not raise
       # this on the assumption that it is a spend knob.
       max-parallel: 3

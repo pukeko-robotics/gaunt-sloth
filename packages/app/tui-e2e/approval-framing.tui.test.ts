@@ -2,6 +2,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test, expect } from '@microsoft/tui-test';
+import { removeTmpHome, settleSessionsAfterEach } from './fixtures/tmpHome.mjs';
+
+// [[GS2-20]] Every session below opens a database inside its throwaway HOME, and the harness's
+// kill does not wait for the process to die. Settle each session before any afterAll removes the
+// directory it was writing into. File-scoped: one call covers every describe in this file.
+settleSessionsAfterEach(test);
 
 /**
  * [[TUI-C26]] task 1 PTY e2e: **what the approval dialog actually puts on a terminal** when the
@@ -102,7 +108,7 @@ const framingSuite = (name: string, config: string, rows: number): void => {
     columns: 120,
     rows,
   });
-  test.afterAll(() => fs.rmSync(tmpHome, { recursive: true, force: true }));
+  test.afterAll(() => removeTmpHome(tmpHome));
   void name;
 };
 

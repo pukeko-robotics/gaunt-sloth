@@ -55,7 +55,8 @@ export function formatSearchResults(results: SessionSearchResult[]): string[] {
 export function formatConversationList(conversations: ConversationSummary[]): string[] {
   if (conversations.length === 0) {
     return [
-      'No conversations recorded yet. Enable history with `history.enabled: true` in your config.',
+      'No conversations recorded yet. Recording is on by default; `history.enabled: false` in ' +
+        'your config turns it off.',
     ];
   }
   const lines: string[] = [];
@@ -100,7 +101,8 @@ export function formatConversationThread(turns: SessionRecord[]): string[] {
 export function formatInsightsSummary(insights: HistoryInsights): string[] {
   if (insights.sessionCount === 0) {
     return [
-      'No sessions recorded yet. Enable history with `history.enabled: true` in your config.',
+      'No sessions recorded yet. Recording is on by default; `history.enabled: false` in your ' +
+        'config turns it off.',
     ];
   }
   const lines: string[] = [];

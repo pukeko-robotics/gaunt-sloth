@@ -259,7 +259,8 @@ export function configNotice(
 /** Shared "history is unavailable" body (history off / DB missing), reused by all three commands. */
 const HISTORY_UNAVAILABLE_LINES = [
   'No local session history is available in this session.',
-  'Enable it with `history.enabled: true` in your gsloth config (local only, opt-in).',
+  'Recording is on by default (local only); `history.enabled: false` in your gsloth config turns ' +
+    'it off.',
 ];
 
 /** The `/history` notice (GS2-7): recent recorded sessions, or an "unavailable" fallback. */
@@ -1399,7 +1400,7 @@ export function createCommandRegistry(): SlashCommand[] {
     },
     {
       name: 'history',
-      description: 'Show recent recorded sessions (local, opt-in history)',
+      description: 'Show recent recorded sessions (local history)',
       availableDuringRun: true,
       // Read-only discovery, mirroring /config: render the App's fail-soft, pre-built summary.
       run: (ctx) => ({ notice: historyNotice(ctx.historySummary) }),

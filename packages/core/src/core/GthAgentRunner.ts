@@ -310,6 +310,20 @@ export interface GthAgentRunnerInitOptions {
    * run that does have a verb but does not go by its name.
    */
   displayCommand?: string;
+
+  /**
+   * GS2-20 — the LangGraph thread this run drives, instead of the fresh one `init` would mint.
+   *
+   * It is what makes a durable checkpointer useful in both directions: a session supplies the id it
+   * has already recorded against its conversation row, so the state it writes can be found again;
+   * and a resume supplies a stored id, so the graph comes back holding what it held. Omitted, the
+   * runner mints a fresh thread exactly as before.
+   *
+   * Note that `/clear` ({@link GthAgentRunner#resetThread}) deliberately rotates to a NEW thread, so
+   * after one the id recorded against the conversation names the state from before the clear — which
+   * is the correct thing for it to name, since that is the state the user asked to leave behind.
+   */
+  threadId?: string;
 }
 
 /**
@@ -1029,6 +1043,16 @@ export class GthAgentRunner {
     debugLog(`Initializing GthAgentRunner with command: ${command || 'default'}`);
 
     this.runConfig = getNewRunnableConfig();
+    // GS2-20 — drive a caller-supplied thread when there is one, so the durable checkpointer writes
+    // under the id the session has already recorded against its conversation (and, on a resume,
+    // reads back the state stored there). Overlaid on the minted config rather than replacing it, so
+    // the recursion limit and anything else `getNewRunnableConfig` sets survive.
+    if (options?.threadId) {
+      this.runConfig = {
+        ...this.runConfig,
+        configurable: { ...this.runConfig.configurable, thread_id: options.threadId },
+      };
+    }
 
     debugLogObject('Runnable Config', this.runConfig);
 
@@ -3429,7 +3453,7 @@ export class GthAgentRunner {
 
   /**
    * GS2-16 — the analytics harvested from the just-finished turn (token usage + invoked tools),
-   * to thread into the opt-in history recorder. Reads live from the agent when one is present,
+   * to thread into the local history recorder. Reads live from the agent when one is present,
    * otherwise the snapshot captured at {@link cleanup} (the single-shot path reads post-cleanup).
    * Never throws.
    */

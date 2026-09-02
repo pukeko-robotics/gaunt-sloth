@@ -1,6 +1,6 @@
 {
   "name": "@gaunt-sloth/review",
-  "version": "2.0.0-beta.5",
+  "version": "2.0.0-beta.6",
   "description": "Review functionality for Gaunt Sloth",
   "license": "MIT",
   "author": "Andrew Kondratev",
@@ -38,7 +38,7 @@
     "@langchain/core": "^1.2.9",
     "@langchain/langgraph": "^1.4.13",
     "langchain": "^1.5.10",
-    "zod": "^4.4.3"
+    "zod": "^4.5.4"
   },
   "files": [
     "./dist/*",

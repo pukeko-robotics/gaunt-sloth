@@ -1,6 +1,6 @@
 /**
  * @packageDocumentation
- * GS2-7 (B20) — local, opt-in session history store.
+ * GS2-7 (B20) — local session history store.
  *
  * A **local SQLite** store that persists a compact record of each run BESIDE the existing
  * per-run `.md` logs, so `gth history search` / `gth insights` can look back over past sessions.
@@ -8,11 +8,16 @@
  *
  * - **Local only.** Nothing leaves the machine. The DB lives under the user's global `~/.gsloth`
  *   dir (cross-project history), overridable via `history.dbPath`.
- * - **Opt-in.** The recorder only writes when `history.enabled` is true (see
- *   {@link recordSessionSafe}); default runs persist nothing and behave exactly as before.
+ * - **On unless turned off.** The recorder writes unless `history.enabled` is `false` (see
+ *   `isHistoryEnabled` in `historyEnabled.ts`, the one switch it shares with the durable
+ *   checkpointer).
  * - **Fail-soft.** {@link openHistoryStore} returns `null` if the DB can't be opened, and every
  *   {@link HistoryStore} method catches its own errors and returns a safe default. A malformed or
  *   locked DB therefore can never abort or alter a run — it just means no history for that run.
+ *
+ * The same file also holds the durable LangGraph checkpoints a resume reads back (`GthSqliteSaver`
+ * in `checkpointSaver.ts`), which owns its own tables here. One file, one opt-out, one thing to
+ * delete.
  *
  * Uses the built-in `node:sqlite` (Node ≥ 24) — zero native dependency, no build step — and its
  * bundled **FTS5** extension for full-text search (verified available at build time via an
@@ -25,6 +30,12 @@ import { getGlobalGslothDir, ensureGlobalGslothDir } from '#src/utils/globalConf
 
 /** Filename of the global history DB inside `~/.gsloth`. */
 export const HISTORY_DB_FILENAME = 'history.db';
+
+/**
+ * How long a statement waits for another connection's lock before giving up. Kept in step with the
+ * checkpoint saver's own timeout — the two connections share this file.
+ */
+const BUSY_TIMEOUT_MS = 5000;
 
 /** A single persisted session record (all analytics fields optional; populated when available). */
 export interface SessionRecord {
@@ -80,6 +91,13 @@ export interface ConversationMeta {
   command?: string;
   /** Human-readable model/provider label. */
   model?: string;
+  /**
+   * GS2-20 — the LangGraph thread whose durable checkpoint holds this conversation's graph state.
+   * It is the link a resume travels: `gth history list` prints conversation ids, and this is what
+   * turns one of those back into the thread to re-enter. Omitted by callers that do not checkpoint
+   * (a single-shot run), leaving the conversation listable but not resumable.
+   */
+  threadId?: string;
 }
 
 /**
@@ -102,6 +120,12 @@ export interface ConversationSummary {
   /** Prompt / response of the most recent turn (a one-line preview source). */
   lastPrompt?: string;
   lastResponse?: string;
+  /**
+   * GS2-20 — the LangGraph thread this conversation's checkpoint lives under, when it has one.
+   * Absent for a conversation recorded without a checkpointer (any pre-GS2-20 row, and every
+   * single-shot run), which is exactly the set that cannot be resumed.
+   */
+  threadId?: string;
 }
 
 /** Aggregate analytics over the whole store (local only). */
@@ -173,6 +197,11 @@ export class HistoryStore {
     let db: DatabaseSync | undefined;
     try {
       db = new DatabaseSync(dbPath);
+      // GS2-20: the durable checkpointer holds a long-lived connection to this same file while the
+      // recorder opens it for a moment at the end of every turn, so two writers on one file is now
+      // the ordinary case. Without a busy timeout a routine overlap surfaces as a `SQLITE_BUSY`,
+      // which every method here swallows — i.e. as a silently dropped turn.
+      db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
       const store = new HistoryStore(db);
       store.initSchema();
       return store;
@@ -199,13 +228,18 @@ export class HistoryStore {
     // leaves `foreign_keys` off by default and `ALTER TABLE ADD COLUMN` can't add a REFERENCES clause,
     // so declaring one here would only make the fresh schema drift from the migrated one. The column
     // definition is kept byte-identical between this fresh path and {@link migrate}'s ALTER.
+    //
+    // GS2-20 adds `conversations.thread_id` on the same terms: a plain nullable TEXT column, whose
+    // definition here matches the ALTER in {@link migrate} exactly, so a DB created fresh and a DB
+    // upgraded in place have identical schemas.
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS conversations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         started_ts TEXT NOT NULL,
         project TEXT,
         command TEXT,
-        model TEXT
+        model TEXT,
+        thread_id TEXT
       );
       CREATE TABLE IF NOT EXISTS sessions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -249,6 +283,16 @@ export class HistoryStore {
       const hasConversationId = cols.some((c) => c.name === 'conversation_id');
       if (!hasConversationId) {
         this.db.exec(`ALTER TABLE sessions ADD COLUMN conversation_id INTEGER`);
+      }
+      // GS2-20 — the conversation-to-thread link, added the same way for the same reason: a DB
+      // written before this column existed must keep working, and its rows simply have no thread
+      // (they are listable and not resumable, which is the truth about them).
+      const conversationCols = this.db.prepare(`PRAGMA table_info(conversations)`).all() as Record<
+        string,
+        unknown
+      >[];
+      if (!conversationCols.some((c) => c.name === 'thread_id')) {
+        this.db.exec(`ALTER TABLE conversations ADD COLUMN thread_id TEXT`);
       }
       const orphans = this.db
         .prepare(
@@ -295,12 +339,68 @@ export class HistoryStore {
       const ts = meta.ts ?? new Date().toISOString();
       const info = this.db
         .prepare(
-          `INSERT INTO conversations (started_ts, project, command, model) VALUES (?, ?, ?, ?)`
+          `INSERT INTO conversations (started_ts, project, command, model, thread_id)
+           VALUES (?, ?, ?, ?, ?)`
         )
-        .run(ts, meta.project ?? null, meta.command ?? null, meta.model ?? null);
+        .run(
+          ts,
+          meta.project ?? null,
+          meta.command ?? null,
+          meta.model ?? null,
+          meta.threadId ?? null
+        );
       return Number(info.lastInsertRowid);
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * GS2-20 — the LangGraph thread one conversation's state is checkpointed under, or `null` when
+   * that conversation does not exist or was never checkpointed.
+   *
+   * **Exact match on the id, and never a fallback.** A resume that answered a stale or mistyped id
+   * with the newest conversation instead would silently drop the user into somebody else's
+   * transcript, which is the one failure this lookup exists to make impossible; `null` is the
+   * answer, and the caller says so.
+   */
+  getConversationThreadId(conversationId: number): string | null {
+    try {
+      const row = this.db
+        .prepare(`SELECT thread_id FROM conversations WHERE id = ?`)
+        .get(conversationId) as Record<string, unknown> | undefined;
+      if (!row || row.thread_id == null) return null;
+      const threadId = String(row.thread_id);
+      return threadId.length > 0 ? threadId : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * GS2-20 — cut a conversation's link to its LangGraph thread, so it can never be resumed again.
+   *
+   * Called when a checkpoint write has failed mid-session. What is on disk at that point is a
+   * TRUNCATED but well-formed chain: the super-steps before the failure committed, the ones after
+   * did not, and nothing about the rows says so. A resume would replay that half-conversation as
+   * though it were the whole thing — a resume that looks right and is not, which is the one outcome
+   * this ticket exists to prevent. Clearing the link is what makes the refusal durable; a flag in
+   * the failing process dies with it and the NEXT process is the one that would be misled.
+   *
+   * `thread_id = NULL` rather than a sentinel: {@link getConversationThreadId} already answers
+   * `null` for it, so every reader refuses for the same reason it refuses an unknown id, with no
+   * new state to special-case. The cost is that "the writes failed" then looks identical to "this
+   * conversation never had a thread" — a listing concern, not this one's, and both are correctly
+   * un-resumable either way.
+   *
+   * Fail-soft like everything else here: a failure to record the failure must not raise a second
+   * one into a session that is already degraded.
+   */
+  clearConversationThread(conversationId: number): void {
+    try {
+      this.db.prepare(`UPDATE conversations SET thread_id = NULL WHERE id = ?`).run(conversationId);
+    } catch {
+      /* ignore: the session is already degrading; this must not add an error of its own */
     }
   }
 
@@ -438,7 +538,7 @@ export class HistoryStore {
       const rows = this.db
         .prepare(
           `SELECT c.id AS id, c.started_ts AS started_ts, c.project AS project,
-                  c.command AS command, c.model AS model,
+                  c.command AS command, c.model AS model, c.thread_id AS thread_id,
                   COUNT(s.id) AS turn_count, MIN(s.ts) AS first_ts, MAX(s.ts) AS last_ts
              FROM conversations c
              LEFT JOIN sessions s ON s.conversation_id = c.id
@@ -465,6 +565,7 @@ export class HistoryStore {
           lastTs: r.last_ts != null ? String(r.last_ts) : undefined,
           lastPrompt: last?.prompt != null ? String(last.prompt) : undefined,
           lastResponse: last?.response != null ? String(last.response) : undefined,
+          threadId: r.thread_id != null ? String(r.thread_id) : undefined,
         };
       });
     } catch {

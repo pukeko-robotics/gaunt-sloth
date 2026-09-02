@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
   analyseRun,
+  describeLeakReport,
   githubAnnotations,
+  leakedDirs,
   repoPath,
   stepSummaryMarkdown,
   stripAnsi,
@@ -215,6 +217,143 @@ describe('QA-13 tui-e2e flake reporter', () => {
     it('pluralises the job summary heading', () => {
       const two = [...flaky, ...flaky];
       expect(stepSummaryMarkdown(two, { os: 'linux' })).toContain('2 flaky TUI e2e tests on linux');
+    });
+  });
+
+  /**
+   * GS2-20 — the leak gate. A `gth` session holds `<HOME>/.gsloth/history.db` open for its whole
+   * life, and the suite's throwaway HOME cannot be removed on win32 while that handle is alive.
+   * POSIX unlinks an open file regardless, so the win32 cell is the only detector there is, and a
+   * hook that merely warned would be no detector at all. The report is written to a file and the
+   * runner fails the run on it.
+   *
+   * The report cannot travel on a stream: those hooks run in a workerpool child whose captured
+   * output the reporter prints only for a test it is already reporting, and never for
+   * `afterAllWorker`. Measured with a filesystem control — zero hits on either stream.
+   *
+   * **The two findings must stay distinguishable.** A session that outlived its kill and a
+   * directory that will not delete have different causes and different fixes, and a message that
+   * merges them sends the reader after the wrong one. These cases pin that separation.
+   */
+  describe('describeLeakReport', () => {
+    it('says nothing when nothing failed', () => {
+      // The control, and the one that matters most: this gate runs on EVERY green run, so a
+      // function that reported a leak from an empty or whitespace-only file would turn the whole
+      // PTY suite red for every developer, immediately.
+      expect(describeLeakReport('')).toBeNull();
+      expect(describeLeakReport('\n')).toBeNull();
+      expect(describeLeakReport('  \n\n  \n')).toBeNull();
+    });
+
+    it('names every directory that would not delete, with its reason', () => {
+      const report = describeLeakReport(
+        `${JSON.stringify({
+          kind: 'unremovable',
+          dir: 'C:\\Users\\runner\\AppData\\Local\\Temp\\gth-e2e-attack-home-a1',
+          reason: 'EPERM: operation not permitted',
+        })}\n${JSON.stringify({
+          kind: 'unremovable',
+          dir: 'C:\\Users\\runner\\AppData\\Local\\Temp\\gth-e2e-attack-home-b2',
+          reason: 'EBUSY: resource busy',
+        })}\n`
+      );
+      expect(report).not.toBeNull();
+      expect(report).toContain('2 throwaway HOME directories');
+      expect(report).toContain('gth-e2e-attack-home-a1');
+      expect(report).toContain('EPERM: operation not permitted');
+      expect(report).toContain('gth-e2e-attack-home-b2');
+      expect(report).toContain('EBUSY: resource busy');
+      // With no still-running row the message reports WHAT WAS OBSERVED — that the pty signalled an
+      // exit — and keeps the diagnosis conditional on that signal being faithful.
+      expect(report).toContain('The pty reported an exit for every session');
+      expect(report).toContain('If that signal is faithful');
+      // It must NOT claim the process was alive. That was the first message's unearned conclusion.
+      expect(report).not.toContain('still holding a file open well after the process was killed');
+      // Nor may it claim the sessions were CONFIRMED dead, which was the second one: on win32 that
+      // signal is the pty's output socket closing, which is not an observation of process death.
+      expect(report).not.toContain('confirmed exited');
+      expect(report).toContain('evidence and not proof');
+    });
+
+    it('prints how long the exits took, which is what indicts or exonerates the exit signal', () => {
+      const withTimings = describeLeakReport(
+        `${JSON.stringify({
+          kind: 'unremovable',
+          dir: '/tmp/gth-e2e-menu-x',
+          reason: 'EPERM',
+          exitWaits: { n: 12, minMs: 0, maxMs: 3 },
+        })}\n`
+      );
+      expect(withTimings).toContain('reported in 0-3ms across 12 session(s)');
+      // And it must not fabricate the sentence when the worker recorded no timings at all.
+      const without = describeLeakReport(
+        `${JSON.stringify({ kind: 'unremovable', dir: '/tmp/gth-e2e-menu-x', reason: 'EPERM' })}\n`
+      );
+      expect(without).not.toContain('Those exits were reported in');
+    });
+
+    it('reports a session that outlived its kill as its own finding, not as a leak', () => {
+      const report = describeLeakReport(
+        `${JSON.stringify({ kind: 'still-running', waitedMs: 5000 })}\n`
+      );
+      expect(report).not.toBeNull();
+      expect(report).toContain('1 session(s) were STILL RUNNING');
+      expect(report).toContain('5000ms');
+      expect(report).toContain('does not wait');
+      // No directory failed here, so it must not invent one.
+      expect(report).not.toContain('throwaway HOME director');
+    });
+
+    it('stops claiming the sessions were settled once one of them was not', () => {
+      const both = describeLeakReport(
+        `${JSON.stringify({ kind: 'still-running', waitedMs: 5000 })}\n` +
+          `${JSON.stringify({ kind: 'unremovable', dir: '/tmp/gth-e2e-menu-x', reason: 'EPERM' })}\n`
+      );
+      expect(both).toContain('STILL RUNNING');
+      expect(both).toContain('/tmp/gth-e2e-menu-x');
+      // The discriminating assertion: with a live session in the run, the removal failure may be
+      // nothing but that race, and the message must not assert the stronger diagnosis. Pinned on a
+      // string the OTHER branch really does emit — asserting the absence of wording that appears in
+      // neither branch would be an assertion that cannot fail.
+      expect(both).not.toContain('The pty reported an exit for every session');
+      expect(both).toContain('may simply be that race');
+    });
+
+    it('carries the run-end re-check through, which is what separates a race from a leak', () => {
+      const raw = `${JSON.stringify({
+        kind: 'unremovable',
+        dir: '/tmp/gth-e2e-menu-x',
+        reason: 'EPERM',
+      })}\n`;
+      expect(
+        describeLeakReport(raw, { '/tmp/gth-e2e-menu-x': 'removable once the run had exited' })
+      ).toContain('[removable once the run had exited]');
+      expect(describeLeakReport(raw)).toContain('1 throwaway HOME directory');
+    });
+
+    it('never goes quiet on a row it cannot read', () => {
+      // A garbled report is evidence that a hook reported SOMETHING. Dropping it would turn a
+      // broken instrument into a green run, which is the failure mode this whole gate exists to
+      // avoid.
+      const report = describeLeakReport('{not json at all\n');
+      expect(report).not.toBeNull();
+      expect(report).toContain('could not be read');
+      expect(report).toContain('{not json at all');
+    });
+  });
+
+  describe('leakedDirs', () => {
+    it('returns only the directories, so the run-end re-check has something to retry', () => {
+      const raw =
+        `${JSON.stringify({ kind: 'still-running', waitedMs: 5000 })}\n` +
+        `${JSON.stringify({ kind: 'unremovable', dir: '/tmp/a', reason: 'EPERM' })}\n` +
+        `${JSON.stringify({ kind: 'unremovable', dir: '/tmp/b', reason: 'EBUSY' })}\n`;
+      expect(leakedDirs(raw)).toEqual(['/tmp/a', '/tmp/b']);
+    });
+
+    it('is empty for a clean run and survives an unreadable row', () => {
+      expect(leakedDirs('')).toEqual([]);
+      expect(leakedDirs('{broken\n')).toEqual([]);
     });
   });
 });

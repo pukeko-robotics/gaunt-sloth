@@ -357,6 +357,13 @@ export async function startAgUiServer(config: GthConfig, port: number): Promise<
   // Initialize agent.
   // Note this would need a refactoring if it is to be used for a public web server,
   // For connecting local WEB to local CLI agent, this is absolutely OK, since one thread is OK.
+  //
+  // GS2-20 — considered for the durable saver and deliberately left in memory. On this surface the
+  // CLIENT is the source of truth for history: it replays the whole message list every turn and a
+  // fresh run rotates to a new checkpoint thread precisely so the replay is the sole history (see
+  // this file's note on why the client's threadId must never key the checkpoint). Persisting those
+  // rotating threads would accumulate state nothing ever reads back. Serving a resume here means
+  // deciding what the client asks for first, which is [[GS2-106]]'s question rather than this one.
   const checkpointSaver = new MemorySaver();
   const agent = createConfiguredAgent(config);
   await agent.init('api', config, checkpointSaver);

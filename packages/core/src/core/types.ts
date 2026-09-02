@@ -658,7 +658,7 @@ export interface GthAgentInterface {
 
   /**
    * GS2-16 — the analytics harvested from the run(s) since the last {@link resetRunStats}. Used by
-   * the runner to thread token/tool data into the opt-in history recorder. Optional; when absent
+   * the runner to thread token/tool data into the local history recorder. Optional; when absent
    * the runner records no analytics for that turn. Reading must never throw.
    */
   getRunStats?(): GthRunStats;

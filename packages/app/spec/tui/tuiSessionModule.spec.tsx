@@ -86,6 +86,29 @@ vi.mock('@gaunt-sloth/core/utils/systemUtils.js', () => systemUtilsMock);
 // ── langchain + agent deps (kept inert) ────────────────────────────────────────
 vi.mock('@langchain/core/messages', () => ({ HumanMessage: vi.fn() }));
 vi.mock('@langchain/langgraph', () => ({ MemorySaver: vi.fn() }));
+// GS2-20 — the session's checkpointer comes from this seam. Stubbed here so the spec does not
+// load the real SQLite saver (which needs more of @langchain/langgraph than the stub above
+// provides, and would open a database this spec has no interest in). A plain function, not a
+// vi.fn, so a `vi.resetAllMocks()` in beforeEach cannot strip its return value; the returned
+// object is shared so a test can assert that THIS saver and THIS thread id reached the runner.
+const checkpointerStub = vi.hoisted(() => ({
+  saver: { marker: 'session-checkpointer-saver' },
+  durable: true,
+  threadId: 'session-thread-id',
+  close: () => {},
+}));
+vi.mock('@gaunt-sloth/core/history/sessionCheckpointer.js', () => ({
+  openSessionCheckpointerSafe: () => checkpointerStub,
+}));
+// GS2-20 — the history recorder is stubbed for the same reason: this spec does not test history,
+// and with recording on by default a config naming no `dbPath` resolves the user's real
+// `~/.gsloth/history.db` and writes to it. Plain functions, not vi.fn, so a `vi.resetAllMocks()`
+// in beforeEach cannot strip their return values.
+vi.mock('@gaunt-sloth/core/history/recordSession.js', () => ({
+  openConversationSafe: () => null,
+  recordSessionSafe: () => null,
+  lookupConversationThreadSafe: () => null,
+}));
 vi.mock('@gaunt-sloth/agent/resolvers.js', () => ({ createResolvers: vi.fn() }));
 const resolvedFactory = vi.hoisted(() => vi.fn());
 const resolveAgentFactoryMock = vi.hoisted(() => vi.fn());
@@ -228,6 +251,20 @@ describe('createTuiSession — the full-screen surface (TUI-C48)', () => {
     const runnerCall = (GthAgentRunner as unknown as { mock: { calls: unknown[][] } }).mock
       .calls[0];
     expect(runnerCall[2]).toBe(resolvedFactory);
+  });
+
+  it('GS2-20: drives the session checkpointer and its thread id', async () => {
+    initConfigMock.mockResolvedValue({});
+    const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
+
+    await createTuiSession(sessionConfig, overrides);
+
+    // The Ink TUI is the DEFAULT interactive surface, so it is the one that has to be resumable.
+    // Both halves are asserted because either alone is useless: the saver is where the state goes,
+    // and the thread id is the name the stored conversation is found under.
+    const [, , saver, options] = runnerInitMock.mock.calls[0];
+    expect(saver).toBe(checkpointerStub.saver);
+    expect(options?.threadId).toBe(checkpointerStub.threadId);
   });
 
   // Both quieter rungs, because the override has to beat the whole ladder and not just the one

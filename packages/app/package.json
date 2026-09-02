@@ -1,6 +1,6 @@
 {
   "name": "gaunt-sloth",
-  "version": "2.0.0-beta.5",
+  "version": "2.0.0-beta.6",
   "description": "",
   "license": "MIT",
   "author": "Andrew Kondratev",
@@ -35,7 +35,7 @@
     "gth": "cli.js"
   },
   "dependencies": {
-    "@ag-ui/core": "^0.0.58",
+    "@ag-ui/core": "^0.0.59",
     "@gaunt-sloth/agent": "workspace:*",
     "@gaunt-sloth/batch": "workspace:*",
     "@gaunt-sloth/core": "workspace:*",
@@ -52,7 +52,7 @@
     "@langchain/openrouter": "^0.4.10",
     "@langchain/xai": "^1.4.10",
     "commander": "^15.0.0",
-    "zod": "^4.4.3"
+    "zod": "^4.5.4"
   },
   "optionalDependencies": {
     "chalk": "^6.0.0",
