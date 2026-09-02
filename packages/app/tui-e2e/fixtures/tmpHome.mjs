@@ -20,10 +20,19 @@ import fs from 'node:fs';
  * **So the wait belongs on the process, not on the removal.** {@link settleSessionsAfterEach}
  * registers one file-level `afterEach` that kills this test's session and then waits for the pty to
  * report its exit — `Terminal.onExit`, which is public API and fires immediately when the process
- * has already gone. By the time any `afterAll` runs, every session in the file has been CONFIRMED
- * exited or its failure to exit has been recorded. Retrying a removal until it happens to succeed
- * would be a proxy for that, and a poor one: it passes or fails on timing and cannot tell a live
- * process apart from a stuck handle.
+ * has already gone. By the time any `afterAll` runs, the pty has reported an exit for every session
+ * in the file, or the absence of one has been recorded. Retrying a removal until it happens to
+ * succeed would be a proxy for that, and a poor one: it passes or fails on timing and cannot tell a
+ * live process apart from a stuck handle.
+ *
+ * **What that signal is, stated exactly, because the difference matters on win32.** On Windows
+ * node-pty emits `exit` from its conout socket's `close` handler, not from a direct observation of
+ * the process dying. Whether the socket closing precedes, coincides with or follows the kernel
+ * releasing that process's file handles is not established here — and that window is precisely
+ * where an `EPERM` on the directory would live. So a reported exit is strong evidence and not a
+ * proof, which is why {@link settleSessionsAfterEach} also records how long each wait took: a run
+ * where every session "exited" in about a millisecond and the removals still failed indicts the
+ * signal, where hundreds of milliseconds would exonerate it.
  *
  * The `maxRetries` on the removal below stays, and is not the same thing. Once the process is
  * confirmed dead it covers only the OS's own handle rundown, which is short and bounded. It is not
@@ -74,6 +83,27 @@ const EXIT_WAIT_MS_DEGRADED = 250;
 
 /** Set once a session has outlived its kill, to shorten every later wait. Per worker process. */
 let sawSessionOutliveKill = false;
+
+/**
+ * How long each session in this worker took to report its exit, in milliseconds.
+ *
+ * Carried on an `unremovable` record so the two readings of "the pty said it exited, and the
+ * directory still would not go" can be told apart without another CI round. See the win32 caveat in
+ * the docblock above: if every one of these is about a millisecond, the exit signal is running ahead
+ * of the kernel and is itself the suspect; hundreds of milliseconds mean the wait did real work and
+ * the handle outlived the process that opened it.
+ */
+const settleWaits = [];
+
+/** A compact digest of {@link settleWaits}, or null when nothing settled in this worker. */
+function exitWaitSummary() {
+  if (settleWaits.length === 0) return null;
+  return {
+    n: settleWaits.length,
+    minMs: Math.min(...settleWaits),
+    maxMs: Math.max(...settleWaits),
+  };
+}
 
 /** Append one JSON record to the report file, if the parent asked for one. Never throws. */
 function report(record) {
@@ -127,7 +157,9 @@ async function settleSession(terminal) {
     // Never hold the worker's event loop open on this timer alone.
     if (typeof timer.unref === 'function') timer.unref();
   });
-  if (!exited) {
+  if (exited) {
+    settleWaits.push(Date.now() - started);
+  } else {
     sawSessionOutliveKill = true;
     report({ kind: 'still-running', waitedMs: Date.now() - started });
   }
@@ -155,9 +187,11 @@ export function settleSessionsAfterEach(test) {
 /**
  * Remove a suite's throwaway `HOME`.
  *
- * By the time this runs, {@link settleSessionsAfterEach} has confirmed that every session in the
- * file exited — or has recorded that one did not, which the run's gate reports separately. So a
- * failure here is no longer ambiguous: it is a handle that outlived the process that opened it.
+ * By the time this runs, the pty has reported an exit for every session in the file — or
+ * {@link settleSessionsAfterEach} has recorded that one never came, which the run's gate reports
+ * separately. So a failure here is no longer the ambiguity it was: it is not a removal that simply
+ * ran too soon after a kill. What it is instead depends on how far the exit signal can be trusted on
+ * the platform, which is what the recorded wait times are for.
  *
  * @param {string} dir the throwaway home to remove
  */
@@ -170,6 +204,6 @@ export function removeTmpHome(dir) {
       `\n⚠ tui-e2e could not remove the throwaway HOME at ${dir} after retrying: ${reason}\n` +
         `  Leaving it behind rather than failing the run.\n`
     );
-    report({ kind: 'unremovable', dir, reason });
+    report({ kind: 'unremovable', dir, reason, exitWaits: exitWaitSummary() });
   }
 }

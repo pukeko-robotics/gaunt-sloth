@@ -133,9 +133,13 @@ export function analyseRun(raw) {
  *
  * - `still-running` — a session did not exit within the wait after being killed. The removal that
  *   follows was racing a live process, and no amount of retrying the removal is the fix.
- * - `unremovable` — a directory would not delete. Since every session is settled before any of
- *   these hooks run, a live session of ours is excluded by construction, which leaves a handle
- *   that outlived the process holding it.
+ * - `unremovable` — a directory would not delete, and the pty had already reported an exit for
+ *   every session in that file. **That is an observation, not a conclusion, and the message says
+ *   so.** On win32 node-pty emits `exit` when its conout socket closes rather than on the process
+ *   actually dying, and whether that precedes the kernel releasing the process's handles is
+ *   untested — so the recorded exit wait times are printed alongside, since a run where every
+ *   session "exited" in about a millisecond points at the signal itself and a run of hundreds of
+ *   milliseconds points at a handle that outlived its process.
  *
  * @param {string} raw contents of the report file (empty when nothing failed)
  * @param {Record<string, string>} [outcomes] per-directory result of re-attempting the removal
@@ -204,12 +208,20 @@ export function describeLeakReport(raw, outcomes = {}) {
         return `    ${r.dir} — ${r.reason}${outcome ? ` [${outcome}]` : ''}`;
       })
       .join('\n');
+    const waits = unremovable.find((r) => r.exitWaits)?.exitWaits;
+    const timing = waits
+      ? ` Those exits were reported in ${waits.minMs}-${waits.maxMs}ms across ${waits.n} session(s):` +
+        ` single-digit values would make the signal itself the suspect, hundreds of milliseconds` +
+        ` would mean the wait did real work and something outlived the process anyway.`
+      : '';
     const context =
       stillRunning.length > 0
         ? `  At least one session outlived its kill in this run, so these may simply be that race.`
-        : `  Every session in this run was confirmed exited before its directory was removed, so a ` +
-          `live session of ours is not what is holding these. What is left is a handle that ` +
-          `outlived the process that opened it, or a scanner on the host holding the file briefly.`;
+        : `  The pty reported an exit for every session in this run before its directory was ` +
+          `removed. If that signal is faithful, a live session of ours is not what is holding ` +
+          `these, which leaves a handle that outlived the process that opened it or a scanner on ` +
+          `the host. On win32 the signal is the pty's output socket closing rather than the ` +
+          `process dying, so it is evidence and not proof.${timing}`;
     parts.push(
       `${unremovable.length} throwaway HOME director${unremovable.length === 1 ? 'y' : 'ies'} ` +
         `could not be removed:\n${detail}\n${context}`

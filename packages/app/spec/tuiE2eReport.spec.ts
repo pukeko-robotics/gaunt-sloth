@@ -263,12 +263,33 @@ describe('QA-13 tui-e2e flake reporter', () => {
       expect(report).toContain('EPERM: operation not permitted');
       expect(report).toContain('gth-e2e-attack-home-b2');
       expect(report).toContain('EBUSY: resource busy');
-      // With no still-running row, every session WAS confirmed exited, and the message is entitled
-      // to say so — that is the whole value of settling the sessions first.
-      expect(report).toContain('confirmed exited');
-      // It must NOT claim the process was alive. That was the previous message's unearned
-      // conclusion, and it is the specific sentence this round exists to retire.
+      // With no still-running row the message reports WHAT WAS OBSERVED — that the pty signalled an
+      // exit — and keeps the diagnosis conditional on that signal being faithful.
+      expect(report).toContain('The pty reported an exit for every session');
+      expect(report).toContain('If that signal is faithful');
+      // It must NOT claim the process was alive. That was the first message's unearned conclusion.
       expect(report).not.toContain('still holding a file open well after the process was killed');
+      // Nor may it claim the sessions were CONFIRMED dead, which was the second one: on win32 that
+      // signal is the pty's output socket closing, which is not an observation of process death.
+      expect(report).not.toContain('confirmed exited');
+      expect(report).toContain('evidence and not proof');
+    });
+
+    it('prints how long the exits took, which is what indicts or exonerates the exit signal', () => {
+      const withTimings = describeLeakReport(
+        `${JSON.stringify({
+          kind: 'unremovable',
+          dir: '/tmp/gth-e2e-menu-x',
+          reason: 'EPERM',
+          exitWaits: { n: 12, minMs: 0, maxMs: 3 },
+        })}\n`
+      );
+      expect(withTimings).toContain('reported in 0-3ms across 12 session(s)');
+      // And it must not fabricate the sentence when the worker recorded no timings at all.
+      const without = describeLeakReport(
+        `${JSON.stringify({ kind: 'unremovable', dir: '/tmp/gth-e2e-menu-x', reason: 'EPERM' })}\n`
+      );
+      expect(without).not.toContain('Those exits were reported in');
     });
 
     it('reports a session that outlived its kill as its own finding, not as a leak', () => {
@@ -291,8 +312,10 @@ describe('QA-13 tui-e2e flake reporter', () => {
       expect(both).toContain('STILL RUNNING');
       expect(both).toContain('/tmp/gth-e2e-menu-x');
       // The discriminating assertion: with a live session in the run, the removal failure may be
-      // nothing but that race, and the message must not assert the stronger diagnosis.
-      expect(both).not.toContain('confirmed exited');
+      // nothing but that race, and the message must not assert the stronger diagnosis. Pinned on a
+      // string the OTHER branch really does emit — asserting the absence of wording that appears in
+      // neither branch would be an assertion that cannot fail.
+      expect(both).not.toContain('The pty reported an exit for every session');
       expect(both).toContain('may simply be that race');
     });
 
