@@ -19,6 +19,7 @@ import type {
   ToolAnnotationHint,
 } from '@gaunt-sloth/core/config.js';
 import type { ApprovalGrant } from '@gaunt-sloth/core/core/approvals/grants.js';
+import type { ConversationCompaction } from '@gaunt-sloth/core/core/compaction.js';
 import type { ApprovalStopPart } from '@gaunt-sloth/core/core/shell/approvalStop.js';
 import type { GthTerminationReason } from '@gaunt-sloth/core/core/terminationReason.js';
 import type { LiveNegotiationRound } from '@gaunt-sloth/core/core/shell/negotiation.js';
@@ -146,6 +147,16 @@ export interface TuiAgent {
    * Optional so the fixture agent (no runner) may omit it.
    */
   liftRefusal?(index: number): ApprovalRefusalLift;
+  /**
+   * GS2-23 — fold the older conversation into a summary in the MODEL's context. Wired to
+   * `/compact [focus]` and to `runner.compactConversation`, which rewrites the checkpointed
+   * thread; the on-screen transcript is not touched. Returns what the runner LANDED on, so the
+   * notice can only describe the compaction actually applied.
+   *
+   * Optional so an agent with no conversation state behind it may omit it, in which case the App
+   * says compaction is unavailable rather than pretending.
+   */
+  compactConversation?(input: { focus?: string }): Promise<ConversationCompaction>;
 }
 
 /**

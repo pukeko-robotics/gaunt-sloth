@@ -69,6 +69,9 @@ import {
   approvalsStatusNotice,
   approvalsTrustNotice,
   approvalsUndenyNotice,
+  COMPACTING_LINE,
+  compactionFailedNotice,
+  compactionNotice,
   createCommandRegistry,
   dispatchSlashCommand,
   formatConfigSummary,
@@ -680,6 +683,19 @@ export async function createInteractiveSession(
               runner.setSessionApprovalRung(result.approvals.rung);
               // Report the posture the runner actually LANDED on, not the one requested.
               printNotice(approvalsRungNotice(runner.getSessionApprovals()));
+            }
+          } else if (result.compact) {
+            // GS2-23 — `/compact [focus]`: the runner folds the older conversation in the live
+            // graph and reports what LANDED; the notice is built from that, never from what was
+            // asked for. Sequential here — the prompt does not come back until the await settles —
+            // so nothing on this surface can race the state rewrite. The transcript in scrollback
+            // is the person's record and is left exactly as it is.
+            displayInfo(COMPACTING_LINE);
+            try {
+              const outcome = await runner.compactConversation(result.compact);
+              printNotice(compactionNotice(outcome, result.compact.focus));
+            } catch (err) {
+              printNotice(compactionFailedNotice(err instanceof Error ? err.message : String(err)));
             }
           } else if (
             result.clearTranscript ||

@@ -53,6 +53,12 @@ them — in the TUI it also lists the key bindings, grouped by where each one wo
 there opens a searchable command menu. A few worth knowing:
 
 - `/clear` — wipe the transcript and the model's memory of it (it is gone, not scrolled away)
+- `/compact` — fold the older part of the conversation into a summary the model reads in its
+  place, keeping the last few messages word for word, so a session that has grown long can keep
+  going without starting over. Free text after it (`/compact the migration plan`) says what the
+  summary should concentrate on. The transcript on screen stays as it is — only the model's
+  context shrinks — and the change is written into the conversation's saved state, so a resumed
+  session stays compacted
 - `/status` — mode, model, and turn count
 - `/model` — show the current model / provider
 - `/verbose` — expand or collapse tool-call detail (Ctrl+T does the same, at any time)
@@ -91,7 +97,7 @@ after `/approvals`, which takes over the screen with its own picker while it run
 
 It works mid-turn as well, with the same rule as a typed command — the ones that are safe while the
 agent is working (`/approvals`, `/verbose`, `/debug`, `/model`, `/status`, …) run, and `/clear`,
-`/help`, `/exit` and `/quit` ask you to wait for the turn to finish. One thing to know before you
+`/compact`, `/help`, `/exit` and `/quit` ask you to wait for the turn to finish. One thing to know before you
 open it there: while a reply is arriving, `Escape` stops the reply, and it does that as well as
 closing the menu. To leave the menu without stopping the turn, run one of the commands — or wait
 for the turn to end and then press `Esc`.

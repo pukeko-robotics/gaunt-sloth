@@ -7,3 +7,9 @@
   telemetry; the file is a plain SQLite database you can inspect or delete. Set
   `history.enabled: false` in your config to turn it all off, or `history.dbPath` to move the file.
   See [Migrating to 2.0 → section L](../docs/MIGRATION.md).
+- `/compact [focus]` in interactive `chat` / `code` sessions folds the older conversation into a
+  summary and keeps the last few messages word for word, so a session that has grown too long can
+  keep going without starting over. The summary is written into the conversation's saved state, so
+  a resumed session stays compacted; the transcript on screen is left as it is. Free text after the
+  command says what the summary should concentrate on. See
+  [Interactive sessions → Slash commands](../docs/guides/interactive-sessions.md#slash-commands).

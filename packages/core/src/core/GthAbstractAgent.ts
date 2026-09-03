@@ -29,6 +29,7 @@ import type { DeclaredToolAnnotations } from '#src/core/approvals/annotations.js
 import { collectDeclaredMcpToolAnnotations } from '#src/core/approvals/toolAnnotationSources.js';
 import type { DebugCapture, DebugRequestExtras, LastModelRequest } from '#src/core/debugCapture.js';
 import { modelProviderLabel } from '#src/core/modelLabel.js';
+import { replaceGraphMessages } from '#src/core/compaction.js';
 import { createPlainToolIndication } from '#src/core/plainToolIndication.js';
 import { runHeaderLine } from '#src/core/runHeader.js';
 import { debugLog, debugLogError, debugLogObject } from '#src/utils/debugUtils.js';
@@ -624,6 +625,38 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
     } catch {
       return 0;
     }
+  }
+
+  /**
+   * GS2-23 — the thread's conversation as the checkpointed graph holds it. Loud, unlike
+   * `getStateMessageCount`: a compaction that cannot read the state must not proceed on an
+   * empty list and report that it folded nothing.
+   */
+  async getConversationMessages(runConfig: RunnableConfig): Promise<BaseMessage[]> {
+    if (!this.agent || typeof this.agent.getState !== 'function') {
+      throw new Error('This agent exposes no conversation state to read.');
+    }
+    const state = await this.agent.getState(runConfig);
+    const messages = (state as { values?: { messages?: unknown } })?.values?.messages;
+    return Array.isArray(messages) ? (messages as BaseMessage[]) : [];
+  }
+
+  /**
+   * GS2-23 — replace the thread's conversation through the graph's own `updateState`, so the
+   * compacted history is checkpointed and the next turn (and a later resume) loads it.
+   */
+  async replaceConversationMessages(
+    runConfig: RunnableConfig,
+    messages: BaseMessage[]
+  ): Promise<void> {
+    if (!this.agent || typeof this.agent.updateState !== 'function') {
+      throw new Error('This agent exposes no conversation state to write.');
+    }
+    await replaceGraphMessages(
+      this.agent as Parameters<typeof replaceGraphMessages>[0],
+      runConfig,
+      messages
+    );
   }
 
   /**

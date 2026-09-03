@@ -42,6 +42,14 @@
       "kind": "object"
     },
     {
+      "name": "COMPACTION_SUMMARY_PREFIX",
+      "kind": "string"
+    },
+    {
+      "name": "COMPACTION_SUMMARY_SOURCE",
+      "kind": "string"
+    },
+    {
       "name": "CONFIG_SCHEMA_POINTER",
       "kind": "string"
     },
@@ -68,6 +76,10 @@
     {
       "name": "DEFAULT_CONFIG",
       "kind": "object"
+    },
+    {
+      "name": "DEFAULT_KEEP_RECENT",
+      "kind": "number"
     },
     {
       "name": "DEFAULT_OLLAMA_HOST",
@@ -234,6 +246,10 @@
       "kind": "array"
     },
     {
+      "name": "buildCompactionPrompt",
+      "kind": "function"
+    },
+    {
       "name": "buildInitConfigContent",
       "kind": "function"
     },
@@ -251,6 +267,26 @@
     },
     {
       "name": "commandCarriesUserProvenance",
+      "kind": "function"
+    },
+    {
+      "name": "compactMessages",
+      "kind": "function"
+    },
+    {
+      "name": "compactionCutIndex",
+      "kind": "function"
+    },
+    {
+      "name": "conversationSize",
+      "kind": "function"
+    },
+    {
+      "name": "createCompactionSummaryMessage",
+      "kind": "function"
+    },
+    {
+      "name": "createModelSummarizer",
       "kind": "function"
     },
     {
@@ -354,6 +390,10 @@
       "kind": "function"
     },
     {
+      "name": "isCompactionSummary",
+      "kind": "function"
+    },
+    {
       "name": "isConfigDiscoveryError",
       "kind": "function"
     },
@@ -435,6 +475,10 @@
     },
     {
       "name": "recordSessionSafe",
+      "kind": "function"
+    },
+    {
+      "name": "replaceGraphMessages",
       "kind": "function"
     },
     {
