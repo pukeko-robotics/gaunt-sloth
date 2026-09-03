@@ -37,6 +37,7 @@ import type { ApprovalGrant } from '@gaunt-sloth/core/core/approvals/grants.js';
 import { describeApprovalEntry } from '@gaunt-sloth/core/core/approvals/matcher.js';
 import type { ConversationCompaction } from '@gaunt-sloth/core/core/compaction.js';
 import { MOUSE_SELECTION_HINT } from '@gaunt-sloth/core/config/mouse.js';
+import { parseResumeId } from '#src/modules/sessionResume.js';
 
 /**
  * TUI-C63 — one advertised key binding: the keys as the user's keyboard spells them, and what
@@ -66,6 +67,12 @@ export interface SlashCommandContext {
   modelDisplayName: string;
   /** Count of committed turns so far (for `/help`-style introspection if needed). */
   turnCount: number;
+  /**
+   * GS2-20 — the conversation this session is recording under, as `gth history list` numbers it,
+   * so `/status` can name what `gth history resume <id>` would take. Undefined when nothing is
+   * being recorded (history off, the store did not open, or a surface with no store at all).
+   */
+  conversationId?: number;
   /** Whether tool-call panels currently show their full args/result (drives `/verbose` copy). */
   toolsExpanded: boolean;
   /** Whether the docked debug panel is currently shown (drives `/debug` copy). */
@@ -378,6 +385,15 @@ export interface SlashCommandResult {
    * the free text after the command — what the summary should concentrate on.
    */
   compact?: { focus?: string };
+  /**
+   * GS2-20 — a request from `/resume` to re-enter a stored conversation. With an `id` the surface
+   * resolves and applies it through the one seam in `sessionResume.ts` — the same two calls
+   * `--resume <id>` makes at boot — and commits the resumed-conversation banner and the restored
+   * turns, or the refusal. With no `id` the surface lists the conversations that can be resumed,
+   * leaving out the one it is in. The command itself stays pure: it cannot reach the store or the
+   * runner, so it states the request.
+   */
+  resume?: { id?: number };
   /** When true, the component quits the app (runs `onExit`). */
   exit?: boolean;
 }
@@ -701,7 +717,9 @@ export function approvalsStatusNotice(
     lines: [
       APPROVAL_RUNG_DESCRIPTIONS[approvals.rung],
       `Auto-rater: ${rater}`,
-      `Allowed: ${allowlist.session} this session · ${allowlist.always ?? '—'} remembered · Denied: ${refusals.length}`,
+      // GS2-20 — a grant made at the menu lives with the CONVERSATION, not the process: it is kept
+      // in the history store and comes back when the conversation is resumed.
+      `Allowed: ${allowlist.session} this conversation · ${allowlist.always ?? '—'} remembered · Denied: ${refusals.length}`,
       ...describeGrants(grants),
       ...(trust ? [describeMcpTrust(trust)] : []),
       // The docs pointer rides with the mode list, and is absent for the same reason the list is
@@ -756,12 +774,17 @@ function describeGrants(grants: readonly ApprovalGrant[]): string[] {
 /**
  * [[EXT-107]] — how a refusal's origin is said on screen. Three sources, three lifetimes, three
  * owners, and the words have to carry the difference: the whole point of listing refusals here is
- * that a user can tell the one that ends with this session from the one that will still be there
- * tomorrow, and both from the line they wrote themselves.
+ * that a user can tell the one that ends with this conversation from the one that will still be
+ * there tomorrow in any conversation, and both from the line they wrote themselves.
+ *
+ * GS2-20 — the middle one is *this conversation*, not *this session*: a refusal made at the menu is
+ * recorded against the conversation in the history store and comes back when the conversation is
+ * resumed, so its lifetime is the conversation's. (The store's own scope name stays `session`; this
+ * is the label a person reads.)
  */
 const REFUSAL_ORIGIN_LABELS: Record<ApprovalRefusal['origin'], string> = {
   config: 'from your approvals.deny',
-  session: 'this session only',
+  session: 'this conversation only',
   persisted: 'saved to this project',
 };
 
@@ -1042,17 +1065,19 @@ export function approvalsUndenyNotice(lift: ApprovalRefusalLift): SlashCommandNo
       tone: 'warn',
     };
   }
+  // GS2-20 — a lift is recorded against the conversation like the refusal was, so the lifetime it
+  // names is the conversation's: it holds if the conversation is resumed, and not in another one.
   const removal = lift.stillSaved
-    ? `${lift.description} is no longer refused for the rest of this session — but this project’s ` +
-      'saved refusals could not be updated, so it is still in that file and it will refuse again ' +
-      'in a new session. The error reported beside this names the file and why it could not be ' +
-      'written; fix that, or remove the entry from the file by hand.'
+    ? `${lift.description} is no longer refused for the rest of this conversation — but this ` +
+      'project’s saved refusals could not be updated, so it is still in that file and it will ' +
+      'refuse again in any other conversation. The error reported beside this names the file and ' +
+      'why it could not be written; fix that, or remove the entry from the file by hand.'
     : lift.origin === 'persisted'
       ? `${lift.description} is no longer refused, and it has been removed from this project’s ` +
         'saved refusals, so it will not come back in a new session.'
-      : `${lift.description} is no longer refused for the rest of this session.`;
+      : `${lift.description} is no longer refused for the rest of this conversation.`;
   return {
-    title: lift.stillSaved ? 'Refusal lifted for this session only' : 'Refusal lifted',
+    title: lift.stillSaved ? 'Refusal lifted for this conversation only' : 'Refusal lifted',
     lines: [
       removal,
       ...(lift.stillConfigured
@@ -1379,6 +1404,33 @@ export function createCommandRegistry(): SlashCommand[] {
       },
     },
     {
+      name: 'resume',
+      description:
+        'Pick up a saved conversation where it left off (/resume <id>, the number from ' +
+        '`gth history list` or /history; no id lists the ones that can be resumed)',
+      // Idle-only, like /clear and /compact: it moves the session onto another thread, and a turn
+      // in flight would be writing to the one being left. The surface resolves and applies it
+      // through the shared seam and commits what landed; the id is validated here so a typo is
+      // named before anything is looked up.
+      run: (_ctx, args) => {
+        if (args.length === 0) return { resume: {} };
+        const id = parseResumeId(args[0]);
+        if (id === null || args.length > 1) {
+          return {
+            notice: {
+              title: `Not a conversation id: ${args.join(' ')}`,
+              lines: [
+                'Usage: /resume [<id>] — the id is the number `gth history list` prints; with no ' +
+                  'id it lists the conversations that can be resumed.',
+              ],
+              tone: 'warn',
+            },
+          };
+        }
+        return { resume: { id } };
+      },
+    },
+    {
       name: 'debug',
       description: 'Toggle the docked debug panel',
       availableDuringRun: true,
@@ -1480,6 +1532,11 @@ export function createCommandRegistry(): SlashCommand[] {
             `Mode: ${ctx.mode} — how the agent handles your messages this session.`,
             `Model: ${ctx.modelDisplayName || 'unknown'}`,
             `Turns so far: ${ctx.turnCount}`,
+            // GS2-20 — the id a later `gth history resume` takes, or the fact that there is none.
+            ctx.conversationId !== undefined
+              ? `Conversation: #${ctx.conversationId} — pick it up later with ` +
+                `\`gth history resume ${ctx.conversationId}\`, or switch with /resume <id>.`
+              : 'Conversation: not being recorded, so this session cannot be resumed later.',
             'Restart with a different subcommand to change the mode (e.g. `gth chat`).',
           ],
         },

@@ -44,6 +44,18 @@ import {
   recordSessionSafe,
 } from '@gaunt-sloth/core/history/recordSession.js';
 import { openSessionCheckpointerSafe } from '@gaunt-sloth/core/history/sessionCheckpointer.js';
+import { saveConversationGrantsSafe } from '@gaunt-sloth/core/core/approvals/conversationGrants.js';
+import {
+  applyResumeTarget,
+  listResumeCandidates,
+  resolveResumeTarget,
+  resumedConversationNotice,
+  resumeFailedNotice,
+  resumePickerNotice,
+  resumeRefusalNotice,
+  resumeSameConversationNotice,
+  type ResumeTarget,
+} from '#src/modules/sessionResume.js';
 import {
   createInterface,
   error,
@@ -135,17 +147,21 @@ const dialogLines = (lines: readonly string[], tone: DialogTone = 'plain'): void
  */
 const rememberedAnswerLine = (decision: 'approve' | 'reject', landed: ApprovalLifetime): string => {
   const savedToProject = landed === 'always';
+  // GS2-20 — a grant that did not reach the project file lives with the CONVERSATION: it is kept in
+  // the history store and comes back when this conversation is resumed, and no other conversation
+  // has it. So the sentence names the conversation, not the process.
   if (decision === 'approve') {
     return savedToProject
       ? 'Approved and remembered — this exact command is saved to the project allow-list.'
-      : 'Approved for this session only — it was not written to the project allow-list.';
+      : 'Approved for this conversation only — it was not written to the project allow-list, so ' +
+          'resuming this conversation keeps it and any other conversation will ask again.';
   }
   return savedToProject
     ? 'Refused — this exact call will not run and will not ask again. It is saved to this ' +
         'project, so it stays refused in new sessions; lift it with /approvals undeny.'
-    : 'Refused — this exact call will not run and will not ask again this session. It was not ' +
-        'written to the project, so a new session will ask about it again; lift it with ' +
-        '/approvals undeny.';
+    : 'Refused — this exact call will not run and will not ask again in this conversation, even ' +
+        'if you resume it later. It was not written to the project, so another conversation will ' +
+        'ask about it again; lift it with /approvals undeny.';
 };
 
 export interface SessionConfig {
@@ -156,10 +172,21 @@ export interface SessionConfig {
   exitMessage: string;
 }
 
+/** GS2-20 — how a session is asked to start: fresh, or inside a stored conversation. */
+export interface InteractiveSessionOptions {
+  /**
+   * Re-enter this conversation (the id `gth history list` prints) instead of opening a new one.
+   * Refused, with a notice and exit status 1, when it cannot be: history off, the store unopenable,
+   * no such conversation, one with no state to re-enter, or one recorded in another directory.
+   */
+  resumeConversationId?: number;
+}
+
 export async function createInteractiveSession(
   sessionConfig: SessionConfig,
   commandLineConfigOverrides: CommandLineConfigOverrides,
-  message?: string
+  message?: string,
+  options: InteractiveSessionOptions = {}
 ) {
   const config = { ...(await initConfig(commandLineConfigOverrides)) };
 
@@ -170,6 +197,39 @@ export async function createInteractiveSession(
   // absence of one throws MISSING_CHECKPOINTER mid-turn.
   const checkpointer = openSessionCheckpointerSafe(config);
 
+  // GS2-8 — render a structured command notice on the plain-text surface: tone-matched title,
+  // then the body lines indented under it.
+  //
+  // [[EXT-165]] — through `displayNotice`, which writes the WHOLE notice to one stream. Rendered
+  // line by line through the ordinary helpers, the title took its stream from its colour while
+  // the body took another, so a redirected session kept one half and discarded the other; and
+  // because the two halves were filtered at different levels, a quieted console showed a title
+  // with no body under it (or, at `display` level, a body with no title over it). The tone is
+  // passed through rather than turned into a helper choice here — that mapping is what coupled
+  // colour to stream.
+  const printNotice = (notice: SlashCommandNotice) => {
+    displayNotice(notice.title, notice.lines, { tone: notice.tone ?? 'info' });
+  };
+
+  // GS2-20 — `--resume <id>`: decide BEFORE anything else is opened or written whether the stored
+  // conversation can be re-entered, through the same seam `/resume` uses mid-session. A refusal
+  // is a notice and exit status 1 with nothing changed — no conversation row opened, no session
+  // log started — so a mistyped id costs the person nothing but the message.
+  let bootResume: ResumeTarget | undefined;
+  if (options.resumeConversationId !== undefined) {
+    const resolution = await resolveResumeTarget(
+      { config, checkpointer, workspace: getProjectDir() },
+      options.resumeConversationId
+    );
+    if (!resolution.ok) {
+      printNotice(resumeRefusalNotice(resolution.refusal));
+      checkpointer.close();
+      exit(1);
+      return;
+    }
+    bootResume = resolution.target;
+  }
+
   // GS2-19: open ONE conversation for this interactive session up-front; every turn below is stamped
   // with its id so a multi-turn chat groups under one conversation (not N unrelated rows). Fail-soft:
   // a no-op returning undefined when `history.enabled: false`, in which case turns fall back to
@@ -179,13 +239,19 @@ export async function createInteractiveSession(
   // `gth history list` prints, to the checkpoint holding this session's state. Written HERE, before
   // the runner exists, because `runner.init` can throw partway and a conversation whose thread was
   // never recorded is an entry that can never be resumed.
-  const conversationId =
-    openConversationSafe(config, {
-      command: sessionConfig.mode,
-      project: getProjectDir(),
-      model: config.modelDisplayName,
-      threadId: checkpointer.threadId,
-    }) ?? undefined;
+  //
+  // GS2-20: a resumed session opens NO new row — its turns go on recording under the conversation
+  // it re-entered, which is what makes the resumed conversation one conversation in `history list`
+  // rather than a chain of them. `let`, because `/resume` moves it mid-session and every turn
+  // recorded after that must follow.
+  let conversationId: number | undefined = bootResume
+    ? bootResume.conversationId
+    : (openConversationSafe(config, {
+        command: sessionConfig.mode,
+        project: getProjectDir(),
+        model: config.modelDisplayName,
+        threadId: checkpointer.threadId,
+      }) ?? undefined);
 
   // GS2-20: tell the checkpointer which row to mark unresumable if a checkpoint write fails later.
   // Optional call — a spec that stubs the checkpointer with a plain object has nothing to bind.
@@ -210,13 +276,44 @@ export async function createInteractiveSession(
     await runner.init(sessionConfig.mode, config, checkpointer.saver, {
       threadId: checkpointer.threadId,
     });
+    // GS2-20 — Ruling 3: a grant made at the approval menu is written against the conversation the
+    // moment it lands, so it outlives the process and a resume can install it again. The listener
+    // reads the LIVE `conversationId`, because `/resume` moves it; a grant made after that belongs
+    // to the conversation the session is then in. Nothing to write against ⇒ the bridge no-ops.
+    runner.setSessionGrantsListener(() => {
+      saveConversationGrantsSafe(config, conversationId, runner.getSessionScopedGrants());
+    });
+
     const rl = createInterface({ input, output });
     let shouldExit = false;
     // GS2-8 — the readline surface shares the SAME command registry as the Ink TUI (one source
     // of truth): every registered command parses, appears in /help, and dispatches here too.
     const registry = createCommandRegistry();
     // Committed-turn counter for the /status command (mirrors the TUI's status-bar counter).
-    let turnCount = 0;
+    // GS2-20 — a resumed conversation starts the count where it left off.
+    let turnCount = bootResume?.turns.length ?? 0;
+
+    // GS2-20 — what a resume shows: the banner, then every recorded turn replayed as the person
+    // and the model said it, so the screen holds the conversation the model is continuing. Plain
+    // `display`, not the dialog writers: these are restored transcript lines, not chrome. The
+    // prompt marker is the same one the live loop uses, so a restored turn reads like a live one.
+    const showRestoredConversation = (target: ResumeTarget): void => {
+      printNotice(resumedConversationNotice(target));
+      for (const turn of target.turns) {
+        display(`${formatInputPrompt('  > ')}${turn.prompt ?? ''}`);
+        if (turn.response) display(turn.response);
+        display('');
+      }
+    };
+
+    // GS2-20 — the boot half of `--resume`: the SAME apply call `/resume` makes below, after
+    // `runner.init` has built the graph on a thread of its own. Rotating onto the stored thread
+    // here rather than initialising on it is deliberate: both spellings then go through one seam,
+    // and breaking it breaks both.
+    if (bootResume) {
+      applyResumeTarget({ runner, checkpointer }, bootResume);
+      showRestoredConversation(bootResume);
+    }
 
     // GS2-56 — wire `/debug-dump` on the readline (`--no-tui`) surface too. Previously this surface
     // injected no writer, so `/debug-dump` reported itself "unavailable" here; it now forwards to the
@@ -263,9 +360,11 @@ export async function createInteractiveSession(
     // EXT-9 Tier-2: instead of a bare y/N, offer a scoped choice so the
     // human can stop re-prompting for an operation they trust:
     //   [o]nce        — approve this single invocation only (persists nothing),
-    //   [s]ession     — auto-approve this exact command for the rest of the session,
+    //   [s]ession     — auto-approve this exact command for the rest of the CONVERSATION (GS2-20:
+    //                   it is kept with the conversation and comes back on a resume; the key and
+    //                   its label stay `session`, which is the name the store gives the scope),
     //   [a]lways      — additionally persist it to the project allow-list,
-    //   [d]eny always — refuse it AND record a deny entry for the rest of the session,
+    //   [d]eny always — refuse it AND record a deny entry, for the conversation or the project,
     //   anything else → reject this one call (fail-closed, and it stays the fallthrough).
     // The runner consults the allow-list BEFORE calling this, so trusted commands never reach
     // this prompt at all. (The Ink TUI surfaces the same scoped prompt via an approval bridge —
@@ -369,8 +468,11 @@ export async function createInteractiveSession(
       // core's, the single chokepoint for every surface, and this must not start deciding
       // persistence for itself.
       if (sticky && (answer === 's' || answer === 'session')) {
+        // GS2-20 — the conversation, not the process: the grant is recorded against the
+        // conversation and is in force again when it is resumed.
         displayDialogLine(
-          'Approved — this exact command will not ask again this session.',
+          'Approved — this exact command will not ask again in this conversation, even if you ' +
+            'resume it later.',
           'notice'
         );
         return { type: 'approve', scope: 'session' };
@@ -583,20 +685,6 @@ export async function createInteractiveSession(
       turnCount += 1; // GS2-8 — feeds the /status turn counter
     };
 
-    // GS2-8 — render a structured command notice on the plain-text surface: tone-matched title,
-    // then the body lines indented under it.
-    //
-    // [[EXT-165]] — through `displayNotice`, which writes the WHOLE notice to one stream. Rendered
-    // line by line through the ordinary helpers, the title took its stream from its colour while
-    // the body took another, so a redirected session kept one half and discarded the other; and
-    // because the two halves were filtered at different levels, a quieted console showed a title
-    // with no body under it (or, at `display` level, a body with no title over it). The tone is
-    // passed through rather than turned into a helper choice here — that mapping is what coupled
-    // colour to stream.
-    const printNotice = (notice: SlashCommandNotice) => {
-      displayNotice(notice.title, notice.lines, { tone: notice.tone ?? 'info' });
-    };
-
     const endSession = async () => {
       display('Exiting...');
       shouldExit = true;
@@ -628,6 +716,9 @@ export async function createInteractiveSession(
             mode: sessionConfig.mode,
             modelDisplayName: config.modelDisplayName ?? '',
             turnCount,
+            // GS2-20 — the id `/status` names and `gth history resume` takes; live, so it follows
+            // a mid-session `/resume`.
+            conversationId,
             // No tool-detail panels or debug pane exist on this surface; their commands degrade
             // below rather than vanishing from the catalog.
             toolsExpanded: false,
@@ -696,6 +787,36 @@ export async function createInteractiveSession(
               printNotice(compactionNotice(outcome, result.compact.focus));
             } catch (err) {
               printNotice(compactionFailedNotice(err instanceof Error ? err.message : String(err)));
+            }
+          } else if (result.resume) {
+            // GS2-20 — `/resume [<id>]`: the mid-session spelling of `--resume`, through the SAME
+            // two seam calls the boot path makes above. Bare, it lists what could be resumed —
+            // every resumable conversation except this one. With an id it resolves (the five
+            // checks, each with its own sentence), applies, moves the recorder onto the resumed
+            // conversation, and shows the banner and the restored turns. The conversation being
+            // left keeps everything recorded under it; nothing is deleted by moving away.
+            const { id } = result.resume;
+            if (id === undefined) {
+              printNotice(resumePickerNotice(listResumeCandidates(config, conversationId)));
+            } else if (id === conversationId) {
+              printNotice(resumeSameConversationNotice(id));
+            } else {
+              const resolution = await resolveResumeTarget(
+                { config, checkpointer, workspace: getProjectDir() },
+                id
+              );
+              if (!resolution.ok) {
+                printNotice(resumeRefusalNotice(resolution.refusal, { inSession: true }));
+              } else {
+                try {
+                  applyResumeTarget({ runner, checkpointer }, resolution.target);
+                  conversationId = resolution.target.conversationId;
+                  turnCount = resolution.target.turns.length;
+                  showRestoredConversation(resolution.target);
+                } catch (err) {
+                  printNotice(resumeFailedNotice(err instanceof Error ? err.message : String(err)));
+                }
+              }
             }
           } else if (
             result.clearTranscript ||

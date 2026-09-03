@@ -8,7 +8,13 @@ import { CommandNotice } from '#src/tui/components/CommandNotice.js';
 import { terminationNotice } from '@gaunt-sloth/core/core/terminationNotice.js';
 import { ApprovalStopMessage } from '#src/tui/components/ApprovalStopMessage.js';
 import { ApprovalRequestPanel } from '#src/tui/components/ApprovalRequestPanel.js';
-import { transcriptWindowEnd, transcriptWindowStart } from '#src/tui/transcriptWindow.js';
+import {
+  opensTurn,
+  RESTORED_MARKER,
+  transcriptWindowEnd,
+  transcriptWindowStart,
+} from '#src/tui/transcriptWindow.js';
+import { renderMarkdown } from '#src/tui/markdown.js';
 import type { TranscriptScroll } from '#src/tui/transcriptScroll.js';
 import type { TranscriptGeometry } from '#src/tui/useTranscriptScroll.js';
 
@@ -94,8 +100,8 @@ export function TranscriptViewport({
   children?: React.ReactNode;
 }): React.ReactElement {
   // Index of the first 'user' item; the separator above it is suppressed so the transcript does
-  // not open with a stray rule.
-  const firstUserIndex = items.findIndex((i) => i.kind === 'user');
+  // not open with a stray rule. A restored turn (GS2-20) opens a turn the way a user line does.
+  const firstUserIndex = items.findIndex((i) => opensTurn(i));
   // Block numbering: transcript items keep their own index, and the tail block — the intro chrome
   // and the streaming turn — is the one past the end. One numbering for both is what lets the
   // reader scroll into a streaming turn rather than past it in a single jump.
@@ -155,7 +161,7 @@ export function TranscriptViewport({
       toolsExpanded={toolsExpanded}
       columns={columns}
       geometry={geometry}
-      separator={items[index].kind === 'user' && index !== firstUserIndex}
+      separator={opensTurn(items[index]) && index !== firstUserIndex}
       leadingBlank={index !== 0}
     />
   );
@@ -268,6 +274,23 @@ function renderItem(
         <Box>
           <Text color="green">{'You › '}</Text>
           <Text>{item.text}</Text>
+        </Box>
+      );
+    case 'restored':
+      // GS2-20 — a turn replayed from the history store when the conversation was resumed. The
+      // prompt line reads like a live one, marked so the person can tell replay from what they
+      // typed in this process; the response renders through the same markdown pass a committed
+      // turn gets, and `estimateItemRows` measures it the same way.
+      return (
+        <Box flexDirection="column">
+          <Box>
+            <Text color="green">{'You › '}</Text>
+            <Text>{item.prompt}</Text>
+            <Text dimColor>{RESTORED_MARKER}</Text>
+          </Box>
+          {item.response.length > 0 ? (
+            <Text>{renderMarkdown(item.response, { columns })}</Text>
+          ) : null}
         </Box>
       );
     case 'assistant':

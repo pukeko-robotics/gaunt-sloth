@@ -59,6 +59,22 @@ function lineRows(line: string, columns: number): number {
 }
 
 /** Rows a string occupies inside ONE `<Text>`: newlines split rows, a trailing one does not. */
+/**
+ * GS2-20 — the dim tag on a restored prompt line, so replay from the history store reads apart
+ * from what was typed in this process. One constant, because the viewport paints it and the row
+ * estimate below measures it, and the two must agree to the character.
+ */
+export const RESTORED_MARKER = '  (restored)';
+
+/**
+ * Whether an item opens a turn — a user line, or a restored turn (GS2-20), which begins with one.
+ * The dim rule the viewport draws above each turn after the first is keyed on this, in the
+ * renderer and in the two window estimates alike.
+ */
+export function opensTurn(item: TranscriptItem): boolean {
+  return item.kind === 'user' || item.kind === 'restored';
+}
+
 function textRows(text: string, columns: number): number {
   return text
     .replace(/\n+$/, '')
@@ -187,6 +203,14 @@ export function estimateItemRows(
       // The prompt marker and the text share one row Box, so they wrap as one run of text.
       rows += textRows(`You › ${item.text}`, columns);
       break;
+    case 'restored':
+      // GS2-20 — the prompt row with its marker, then the response measured from the RENDERED
+      // markdown exactly as a committed turn's text is (see `turnRows`).
+      rows += textRows(`You › ${item.prompt}${RESTORED_MARKER}`, columns);
+      if (item.response.length > 0) {
+        rows += textRows(renderMarkdown(item.response, { columns }), columns);
+      }
+      break;
     case 'assistant':
       rows += turnRows(item.turn, options.toolsExpanded, columns);
       break;
@@ -270,7 +294,7 @@ export function transcriptWindowStart(
 ): number {
   if (items.length === 0) return 0;
   const budget = Math.max(1, budgetRows);
-  const firstUserIndex = items.findIndex((i) => i.kind === 'user');
+  const firstUserIndex = items.findIndex((i) => opensTurn(i));
   let rows = 0;
   let start = Math.min(items.length, Math.max(0, bottomIndex + 1));
   while (start > 0 && rows < budget) {
@@ -278,7 +302,7 @@ export function transcriptWindowStart(
     rows += estimateItemRows(items[start], {
       columns,
       toolsExpanded,
-      separator: items[start].kind === 'user' && start !== firstUserIndex,
+      separator: opensTurn(items[start]) && start !== firstUserIndex,
       leadingBlank: start !== 0,
     });
   }
@@ -308,7 +332,7 @@ export function transcriptWindowEnd(
 ): number {
   if (items.length === 0) return -1;
   const budget = Math.max(1, budgetRows);
-  const firstUserIndex = items.findIndex((i) => i.kind === 'user');
+  const firstUserIndex = items.findIndex((i) => opensTurn(i));
   let rows = 0;
   let end = Math.max(-1, Math.min(items.length - 1, bottomIndex));
   while (end < items.length - 1 && rows < budget) {
@@ -316,7 +340,7 @@ export function transcriptWindowEnd(
     rows += estimateItemRows(items[end], {
       columns,
       toolsExpanded,
-      separator: items[end].kind === 'user' && end !== firstUserIndex,
+      separator: opensTurn(items[end]) && end !== firstUserIndex,
       leadingBlank: end !== 0,
     });
   }

@@ -13,6 +13,7 @@ import { apiCommand } from '#src/commands/apiCommand.js';
 import { getCommand } from '#src/commands/getCommand.js';
 import { configCommand } from '#src/commands/configCommand.js';
 import { historyCommand } from '#src/commands/historyCommand.js';
+import { resumeOption } from '#src/commands/resumeOption.js';
 import { insightsCommand } from '#src/commands/insightsCommand.js';
 import { modelsCommand } from '#src/commands/modelsCommand.js';
 import { argv, exit, getSlothVersion, readStdin } from '@gaunt-sloth/core/utils/systemUtils.js';
@@ -59,6 +60,9 @@ program
       '(overrides GTH_NO_TUI, the tui config key and CI auto-off)'
   )
   .option('--no-tui', 'Force the plain readline session for chat/code (disable the TUI)')
+  // GS2-20 — on the root so the bare `gth` (a code session) can resume too; `chat` and `code`
+  // carry the same option themselves.
+  .addOption(resumeOption())
   .addOption(new Option('--nopipe').hideHelp(true))
   .addOption(new Option('--no-pipe').hideHelp(true));
 
@@ -139,7 +143,9 @@ getCommand(program, cliConfigOverrides);
 configCommand(program, cliConfigOverrides);
 // GS2-7 (B20) — read-only, local history/insights surfaces. They resolve their own DB path (global
 // default or --db) and do not build the LLM, so they stay decoupled from config/provider setup.
-historyCommand(program);
+// GS2-20 — `history resume <id>` is the exception: it starts a session, so it takes the overrides
+// the session commands take.
+historyCommand(program, cliConfigOverrides);
 insightsCommand(program);
 // GS2-6 (B16) — model catalog: lists providers/models enriched with models.dev cost/limit metadata.
 // Read-only; enrichment never gates what `/v1/models` reports as callable.

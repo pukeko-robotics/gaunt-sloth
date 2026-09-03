@@ -25,6 +25,8 @@ import type { GthTerminationReason } from '@gaunt-sloth/core/core/terminationRea
 import type { LiveNegotiationRound } from '@gaunt-sloth/core/core/shell/negotiation.js';
 import type { CommandNoticeTone } from '#src/tui/components/CommandNotice.js';
 import type { DebugDumpInput } from '@gaunt-sloth/agent/modules/slashCommands.js';
+import type { ResumeResolution, ResumeTarget } from '@gaunt-sloth/agent/modules/sessionResume.js';
+import type { ConversationSummary } from '@gaunt-sloth/core/history/historyStore.js';
 import type { MouseSubscribe } from '#src/tui/useMouse.js';
 
 /**
@@ -157,6 +159,16 @@ export interface TuiAgent {
    * says compaction is unavailable rather than pretending.
    */
   compactConversation?(input: { focus?: string }): Promise<ConversationCompaction>;
+  /**
+   * GS2-20 — re-enter a stored conversation: the session module resolves and applies it through
+   * the one seam `--resume <id>` also uses (`sessionResume.ts`), moves its own recorder onto the
+   * resumed conversation, and returns what was decided — the target, or the refusal with its
+   * reason — so the App can only ever describe what actually happened. Wired to `/resume <id>`.
+   *
+   * Optional so an agent with no conversation store behind it may omit it, in which case the App
+   * says resume is unavailable rather than pretending.
+   */
+  resumeConversation?(id: number): Promise<ResumeResolution>;
 }
 
 /**
@@ -175,6 +187,12 @@ export type TuiDebugCapture =
 export type TranscriptItem =
   | { kind: 'user'; id: number; text: string }
   | { kind: 'assistant'; id: number; turn: TurnViewModel }
+  // GS2-20 — one turn of a RESUMED conversation, replayed from the history store: the prompt as
+  // the person typed it and the response as the model gave it, marked as restored. Its own kind
+  // rather than a `user` + `assistant` pair, because a stored turn has no event stream behind it
+  // — no tool calls, no reasoning, no view model — and pretending otherwise would give
+  // `/reasoning` and the tool panels turns they cannot open.
+  | { kind: 'restored'; id: number; prompt: string; response: string }
   | { kind: 'system'; id: number; level: string; text: string }
   // A structured command-feedback notice (TUI-C14), rendered via <CommandNotice>: a coloured
   // title that states WHAT happened plus body lines explaining HOW it affects the user.
@@ -278,6 +296,25 @@ export interface TuiAppProps {
   historySummary?: string[];
   insightsSummary?: string[];
   historySearch?: (query: string) => string[];
+  /**
+   * GS2-20 — the conversation this session records under at mount, as `gth history list` numbers
+   * it, so `/status` can name it from the first frame. The App tracks it after that, because
+   * `/resume` moves it. Absent when nothing is being recorded.
+   */
+  conversationId?: number;
+  /**
+   * GS2-20 — the conversations a bare `/resume` offers, read LIVE at dispatch (so a session that
+   * has moved conversations is not offered the one it is now in). Injected the way
+   * `historySearch` is, so the App never touches the store. Absent where there is no store, in
+   * which case `/resume` reports itself unavailable.
+   */
+  listResumeCandidates?: () => ConversationSummary[];
+  /**
+   * GS2-20 — a session started with `--resume <id>`: the resolved conversation, whose banner and
+   * recorded turns seed the transcript so the first frame shows what the model is continuing
+   * rather than the greeting for a new session.
+   */
+  resumed?: ResumeTarget;
   /**
    * GS2-46 — the resolved config (the live `GthConfig`), for `/debug-dump`. Kept `unknown` here
    * (this component never inspects it — it just forwards it into `dumpDebugSession`) so the TUI
