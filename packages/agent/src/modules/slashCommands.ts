@@ -1292,7 +1292,10 @@ const plural = (n: number, noun: string): string => `${n} ${noun}${n === 1 ? '' 
  * only mentioned the model would leave them expecting lines to vanish. The size is a message count
  * and a character estimate; tokens are not counted here.
  */
-export function compactionNotice(outcome: ConversationCompaction, focus?: string): SlashCommandNotice {
+export function compactionNotice(
+  outcome: ConversationCompaction,
+  focus?: string
+): SlashCommandNotice {
   if (!outcome.changed) {
     return {
       title: 'Nothing to compact',
@@ -1325,10 +1328,7 @@ export function compactionNotice(outcome: ConversationCompaction, focus?: string
 export function compactionUnavailableNotice(): SlashCommandNotice {
   return {
     title: 'Compaction unavailable',
-    lines: [
-      'This session has no model conversation to compact.',
-      'Nothing was changed.',
-    ],
+    lines: ['This session has no model conversation to compact.', 'Nothing was changed.'],
     tone: 'warn',
   };
 }

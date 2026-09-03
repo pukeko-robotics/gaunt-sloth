@@ -275,7 +275,11 @@ function contentText(content: unknown): string {
   return content
     .map((block) => {
       if (typeof block === 'string') return block;
-      if (block && typeof block === 'object' && typeof (block as { text?: unknown }).text === 'string') {
+      if (
+        block &&
+        typeof block === 'object' &&
+        typeof (block as { text?: unknown }).text === 'string'
+      ) {
         return (block as { text: string }).text;
       }
       return '';
@@ -289,7 +293,8 @@ function contentText(content: unknown): string {
  * binds; a caller with a cheaper model for summaries binds that instead.
  */
 export function createModelSummarizer(model: SummarizingModel): ConversationSummarizer {
-  return async (span, focus) => contentText((await model.invoke(buildCompactionPrompt(span, focus))).content);
+  return async (span, focus) =>
+    contentText((await model.invoke(buildCompactionPrompt(span, focus))).content);
 }
 
 /** A message-count and character-based size of a conversation — an estimate, never tokens. */

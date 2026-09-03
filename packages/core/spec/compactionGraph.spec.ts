@@ -20,7 +20,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AIMessage, HumanMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages';
+import {
+  AIMessage,
+  HumanMessage,
+  SystemMessage,
+  ToolMessage,
+  type BaseMessage,
+} from '@langchain/core/messages';
 import { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { MemorySaver } from '@langchain/langgraph';
 import { tool } from '@langchain/core/tools';
@@ -136,7 +142,16 @@ describe('GS2-23 — durability: the compacted list is what a fresh graph over t
     }
     const before = (await graph.getState(cfg)).values.messages as BaseMessage[];
     expect(typesOf(before)).toEqual([
-      'human', 'ai', 'human', 'ai', 'tool', 'ai', 'human', 'ai', 'human', 'ai',
+      'human',
+      'ai',
+      'human',
+      'ai',
+      'tool',
+      'ai',
+      'human',
+      'ai',
+      'human',
+      'ai',
     ]);
 
     const out = await compactMessages({
@@ -246,11 +261,18 @@ describe('GS2-23 — GthAgentRunner.compactConversation, measured at lastModelRe
     const sizeAfter = conversationSize(requestAfter);
     expect(sizeAfter.messages).toBeLessThan(sizeBefore.messages);
     expect(sizeAfter.characters).toBeLessThan(sizeBefore.characters);
-    // Its shape: the system prompt, the summary, the kept tail, then the new turn.
-    expect(requestAfter[0].getType()).toBe('system');
-    expect(isCompactionSummary(requestAfter[1])).toBe(true);
+    // Its shape: any system prompt, then the summary, the kept tail, then the new turn. (This
+    // config carries no mode prompt, so the lean agent sends no system message at all — which is
+    // itself the measured fact behind invariant (b): the system prompt is never in the state.)
+    const firstConversation = requestAfter.findIndex((m) => !SystemMessage.isInstance(m));
+    expect(isCompactionSummary(requestAfter[firstConversation])).toBe(true);
+    expect(requestAfter.slice(0, firstConversation).every((m) => SystemMessage.isInstance(m))).toBe(
+      true
+    );
     expect(requestAfter[requestAfter.length - 1].content).toBe('six');
-    expect(requestAfter.some((m) => typeof m.content === 'string' && m.content.startsWith('one '))).toBe(false);
+    expect(
+      requestAfter.some((m) => typeof m.content === 'string' && m.content.startsWith('one '))
+    ).toBe(false);
 
     await runner.cleanup();
   });
@@ -273,7 +295,9 @@ describe('GS2-23 — GthAgentRunner.compactConversation, measured at lastModelRe
     await turn(compacted, 'two');
     await turn(control, 'two');
     expect(typesOf(lastRequest(compacted))).toEqual(typesOf(lastRequest(control)));
-    expect(conversationSize(lastRequest(compacted))).toEqual(conversationSize(lastRequest(control)));
+    expect(conversationSize(lastRequest(compacted))).toEqual(
+      conversationSize(lastRequest(control))
+    );
 
     await compacted.cleanup();
     await control.cleanup();
@@ -308,6 +332,8 @@ describe('GS2-23 — GthAgentRunner.compactConversation, measured at lastModelRe
     };
     const runner = new GthAgentRunner(vi.fn(), undefined, () => stateless);
     await runner.init('chat', { ...BASE_CONFIG, llm: new ScriptedModel() } as unknown as GthConfig);
-    await expect(runner.compactConversation()).rejects.toThrow(/does not expose its conversation state/);
+    await expect(runner.compactConversation()).rejects.toThrow(
+      /does not expose its conversation state/
+    );
   });
 });

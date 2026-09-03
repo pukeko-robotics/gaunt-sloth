@@ -695,9 +695,7 @@ export async function createInteractiveSession(
               const outcome = await runner.compactConversation(result.compact);
               printNotice(compactionNotice(outcome, result.compact.focus));
             } catch (err) {
-              printNotice(
-                compactionFailedNotice(err instanceof Error ? err.message : String(err))
-              );
+              printNotice(compactionFailedNotice(err instanceof Error ? err.message : String(err)));
             }
           } else if (
             result.clearTranscript ||

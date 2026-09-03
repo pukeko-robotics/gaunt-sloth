@@ -3531,7 +3531,9 @@ export class GthAgentRunner {
     }
     const agent = this.agent;
     if (!agent.getConversationMessages || !agent.replaceConversationMessages) {
-      throw new Error('This agent does not expose its conversation state, so it cannot be compacted.');
+      throw new Error(
+        'This agent does not expose its conversation state, so it cannot be compacted.'
+      );
     }
     const runConfig = this.runConfig;
     const keepRecent = options.keepRecent ?? DEFAULT_KEEP_RECENT;

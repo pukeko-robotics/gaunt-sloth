@@ -192,7 +192,9 @@ describe('GS2-23 compactMessages — invariant (b): the system prompt survives, 
     expect(SystemMessage.isInstance(summary)).toBe(false);
     expect(summary.additional_kwargs.lc_source).toBe(COMPACTION_SUMMARY_SOURCE);
     expect(isCompactionSummary(summary)).toBe(true);
-    expect(String(summary.content)).toBe(`${COMPACTION_SUMMARY_PREFIX}\n\nSUMMARY OF THE OLDER TURNS`);
+    expect(String(summary.content)).toBe(
+      `${COMPACTION_SUMMARY_PREFIX}\n\nSUMMARY OF THE OLDER TURNS`
+    );
     // No system message anywhere but the head.
     expect(out.messages.slice(1).some((m) => SystemMessage.isInstance(m))).toBe(false);
   });
@@ -336,7 +338,10 @@ describe('GS2-23 compactMessages — the rest of the contract', () => {
     expect(buildCompactionPrompt(span)).not.toContain('<focus>');
 
     const invoke = vi.fn(async (_input: string) => ({
-      content: [{ type: 'text', text: 'first ' }, { type: 'text', text: 'second' }],
+      content: [
+        { type: 'text', text: 'first ' },
+        { type: 'text', text: 'second' },
+      ],
     }));
     const summarizer = createModelSummarizer({ invoke });
     expect(await summarizer(span, 'file names')).toBe('first second');
@@ -344,7 +349,11 @@ describe('GS2-23 compactMessages — the rest of the contract', () => {
   });
 
   it('conversationSize counts text, tool-call arguments and tool results, never tokens', () => {
-    const size = conversationSize([h('12345'), aiCalling({ id: 'c1', args: { path: 'a' } }), result('c1', 'xyz')]);
+    const size = conversationSize([
+      h('12345'),
+      aiCalling({ id: 'c1', args: { path: 'a' } }),
+      result('c1', 'xyz'),
+    ]);
     expect(size.messages).toBe(3);
     // 5 (text) + 'read_file' (9) + '{"path":"a"}' (12) + 3 (result).
     expect(size.characters).toBe(5 + 9 + 12 + 3);
@@ -378,7 +387,10 @@ async function loadProviderModule<T>(pkg: string, relativeFromDist: string): Pro
 
 type AnthropicPayload = {
   system: unknown;
-  messages: { role: string; content: string | { type: string; id?: string; tool_use_id?: string }[] }[];
+  messages: {
+    role: string;
+    content: string | { type: string; id?: string; tool_use_id?: string }[];
+  }[];
 };
 type GeminiContent = {
   role: string;
@@ -392,7 +404,9 @@ type GeminiContent = {
  */
 const geminiCalling = (id: string) =>
   new AIMessage({
-    content: [{ type: 'functionCall', functionCall: { name: 'read_file', args: { path: `${id}.txt` } } }],
+    content: [
+      { type: 'functionCall', functionCall: { name: 'read_file', args: { path: `${id}.txt` } } },
+    ],
     tool_calls: [{ id, name: 'read_file', args: { path: `${id}.txt` } }],
   });
 
@@ -461,13 +475,19 @@ describe('GS2-23 compactMessages — the compacted shape through the real provid
     );
     // CONTROL 2 — a split pair reaches the wire as a tool_result with no tool_use before it, which
     // the check above would catch: the assertion can fail.
-    const split = messages.filter((m) => !(AIMessage.isInstance(m) && (m.tool_calls?.length ?? 0) > 0));
+    const split = messages.filter(
+      (m) => !(AIMessage.isInstance(m) && (m.tool_calls?.length ?? 0) > 0)
+    );
     const splitPayload = _convertMessagesToAnthropicPayload(split);
     const orphan = splitPayload.messages.some(
       (m) => typeof m.content !== 'string' && m.content.some((b) => b.type === 'tool_result')
     );
     expect(orphan).toBe(true);
-    expect(splitPayload.messages.some((m) => typeof m.content !== 'string' && m.content.some((b) => b.type === 'tool_use'))).toBe(false);
+    expect(
+      splitPayload.messages.some(
+        (m) => typeof m.content !== 'string' && m.content.some((b) => b.type === 'tool_use')
+      )
+    ).toBe(false);
   });
 
   it('Gemini: roles alternate after the converter merges the adjacent user turns, function pairs intact', async () => {
@@ -490,7 +510,8 @@ describe('GS2-23 compactMessages — the compacted shape through the real provid
     // user content, so the roles strictly alternate on the wire.
     expect(contents[0].role).toBe('user');
     expect(contents[0].parts.some((p) => p.text?.includes(COMPACTION_SUMMARY_PREFIX))).toBe(true);
-    for (let i = 1; i < contents.length; i++) expect(contents[i].role).not.toBe(contents[i - 1].role);
+    for (let i = 1; i < contents.length; i++)
+      expect(contents[i].role).not.toBe(contents[i - 1].role);
     // Every functionResponse follows a functionCall of the same name.
     const calls: string[] = [];
     for (const content of contents) {
@@ -502,7 +523,9 @@ describe('GS2-23 compactMessages — the compacted shape through the real provid
     expect(contents[contents.length - 1].role).toBe('user');
 
     // CONTROL — a split pair is a hard error in this converter: the tool result's call is gone.
-    const split = messages.filter((m) => !(AIMessage.isInstance(m) && (m.tool_calls?.length ?? 0) > 0));
+    const split = messages.filter(
+      (m) => !(AIMessage.isInstance(m) && (m.tool_calls?.length ?? 0) > 0)
+    );
     expect(() => convertMessagesToGeminiContents(split)).toThrow();
   });
 });

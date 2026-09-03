@@ -65,9 +65,14 @@ describe('GS2-23 /compact — registry', () => {
   });
 
   it('is refused while a turn is running, like /clear', () => {
-    const result = dispatchSlashCommand(parseSlashCommand('/compact')!, createCommandRegistry(), ctx, {
-      duringRun: true,
-    });
+    const result = dispatchSlashCommand(
+      parseSlashCommand('/compact')!,
+      createCommandRegistry(),
+      ctx,
+      {
+        duringRun: true,
+      }
+    );
     expect(result.compact).toBeUndefined();
     expect(result.notice?.title).toBe('/compact is not available while the agent is working');
   });
