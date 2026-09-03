@@ -8,8 +8,10 @@
  * the file, if the fingerprint changed.
  *
  * It never opens the database. It reads bytes, hashes them, and compares — nothing else — so it
- * cannot itself be the writer it guards against. When the file is absent it does nothing. Node's
- * own modules only, so it loads before any workspace package is built.
+ * cannot itself be the writer it guards against. A file that is absent at setup is fingerprinted as
+ * absent, so a spec that CREATES it — the shape on a fresh machine or in CI, where nothing existed to
+ * be modified — fails the run the same way. Node's own modules only, so it loads before any
+ * workspace package is built.
  */
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
@@ -29,7 +31,8 @@ function fingerprint(file) {
 let before = null;
 
 export function setup() {
-  before = existsSync(dbPath) ? watched.map(fingerprint) : null;
+  // Unconditional: 'absent' is a fingerprint too, so absent → present is a change.
+  before = watched.map(fingerprint);
 }
 
 export function teardown() {
