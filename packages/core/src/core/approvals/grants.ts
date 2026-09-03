@@ -467,7 +467,15 @@ function readAnnotationSnapshot(value: unknown): EffectiveToolAnnotations | null
  * discarding a real grant over a missing timestamp would cost an approval the human already gave.
  * The annotation snapshot is the exception ({@link readAnnotationSnapshot}), because it decides.
  */
-function readGrant(value: unknown, fallbackTime: string): ApprovalGrant | null {
+/**
+ * Read one stored grant, or `null` when the value is not one: no readable entry, or an annotation
+ * snapshot that is present and malformed (see {@link readAnnotationSnapshot}).
+ *
+ * Exported because the conversation-grants document a resume restores
+ * (`core/approvals/conversationGrants.ts`) stores grants in this same shape, and one reader for
+ * both files is what keeps the two from accepting different things.
+ */
+export function readGrant(value: unknown, fallbackTime: string): ApprovalGrant | null {
   if (!value || typeof value !== 'object') return null;
   const record = value as {
     entry?: unknown;

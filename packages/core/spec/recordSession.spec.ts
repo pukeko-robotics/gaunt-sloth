@@ -4,9 +4,13 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
+  listResumableConversationsSafe,
+  lookupConversationSafe,
   lookupConversationThreadSafe,
   openConversationSafe,
+  readConversationGrantsSafe,
   recordSessionSafe,
+  writeConversationGrantsSafe,
 } from '#src/history/recordSession.js';
 import { openHistoryStore } from '#src/history/historyStore.js';
 
@@ -226,5 +230,101 @@ describe('history: the conversation-to-thread link', () => {
     const fresh = migrated.openConversation({ command: 'chat', threadId: 'thread-after-migrate' })!;
     expect(migrated.getConversationThreadId(fresh)).toBe('thread-after-migrate');
     migrated.close();
+  });
+});
+
+/**
+ * GS2-20 — the reads a resume makes through the bridge: the conversation row and its turns, the
+ * picker's candidates, and the grants document. All governed by the one switch, all fail-soft.
+ */
+describe('history/recordSession — resume lookups', () => {
+  let dir: string;
+  let dbPath: string;
+  beforeEach(() => {
+    dir = mkdtempSync(resolve(tmpdir(), 'gsloth-resume-lookup-'));
+    dbPath = resolve(dir, 'history.db');
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const seed = () => {
+    const config = { history: { dbPath } };
+    const resumable = openConversationSafe(config, {
+      command: 'code',
+      project: '/proj/a',
+      model: 'm',
+      threadId: 'thread-a',
+    })!;
+    recordSessionSafe(config, { conversationId: resumable, prompt: 'first', response: 'one' });
+    recordSessionSafe(config, { conversationId: resumable, prompt: 'second', response: 'two' });
+    // A single-shot run: a 1-turn conversation with no thread.
+    recordSessionSafe(config, { command: 'ask', prompt: 'ask-only', response: 'r' });
+    // A session that opened and exited without an exchange: a thread and zero turns.
+    const empty = openConversationSafe(config, { command: 'chat', threadId: 'thread-empty' })!;
+    return { config, resumable, empty };
+  };
+
+  it('lookupConversationSafe returns the row and its turns oldest-first, or null for an unknown id', () => {
+    const { config, resumable, empty } = seed();
+    const found = lookupConversationSafe(config, resumable)!;
+    expect(found.summary.id).toBe(resumable);
+    expect(found.summary.project).toBe('/proj/a');
+    expect(found.summary.command).toBe('code');
+    expect(found.summary.threadId).toBe('thread-a');
+    expect(found.summary.turnCount).toBe(2);
+    expect(found.turns.map((t) => t.prompt)).toEqual(['first', 'second']);
+    // The empty one is FOUND (so it can be refused for its real reason), with no turns.
+    expect(lookupConversationSafe(config, empty)!.turns).toEqual([]);
+    expect(lookupConversationSafe(config, empty + 1000)).toBeNull();
+    expect(lookupConversationSafe(config, 0)).toBeNull();
+  });
+
+  it('listResumableConversationsSafe offers only threaded conversations, newest first, minus the excluded one', () => {
+    const { config, resumable } = seed();
+    const second = openConversationSafe(config, { command: 'chat', threadId: 'thread-b' })!;
+    recordSessionSafe(config, { conversationId: second, prompt: 'b1', response: 'r' });
+
+    const all = listResumableConversationsSafe(config);
+    // The single-shot `ask` (no thread) and the empty conversation (no turns) are not offered.
+    expect(all.map((c) => c.id)).toEqual([second, resumable]);
+    expect(all.every((c) => c.threadId !== undefined)).toBe(true);
+    // The conversation the session is already in is left out.
+    expect(listResumableConversationsSafe(config, { exclude: second }).map((c) => c.id)).toEqual([
+      resumable,
+    ]);
+    expect(listResumableConversationsSafe(config, { limit: 1 }).map((c) => c.id)).toEqual([second]);
+  });
+
+  it('reads and writes the grants document against one conversation', () => {
+    const { config, resumable, empty } = seed();
+    expect(readConversationGrantsSafe(config, resumable)).toBeNull();
+    expect(writeConversationGrantsSafe(config, resumable, '{"version":1}')).toBe(true);
+    expect(readConversationGrantsSafe(config, resumable)).toBe('{"version":1}');
+    // Written against THAT conversation only.
+    expect(readConversationGrantsSafe(config, empty)).toBeNull();
+    expect(writeConversationGrantsSafe(config, resumable, null)).toBe(true);
+    expect(readConversationGrantsSafe(config, resumable)).toBeNull();
+  });
+
+  it('answers nothing, offers nothing and writes nothing when history.enabled is false', () => {
+    const { resumable } = seed();
+    const off = { history: { enabled: false, dbPath } };
+    expect(lookupConversationSafe(off, resumable)).toBeNull();
+    expect(listResumableConversationsSafe(off)).toEqual([]);
+    expect(writeConversationGrantsSafe(off, resumable, '{"version":1}')).toBe(false);
+    expect(readConversationGrantsSafe(off, resumable)).toBeNull();
+    // The control: the same row, read with the switch on, is there and unchanged.
+    expect(readConversationGrantsSafe({ history: { dbPath } }, resumable)).toBeNull();
+    expect(lookupConversationSafe({ history: { dbPath } }, resumable)).not.toBeNull();
+  });
+
+  it('answers nothing when there is no store to open, and creates none', () => {
+    const missing = { history: { dbPath: resolve(dir, 'never-created.db') } };
+    expect(lookupConversationSafe(missing, 1)).toBeNull();
+    expect(listResumableConversationsSafe(missing)).toEqual([]);
+    expect(readConversationGrantsSafe(missing, 1)).toBeNull();
+    expect(writeConversationGrantsSafe(missing, 1, '{}')).toBe(false);
+    expect(existsSync(missing.history.dbPath)).toBe(false);
   });
 });

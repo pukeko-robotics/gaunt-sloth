@@ -9,7 +9,11 @@
  * - with history on, a DB problem (locked/corrupt/read-only fs) can never abort or alter
  *   the run: the worst case is that one session isn't recorded.
  */
-import type { ConversationMeta, SessionRecord } from '#src/history/historyStore.js';
+import type {
+  ConversationMeta,
+  ConversationSummary,
+  SessionRecord,
+} from '#src/history/historyStore.js';
 import { openHistoryStore, resolveHistoryDbPath } from '#src/history/historyStore.js';
 import { isHistoryEnabled } from '#src/history/historyEnabled.js';
 
@@ -127,5 +131,124 @@ export function lookupConversationThreadSafe(
     }
   } catch {
     return null;
+  }
+}
+
+/** GS2-20 — what a resume needs to know about a stored conversation before re-entering it. */
+export interface StoredConversation {
+  /** The listing row: when it started, which command and model recorded it, its workspace. */
+  summary: ConversationSummary;
+  /** Its recorded turns, oldest first — what the surface replays as restored turns. */
+  turns: SessionRecord[];
+}
+
+/**
+ * GS2-20 — the conversation row and its recorded turns, or `null` when history is off, the store
+ * cannot be opened, or no conversation has that id.
+ *
+ * This is the *display and policy* half of a resume — the workspace the conversation belongs to,
+ * the command it was recorded under, the turns to show — and deliberately not the thread decision:
+ * whether the conversation can be re-entered is answered by {@link lookupConversationThreadSafe},
+ * whose exact-match-never-fallback contract is the one a resume rests on. Fail-soft, never throws.
+ */
+export function lookupConversationSafe(
+  config: HistoryConfigView,
+  conversationId: number
+): StoredConversation | null {
+  try {
+    if (!isHistoryEnabled(config)) return null;
+    const dbPath = resolveHistoryDbPath(config.history?.dbPath);
+    const store = openHistoryStore(dbPath, { create: false });
+    if (!store) return null;
+    try {
+      const summary = store.getConversation(conversationId);
+      if (!summary) return null;
+      return { summary, turns: store.getConversationThread(conversationId) };
+    } finally {
+      store.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * GS2-20 — the conversations a `/resume` picker may offer: the most recent ones that carry a thread
+ * (so a resume could actually re-enter them), minus the one the session is already in. `[]` when
+ * history is off or the store cannot be opened, which the caller renders as "nothing to resume".
+ * Fail-soft, never throws.
+ */
+export function listResumableConversationsSafe(
+  config: HistoryConfigView,
+  options: { limit?: number; exclude?: number } = {}
+): ConversationSummary[] {
+  try {
+    if (!isHistoryEnabled(config)) return [];
+    const dbPath = resolveHistoryDbPath(config.history?.dbPath);
+    const store = openHistoryStore(dbPath, { create: false });
+    if (!store) return [];
+    try {
+      // Over-fetch so the filter below still yields up to `limit` rows when recent conversations
+      // are single-shot runs (no thread) or the excluded one.
+      const limit = options.limit ?? 20;
+      return store
+        .listConversations(limit * 3)
+        .filter((c) => c.threadId !== undefined && c.id !== options.exclude)
+        .slice(0, limit);
+    } finally {
+      store.close();
+    }
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * GS2-20 — the stored approval-grants document of one conversation, as the opaque JSON string the
+ * approvals layer wrote (`core/approvals/conversationGrants.ts` owns the format), or `null` when
+ * there is none. Governed by the same switch as everything else here. Fail-soft, never throws.
+ */
+export function readConversationGrantsSafe(
+  config: HistoryConfigView,
+  conversationId: number
+): string | null {
+  try {
+    if (!isHistoryEnabled(config)) return null;
+    const dbPath = resolveHistoryDbPath(config.history?.dbPath);
+    const store = openHistoryStore(dbPath, { create: false });
+    if (!store) return null;
+    try {
+      return store.getConversationGrants(conversationId);
+    } finally {
+      store.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * GS2-20 — replace one conversation's stored approval-grants document. Called whenever the session's
+ * grants change, so the row always holds the current set and a resume restores exactly what the
+ * conversation had. Returns whether the row was written. Fail-soft, never throws — a grant that
+ * could not be recorded costs one re-prompt after a resume, and must never cost the turn.
+ */
+export function writeConversationGrantsSafe(
+  config: HistoryConfigView,
+  conversationId: number,
+  grantsJson: string | null
+): boolean {
+  try {
+    if (!isHistoryEnabled(config)) return false;
+    const dbPath = resolveHistoryDbPath(config.history?.dbPath);
+    const store = openHistoryStore(dbPath, { create: false });
+    if (!store) return false;
+    try {
+      return store.setConversationGrants(conversationId, grantsJson);
+    } finally {
+      store.close();
+    }
+  } catch {
+    return false;
   }
 }

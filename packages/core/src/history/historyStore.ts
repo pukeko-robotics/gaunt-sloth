@@ -231,7 +231,9 @@ export class HistoryStore {
     //
     // GS2-20 adds `conversations.thread_id` on the same terms: a plain nullable TEXT column, whose
     // definition here matches the ALTER in {@link migrate} exactly, so a DB created fresh and a DB
-    // upgraded in place have identical schemas.
+    // upgraded in place have identical schemas. `conversations.grants` follows the same rule: the
+    // session-scoped approval grants a resume restores, as one opaque JSON document owned by the
+    // approvals layer (`core/approvals/conversationGrants.ts`); this store never reads inside it.
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS conversations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -239,7 +241,8 @@ export class HistoryStore {
         project TEXT,
         command TEXT,
         model TEXT,
-        thread_id TEXT
+        thread_id TEXT,
+        grants TEXT
       );
       CREATE TABLE IF NOT EXISTS sessions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -293,6 +296,11 @@ export class HistoryStore {
       >[];
       if (!conversationCols.some((c) => c.name === 'thread_id')) {
         this.db.exec(`ALTER TABLE conversations ADD COLUMN thread_id TEXT`);
+      }
+      // GS2-20 — the grants a resumed conversation gets back. Nullable for the same reason: a row
+      // written before the column existed simply has no grants to restore, which is the truth.
+      if (!conversationCols.some((c) => c.name === 'grants')) {
+        this.db.exec(`ALTER TABLE conversations ADD COLUMN grants TEXT`);
       }
       const orphans = this.db
         .prepare(
@@ -401,6 +409,83 @@ export class HistoryStore {
       this.db.prepare(`UPDATE conversations SET thread_id = NULL WHERE id = ?`).run(conversationId);
     } catch {
       /* ignore: the session is already degrading; this must not add an error of its own */
+    }
+  }
+
+  /**
+   * GS2-20 — ONE conversation as a listing row, or `null` when there is no such id.
+   *
+   * Unlike {@link listConversations} this keeps a conversation with zero turns: a resume needs to
+   * see the row for a session that opened and exited without an exchange, so it can refuse that id
+   * for the right reason (no state was ever recorded) instead of calling it unknown. Fail-soft.
+   */
+  getConversation(conversationId: number): ConversationSummary | null {
+    try {
+      const r = this.db
+        .prepare(
+          `SELECT c.id AS id, c.started_ts AS started_ts, c.project AS project,
+                  c.command AS command, c.model AS model, c.thread_id AS thread_id,
+                  COUNT(s.id) AS turn_count, MIN(s.ts) AS first_ts, MAX(s.ts) AS last_ts
+             FROM conversations c
+             LEFT JOIN sessions s ON s.conversation_id = c.id
+            WHERE c.id = ?
+            GROUP BY c.id`
+        )
+        .get(conversationId) as Record<string, unknown> | undefined;
+      if (!r || r.id == null) return null;
+      const last = this.db
+        .prepare(
+          `SELECT prompt, response FROM sessions
+            WHERE conversation_id = ? ORDER BY id DESC LIMIT 1`
+        )
+        .get(conversationId) as Record<string, unknown> | undefined;
+      return {
+        id: Number(r.id),
+        startedTs: String(r.started_ts),
+        project: r.project != null ? String(r.project) : undefined,
+        command: r.command != null ? String(r.command) : undefined,
+        model: r.model != null ? String(r.model) : undefined,
+        turnCount: Number(r.turn_count ?? 0),
+        firstTs: r.first_ts != null ? String(r.first_ts) : undefined,
+        lastTs: r.last_ts != null ? String(r.last_ts) : undefined,
+        lastPrompt: last?.prompt != null ? String(last.prompt) : undefined,
+        lastResponse: last?.response != null ? String(last.response) : undefined,
+        threadId: r.thread_id != null && String(r.thread_id).length > 0 ? String(r.thread_id) : undefined,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * GS2-20 — the stored approval-grants document of one conversation, verbatim, or `null` when the
+   * conversation has none (or does not exist). Opaque here: the approvals layer owns the format.
+   */
+  getConversationGrants(conversationId: number): string | null {
+    try {
+      const row = this.db
+        .prepare(`SELECT grants FROM conversations WHERE id = ?`)
+        .get(conversationId) as Record<string, unknown> | undefined;
+      if (!row || row.grants == null) return null;
+      const json = String(row.grants);
+      return json.length > 0 ? json : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * GS2-20 — replace one conversation's stored approval-grants document (`null` clears it). Returns
+   * whether the row was updated; `false` for an unknown id or any SQLite error. Fail-soft.
+   */
+  setConversationGrants(conversationId: number, grantsJson: string | null): boolean {
+    try {
+      const info = this.db
+        .prepare(`UPDATE conversations SET grants = ? WHERE id = ?`)
+        .run(grantsJson, conversationId);
+      return Number(info.changes) > 0;
+    } catch {
+      return false;
     }
   }
 
