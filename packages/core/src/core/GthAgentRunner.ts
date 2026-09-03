@@ -3507,9 +3507,13 @@ export class GthAgentRunner {
   }
 
   /**
-   * GS2-23 — **fold the older conversation into a summary, in the live graph.** The seam behind
-   * `/compact`, and the one the involuntary paths (EXT-160's compact-and-retry, EXT-161's
-   * threshold) call rather than growing their own.
+   * GS2-23 — **fold the older conversation into a summary, in the live graph.** The idle,
+   * user-invoked seam: what `/compact` calls between turns.
+   *
+   * It is not the seam for the involuntary paths. EXT-160's compact-and-retry runs inside the
+   * driver's `try`, where a turn is in flight and this method refuses; that path composes
+   * `compactMessages` with `replaceGraphMessages` (or the agent's `replaceConversationMessages`)
+   * from inside the turn, or adds a guard-free internal when it needs one, rather than calling this.
    *
    * Reads the thread's messages from the graph, runs the shared `compactMessages` with the
    * summariser bound to the session model, and writes the replacement back through the graph's own
@@ -3517,8 +3521,15 @@ export class GthAgentRunner {
    * `after` is read back from the graph rather than computed, so the report describes what the
    * graph actually holds.
    *
-   * Refuses while a turn is running (the two drivers count themselves in and out), and does nothing
-   * on a conversation no longer than the kept tail: `changed: false`, nothing written.
+   * Refuses while a turn is running (the two drivers count themselves in and out). Refuses a graph
+   * suspended on a pending tool approval — idle, but not between turns: the state write lands on
+   * such a graph and erases the interrupt payload (measured: one pending interrupt becomes none,
+   * `next` preserved), so the approval could never be answered. A graph a THROWN turn left behind
+   * is not refused: its checkpoint ends on the pending human turn with no interrupt, the write
+   * lands, and the next turn runs from the compacted state. Invariant (c) is relative there — the
+   * mechanism never creates a trailing assistant turn and the pending human stays last; having the
+   * next human turn present before the model is invoked again is the caller's job. Does nothing on
+   * a conversation no longer than the kept tail: `changed: false`, nothing written.
    */
   public async compactConversation(
     options: CompactConversationOptions = {}
@@ -3536,6 +3547,10 @@ export class GthAgentRunner {
       );
     }
     const runConfig = this.runConfig;
+    const pendingApprovals = (await agent.getPendingToolInterrupts?.(runConfig)) ?? [];
+    if (pendingApprovals.length > 0) {
+      throw new Error('A tool approval is still pending; answer it before compacting.');
+    }
     const keepRecent = options.keepRecent ?? DEFAULT_KEEP_RECENT;
     const messages = await agent.getConversationMessages(runConfig);
     const before = conversationSize(messages);

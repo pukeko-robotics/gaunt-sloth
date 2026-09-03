@@ -13,8 +13,11 @@
  *    before it. With a CONTROL: an identical session whose compaction is a no-op (below the kept
  *    tail) produces a next request identical in size to a session that never compacted.
  *
- * Also here, because they need the runner: it refuses while a turn is running, and it refuses an
- * agent that exposes no conversation state.
+ * Also here, because they need the runner: it refuses while a turn is running; it refuses a graph
+ * suspended on a pending tool approval (idle, but the write would erase the interrupt) and leaves
+ * it untouched; it does NOT refuse the graph a thrown turn leaves behind — that one is compacted
+ * with the pending human turn still last, and the next turn runs from the summary; and it refuses
+ * an agent that exposes no conversation state, as does the abstract agent before it has a graph.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -28,6 +31,7 @@ import {
   type BaseMessage,
 } from '@langchain/core/messages';
 import { BaseChatModel } from '@langchain/core/language_models/chat_models';
+import type { RunnableConfig } from '@langchain/core/runnables';
 import { MemorySaver } from '@langchain/langgraph';
 import { tool } from '@langchain/core/tools';
 import { createAgent } from 'langchain';
@@ -69,6 +73,8 @@ class ScriptedModel extends BaseChatModel {
   summaryPrompts: string[] = [];
   /** When set, every turn waits on it — the way a turn is held "running" for the refusal cell. */
   gate: Promise<void> | null = null;
+  /** When set, the next TURN request throws instead of answering — a turn the model fails. */
+  failNext = false;
 
   constructor() {
     super({});
@@ -87,6 +93,10 @@ class ScriptedModel extends BaseChatModel {
       return { generations: [{ message: new AIMessage('SUMMARY'), text: 'SUMMARY' }] };
     }
     if (this.gate) await this.gate;
+    if (this.failNext) {
+      this.failNext = false;
+      throw new Error('MODEL DOWN');
+    }
     this.seen.push(messages);
     const lastHuman = [...messages].reverse().find((m) => HumanMessage.isInstance(m));
     const ask = typeof lastHuman?.content === 'string' ? lastHuman.content : '';
@@ -210,15 +220,19 @@ describe('GS2-23 — GthAgentRunner.compactConversation, measured at lastModelRe
     ({ GthAgentRunner } = await import('#src/core/GthAgentRunner.js'));
   });
 
-  const makeRunner = async (model: ScriptedModel) => {
+  const makeRunner = async (model: ScriptedModel, extra: Record<string, unknown> = {}) => {
     const runner = new GthAgentRunner(vi.fn(), {
       resolveTools: vi.fn().mockResolvedValue([lookup]),
       resolveMiddleware: async (m: unknown[] | undefined) => m ?? [],
     });
-    const config = { ...BASE_CONFIG, llm: model } as unknown as GthConfig;
+    const config = { ...BASE_CONFIG, ...extra, llm: model } as unknown as GthConfig;
     await runner.init('chat', config, new MemorySaver());
     return runner;
   };
+
+  /** The runner's thread config, read off the private field: what the state accessors are keyed by. */
+  const runConfigOf = (runner: InstanceType<typeof GthAgentRunner>): RunnableConfig =>
+    (runner as unknown as { runConfig: RunnableConfig }).runConfig;
 
   const turn = async (runner: InstanceType<typeof GthAgentRunner>, text: string) => {
     for await (const _ of runner.processMessagesWithEvents([new HumanMessage(text)])) {
@@ -320,6 +334,77 @@ describe('GS2-23 — GthAgentRunner.compactConversation, measured at lastModelRe
     await running;
     await expect(runner.compactConversation()).resolves.toMatchObject({ changed: false });
     await runner.cleanup();
+  });
+
+  it('refuses a graph suspended on a pending tool approval, and leaves the state and the interrupt as they were', async () => {
+    const model = new ScriptedModel();
+    // `manual` gates a custom tool with no access class, so the call reaches the approval
+    // callback — which throws instead of answering. The turn ends, no turn is in flight, and the
+    // graph is still suspended on the interrupt: the state a session resumed onto a suspended
+    // checkpoint is in, and the one where the write would erase the pending approval.
+    const runner = await makeRunner(model, { approvals: { mode: 'manual' } });
+    runner.setToolApprovalCallback(async () => {
+      throw new Error('nobody answered');
+    });
+    for (const text of ['one', 'two', 'three']) await turn(runner, text);
+    await expect(turn(runner, 'tool four')).rejects.toThrow('nobody answered');
+
+    const agent = runner.getAgent() as GthAbstractAgent;
+    const runConfig = runConfigOf(runner);
+    const before = await agent.getConversationMessages(runConfig);
+    expect(typesOf(before).slice(-2)).toEqual(['human', 'ai']);
+    expect(await agent.getPendingToolInterrupts(runConfig)).toHaveLength(1);
+
+    await expect(runner.compactConversation({ keepRecent: 2 })).rejects.toThrow(
+      /tool approval is still pending/
+    );
+
+    expect(model.summaryPrompts).toHaveLength(0);
+    const after = await agent.getConversationMessages(runConfig);
+    expect(after.map((m) => m.id)).toEqual(before.map((m) => m.id));
+    expect(await agent.getPendingToolInterrupts(runConfig)).toHaveLength(1);
+    await runner.cleanup();
+  });
+
+  it('compacts the graph a thrown turn left behind: the pending human stays last, the next turn runs from the summary', async () => {
+    const model = new ScriptedModel();
+    const runner = await makeRunner(model);
+    for (const text of ['one', 'two', 'three']) await turn(runner, text);
+    model.failNext = true;
+    await expect(turn(runner, 'four')).rejects.toThrow('MODEL DOWN');
+
+    // The checkpoint ends on the unanswered human turn and carries no interrupt — idle, with
+    // pending work, and exactly the state a context overflow leaves for /compact to remedy.
+    const agent = runner.getAgent() as GthAbstractAgent;
+    const runConfig = runConfigOf(runner);
+    const left = await agent.getConversationMessages(runConfig);
+    expect(typesOf(left)).toEqual(['human', 'ai', 'human', 'ai', 'human', 'ai', 'human']);
+    expect(await agent.getPendingToolInterrupts(runConfig)).toHaveLength(0);
+
+    const outcome = await runner.compactConversation({ keepRecent: 2 });
+    expect(outcome.changed).toBe(true);
+    expect(outcome.removedCount).toBe(5);
+    const compacted = await agent.getConversationMessages(runConfig);
+    expect(typesOf(compacted)).toEqual(['human', 'ai', 'human']);
+    expect(isCompactionSummary(compacted[0])).toBe(true);
+    expect(compacted[compacted.length - 1].content).toBe('four');
+
+    await turn(runner, 'five');
+    const request = lastRequest(runner);
+    expect(isCompactionSummary(request[0])).toBe(true);
+    expect(request.slice(1).map((m) => m.content)).toEqual(['answer: three', 'four', 'five']);
+    await runner.cleanup();
+  });
+
+  it('the abstract agent refuses loudly to read or write conversation state before it has a graph', async () => {
+    const { GthLangChainAgent } = await import('#src/core/GthLangChainAgent.js');
+    const bare = new GthLangChainAgent(vi.fn());
+    await expect(bare.getConversationMessages({})).rejects.toThrow(
+      'This agent exposes no conversation state to read.'
+    );
+    await expect(bare.replaceConversationMessages({}, [])).rejects.toThrow(
+      'This agent exposes no conversation state to write.'
+    );
   });
 
   it('refuses an agent that exposes no conversation state, rather than reporting a fold of nothing', async () => {

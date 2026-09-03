@@ -15,7 +15,10 @@
  *   never a mid-list `SystemMessage`, which `ChatAnthropic` rejects outright;
  * - **(c)** the tail is never truncated at its end, so the last message of the input is the last
  *   message of the output: a history that ended on the pending user turn still does, and no
- *   compaction turns a completed exchange into a trailing assistant turn;
+ *   compaction turns a completed exchange into a trailing assistant turn. The guarantee is
+ *   relative to the input — the mechanism never CREATES a trailing assistant turn; a history a
+ *   thrown turn left ending on its unanswered human turn still ends on it, and having the next
+ *   human turn present before the model is invoked again is the caller's job;
  * - **(d)** the operation converges: a previous summary is recognised by its marker and folded into
  *   the new one, so a compacted history compacted again holds exactly one summary message.
  *
