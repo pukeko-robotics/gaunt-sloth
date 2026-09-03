@@ -469,7 +469,7 @@ function readAnnotationSnapshot(value: unknown): EffectiveToolAnnotations | null
  */
 /**
  * Read one stored grant, or `null` when the value is not one: no readable entry, or an annotation
- * snapshot that is present and malformed (see {@link readAnnotationSnapshot}).
+ * snapshot that is present and malformed (see `readAnnotationSnapshot`).
  *
  * Exported because the conversation-grants document a resume restores
  * (`core/approvals/conversationGrants.ts`) stores grants in this same shape, and one reader for
