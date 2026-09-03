@@ -137,27 +137,36 @@ function leadingSystemCount(messages: readonly BaseMessage[]): number {
 }
 
 /**
+ * The index of the `AIMessage` a tool result at `resultIndex` answers: the NEAREST earlier message
+ * that issued its `tool_call_id`, or `-1` for an orphan.
+ *
+ * Nearest, not earliest, because ids are not unique in every history: a replayed fixture and more
+ * than one provider reuse short ids (`call_0`) turn after turn. A result answers the most recent
+ * call with its id; pairing it with the first one ever issued would widen the tail back to the
+ * head of the conversation and fold nothing.
+ */
+function issuerOf(conversation: readonly BaseMessage[], resultIndex: number, id: string): number {
+  for (let j = resultIndex - 1; j >= 0; j--) {
+    if (toolCallIdsOf(conversation[j]).has(id)) return j;
+  }
+  return -1;
+}
+
+/**
  * Widen a proposed tail start backwards until no tool pair straddles it: for every `ToolMessage`
- * at or after `start`, the `AIMessage` that issued its `tool_call_id` must be at or after `start`
- * too. Repeats until stable, because moving the start back can bring another answered call into
- * the tail.
+ * at or after `start`, the `AIMessage` that issued its `tool_call_id` ({@link issuerOf}) must be at
+ * or after `start` too. Repeats until stable, because moving the start back can bring another
+ * answered call into the tail.
  */
 function widenTailToPairStart(conversation: readonly BaseMessage[], start: number): number {
   let tailStart = start;
   for (;;) {
-    const answeredInTail = new Set<string>();
+    let widenedTo = tailStart;
     for (let i = tailStart; i < conversation.length; i++) {
       const message = conversation[i];
-      if (ToolMessage.isInstance(message) && message.tool_call_id) {
-        answeredInTail.add(message.tool_call_id);
-      }
-    }
-    let widenedTo = tailStart;
-    for (let i = tailStart - 1; i >= 0; i--) {
-      const issued = toolCallIdsOf(conversation[i]);
-      for (const id of issued) {
-        if (answeredInTail.has(id)) widenedTo = i;
-      }
+      if (!ToolMessage.isInstance(message) || !message.tool_call_id) continue;
+      const issuer = issuerOf(conversation, i, message.tool_call_id);
+      if (issuer !== -1 && issuer < widenedTo) widenedTo = issuer;
     }
     if (widenedTo === tailStart) return tailStart;
     tailStart = widenedTo;

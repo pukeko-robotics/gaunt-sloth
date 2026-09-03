@@ -142,6 +142,27 @@ describe('GS2-23 compactMessages — invariant (a): a tool call is never separat
     expect(out.messages.slice(1)).toEqual(messages.slice(3));
   });
 
+  it('pairs a result with the NEAREST call that issued its id, so a reused id does not widen to the head', async () => {
+    // Two turns whose tool calls carry the same id — what a replayed fixture and some providers
+    // produce. The cut lands on the second result; its call is the message just before it.
+    const messages = [
+      h('one'),
+      aiCalling({ id: 'reused' }),
+      result('reused', 'first result'),
+      ai('answer one'),
+      h('two'),
+      aiCalling({ id: 'reused' }),
+      result('reused', 'second result'),
+      ai('answer two'),
+    ];
+    const out = await compactMessages({ messages, summarize: stubSummarizer(), keepRecent: 2 });
+    expect(out.changed).toBe(true);
+    expect(out.removedCount).toBe(5);
+    expect(out.keptCount).toBe(3);
+    expect(out.messages.slice(1)).toEqual(messages.slice(5));
+    expect(toolPairsIntact(out.messages)).toBe(true);
+  });
+
   it('does not widen when the tail already begins at the pair (the call itself)', () => {
     const messages = toolHeavy();
     // The last 7 begin exactly at the AI message issuing c2: nothing to widen.
