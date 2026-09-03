@@ -446,11 +446,19 @@
       "kind": "function"
     },
     {
+      "name": "listResumableConversationsSafe",
+      "kind": "function"
+    },
+    {
       "name": "loadConfiguredTui",
       "kind": "function"
     },
     {
       "name": "loadGlobalRawConfig",
+      "kind": "function"
+    },
+    {
+      "name": "lookupConversationSafe",
       "kind": "function"
     },
     {
@@ -471,6 +479,10 @@
     },
     {
       "name": "openHistoryStore",
+      "kind": "function"
+    },
+    {
+      "name": "readConversationGrantsSafe",
       "kind": "function"
     },
     {
@@ -539,6 +551,10 @@
     },
     {
       "name": "validateProfileName",
+      "kind": "function"
+    },
+    {
+      "name": "writeConversationGrantsSafe",
       "kind": "function"
     }
   ]
