@@ -450,7 +450,8 @@ export class HistoryStore {
         lastTs: r.last_ts != null ? String(r.last_ts) : undefined,
         lastPrompt: last?.prompt != null ? String(last.prompt) : undefined,
         lastResponse: last?.response != null ? String(last.response) : undefined,
-        threadId: r.thread_id != null && String(r.thread_id).length > 0 ? String(r.thread_id) : undefined,
+        threadId:
+          r.thread_id != null && String(r.thread_id).length > 0 ? String(r.thread_id) : undefined,
       };
     } catch {
       return null;

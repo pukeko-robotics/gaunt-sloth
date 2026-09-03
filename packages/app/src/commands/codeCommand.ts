@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { startSession } from '#src/modules/startSession.js';
 import { CODE_SESSION_CONFIG } from '#src/modules/sessionConfigs.js';
-import { resolveResumeId, resumeOption } from '#src/commands/resumeOption.js';
+import { resumeOption, sessionOptionsFor } from '#src/commands/resumeOption.js';
 import { CommandLineConfigOverrides } from '@gaunt-sloth/core/config.js';
 
 export function codeCommand(
@@ -12,9 +12,12 @@ export function codeCommand(
   // GS2-20 — `gth --resume <id>` is the root option (see cli.ts), read here because the bare form
   // has no subcommand of its own to carry it.
   program.action(async () => {
-    await startSession(CODE_SESSION_CONFIG, commandLineConfigOverrides, undefined, {
-      resumeConversationId: resolveResumeId(program, {}),
-    });
+    await startSession(
+      CODE_SESSION_CONFIG,
+      commandLineConfigOverrides,
+      undefined,
+      sessionOptionsFor(program, {})
+    );
   });
 
   program
@@ -34,8 +37,11 @@ export function codeCommand(
         '  $ gth code --resume 42\n'
     )
     .action(async (message: string, options: { resume?: number }) => {
-      await startSession(CODE_SESSION_CONFIG, commandLineConfigOverrides, message, {
-        resumeConversationId: resolveResumeId(program, options),
-      });
+      await startSession(
+        CODE_SESSION_CONFIG,
+        commandLineConfigOverrides,
+        message,
+        sessionOptionsFor(program, options)
+      );
     });
 }

@@ -230,7 +230,9 @@ describe('GS2-20: GthAgentRunner.resumeConversation (real lean agent over node:s
     const config = { ...BASE_CONFIG, llm: options.model } as unknown as GthConfig;
     await runner.init('code', config, options.saver, { threadId: options.threadId });
     const human = vi.fn(async (pending: PendingToolInterrupt) =>
-      options.decide ? options.decide(pending) : { type: 'approve' as const, scope: 'once' as const }
+      options.decide
+        ? options.decide(pending)
+        : { type: 'approve' as const, scope: 'once' as const }
     );
     runner.setToolApprovalCallback(human as never);
     return { runner, human };
@@ -263,7 +265,11 @@ describe('GS2-20: GthAgentRunner.resumeConversation (real lean agent over node:s
     // Session two: a NEW saver over the same file, a NEW runner on a thread of its own — exactly
     // how a fresh `gth code` process boots — then the seam points it at the stored thread.
     const second = openSaver();
-    const two = await makeRunner({ model: new RecallingModel(), tools: [lookupCode()], saver: second });
+    const two = await makeRunner({
+      model: new RecallingModel(),
+      tools: [lookupCode()],
+      saver: second,
+    });
     const ownThread = threadOf(two.runner);
     expect(ownThread).toBeDefined();
     expect(ownThread).not.toBe(storedThread);
@@ -278,7 +284,11 @@ describe('GS2-20: GthAgentRunner.resumeConversation (real lean agent over node:s
     expect(toolCalls).toBe(1);
 
     // CONTROL: a third runner over the same database that does NOT resume has nothing to recall.
-    const three = await makeRunner({ model: new RecallingModel(), tools: [lookupCode()], saver: second });
+    const three = await makeRunner({
+      model: new RecallingModel(),
+      tools: [lookupCode()],
+      saver: second,
+    });
     expect(await say(three.runner, 'what was the code')).toContain(NOTHING);
   });
 

@@ -1,5 +1,6 @@
 import { InvalidArgumentError, Option, type Command } from 'commander';
 import { parseResumeId } from '@gaunt-sloth/agent/modules/sessionResume.js';
+import type { InteractiveSessionOptions } from '@gaunt-sloth/agent/modules/interactiveSessionModule.js';
 
 /**
  * GS2-20 — the `--resume <id>` flag, defined once and attached three times: on `chat`, on `code`,
@@ -23,10 +24,16 @@ export function resumeOption(): Option {
 }
 
 /**
- * The id to resume, from the subcommand's own option first and the root program's second, so
- * `gth chat --resume 12` and `gth --resume 12 chat` mean the same thing. Undefined when neither
- * was given.
+ * The session options a command starts with: `{ resumeConversationId }` when `--resume` was given
+ * — on the subcommand itself or on the root program, so `gth chat --resume 12` and
+ * `gth --resume 12 chat` mean the same thing — and nothing at all otherwise, so a session started
+ * without the flag is started exactly as it always was.
  */
-export function resolveResumeId(program: Command, own: { resume?: number }): number | undefined {
-  return own.resume ?? (program.getOptionValue('resume') as number | undefined);
+export function sessionOptionsFor(
+  program: Command,
+  own: { resume?: number }
+): InteractiveSessionOptions | undefined {
+  const resumeConversationId =
+    own.resume ?? (program.getOptionValue('resume') as number | undefined);
+  return resumeConversationId === undefined ? undefined : { resumeConversationId };
 }

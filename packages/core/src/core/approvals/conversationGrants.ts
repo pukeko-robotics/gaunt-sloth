@@ -79,7 +79,8 @@ export function decodeConversationGrants(json: string | null): ConversationGrant
   } catch {
     return { allow: [], deny: [] };
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { allow: [], deny: [] };
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+    return { allow: [], deny: [] };
   const record = parsed as { version?: unknown; allow?: unknown; deny?: unknown };
   if (record.version !== 1) return { allow: [], deny: [] };
   const fallbackTime = new Date().toISOString();

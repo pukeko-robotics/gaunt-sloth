@@ -29,7 +29,10 @@
  */
 import { resolve } from 'node:path';
 import type { BaseCheckpointSaver } from '@langchain/langgraph';
-import { isHistoryEnabled, type HistoryConfigView } from '@gaunt-sloth/core/history/historyEnabled.js';
+import {
+  isHistoryEnabled,
+  type HistoryConfigView,
+} from '@gaunt-sloth/core/history/historyEnabled.js';
 import {
   listResumableConversationsSafe,
   lookupConversationSafe,
@@ -77,8 +80,7 @@ export type ResumeRefusal =
   | { kind: 'workspace-mismatch'; id: number; stored: string; current: string };
 
 export type ResumeResolution =
-  | { ok: true; target: ResumeTarget }
-  | { ok: false; refusal: ResumeRefusal };
+  { ok: true; target: ResumeTarget } | { ok: false; refusal: ResumeRefusal };
 
 /** What {@link resolveResumeTarget} needs from the session asking. */
 export interface ResumeSessionContext {

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import {
   HistoryStore,
   openHistoryStore,
@@ -271,7 +272,6 @@ describe('history/historyStore', () => {
       const dbPath = resolve(dir, 'pre-grants.db');
       const legacy = openHistoryStore(dbPath, { create: true })!;
       legacy.close();
-      const { DatabaseSync } = require('node:sqlite') as typeof import('node:sqlite');
       const raw = new DatabaseSync(dbPath);
       raw.exec('DROP TABLE conversations');
       raw.exec(

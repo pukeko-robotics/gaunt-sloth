@@ -10,7 +10,10 @@ import { readChatPrompt, readCodePrompt } from '@gaunt-sloth/core/utils/llmUtils
  */
 export const CHAT_SESSION_CONFIG: SessionConfig = {
   mode: 'chat',
-  readModePrompt: readChatPrompt,
+  // Wrapped rather than referenced, so the prompt reader is resolved when a session asks for it
+  // and not when this module loads — a command spec that stubs the other mode's reader alone must
+  // not fail on the one it never calls.
+  readModePrompt: (config) => readChatPrompt(config),
   description: 'Start an interactive chat session with Gaunt Sloth',
   readyMessage: '\nGaunt Sloth is ready to chat. Type your prompt.',
   // [[TUI-C79]] — this row is shared by BOTH surfaces (the Ink dock composes it with
@@ -24,7 +27,7 @@ export const CHAT_SESSION_CONFIG: SessionConfig = {
 
 export const CODE_SESSION_CONFIG: SessionConfig = {
   mode: 'code',
-  readModePrompt: readCodePrompt,
+  readModePrompt: (config) => readCodePrompt(config),
   description:
     'Interactively write code with sloth (has full file system access within your project)',
   readyMessage: '\nGaunt Sloth is ready to code. Type your prompt.',

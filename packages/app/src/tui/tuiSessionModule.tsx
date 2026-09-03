@@ -18,13 +18,14 @@ import type {
 } from '@gaunt-sloth/core/core/types.js';
 import {
   beginWarningCapture,
+  displayNotice,
   endWarningCapture,
   flushSessionLog,
   initSessionLogging,
   stopSessionLogging,
 } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { appendToFile, getCommandOutputFilePath } from '@gaunt-sloth/core/utils/fileUtils.js';
-import { env, getProjectDir, stdin, stdout } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { env, exit, getProjectDir, stdin, stdout } from '@gaunt-sloth/core/utils/systemUtils.js';
 import {
   openConversationSafe,
   recordSessionSafe,

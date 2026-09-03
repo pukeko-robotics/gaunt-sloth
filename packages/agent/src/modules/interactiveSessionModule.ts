@@ -280,7 +280,9 @@ export async function createInteractiveSession(
     // moment it lands, so it outlives the process and a resume can install it again. The listener
     // reads the LIVE `conversationId`, because `/resume` moves it; a grant made after that belongs
     // to the conversation the session is then in. Nothing to write against ⇒ the bridge no-ops.
-    runner.setSessionGrantsListener(() => {
+    // Optional call, like `checkpointer.bindConversation`: a spec that stubs the runner with a
+    // plain object has nothing to listen with.
+    runner.setSessionGrantsListener?.(() => {
       saveConversationGrantsSafe(config, conversationId, runner.getSessionScopedGrants());
     });
 
