@@ -280,19 +280,31 @@ describe('GS2-23 compactMessages — invariant (d): compacting twice leaves exac
     expect(summarize).toHaveBeenCalledTimes(1);
   });
 
-  it("recognises LangChain's own summarization marker and folds that summary too", async () => {
+  it("recognises LangChain's own summarization marker — by the marker, not by position", async () => {
+    // A history the opt-in middleware already summarised: THEIR summary, then one exchange. With
+    // keepRecent 2 the cut lands right behind the summary, so the span is that one message and
+    // nothing else: only RECOGNISING the marker makes this the settled, leave-alone case. Read as
+    // an ordinary human turn it would be folded into a fresh summary of itself.
     const theirs = new HumanMessage({
       content: 'Here is a summary of the conversation to date:\n\nolder',
       additional_kwargs: { lc_source: 'summarization' },
     });
-    const out = await compactMessages({
-      messages: [theirs, h('one'), ai('a1'), h('two'), ai('a2')],
-      summarize: stubSummarizer(),
-      keepRecent: 2,
-    });
+    const summarize = stubSummarizer();
+    const settled = [theirs, h('one'), ai('a1')];
+    const untouched = await compactMessages({ messages: settled, summarize, keepRecent: 2 });
+    expect(untouched.changed).toBe(false);
+    expect(untouched.messages).toEqual(settled);
+    expect(summarize).not.toHaveBeenCalled();
+
+    // And once there is new material behind it, their summary goes INTO the span and the history
+    // converges to one summary, now marked as ours.
+    const grown = [...settled, h('two'), ai('a2')];
+    const out = await compactMessages({ messages: grown, summarize, keepRecent: 2 });
     expect(out.changed).toBe(true);
     expect(summaries(out.messages)).toHaveLength(1);
     expect(out.messages[0].additional_kwargs.lc_source).toBe(COMPACTION_SUMMARY_SOURCE);
+    expect(summarize).toHaveBeenCalledTimes(1);
+    expect(summarize.mock.calls[0][0][0]).toBe(theirs);
   });
 });
 
