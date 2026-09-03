@@ -52,6 +52,24 @@ vi.mock('@gaunt-sloth/core/utils/fileUtils.js', () => ({
   getCommandOutputFilePath: vi.fn().mockReturnValue(null),
 }));
 
+// `createInteractiveSession` is the REAL one here, so the history recorder and the session
+// checkpointer are stubbed the way the sibling `interactiveSessionModule.compact.spec.ts` stubs
+// them. Without these two, every cell below opens the developer's own `~/.gsloth/history.db` and
+// records a conversation row into it — the root global-setup history guard is what turns that red.
+vi.mock('@gaunt-sloth/core/history/recordSession.js', () => ({
+  openConversationSafe: () => null,
+  recordSessionSafe: () => null,
+  lookupConversationThreadSafe: () => null,
+}));
+vi.mock('@gaunt-sloth/core/history/sessionCheckpointer.js', () => ({
+  openSessionCheckpointerSafe: () => ({
+    saver: {},
+    durable: false,
+    threadId: 'test-thread-id',
+    close: () => {},
+  }),
+}));
+
 const runnerInstanceMock = {
   init: vi.fn().mockResolvedValue(undefined),
   processMessages: vi.fn().mockResolvedValue(undefined),

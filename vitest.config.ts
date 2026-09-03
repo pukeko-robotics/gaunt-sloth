@@ -134,6 +134,12 @@ export default defineConfig({
     // NOT equivalent; FORCE_COLOR=0 is rung 1 of the CFG-30 ladder several specs exercise.
     // Relative, not an absolute path literal, so the Windows cell resolves it too.
     setupFiles: ['./packages/app/vitest.setup.ts'],
+    // A read-only tripwire over the developer's real ~/.gsloth/history.db: fingerprinted before
+    // the suite, and the run fails in teardown, naming the file, if a spec wrote to it. One spec
+    // booting a real session without stubbing the recorder and the checkpointer did exactly that
+    // on every unit run, and the suite stayed green. Here, on the single root config, so one
+    // `pnpm test` runs it once for the whole workspace.
+    globalSetup: ['./scripts/vitest-history-guard.mjs'],
     server: {
       deps: {
         // Import the repo-root CLI helpers the way Node does, not through Vitest's inline
