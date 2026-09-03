@@ -238,8 +238,10 @@ describe('[[EXT-154]] the readline confirmation is written from what the runner 
     // Committed at all — asserted before anything is looked for inside it, because a "does not
     // claim persistence" test passes just as happily when nothing was written at all.
     expect(said).not.toBe('');
-    expect(said).toContain('will not ask again this session');
-    expect(said).toContain('a new session will ask about it again');
+    // GS2-20 — the lifetime named is the CONVERSATION's: the refusal is kept with it and comes
+    // back on a resume, and no other conversation has it.
+    expect(said).toContain('will not ask again in this conversation, even if you resume it later');
+    expect(said).toContain('another conversation will ask about it again');
     expect(said).not.toContain('saved to this project');
     expect(said).not.toContain('stays refused in new sessions');
 
@@ -253,7 +255,7 @@ describe('[[EXT-154]] the readline confirmation is written from what the runner 
 
     expect(said).toContain('It is saved to this project');
     expect(said).toContain('stays refused in new sessions');
-    expect(said).not.toContain('a new session will ask about it again');
+    expect(said).not.toContain('another conversation will ask about it again');
 
     // The file the sentence claims, on disk.
     expect(existsSync(join(tmpRoot, 'shell-denylist.json'))).toBe(true);
@@ -270,8 +272,10 @@ describe('[[EXT-154]] the readline confirmation is written from what the runner 
     const said = confirmation(lines);
 
     expect(said).not.toBe('');
-    expect(said).toContain('Approved for this session only');
+    // GS2-20 — the fallback lifetime is the conversation's, and a resume keeps the grant.
+    expect(said).toContain('Approved for this conversation only');
     expect(said).toContain('not written to the project allow-list');
+    expect(said).toContain('resuming this conversation keeps it');
     expect(said).not.toContain('Approved and remembered');
 
     expect(existsSync(unwritableDir)).toBe(false);
@@ -283,7 +287,7 @@ describe('[[EXT-154]] the readline confirmation is written from what the runner 
 
     expect(said).toContain('Approved and remembered');
     expect(said).toContain('saved to the project allow-list');
-    expect(said).not.toContain('for this session only');
+    expect(said).not.toContain('for this conversation only');
 
     // The file the sentence claims, on disk. This is also what proves `[a]` was on offer at all —
     // an unoffered option reads as an empty confirmation, which names nothing about the cause.

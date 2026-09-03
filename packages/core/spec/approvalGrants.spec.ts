@@ -1240,8 +1240,10 @@ describe('PersistedApprovalGrants', () => {
       // one store per session, so a user who repairs the file and answers again now is refused by
       // the same cached state and reads this identical message in a loop.
       expect(refused[0].message).toContain('answer again in a new session');
-      // ...and what they DO have: this session.
-      expect(refused[0].message).toContain('this session only');
+      // ...and what they DO have: this conversation (GS2-20 — the fallback lifetime is the
+      // conversation's, because the answer is kept with it and comes back on a resume).
+      expect(refused[0].message).toContain('this conversation only');
+      expect(refused[0].message).toContain('resuming it keeps the answer');
       // It names what they nearly lost, in the word for THIS file and never the other one's.
       expect(refused[0].message).toContain('refusals');
       expect(refused[0].message).not.toContain('approvals');
@@ -1322,7 +1324,9 @@ describe('PersistedApprovalGrants', () => {
       expect(told[0].level).toBe(StatusLevel.ERROR);
       expect(told[0].message).toContain(unwritable);
       expect(told[0].message).toContain('could not be written');
-      expect(told[0].message).toContain('this session only');
+      // GS2-20 — the fallback lifetime is the conversation's, and a resume keeps the answer.
+      expect(told[0].message).toContain('this conversation only');
+      expect(told[0].message).toContain('resuming it keeps the answer');
       // The load-bearing negatives: this is NOT the refused-write message, whose promises are all
       // false here — nothing in the file was lost, and there is no read error to fix.
       expect(told[0].message).not.toContain('could not be read');

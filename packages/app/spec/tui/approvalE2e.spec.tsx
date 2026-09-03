@@ -919,11 +919,14 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
 
       // The notice is COMMITTED — asserted before anything is looked for inside it, because a
       // "does not claim persistence" test passes just as happily when nothing rendered at all.
+      // GS2-20 — the lifetime named is the conversation's: the refusal is kept with it and comes
+      // back on a resume, and no other conversation has it.
       await vi.waitFor(() =>
-        expect(noticeBlock(lastFrame() ?? '', 'Command refused for this session')).not.toBe('')
+        expect(noticeBlock(lastFrame() ?? '', 'Command refused for this conversation')).not.toBe('')
       );
-      const block = noticeBlock(lastFrame() ?? '', 'Command refused for this session');
-      expect(block).toContain('a new session will ask about it again');
+      const block = noticeBlock(lastFrame() ?? '', 'Command refused for this conversation');
+      expect(block).toContain('another conversation will ask about it again');
+      expect(block).toContain('including if you resume it later');
       expect(block).not.toContain('saved to this project');
       expect(block).not.toContain('stays refused in new sessions');
 
@@ -945,7 +948,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
       );
       const block = noticeBlock(lastFrame() ?? '', 'Command refused and saved');
       expect(block).toContain('It is saved to this project');
-      expect(block).not.toContain('a new session will ask about it again');
+      expect(block).not.toContain('another conversation will ask about it again');
       expect(runner.getRefusals()).toEqual([
         {
           index: 1,

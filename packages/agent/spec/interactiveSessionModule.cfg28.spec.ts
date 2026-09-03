@@ -261,7 +261,7 @@ describe('interactiveSessionModule CFG-28 — the readline confirmation tells th
       expect(out).toContain('Command rejected.');
       // None of the approval sentences, honest or otherwise.
       expect(out).not.toContain('Approved');
-      expect(out).not.toContain('will not ask again this session');
+      expect(out).not.toContain('will not ask again in this conversation');
       expect(out).not.toContain('saved to the project allow-list');
     }
   );
@@ -273,7 +273,10 @@ describe('interactiveSessionModule CFG-28 — the readline confirmation tells th
   it('on a destructive verdict, "s" still promises the session grant sticks', async () => {
     await startSession();
     await answer('s', DESTRUCTIVE);
-    expect(printed()).toContain('Approved — this exact command will not ask again this session.');
+    // GS2-20 — the grant is kept with the conversation and comes back on a resume, and says so.
+    expect(printed()).toContain(
+      'Approved — this exact command will not ask again in this conversation, even if you resume it later.'
+    );
   });
 
   /**

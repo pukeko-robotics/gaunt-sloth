@@ -682,7 +682,9 @@ describe('GthAgentRunner — [[EXT-107]] the persisted deny store', () => {
       expect(told).toHaveLength(1);
       expect(told[0][0]).toBe(StatusLevel.ERROR);
       expect(String(told[0][1])).toContain('NOT saved');
-      expect(String(told[0][1])).toContain('this session only');
+      // GS2-20 — an unsaved refusal is held with the conversation, and a resume keeps it.
+      expect(String(told[0][1])).toContain('this conversation only');
+      expect(String(told[0][1])).toContain('resuming it keeps the answer');
       // NOT the refused-write message: nothing in the file was lost and there is nothing to fix in
       // it, so that message's promises are all false here.
       expect(String(told[0][1])).not.toContain('could not be read');
