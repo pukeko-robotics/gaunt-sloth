@@ -629,7 +629,7 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
 
   /**
    * GS2-23 — the thread's conversation as the checkpointed graph holds it. Loud, unlike
-   * {@link getStateMessageCount}: a compaction that cannot read the state must not proceed on an
+   * `getStateMessageCount`: a compaction that cannot read the state must not proceed on an
    * empty list and report that it folded nothing.
    */
   async getConversationMessages(runConfig: RunnableConfig): Promise<BaseMessage[]> {

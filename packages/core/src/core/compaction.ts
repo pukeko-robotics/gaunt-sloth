@@ -181,7 +181,7 @@ function widenTailToPairStart(conversation: readonly BaseMessage[], start: numbe
  * there is nothing to fold.
  *
  * The tail is the last `keepRecent` messages, widened backwards so no `tool_call` is separated from
- * its `tool_result` ({@link widenTailToPairStart}). A system prompt at the head is never part of
+ * its `tool_result` (`widenTailToPairStart`). A system prompt at the head is never part of
  * either side. A previous summary sits at the head of the conversation and is always in the folded
  * span, never in the tail — and when it would be the ONLY thing folded, nothing is folded: rewriting
  * a summary with no new material behind it is the thrash invariant (d) forbids.
