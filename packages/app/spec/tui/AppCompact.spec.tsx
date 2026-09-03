@@ -143,11 +143,11 @@ describe('tui <App> — /compact (GS2-23)', () => {
     unmount();
   });
 
-  it('reports a failed compaction with its reason and says the conversation was left unchanged', async () => {
+  it('a failed compaction reports its reason and gives the hold back: the next plain message starts a turn', async () => {
     const compact = vi.fn(async () => {
       throw new Error('provider down');
     });
-    const { agent } = compactingAgent(compact);
+    const { agent, turnsRun } = compactingAgent(compact);
     const { stdin, frames, lastFrame, unmount } = render(<App {...baseProps} agent={agent} />);
 
     await submit(stdin, lastFrame, '/compact');
@@ -157,8 +157,15 @@ describe('tui <App> — /compact (GS2-23)', () => {
       expect(all).toContain('Compaction did not happen');
       expect(all).toContain('The conversation was left unchanged: provider down');
     });
-    // And the prompt is back — a failed compaction does not leave the session held.
-    await vi.waitFor(() => expect(lastFrame()).toContain('ready'));
+    expect(turnsRun()).toBe(0);
+
+    // The hold the compaction took is what a failure has to give back. The status bar never shows
+    // it, so the only thing that can pin it is what the hold controls: a plain message afterwards
+    // is dispatched as a turn, not refused as "the agent is working". A release that happens only
+    // on success leaves this session wedged after any failed /compact.
+    await submit(stdin, lastFrame, 'hello afterwards');
+    await vi.waitFor(() => expect(turnsRun()).toBe(1));
+    expect(frames.join('\n')).not.toContain('The agent is working — only slash commands');
 
     unmount();
   });
