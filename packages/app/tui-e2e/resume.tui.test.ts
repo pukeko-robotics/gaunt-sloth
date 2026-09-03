@@ -48,11 +48,13 @@ const realSessionEnv = (tmpHome: string): Record<string, string | undefined> => 
  * below.
  */
 test.describe('gth chat TUI — /resume (greeting fixture, GS2-20)', () => {
+  // 80 rows, like the TUI-C63 cell: /help is taller than a 40-row screen and the command list is its
+  // first half, which would scroll off before the assertion looked.
   test.use({
     program: { file: 'node', args: [cli, 'chat', '--tui'] },
     env: fixtureEnv('greeting.json'),
     columns: 120,
-    rows: 40,
+    rows: 80,
   });
 
   test('/help lists /resume, and /status says nothing is being recorded here', async ({
