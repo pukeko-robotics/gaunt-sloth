@@ -62,6 +62,10 @@ import {
   approvalsStatusNotice,
   approvalsTrustNotice,
   approvalsUndenyNotice,
+  COMPACTING_LINE,
+  compactionFailedNotice,
+  compactionNotice,
+  compactionUnavailableNotice,
   createCommandRegistry,
   dispatchSlashCommand,
   type McpTrustRequest,
@@ -221,6 +225,12 @@ export function App(props: TuiAppProps): React.ReactElement {
   const abortRef = useRef<AbortController | null>(null);
   const idRef = useRef(0);
   const runningRef = useRef(false);
+  /**
+   * GS2-23 — whether a `/compact` is awaiting its summary. Read where `runningRef` is read at
+   * submit, so a plain message cannot start a turn on a thread that is about to be rewritten, and
+   * a second `/compact` is refused like any idle-only command. Nothing else keys on it.
+   */
+  const compactingRef = useRef(false);
   const turnCountRef = useRef(0);
   // Per-turn args buffers for the subagent fold (mirrors foldSubagentTree's internal map).
   const subagentBuffersRef = useRef<Map<string, string>>(new Map());
@@ -651,6 +661,38 @@ export function App(props: TuiAppProps): React.ReactElement {
     [agent]
   );
 
+  // GS2-23 — `/compact [focus]`: fold the older conversation into a summary in the MODEL's
+  // context. Same division as the approvals family — the runner owns the thread, does the folding
+  // and reports what LANDED, and the notice is built from that. The on-screen transcript is
+  // deliberately left alone: it is the person's record, and the notice says so. Async because the
+  // summary is a model call that takes seconds, which is also why the line goes up first (DL-1)
+  // and why `compactingRef` holds the prompt to slash commands until it settles.
+  const applyCompaction = useCallback(
+    async (focus?: string): Promise<void> => {
+      if (!agent.compactConversation) {
+        const { title, lines, tone } = compactionUnavailableNotice();
+        push({ kind: 'notice', title, lines, tone: tone ?? 'info' });
+        return;
+      }
+      compactingRef.current = true;
+      push({ kind: 'system', level: 'info', text: COMPACTING_LINE });
+      try {
+        const outcome = await agent.compactConversation(focus === undefined ? {} : { focus });
+        const { title, lines, tone } = compactionNotice(outcome, focus);
+        push({ kind: 'notice', title, lines, tone: tone ?? 'info' });
+      } catch (err) {
+        const { title, lines, tone } = compactionFailedNotice(
+          err instanceof Error ? err.message : String(err)
+        );
+        push({ kind: 'notice', title, lines, tone: tone ?? 'info' });
+      } finally {
+        compactingRef.current = false;
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [agent]
+  );
+
   // [[TUI-C68]] §6.1 — answer the attack banner and dequeue it. `run-anyway` runs exactly one
   // command, so it is the only answer that gets a notice: what a user cannot otherwise observe is
   // the SCOPE of what they granted (the command running is visible; only this one running is not),
@@ -878,7 +920,9 @@ export function App(props: TuiAppProps): React.ReactElement {
     (value: string) => {
       if (!value.trim()) return;
 
-      const running = runningRef.current;
+      // GS2-23 — a compaction in flight holds the prompt exactly as a running turn does: the
+      // thread is about to be rewritten, and a turn started now would race that write.
+      const running = runningRef.current || compactingRef.current;
       const parsed = parseSlashCommand(value);
 
       // While a turn is streaming ("during inference") the prompt stays mounted so the user can
@@ -985,6 +1029,11 @@ export function App(props: TuiAppProps): React.ReactElement {
           else if ('undeny' in result.approvals) liftRefusal(result.approvals.undeny.index);
           else applyApprovalRung(result.approvals.rung);
         }
+        // GS2-23 — `/compact`: awaited inside the helper, which commits its own notices; the
+        // handler itself stays synchronous, like every other effect here.
+        if (result.compact) {
+          void applyCompaction(result.compact.focus);
+        }
         if (result.toggleDebug) {
           setDebugVisible((v) => {
             const next = !v;
@@ -1038,6 +1087,7 @@ export function App(props: TuiAppProps): React.ReactElement {
       toggleTools,
       applyApprovalRung,
       showApprovals,
+      applyCompaction,
       applyMcpTrust,
       liftRefusal,
       applyMouse,

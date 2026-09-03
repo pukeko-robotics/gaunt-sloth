@@ -780,6 +780,11 @@ export async function createTuiSession(
       setMcpAnnotationTrust(server, hints, believe) {
         return runner.setMcpAnnotationTrust(server, hints, believe);
       },
+      // GS2-23 — `/compact [focus]`: the runner folds the older conversation in the live graph
+      // and reports what landed; the App commits the notice from that.
+      compactConversation(input) {
+        return runner.compactConversation(input);
+      },
     };
 
     // TUI-C31 (d): from here on Ink owns the terminal frame. Mark the tool-output channel

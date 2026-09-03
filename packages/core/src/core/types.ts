@@ -219,6 +219,18 @@ export interface GthCompiledGraph {
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   getState?(config: RunnableConfig): Promise<any>;
+  /**
+   * GS2-23 — write values into the checkpointed state for a thread, as LangGraph compiled graphs
+   * do. A compaction replaces `messages` through it (see `core/compaction.ts`), which is what makes
+   * the compacted history durable: the graph writes a new checkpoint rather than a transcript copy.
+   * Optional for the same reason {@link getState} is.
+   */
+  updateState?(
+    config: RunnableConfig,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    values: any,
+    asNode?: string
+  ): Promise<unknown>;
 }
 
 /**
@@ -690,6 +702,22 @@ export interface GthAgentInterface {
    * observed at all. Optional; reading must never throw.
    */
   getFinishReasonObservations?(): readonly GthFinishReasonObservation[];
+
+  /**
+   * GS2-23 — the thread's conversation as the graph holds it: `state.messages` for `runConfig`'s
+   * thread, in order, without the system prompt (which the graphs this repo builds keep outside the
+   * message state). What `GthAgentRunner.compactConversation` reads before it decides a cut.
+   * Optional: an agent whose graph exposes no state omits it, and the runner then reports the
+   * conversation as one it cannot compact.
+   */
+  getConversationMessages?(runConfig: RunnableConfig): Promise<BaseMessage[]>;
+
+  /**
+   * GS2-23 — replace the thread's whole conversation with `messages`, through the graph's own
+   * state update so the change is checkpointed. The other half of {@link getConversationMessages};
+   * the runner calls it with the list `compactMessages` produced and nothing else.
+   */
+  replaceConversationMessages?(runConfig: RunnableConfig, messages: BaseMessage[]): Promise<void>;
 
   cleanup?(): Promise<void>;
 }

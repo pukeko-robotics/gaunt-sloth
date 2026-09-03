@@ -157,6 +157,14 @@ import {
 } from '#src/utils/debugUtils.js';
 import { updateCrashContext } from '#src/utils/crashHandler.js';
 import { setToolDisplayConfig } from '#src/core/toolDisplay.js';
+import {
+  compactMessages,
+  type CompactConversationOptions,
+  type ConversationCompaction,
+  conversationSize,
+  createModelSummarizer,
+  DEFAULT_KEEP_RECENT,
+} from '#src/core/compaction.js';
 
 /**
  * GS2-48 — how many trailing messages of the in-flight turn to hand the crash handler as the
@@ -410,6 +418,13 @@ export class GthAgentRunner {
    * after {@link cleanup} has already dropped the agent.
    */
   private agentFinishReasons: readonly GthFinishReasonObservation[] = [];
+
+  /**
+   * GS2-23 — how many turns are being driven right now, through either driver. Read by
+   * {@link compactConversation}, which refuses to rewrite the thread underneath a running turn:
+   * the graph would be writing checkpoints for the turn while the compaction wrote a competing one.
+   */
+  private turnsInFlight = 0;
 
   /**
    * CFG-27 — the runtime, session-scoped approvals posture, seeded at {@link init} from
@@ -1124,6 +1139,7 @@ export class GthAgentRunner {
     debugLog('Processing messages...');
     debugLogObject('Input Messages', messages);
 
+    this.turnsInFlight++;
     try {
       // Decision: Use streaming or non-streaming based on config
       if (this.config.streamOutput) {
@@ -1264,6 +1280,7 @@ export class GthAgentRunner {
       // the one place the panel outlives its turn. Display-only, and a no-op on today's readline
       // surface, which appends to scrollback and implements no `end`.
       this.clearNegotiationDisplay();
+      this.turnsInFlight--;
     }
   }
 
@@ -3116,6 +3133,7 @@ export class GthAgentRunner {
     this.negotiation.noteUserMessages(humanMessageTexts(messages));
     debugLog('Processing messages (event stream)...');
     debugLogObject('Input Messages', messages);
+    this.turnsInFlight++;
     try {
       // [[TUI-C100]] — **a tool call that never produced a result is closed here, and nowhere
       // earlier.** `processEventStream` ends a call when its own result arrives and otherwise
@@ -3231,6 +3249,7 @@ export class GthAgentRunner {
       // speak for it, and without this the turn would end with no reason at all — the state that
       // must mean "a site we missed".
       this.noteTermination(terminationReason('runner.events-abandoned', 'control', 'abandoned'));
+      this.turnsInFlight--;
     }
   }
 
@@ -3485,6 +3504,71 @@ export class GthAgentRunner {
     this.clearRaterClarifications();
     this.runConfig = getNewRunnableConfig();
     debugLogObject('Reset Runnable Config', this.runConfig);
+  }
+
+  /**
+   * GS2-23 — **fold the older conversation into a summary, in the live graph.** The seam behind
+   * `/compact`, and the one the involuntary paths (EXT-160's compact-and-retry, EXT-161's
+   * threshold) call rather than growing their own.
+   *
+   * Reads the thread's messages from the graph, runs the shared `compactMessages` with the
+   * summariser bound to the session model, and writes the replacement back through the graph's own
+   * state update — so the compacted history is checkpointed and a later resume loads it compacted.
+   * `after` is read back from the graph rather than computed, so the report describes what the
+   * graph actually holds.
+   *
+   * Refuses while a turn is running (the two drivers count themselves in and out), and does nothing
+   * on a conversation no longer than the kept tail: `changed: false`, nothing written.
+   */
+  public async compactConversation(
+    options: CompactConversationOptions = {}
+  ): Promise<ConversationCompaction> {
+    if (!this.agent || !this.config || !this.runConfig) {
+      throw new Error('AgentRunner not initialized. Call init() first.');
+    }
+    if (this.turnsInFlight > 0) {
+      throw new Error('A turn is still running; wait for it to finish before compacting.');
+    }
+    const agent = this.agent;
+    if (!agent.getConversationMessages || !agent.replaceConversationMessages) {
+      throw new Error('This agent does not expose its conversation state, so it cannot be compacted.');
+    }
+    const runConfig = this.runConfig;
+    const keepRecent = options.keepRecent ?? DEFAULT_KEEP_RECENT;
+    const messages = await agent.getConversationMessages(runConfig);
+    const before = conversationSize(messages);
+    const result = await compactMessages({
+      messages,
+      summarize: createModelSummarizer(this.config.llm),
+      keepRecent,
+      ...(options.focus !== undefined ? { focus: options.focus } : {}),
+    });
+    if (!result.changed) {
+      return {
+        changed: false,
+        removedCount: 0,
+        keptCount: messages.length,
+        keepRecent,
+        summaryText: '',
+        before,
+        after: before,
+      };
+    }
+    await agent.replaceConversationMessages(runConfig, result.messages);
+    const after = conversationSize(await agent.getConversationMessages(runConfig));
+    debugLog(
+      `Compacted the conversation: ${result.removedCount} folded, ${result.keptCount} kept, ` +
+        `${before.messages}→${after.messages} messages, ${before.characters}→${after.characters} chars`
+    );
+    return {
+      changed: true,
+      removedCount: result.removedCount,
+      keptCount: result.keptCount,
+      keepRecent,
+      summaryText: result.summaryText,
+      before,
+      after,
+    };
   }
 
   async cleanup(): Promise<void> {

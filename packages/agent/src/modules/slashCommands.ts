@@ -35,6 +35,7 @@ import {
 } from '@gaunt-sloth/core/config.js';
 import type { ApprovalGrant } from '@gaunt-sloth/core/core/approvals/grants.js';
 import { describeApprovalEntry } from '@gaunt-sloth/core/core/approvals/matcher.js';
+import type { ConversationCompaction } from '@gaunt-sloth/core/core/compaction.js';
 import { MOUSE_SELECTION_HINT } from '@gaunt-sloth/core/config/mouse.js';
 
 /**
@@ -369,6 +370,14 @@ export interface SlashCommandResult {
    * friendly `notice` (no reasoning / out-of-range).
    */
   reprintReasoning?: { reasoning: string; turnNumber: number };
+  /**
+   * GS2-23 — a request from `/compact` to fold the older conversation into a summary in the
+   * model's context. Takes the `approvals: { rung }` route for the same reason: the command cannot
+   * reach the runner, so it states the request and the surface awaits
+   * `runner.compactConversation` and commits {@link compactionNotice} for what LANDED. `focus` is
+   * the free text after the command — what the summary should concentrate on.
+   */
+  compact?: { focus?: string };
   /** When true, the component quits the app (runs `onExit`). */
   exit?: boolean;
 }
@@ -1262,6 +1271,81 @@ export function debugDumpNotice(archiveDir: string, redacted: boolean): SlashCom
 }
 
 /**
+ * GS2-23 — the line a surface prints the moment `/compact` starts, because the model call behind
+ * it takes seconds and a command that goes quiet reads as a command that did nothing (DL-1).
+ */
+export const COMPACTING_LINE =
+  'Compacting the conversation — the model is summarising the older messages…';
+
+/** A count with thousands separators, so a character estimate reads at a glance. */
+const formatCount = (n: number): string => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+
+const plural = (n: number, noun: string): string => `${n} ${noun}${n === 1 ? '' : 's'}`;
+
+/**
+ * GS2-23 — the notice for a landed `/compact`, built from what the runner RETURNS rather than from
+ * what was asked for, so it can only describe the compaction actually applied.
+ *
+ * It says three things, because those are the three the person cannot otherwise observe: what was
+ * folded, what was kept, and how much smaller the model's context is. And it says what did NOT
+ * change — the transcript on screen — because the screen is the person's record and a notice that
+ * only mentioned the model would leave them expecting lines to vanish. The size is a message count
+ * and a character estimate; tokens are not counted here.
+ */
+export function compactionNotice(outcome: ConversationCompaction, focus?: string): SlashCommandNotice {
+  if (!outcome.changed) {
+    return {
+      title: 'Nothing to compact',
+      lines: [
+        `The conversation holds ${plural(outcome.before.messages, 'message')}, and the last ` +
+          `${outcome.keepRecent} are always kept word for word, so there is nothing older to fold.`,
+        'Nothing was changed.',
+      ],
+    };
+  }
+  const kept =
+    outcome.keptCount > outcome.keepRecent
+      ? `kept the last ${outcome.keptCount} word for word (${outcome.keepRecent} were asked for; ` +
+        'a tool call and its result stay together)'
+      : `kept the last ${outcome.keptCount} word for word`;
+  return {
+    title: 'Conversation compacted',
+    lines: [
+      `Folded ${plural(outcome.removedCount, 'older message')} into a summary and ${kept}.`,
+      `Model context: ${plural(outcome.before.messages, 'message')} (~${formatCount(outcome.before.characters)} characters) → ` +
+        `${plural(outcome.after.messages, 'message')} (~${formatCount(outcome.after.characters)} characters).`,
+      ...(focus && focus.trim().length > 0 ? [`Summary focus: ${focus.trim()}`] : []),
+      'The transcript on screen is unchanged. This is what the model sees from the next turn on, ' +
+        'and a resumed session stays compacted.',
+    ],
+  };
+}
+
+/** GS2-23 — `/compact` on a surface with no conversation state behind it (the fixture agent). */
+export function compactionUnavailableNotice(): SlashCommandNotice {
+  return {
+    title: 'Compaction unavailable',
+    lines: [
+      'This session has no model conversation to compact.',
+      'Nothing was changed.',
+    ],
+    tone: 'warn',
+  };
+}
+
+/**
+ * GS2-23 — `/compact` whose summary call failed, or that was refused (a turn still running). The
+ * conversation is left as it was in every such case, and the notice says so before it says why.
+ */
+export function compactionFailedNotice(reason: string): SlashCommandNotice {
+  return {
+    title: 'Compaction did not happen',
+    lines: [`The conversation was left unchanged: ${reason}`],
+    tone: 'warn',
+  };
+}
+
+/**
  * Build the default command registry. Returns a fresh array each call so callers may push
  * extension commands onto it (EXT-5) without sharing mutable module state.
  */
@@ -1280,6 +1364,19 @@ export function createCommandRegistry(): SlashCommand[] {
       // The visible feedback is the <ClearBanner>, which survives the transcript wipe because it
       // is not a transcript item, so no committed notice here.
       run: () => ({ clearTranscript: true }),
+    },
+    {
+      name: 'compact',
+      description:
+        'Fold the older conversation into a summary so the model has room to keep going ' +
+        '(/compact [what to focus on]; the last few messages are kept word for word)',
+      // Idle-only, like /clear: it rewrites the model's thread, and the runner refuses to do that
+      // underneath a running turn anyway. The surface awaits the runner and commits the notice for
+      // what landed; free text after the command is the summary's focus.
+      run: (_ctx, args) => {
+        const focus = args.join(' ').trim();
+        return { compact: focus.length > 0 ? { focus } : {} };
+      },
     },
     {
       name: 'debug',
