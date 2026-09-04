@@ -578,26 +578,66 @@ describe('GS2-107 checkpoint retention', () => {
     });
   });
 
+  /**
+   * The fixture here is sized by measurement, not by intuition, because this case is the suite's
+   * file-I/O outlier: `VACUUM` rewrites the WHOLE database into a new file and swaps it, and
+   * `node:sqlite`'s `DatabaseSync` is synchronous, so a fixture bigger than the statement needs
+   * costs wall-clock on every runner and cannot be interrupted by the suite's timer if it goes
+   * long.
+   *
+   * What the mechanism actually requires: `page_size` is 4096 and `auto_vacuum` is 0, so a delete
+   * only makes space reclaimable once the bulk rows own whole pages outright. Measured at four
+   * checkpoints, the freelist stays EMPTY at payload 500 and holds 4 pages at payload 1,000 —
+   * that step is the floor, below which the two assertions below stop discriminating. The chosen
+   * 4 x 4,000 sits a step above it (9 free pages, 36,864 reclaimable bytes against 16,000 seeded)
+   * because SQLite's packing is lumpy rather than monotonic — payload 4,500 frees 8 pages where
+   * 4,000 frees 9 — and a fixture hugging the floor would be one packing decision away from
+   * proving nothing on a matrix cell with a different SQLite build.
+   */
   describe('VACUUM — the part that gives the disk space back', () => {
+    const BULK_CHECKPOINTS = 4;
+    const BULK_PAYLOAD = 4_000;
+    /** What the bulk thread seeds, and the yardstick every size assertion is written against. */
+    const BULK_BYTES = BULK_CHECKPOINTS * BULK_PAYLOAD;
+
     it('shrinks the file, and the CONTROL shows a delete alone does not', () => {
       const db = openStoreAndSaver();
-      // Enough payload that a page-level shrink is visible rather than lost in rounding.
-      seedThread(db, 'bulk', { count: 40, payload: 20_000 });
+      const pageBytes = Number(
+        (db.prepare(`PRAGMA page_size`).get() as Record<string, unknown>).page_size
+      );
+      const reclaimableBytes = (): number =>
+        Number(
+          (db.prepare(`PRAGMA freelist_count`).get() as Record<string, unknown>).freelist_count
+        ) * pageBytes;
+
+      const emptyStore = statSync(dbPath).size;
+      seedThread(db, 'bulk', { count: BULK_CHECKPOINTS, payload: BULK_PAYLOAD });
       seedConversation(db, { threadId: 'keeper' });
       seedThread(db, 'keeper', { count: 1, payload: 100 });
+      // Inert under the store's `journal_mode = delete`; it matters only if the store ever moves
+      // to WAL, where the seeded pages would otherwise still be sitting in the `-wal` file and
+      // the size read below would be of a file that never grew.
       db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
       const grown = statSync(dbPath).size;
-      expect(grown).toBeGreaterThan(500_000);
+      expect(grown - emptyStore).toBeGreaterThanOrEqual(BULK_BYTES);
 
       deleteThreads(db, ['bulk']);
       // CONTROL — the rows are gone and the file has not moved. This is why the VACUUM is not
-      // optional: without it a prune reports bytes removed that a user cannot see come back.
+      // optional: without it a prune reports bytes removed that a user cannot see come back. It
+      // is also the line that reds if `auto_vacuum` is ever switched on in the store, which would
+      // hand those pages back without anyone asking.
       const afterDelete = statSync(dbPath).size;
       expect(afterDelete).toBe(grown);
+      // And the file has not moved DESPITE whole pages being free — which is the half that makes
+      // the CONTROL a statement rather than a tautology. A delete does not shrink a file that had
+      // nothing reclaimable in it either, so on a fixture below the floor above the CONTROL goes
+      // on passing while proving nothing; this is the line that reds there instead.
+      const reclaimable = reclaimableBytes();
+      expect(reclaimable).toBeGreaterThanOrEqual(BULK_BYTES);
 
       expect(vacuumStore(db)).toBe(true);
       const afterVacuum = statSync(dbPath).size;
-      expect(afterVacuum).toBeLessThan(grown / 2);
+      expect(grown - afterVacuum).toBeGreaterThanOrEqual(BULK_BYTES);
       // And the conversation that was not named survived the compaction.
       expect(
         db.prepare(`SELECT COUNT(*) AS n FROM checkpoints WHERE thread_id = 'keeper'`).get()
