@@ -311,7 +311,10 @@ describe('GS2-20: GthAgentRunner.resumeConversation (real lean agent over node:s
     await say(two.runner, 'look up the code'); // the tool runs INSIDE the resumed conversation
 
     const three = await makeRunner({ model: new RecallingModel(), tools: [lookupCode()], saver });
-    await three.runner.resumeConversation({ threadId: storedThread, grants: NO_CONVERSATION_GRANTS });
+    await three.runner.resumeConversation({
+      threadId: storedThread,
+      grants: NO_CONVERSATION_GRANTS,
+    });
     expect(await say(three.runner, 'what was the code')).toContain(`recall:${SECRET}`);
     expect(toolCalls).toBe(1);
   });

@@ -946,8 +946,7 @@ export class GthAgentRunner {
         'A turn is still running; wait for it to finish before resuming another conversation.'
       );
     }
-    const pendingApprovals =
-      (await this.agent.getPendingToolInterrupts?.(this.runConfig)) ?? [];
+    const pendingApprovals = (await this.agent.getPendingToolInterrupts?.(this.runConfig)) ?? [];
     if (pendingApprovals.length > 0) {
       throw new Error(
         'A tool approval is still pending; answer it before resuming another conversation.'
