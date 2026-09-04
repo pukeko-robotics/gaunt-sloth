@@ -34,6 +34,7 @@ import {
   createContextGuardMiddleware,
   estimatePromptTokens,
   DEFAULT_OUTPUT_RESERVE_TOKENS,
+  MAX_RESERVE_FRACTION_OF_WINDOW,
 } from '#src/core/GthLangChainAgent.js';
 import {
   DEFAULT_OLLAMA_NUM_CTX,
@@ -295,15 +296,71 @@ describe('EXT-160 — the pre-call guard hook', () => {
   });
 
   it('defaults the reserve rather than leaving the answer no room', async () => {
-    const messages = longHistory();
+    // A window large enough that the quarter-of-the-window clamp does not bind, so the number under
+    // test really is the default and not the ceiling.
+    const messages: BaseMessage[] = [];
+    for (let i = 0; i < 6; i++) {
+      messages.push(new HumanMessage(`ask ${i} ` + 'x'.repeat(2000)));
+      messages.push(new AIMessage(`answer ${i} ` + 'y'.repeat(2000)));
+    }
     const estimate = estimatePromptTokens(messages);
-    const compact = vi.fn(realCompact);
+    const window = estimate + DEFAULT_OUTPUT_RESERVE_TOKENS - 1;
+    expect(Math.floor(window * MAX_RESERVE_FRACTION_OF_WINDOW)).toBeGreaterThanOrEqual(
+      DEFAULT_OUTPUT_RESERVE_TOKENS
+    );
+
+    // Big enough for the prompt, one token short of the prompt plus the default reserve.
     const middleware = createContextGuardMiddleware({
-      // Big enough for the prompt, not big enough for the prompt plus the default reserve.
-      windowSource: async () => estimate + DEFAULT_OUTPUT_RESERVE_TOKENS - 1,
-      compact,
+      windowSource: async () => window,
+      compact: vi.fn(realCompact),
     });
     expect(await runHook(middleware, messages)).toBeDefined();
+
+    // One token more of window, and it does not trigger — so the cell is measuring the reserve.
+    const roomy = createContextGuardMiddleware({
+      windowSource: async () => window + 1,
+      compact: vi.fn(realCompact),
+    });
+    expect(await runHook(roomy, messages)).toBeUndefined();
+  });
+
+  it('clamps the reserve to a fraction of the window, so a small window is not all headroom', async () => {
+    // Measured live on a `num_ctx` of 2048: a flat 2048-token reserve makes `estimate + reserve >
+    // window` true for EVERY call whatever the conversation holds, so the guard folded on every
+    // turn and spent a summary call each time. A short conversation in a small window must be left
+    // alone.
+    const compact = vi.fn(realCompact);
+    const middleware = createContextGuardMiddleware({
+      windowSource: async () => 2048,
+      reserve: DEFAULT_OUTPUT_RESERVE_TOKENS,
+      compact,
+    });
+    const short = [new HumanMessage('hello'), new AIMessage('hi')];
+    expect(await runHook(middleware, short)).toBeUndefined();
+    expect(compact).not.toHaveBeenCalled();
+
+    // The clamp is a ceiling, not a floor: a conversation genuinely near the window still trips.
+    const nearlyFull = createContextGuardMiddleware({
+      windowSource: async () => 2048,
+      reserve: DEFAULT_OUTPUT_RESERVE_TOKENS,
+      compact: vi.fn(realCompact),
+    });
+    expect(await runHook(nearlyFull, longHistory())).toBeDefined();
+  });
+
+  it('never lets the clamped reserve exceed its quarter of the window', async () => {
+    const window = 4000;
+    const cap = Math.floor(window * MAX_RESERVE_FRACTION_OF_WINDOW);
+    const messages = longHistory();
+    const estimate = estimatePromptTokens(messages);
+    // A history that clears the window with more than the CAP to spare must not trigger, however
+    // large the configured reserve.
+    const middleware = createContextGuardMiddleware({
+      windowSource: async () => estimate + cap + 10,
+      reserve: 100_000,
+      compact: vi.fn(realCompact),
+    });
+    expect(await runHook(middleware, messages)).toBeUndefined();
   });
 
   it('LETS THE CALL PROCEED when there is nothing to fold — the bail that stops it looping', async () => {

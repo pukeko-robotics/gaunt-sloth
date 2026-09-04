@@ -383,6 +383,17 @@ export const ESTIMATE_SAFETY_MARGIN = 1.1;
  */
 export const DEFAULT_OUTPUT_RESERVE_TOKENS = 2048;
 
+/**
+ * EXT-160 — the largest fraction of the window the reserve is allowed to claim.
+ *
+ * A fixed reserve is meaningless against a window near its own size: measured live on a
+ * deliberately small `num_ctx` of 2048, the flat 2048-token reserve made `estimate + reserve >
+ * window` true for every call whatever the conversation held, so the guard folded on every turn and
+ * spent a summary call each time. The clamp keeps the reserve proportionate — a quarter of the
+ * window is still real headroom for an answer, and it can never be the whole budget.
+ */
+export const MAX_RESERVE_FRACTION_OF_WINDOW = 0.25;
+
 /** EXT-160 — what {@link createContextGuardMiddleware} needs to decide, all of it injectable. */
 export interface ContextGuardOptions {
   /**
@@ -395,7 +406,10 @@ export interface ContextGuardOptions {
    * nothing worth folding, which is what stops this guard looping (see the hook).
    */
   compact: (_messages: BaseMessage[]) => Promise<CompactMessagesResult>;
-  /** Tokens held back for the answer; {@link DEFAULT_OUTPUT_RESERVE_TOKENS} when omitted. */
+  /**
+   * Tokens held back for the answer; {@link DEFAULT_OUTPUT_RESERVE_TOKENS} when omitted, and
+   * clamped by {@link MAX_RESERVE_FRACTION_OF_WINDOW} whatever it is set to.
+   */
   reserve?: number;
   /**
    * The static system prompt's characters, read at call time. `createAgent` applies the system
@@ -496,10 +510,15 @@ export function createContextGuardMiddleware(options: ContextGuardOptions) {
         // The 4097 case: an unknown window yields no guard, never a guess.
         if (window === null || !Number.isFinite(window) || window <= 0) return undefined;
         const estimate = estimateTokens(messages, systemPromptCharacters());
-        if (estimate + reserve <= window) return undefined;
+        // Proportionate, never absolute: see MAX_RESERVE_FRACTION_OF_WINDOW.
+        const effectiveReserve = Math.min(
+          reserve,
+          Math.floor(window * MAX_RESERVE_FRACTION_OF_WINDOW)
+        );
+        if (estimate + effectiveReserve <= window) return undefined;
         debugLog(
-          `Context guard: estimated ${estimate} prompt tokens + ${reserve} reserved for the answer ` +
-            `exceeds the ${window}-token window; compacting before the call.`
+          `Context guard: estimated ${estimate} prompt tokens + ${effectiveReserve} reserved for ` +
+            `the answer exceeds the ${window}-token window; compacting before the call.`
         );
         let result: CompactMessagesResult;
         try {
@@ -518,8 +537,8 @@ export function createContextGuardMiddleware(options: ContextGuardOptions) {
         if (!result.changed) return undefined;
         options.onCompact?.(
           `Context is nearly full (about ${estimate} tokens of a ${window}-token window, with ` +
-            `${reserve} reserved for the answer), so ${result.removedCount} earlier messages were ` +
-            `folded into a summary before this call. ${result.keptCount} kept verbatim.`
+            `${effectiveReserve} reserved for the answer), so ${result.removedCount} earlier ` +
+            `messages were folded into a summary before this call. ${result.keptCount} kept verbatim.`
         );
         // The same write shape GS2-23 uses: discard everything, keep what follows.
         return {
@@ -864,11 +883,19 @@ export class GthLangChainAgent extends GthAbstractAgent {
     // middleware array below is assembled before the prompt is composed further down.
     let systemPromptCharacters = 0;
     const sessionModel = this.config.llm;
+    // The output headroom the user actually configured, when they configured one: on ollama
+    // `num_predict` caps the generation, so it is the true answer budget and a better number than
+    // any default. Absent, the default stands — and either way it is clamped to a fraction of the
+    // window, which is what stops a small `num_ctx` reserving its whole budget.
+    const configuredNumPredict = (sessionModel as { numPredict?: number } | undefined)?.numPredict;
     const contextGuard = createContextGuardMiddleware({
       windowSource: resolveContextWindowSource(sessionModel),
       compact: (messages) =>
         compactMessages({ messages, summarize: createModelSummarizer(sessionModel) }),
       systemPromptCharacters: () => systemPromptCharacters,
+      ...(typeof configuredNumPredict === 'number' && configuredNumPredict > 0
+        ? { reserve: configuredNumPredict }
+        : {}),
       onCompact: (message) => statusUpdate(StatusLevel.INFO, message),
     });
 
