@@ -116,6 +116,22 @@ export type GthTerminationSite =
   | 'runner.stream-error'
   /** The turn threw. */
   | 'runner.turn-error'
+  /**
+   * [[EXT-160]] — the turn overflowed the context and compaction could not make it smaller: there
+   * was nothing left worth folding, the summary could not be produced, or the agent exposes no
+   * conversation state to rewrite. Distinct from the two wrappers above because the category they
+   * would report is the same and the *remedy* is not: this one says the automatic remedy was tried
+   * and had nothing left to give, so the next step is a human's.
+   */
+  | 'runner.overflow-compact'
+  /**
+   * [[EXT-160]] — the turn overflowed AGAIN on the retry that followed a successful compaction.
+   * One retry is the whole budget: a second overflow after the conversation was already folded is
+   * evidence that the prompt is too large for reasons compaction cannot reach (one enormous tool
+   * result, a window smaller than the system prompt), and a second compaction would fold the tail
+   * it just kept and try the same thing again.
+   */
+  | 'runner.overflow-compact-exhausted'
   /** The string path's tool-approval drain ran out of resume rounds. */
   | 'runner.interrupt-guard-exhausted'
   /** `GthAgentRunner.processMessagesWithEvents` drained its stream to the end. */
@@ -597,6 +613,32 @@ export function attachTerminationReason<T>(error: T, reason: GthTerminationReaso
   try {
     if (!error || (typeof error !== 'object' && typeof error !== 'function')) return error;
     if (field(error, TERMINATION_REASON_KEY) !== undefined) return error;
+    Object.defineProperty(error, TERMINATION_REASON_KEY, {
+      value: reason,
+      enumerable: false,
+      writable: true,
+      configurable: true,
+    });
+  } catch {
+    /* fail-soft */
+  }
+  return error;
+}
+
+/**
+ * [[EXT-160]] — **replace** the reason attached to a thrown value.
+ *
+ * {@link attachTerminationReason} is first-write-wins, which is right for the nested wrappers it
+ * was built for: the inner site saw the failure first and is the truer classification. This is the
+ * one case that legitimately overwrites, and it is not an exception to that rule but an instance of
+ * it — the compact-and-retry seam has seen the overflow happen TWICE, and the wrapper that
+ * classified the second one only ever saw one of them. Without this the runner's own field and the
+ * reason riding on the error would disagree about the same failure, which is precisely what
+ * `classifyThrownAt` exists to prevent.
+ */
+export function replaceTerminationReason<T>(error: T, reason: GthTerminationReason): T {
+  try {
+    if (!error || (typeof error !== 'object' && typeof error !== 'function')) return error;
     Object.defineProperty(error, TERMINATION_REASON_KEY, {
       value: reason,
       enumerable: false,

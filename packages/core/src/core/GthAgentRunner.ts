@@ -73,6 +73,8 @@ import {
 import {
   attachTerminationReason,
   classifyThrownTermination,
+  replaceTerminationReason,
+  terminationPosture,
   terminationReason,
   terminationReasonOf,
   type GthFinishReasonObservation,
@@ -1139,6 +1141,25 @@ export class GthAgentRunner {
     debugLog('Processing messages...');
     debugLogObject('Input Messages', messages);
 
+    return this.runTurn(messages, 0);
+  }
+
+  /**
+   * The turn itself, separated from the per-turn bookkeeping above so [[EXT-160]] can run it twice.
+   *
+   * `attempt` is 0 for the turn the user asked for and 1 for the single retry that follows a
+   * compaction; nothing else calls this. The retry passes an EMPTY message list, because the user's
+   * message is already in the graph's state — the input step commits before the model step throws
+   * (measured), so re-sending it would append a second copy of the same turn.
+   *
+   * The preamble is deliberately NOT repeated on the retry: resetting the analytics tally, ending
+   * the negotiation and re-recording the crash transcript are things a NEW user turn does, and a
+   * retry is the same turn being attempted again.
+   */
+  private async runTurn(messages: Message[], attempt: number): Promise<string> {
+    if (!this.agent || !this.config || !this.runConfig) {
+      throw new Error('AgentRunner not initialized. Call init() first.');
+    }
     this.turnsInFlight++;
     try {
       // Decision: Use streaming or non-streaming based on config
@@ -1256,6 +1277,18 @@ export class GthAgentRunner {
       if (error instanceof ApprovalStopError) {
         this.noteApprovalStop('runner.turn-approval-stop', error);
         throw error;
+      }
+      // [[EXT-160]] — **the reactive seam: catch, classify, compact, retry once.**
+      //
+      // Here rather than in the streaming branch's inner `catch` because BOTH paths reach this one
+      // and only one of them has an inner catch — and because the streaming path does not always
+      // use it: an overflow raised while the stream is being CREATED (`await this.agent.stream(…)`,
+      // above the inner `try`) lands here too, which is exactly what the local measurement showed.
+      // One seam, both paths, once each.
+      const retryAfterCompaction = await this.handleContextOverflow(error, attempt);
+      if (retryAfterCompaction) {
+        const answer = await this.runTurn([], attempt + 1);
+        return answer;
       }
       // Handle agent invocation errors
       debugLogError('Agent processing', error);
@@ -3551,6 +3584,35 @@ export class GthAgentRunner {
     if (pendingApprovals.length > 0) {
       throw new Error('A tool approval is still pending; answer it before compacting.');
     }
+    return this.applyCompaction(options);
+  }
+
+  /**
+   * [[EXT-160]] — the read-compact-write itself, with **no turn-state guards**: the shared internal
+   * behind both the idle `/compact` above and the involuntary compact-and-retry inside a turn.
+   *
+   * It exists because {@link compactConversation}'s guards are exactly wrong for the involuntary
+   * case. That method refuses while `turnsInFlight > 0`, and the overflow seam runs inside the
+   * driver's `catch`, where the turn it is recovering is still counted in — so calling the public
+   * method from there throws every time. The alternative was for the seam to compose
+   * `compactMessages` with `replaceConversationMessages` itself, which is the same six steps written
+   * twice: two places to keep the summariser, the keep-recent default, the read-back and the
+   * `changed: false` shape in agreement. One implementation with the guards on the caller that needs
+   * them is the version that cannot drift.
+   */
+  private async applyCompaction(
+    options: CompactConversationOptions = {}
+  ): Promise<ConversationCompaction> {
+    if (!this.agent || !this.config || !this.runConfig) {
+      throw new Error('AgentRunner not initialized. Call init() first.');
+    }
+    const agent = this.agent;
+    if (!agent.getConversationMessages || !agent.replaceConversationMessages) {
+      throw new Error(
+        'This agent does not expose its conversation state, so it cannot be compacted.'
+      );
+    }
+    const runConfig = this.runConfig;
     const keepRecent = options.keepRecent ?? DEFAULT_KEEP_RECENT;
     const messages = await agent.getConversationMessages(runConfig);
     const before = conversationSize(messages);
@@ -3586,6 +3648,122 @@ export class GthAgentRunner {
       before,
       after,
     };
+  }
+
+  /**
+   * [[EXT-160]] — **decide what a thrown turn's context overflow means, and act on it once.**
+   *
+   * Returns `true` when the conversation was made smaller and the turn is worth attempting again;
+   * `false` for everything else, including every failure that is not an overflow at all, in which
+   * case the caller's existing error path runs untouched.
+   *
+   * **The predicate is the taxonomy's, never a private one.** The category comes from the reason an
+   * inner site already attached, or failing that from `classifyThrownTermination`, and the decision
+   * is `remedy === 'reduce-context'` read out of the one POSTURE table. That is what makes this the
+   * same fact [[EXT-159]] surfaces rather than a second opinion about it — and it is why an
+   * `output_truncated` turn is not compacted here: the answer was cut off against the output cap,
+   * its remedy is `change-request`, and folding the history would not add a single token of room to
+   * the part that ran out. `context_overflow` is also the one category whose posture separates the
+   * two facts this method depends on: retrying the SAME prompt is hopeless (`retryableAsIs: false`,
+   * which is what `ContextOverflowError.getRetryable()` says too) while retrying a SMALLER one is
+   * the whole move (`retryableAfterRemedy: true`).
+   *
+   * **One retry, and the reasons a compaction can decline.** A second overflow after the history has
+   * already been folded is not worth a second fold — the tail it just kept is what the next
+   * compaction would have to eat — so `attempt > 0` terminates at its own site. So does a compaction
+   * that had nothing to fold, could not get a summary, or found an agent with no conversation state:
+   * each is "the automatic remedy was tried and had nothing to give", which is a different fact from
+   * "the model said no" and deserves to be said in its own words.
+   *
+   * The original overflow error is what surfaces in every declining branch. A compaction that throws
+   * has its own failure logged and dropped rather than re-thrown, because replacing a diagnosis the
+   * whole node exists to preserve with a summariser's stack trace buries the one useful thing the
+   * turn produced.
+   */
+  private async handleContextOverflow(error: unknown, attempt: number): Promise<boolean> {
+    const category =
+      terminationReasonOf(error)?.category ?? classifyThrownTermination(error).category;
+    if (terminationPosture(category).remedy !== 'reduce-context') return false;
+
+    if (attempt > 0) {
+      this.overrideTerminationReason(
+        error,
+        terminationReason('runner.overflow-compact-exhausted', 'exception', {
+          category: 'context_overflow',
+          detail: 'overflowed again after compaction',
+        })
+      );
+      this.statusUpdate(
+        StatusLevel.WARNING,
+        'The context overflowed again after compacting, so this turn was ended. Start a new ' +
+          'conversation, or narrow what this turn is asking for.'
+      );
+      return false;
+    }
+
+    // An agent that exposes no conversation state cannot be compacted at ALL, which is a different
+    // fact from a compaction that ran and had nothing to give — and only the second is something
+    // this seam knows. So nothing is overridden here: the wrapper's own classification is the
+    // truest thing anyone has, and claiming the remedy was tried would be false.
+    const agent = this.agent;
+    if (!agent?.getConversationMessages || !agent?.replaceConversationMessages) {
+      debugLog(
+        'Context overflow: this agent exposes no conversation state, so it cannot be compacted.'
+      );
+      return false;
+    }
+
+    let compaction: ConversationCompaction;
+    try {
+      compaction = await this.applyCompaction();
+    } catch (compactionError) {
+      debugLogError('Compacting after a context overflow', compactionError);
+      compaction = { changed: false } as ConversationCompaction;
+    }
+    if (!compaction.changed) {
+      this.overrideTerminationReason(
+        error,
+        terminationReason('runner.overflow-compact', 'exception', {
+          category: 'context_overflow',
+          detail: 'nothing left to compact',
+        })
+      );
+      this.statusUpdate(
+        StatusLevel.WARNING,
+        'The context overflowed and there was nothing left to compact, so this turn was ended. ' +
+          'Start a new conversation, or narrow what this turn is asking for.'
+      );
+      return false;
+    }
+
+    this.statusUpdate(
+      StatusLevel.INFO,
+      `The context overflowed, so ${compaction.removedCount} earlier messages were folded into a ` +
+        `summary (${compaction.before.messages}→${compaction.after.messages} messages). Retrying.`
+    );
+    // The retry is a fresh attempt and owes its own reason: the FULL reset, so the failed attempt's
+    // provider finish reasons go with it rather than being read later as the retry's.
+    this.resetTerminationReason();
+    return true;
+  }
+
+  /**
+   * [[EXT-160]] — record a reason that OVERRIDES what an inner site already said, on both carriers.
+   *
+   * {@link noteTermination} is first-write-wins and {@link classifyThrownAt} inherits, which is
+   * right for the nested wrappers they serve: the inner site saw the failure first. The overflow
+   * seam is the one site that legitimately knows better — it has watched the same turn overflow
+   * twice, or watched the remedy come back empty, and the wrapper that classified the throw saw
+   * neither. Both carriers move together so the runner's field and the error can never disagree.
+   */
+  private overrideTerminationReason(error: unknown, reason: GthTerminationReason): void {
+    try {
+      this.terminationReason = reason;
+      replaceTerminationReason(error, reason);
+      debugLog(terminationLogLine(reason));
+    } catch {
+      /* fail-soft: classification must never affect a run */
+    }
   }
 
   async cleanup(): Promise<void> {

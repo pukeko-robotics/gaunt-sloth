@@ -31,10 +31,7 @@ import {
   createModelSummarizer,
   type CompactMessagesResult,
 } from '#src/core/compaction.js';
-import {
-  resolveContextWindowSource,
-  type ContextWindowSource,
-} from '#src/core/contextWindow.js';
+import { resolveContextWindowSource, type ContextWindowSource } from '#src/core/contextWindow.js';
 import { AIMessage, RemoveMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages';
 import { BaseCheckpointSaver, REMOVE_ALL_MESSAGES } from '@langchain/langgraph';
 import {
