@@ -466,6 +466,46 @@ export interface ContextGuardOptions {
  * characters are added because nothing has measured them yet. With an anchor they are already
  * inside the anchor's count and adding them again would double-count the single largest block.
  */
+/**
+ * EXT-160 — the characters `conversationSize` cannot see, added back.
+ *
+ * `conversationSize` reads message content through `compaction.ts`'s `contentText`, which keeps a
+ * string block and a block with a string `text` field and returns `''` for everything else. That is
+ * right for compaction, whose before/after comparison only has to agree with itself, but it is
+ * wrong for a token estimate: an image block or a structured MCP tool result would contribute zero
+ * characters, so the guard would under-count precisely the payload most likely to fill the window.
+ *
+ * That is the UNSAFE direction, and it is the only approximation here that errs that way — every
+ * other one deliberately reads high. The serialised length of the block is a rough proxy for what
+ * the provider will charge for it, and rough-but-present beats exact-and-missing.
+ *
+ * The skip conditions mirror `contentText`'s accept conditions exactly, so a text block counted
+ * there is never counted again here.
+ */
+function nonTextBlockCharacters(messages: readonly BaseMessage[]): number {
+  let total = 0;
+  for (const message of messages) {
+    const content = message.content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      if (typeof block === 'string') continue;
+      if (
+        block &&
+        typeof block === 'object' &&
+        typeof (block as { text?: unknown }).text === 'string'
+      ) {
+        continue;
+      }
+      try {
+        total += JSON.stringify(block ?? {}).length;
+      } catch {
+        /* a block that cannot be serialised is left uncounted rather than crashing the estimate */
+      }
+    }
+  }
+  return total;
+}
+
 export function estimatePromptTokens(
   messages: readonly BaseMessage[],
   systemPromptCharacters = 0
@@ -484,10 +524,11 @@ export function estimatePromptTokens(
   }
   // From the anchor message onward: the anchor's own tokens covered everything BEFORE it, so the
   // anchor message itself is part of the next prompt and is counted in the delta.
+  const counted = anchorIndex === -1 ? messages : messages.slice(anchorIndex);
   const deltaCharacters =
-    anchorIndex === -1
-      ? conversationSize(messages).characters + systemPromptCharacters
-      : conversationSize(messages.slice(anchorIndex)).characters;
+    conversationSize(counted).characters +
+    nonTextBlockCharacters(counted) +
+    (anchorIndex === -1 ? systemPromptCharacters : 0);
   const estimate = anchorTokens + deltaCharacters / ESTIMATE_CHARS_PER_TOKEN;
   return Math.ceil(estimate * ESTIMATE_SAFETY_MARGIN);
 }

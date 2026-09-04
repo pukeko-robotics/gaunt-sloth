@@ -215,6 +215,39 @@ describe('EXT-160 — the estimate, anchored on a real token count', () => {
     expect(withPrompt - withoutPrompt).toBeGreaterThan(1000);
   });
 
+  it('counts non-text content blocks, which the character source drops', () => {
+    // `conversationSize` reads content through compaction's `contentText`, which returns '' for any
+    // block without a string `text` field. An image or a structured tool result would therefore
+    // weigh nothing, and the guard would under-count the payload most likely to fill the window —
+    // the one direction none of the other approximations here err in.
+    const textOnly = [new HumanMessage({ content: [{ type: 'text', text: 'hello' }] })];
+    const withImage = [
+      new HumanMessage({
+        content: [
+          { type: 'text', text: 'hello' },
+          {
+            type: 'image_url',
+            image_url: { url: 'data:image/png;base64,' + 'A'.repeat(4000) },
+          },
+        ],
+      }),
+    ];
+    const plain = estimatePromptTokens(textOnly);
+    const withBlock = estimatePromptTokens(withImage);
+    // Strictly larger, and by roughly the block's own weight — a 4000-character payload is about
+    // 1257 tokens at this file's ratio and margin. Before this was counted the two were EQUAL.
+    expect(withBlock).toBeGreaterThan(plain);
+    expect(withBlock - plain).toBeGreaterThan(1000);
+
+    // And the text block itself is still counted exactly once: an identical conversation whose text
+    // is longer must also weigh more, which would not hold if the mirror of `contentText`'s accept
+    // conditions had drifted and text were being double-counted or skipped.
+    const longerText = [
+      new HumanMessage({ content: [{ type: 'text', text: 'hello' + 'z'.repeat(700) }] }),
+    ];
+    expect(estimatePromptTokens(longerText)).toBeGreaterThan(plain);
+  });
+
   it('does not add the system prompt on top of an anchor that already contains it', () => {
     const anchored = new AIMessage({
       content: 'a',
@@ -618,5 +651,63 @@ describe('EXT-160 — the guard as the lean agent installs it', () => {
     expect(estimatePromptTokens([new SystemMessage('x'.repeat(8000))], 0)).toBeGreaterThan(
       graphOnly
     );
+  });
+
+  /**
+   * The cell above pins the FUNCTION — it passes the character count in as an argument. This one
+   * pins the ASSIGNMENT that makes production feed it a real number, which is a different claim and
+   * was previously untested: setting `systemPromptCharacters = 0` in `init` left every cell green.
+   *
+   * It works by making the guard's DECISION depend on the prompt being counted. The conversation is
+   * deliberately tiny — a few dozen characters — so the graph state alone comes nowhere near the
+   * window, and the only thing that can push the estimate over it is the system prompt, which never
+   * appears in `state.messages` at all. Measured in this fixture: the composed prompt is ~2396
+   * characters with the prompt segments on and ~253 with them off, so the pair below straddles the
+   * 900-token window by a wide margin in both directions.
+   */
+  it('feeds the guard the REAL system prompt length, not zero', async () => {
+    const runTurns = async (extraConfig: Record<string, unknown>) => {
+      const model = new RecordingModel();
+      model.llmType = 'ollama';
+      model.numCtx = 900;
+      model.baseUrl = 'http://127.0.0.1:11434';
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => {
+          throw new Error('ECONNREFUSED');
+        })
+      );
+      const runner = new GthAgentRunner(statusUpdate, {
+        resolveTools: vi.fn().mockResolvedValue([lookup]),
+        resolveMiddleware: async (m: unknown[] | undefined) => m ?? [],
+      });
+      await runner.init(
+        'chat',
+        { ...BASE_CONFIG, ...extraConfig, llm: model } as unknown as GthConfig,
+        new MemorySaver()
+      );
+      // Six short turns: twelve messages, which is past the kept tail so there IS something to
+      // fold. Every message is a handful of characters, so the state's own contribution is noise.
+      for (const text of ['one', 'two', 'three', 'four', 'five', 'six']) {
+        await runner.processMessages([new HumanMessage(text)]);
+      }
+      return statusUpdate.mock.calls.some((call) =>
+        /context is nearly full/i.test(String(call[1] ?? ''))
+      );
+    };
+
+    // With the prompt counted the estimate clears the window and the guard folds.
+    expect(await runTurns({})).toBe(true);
+
+    // THE CONTROL: the same tiny conversation, the same window, the prompt segments switched off so
+    // the composed prompt collapses to the date and model note. Nothing triggers — which is what
+    // the run above would also do if the assignment stopped feeding the real number.
+    statusUpdate.mockClear();
+    const off = { enabled: false } as const;
+    expect(
+      await runTurns({
+        prompts: { system: off, chat: off, backstory: off, guidelines: off },
+      })
+    ).toBe(false);
   });
 });
