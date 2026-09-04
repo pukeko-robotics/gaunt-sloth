@@ -182,6 +182,9 @@ export function historyCommand(
         'and loses only the state a resume needs. Threads no conversation names are reclaimed\n' +
         'automatically a day after the session ends; this is for the rest.\n' +
         '\n' +
+        'This removes exactly what your bounds select, including a conversation that is open in\n' +
+        'another window right now — the plan marks those `<- active today`.\n' +
+        '\n' +
         'Examples:\n' +
         '  $ gth history prune --older-than 30\n' +
         '  $ gth history prune --keep-last 20 --yes\n'
@@ -303,10 +306,14 @@ export function historyCommand(
  */
 function parseBound(raw: string | undefined, flag: string): number | undefined | 'invalid' {
   if (raw === undefined) return undefined;
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n < 0) {
+  // `Number('')` and `Number('  ')` are both 0, not NaN, so an empty flag value has to be refused
+  // before the numeric test rather than by it. And zero itself is refused: `--older-than 0` means
+  // "older than right now", which selects every conversation that has stored state — the widest
+  // possible delete, reached by typing the narrowest-looking bound.
+  const n = raw.trim() === '' ? Number.NaN : Number(raw);
+  if (!Number.isInteger(n) || n < 1) {
     displayWarning(
-      `Nothing was removed: \`--${flag} ${raw}\` is not a whole number of ` +
+      `Nothing was removed: \`--${flag} ${raw}\` is not a positive whole number of ` +
         `${flag === 'older-than' ? 'days' : 'conversations'}.`
     );
     return 'invalid';

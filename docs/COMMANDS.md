@@ -1172,6 +1172,8 @@ A checkpoint is not a transcript. A recorded turn is a prompt and a response; th
 
 Pruning takes whole conversations, never part of one, and it **keeps the transcripts**: `gth history list` and `gth history show <id>` go on working for a pruned conversation, and only `history resume` stops. `--keep-last <n>` means "keep the *n* most recently active conversations", not "keep the last *n* steps of each".
 
+**`prune` does not skip a conversation that is open right now.** The automatic pass waits a day precisely because it was nobody's decision; `prune` removes exactly what your bounds select, because quietly holding rows back would make the bound you typed mean something else. A conversation that is open in another window and loses its state keeps its transcript, but the session in that window carries on with no memory of the part before the prune. So the plan marks every conversation whose last activity is inside the last day with `<- active today`, and nothing is removed until you add `--yes`. `--keep-last` is the bound that leaves the current work alone.
+
 ### Arguments
 - `<query...>` - (`history search`) One or more search terms.
 - `<id>` - (`history show` / `history resume`) Conversation id, as printed by `history list` / `history search`.

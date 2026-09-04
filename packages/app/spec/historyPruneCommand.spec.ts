@@ -205,8 +205,56 @@ describe('gth history prune (GS2-107)', () => {
   it('refuses a bound that is not a whole number rather than reinterpreting it', async () => {
     await seed({ threadId: 't-old', ageDays: 400 });
     await run('prune', '--older-than', 'soon', '--yes', '--db', dbPath);
-    expect(output()).toContain('is not a whole number');
+    expect(output()).toContain('is not a positive whole number');
     expect(threadsInStore()).toEqual(['t-old']);
+  });
+
+  /**
+   * GS2-107 fix round, finding E — the docstring said non-positive values were refused and the code
+   * accepted `0`, which is the widest delete this command can make: `--older-than 0` means "older
+   * than right now", so every conversation with stored state is selected, reached by typing the
+   * smallest-looking bound there is. `--keep-last 0` is the same sentence from the other end.
+   *
+   * The empty forms are here because `Number('')` and `Number('  ')` are both `0` rather than
+   * `NaN`, so they arrive at the numeric test already looking like a valid bound.
+   */
+  it.each([
+    ['--older-than', '0'],
+    ['--keep-last', '0'],
+    ['--older-than', ''],
+    ['--keep-last', '   '],
+  ])('refuses %s %s and removes nothing', async (flag, value) => {
+    await seed({ threadId: 't-old', ageDays: 400 });
+    await run('prune', flag, value, '--yes', '--db', dbPath);
+    expect(output()).toContain('is not a positive whole number');
+    expect(output()).not.toContain('History prune complete');
+    expect(threadsInStore()).toEqual(['t-old']);
+  });
+
+  /**
+   * GS2-107 fix round, finding F — the command a person types has neither of the automatic pass's
+   * guards, and the plan is where it says so. The marker rides on the row, the paragraph appears
+   * once, and both are absent when nothing selected is recent — so a person reading a plan full of
+   * year-old conversations is not told to worry about a window that is not open.
+   */
+  it('marks a recently active conversation in the plan and says prune does not skip an open one', async () => {
+    await seed({ threadId: 't-newest', ageDays: 0 });
+    await seed({ threadId: 't-hours-ago', ageDays: 0.2 });
+    await seed({ threadId: 't-ancient', ageDays: 400 });
+    await run('prune', '--keep-last', '1', '--db', dbPath);
+    expect(output()).toContain('active today');
+    expect(output()).toContain('may be open in another window right now');
+    expect(output()).toContain('does not skip an open conversation');
+    expect(threadsInStore()).toEqual(['t-ancient', 't-hours-ago', 't-newest']);
+  });
+
+  it('says none of that when everything selected is old', async () => {
+    await seed({ threadId: 't-newest', ageDays: 0 });
+    await seed({ threadId: 't-ancient', ageDays: 400 });
+    await run('prune', '--keep-last', '1', '--db', dbPath);
+    expect(output()).toContain('#');
+    expect(output()).not.toContain('active today');
+    expect(output()).not.toContain('may be open in another window right now');
   });
 
   it('says there is no history rather than creating a database', async () => {
