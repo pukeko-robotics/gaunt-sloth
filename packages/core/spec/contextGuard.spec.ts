@@ -76,6 +76,30 @@ const longHistory = (): BaseMessage[] => {
   return messages;
 };
 
+/**
+ * LangChain's own fallback guess for a context window it does not recognise. The unknown-window
+ * cell below uses this exact number rather than a round one, because the mutation it has to
+ * discriminate is precisely "the guard inherited THIS guess" — see `contextWindow.ts`.
+ */
+const LANGCHAIN_FALLBACK_WINDOW_GUESS = 4097;
+
+/**
+ * A conversation whose estimate alone clears {@link LANGCHAIN_FALLBACK_WINDOW_GUESS}.
+ *
+ * `longHistory()` cannot do that job: it estimates ~1537 tokens, so at a 4097 window it fits with
+ * room to spare and an unknown-window assertion built on it stays green even if the guard starts
+ * guessing 4097. Sizing the fixture ABOVE the guess is what makes the absence assertion able to
+ * fail, which is the whole point of the control.
+ */
+const overflowingHistory = (): BaseMessage[] => {
+  const messages: BaseMessage[] = [];
+  for (let i = 0; i < 10; i++) {
+    messages.push(new HumanMessage(`ask ${i} ` + 'x'.repeat(1200)));
+    messages.push(new AIMessage(`answer ${i} ` + 'y'.repeat(1200)));
+  }
+  return messages;
+};
+
 const realCompact = (messages: BaseMessage[]): Promise<CompactMessagesResult> =>
   compactMessages({ messages, summarize: async () => 'SUMMARY' });
 
@@ -233,7 +257,11 @@ describe('EXT-160 — the pre-call guard hook', () => {
   });
 
   it('never triggers on an UNKNOWN window — and the control proves the assertion can fail', async () => {
-    const messages = longHistory();
+    // The fixture is sized ABOVE 4097 on purpose. The mutation this cell has to catch is the guard
+    // treating an unknown window as LangChain's 4097 fallback guess, and a fixture that fits inside
+    // 4097 cannot tell that mutation from correct behaviour — both leave the conversation alone.
+    const messages = overflowingHistory();
+    expect(estimatePromptTokens(messages)).toBeGreaterThan(LANGCHAIN_FALLBACK_WINDOW_GUESS);
 
     const compactUnknown = vi.fn(realCompact);
     const unknown = createContextGuardMiddleware({
@@ -243,13 +271,13 @@ describe('EXT-160 — the pre-call guard hook', () => {
     expect(await runHook(unknown, messages)).toBeUndefined();
     expect(compactUnknown).not.toHaveBeenCalled();
 
-    // THE CONTROL. Identical history, identical estimate — the ONLY difference is that the window
-    // is known. It compacts, so the assertion above is measuring the window and not some accident
-    // of the fixture being too small to trip anything.
+    // THE CONTROL, and it is deliberately the 4097 case itself. Identical history, identical
+    // estimate, identical (default) reserve — the ONLY difference is that the window is the guess
+    // instead of unknown. It compacts. So if the guard ever adopts that guess for an unknown
+    // window, the absence assertion above becomes this one and goes red.
     const compactKnown = vi.fn(realCompact);
     const known = createContextGuardMiddleware({
-      windowSource: async () => 1000,
-      reserve: 100,
+      windowSource: async () => LANGCHAIN_FALLBACK_WINDOW_GUESS,
       compact: compactKnown,
     });
     expect(await runHook(known, messages)).toBeDefined();
