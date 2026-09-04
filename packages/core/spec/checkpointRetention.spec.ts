@@ -534,7 +534,10 @@ describe('GS2-107 checkpoint retention', () => {
         .map((r) => String(r.detail))
         .join('\n');
       expect(plan).toContain('idx_conversations_thread_id');
-      expect(plan).not.toContain('SCAN conversations');
+      // `v`, the alias the subquery gives `conversations` — the plan never names the table, so an
+      // assertion written against `SCAN conversations` matches nothing in either direction and
+      // cannot fail. Without the index this line reads exactly `SCAN v`.
+      expect(plan).not.toContain('SCAN v');
       db.close();
     });
 
