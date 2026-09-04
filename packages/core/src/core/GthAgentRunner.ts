@@ -3741,6 +3741,15 @@ export class GthAgentRunner {
    * twice: two places to keep the summariser, the keep-recent default, the read-back and the
    * `changed: false` shape in agreement. One implementation with the guards on the caller that needs
    * them is the version that cannot drift.
+   *
+   * **The pending-approval guard is dropped here too, and that is deliberate rather than an
+   * oversight.** `/compact` refuses under a pending approval because the user is mid-decision about
+   * a tool call, and folding the conversation under them would rewrite the history that decision is
+   * being made against. The involuntary path cannot be in that position: it runs from the `catch`
+   * of a model call that threw, and a model call that threw produced no tool call, so there is no
+   * new interrupt to answer. An approval raised EARLIER in the same turn has already been resolved
+   * — the driver resolves interrupts in a loop before the model is asked again — so by the time an
+   * overflow can be caught, there is nothing pending for the guard to protect.
    */
   private async applyCompaction(
     options: CompactConversationOptions = {}
