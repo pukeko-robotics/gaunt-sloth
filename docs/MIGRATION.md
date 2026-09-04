@@ -673,8 +673,10 @@ behaviour.
 **What reclaims the space, since it now accumulates for everyone.** Conversation state that no
 conversation can reach — what `/clear` leaves behind, a session that ended before recording
 anything, a conversation marked unresumable because a write failed — is deleted automatically at the
-end of a session, a day after its last step so a running session is never swept. Nothing there was
-resumable, so nothing is lost. **State you could still have resumed is only ever removed by
+end of a session, a day after its last step. The session running the sweep never reclaims a
+conversation it wrote itself; anything else is protected only by that one-day window, so a session
+left open in another window and idle for longer can lose its state while it is still on screen.
+Nothing there was resumable, so nothing is lost. **State you could still have resumed is only ever removed by
 `gth history prune`, which you type**, with an explicit `--older-than <days>` or `--keep-last <n>`
 and a plan printed before anything goes; it takes whole conversations and keeps their transcripts,
 so `gth history show <id>` goes on working and only the resume stops. `gth history list` prints the
