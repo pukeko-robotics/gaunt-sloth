@@ -443,7 +443,7 @@ describe('tui <App>', () => {
     await vi.waitFor(() => {
       const out = frames.join('\n');
       expect(out).toContain('Approvals: Write');
-      expect(out).toContain('2 this session');
+      expect(out).toContain('2 this conversation');
       expect(out).toContain('Denied: 0');
     });
     expect(rung()).toBe('write'); // display only — nothing switched

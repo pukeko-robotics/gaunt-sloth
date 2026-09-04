@@ -467,7 +467,15 @@ function readAnnotationSnapshot(value: unknown): EffectiveToolAnnotations | null
  * discarding a real grant over a missing timestamp would cost an approval the human already gave.
  * The annotation snapshot is the exception ({@link readAnnotationSnapshot}), because it decides.
  */
-function readGrant(value: unknown, fallbackTime: string): ApprovalGrant | null {
+/**
+ * Read one stored grant, or `null` when the value is not one: no readable entry, or an annotation
+ * snapshot that is present and malformed (see `readAnnotationSnapshot`).
+ *
+ * Exported because the conversation-grants document a resume restores
+ * (`core/approvals/conversationGrants.ts`) stores grants in this same shape, and one reader for
+ * both files is what keeps the two from accepting different things.
+ */
+export function readGrant(value: unknown, fallbackTime: string): ApprovalGrant | null {
   if (!value || typeof value !== 'object') return null;
   const record = value as {
     entry?: unknown;
@@ -733,7 +741,10 @@ function refusedWriteNotice(
     level: StatusLevel.ERROR,
     message:
       `This answer was NOT saved to ${filePath}, because that file could not be read when this ` +
-      `session started. ${recovery} For now the answer applies to this session only.`,
+      // GS2-20 — an unsaved answer is held with the CONVERSATION (recorded in the history store and
+      // installed again on a resume), so the fallback lifetime is the conversation's.
+      `session started. ${recovery} For now the answer applies to this conversation only: ` +
+      'resuming it keeps the answer, and any other conversation will ask again.',
   };
 }
 
@@ -780,8 +791,9 @@ function failedWriteNotice(
       level: StatusLevel.ERROR,
       message:
         `${filePath} could NOT be updated (${reason}), so this entry is still saved in it. It is ` +
-        'lifted for the rest of this session and it will be back in the next one, until that file ' +
-        'can be written or you remove the entry from it by hand.',
+        // GS2-20 — the lift, like a grant, is held with the conversation.
+        'lifted for the rest of this conversation and it will be back in any other, until that ' +
+        'file can be written or you remove the entry from it by hand.',
     };
   }
   if (purpose === 'migrate') {
@@ -798,7 +810,10 @@ function failedWriteNotice(
     message:
       `This answer was NOT saved to ${filePath}, because that file could not be written ` +
       `(${reason}). Nothing in it was lost — it was read normally and is left exactly as it is. ` +
-      'The answer applies to this session only; a new session will not have it.',
+      // GS2-20 — the fallback lifetime is the conversation's: kept in the history store, back on
+      // a resume, absent from any other conversation.
+      'The answer applies to this conversation only; resuming it keeps the answer, and any other ' +
+      'conversation will not have it.',
   };
 }
 

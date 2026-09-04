@@ -72,7 +72,17 @@ import {
   parseSlashCommand,
   toolsToggleNotice,
 } from '@gaunt-sloth/agent/modules/slashCommands.js';
+import {
+  resumedConversationNotice,
+  resumeFailedNotice,
+  resumePickerNotice,
+  resumeRefusalNotice,
+  resumeSameConversationNotice,
+  resumeUnavailableNotice,
+  type ResumeTarget,
+} from '@gaunt-sloth/agent/modules/sessionResume.js';
 import { ApprovalsPicker } from '#src/tui/components/ApprovalsPicker.js';
+import type { CommandNoticeTone } from '#src/tui/components/CommandNotice.js';
 import { TerminalSizeProvider, useTerminalSize } from '#src/tui/useTerminalSize.js';
 import { findMatches, scrollOffsetForLine, stepMatch } from '#src/tui/debugSearch.js';
 import { useTranscriptScroll } from '#src/tui/useTranscriptScroll.js';
@@ -128,12 +138,44 @@ export const QUIT_CLEANUP_DEADLINE_MS = 2000;
  * an `AsyncGenerator<AgentStreamEvent>` and folds events through the pure `foldEvents`
  * reducer, so the whole component is testable with a scripted fake agent.
  */
+/**
+ * GS2-20 — the transcript a resumed conversation opens with: the banner, then one restored item per
+ * recorded turn. Ids are assigned from 1 here and the App's id counter starts past them, so a
+ * `push` after the seed cannot collide with a seeded key.
+ */
+function restoredTranscript(target: ResumeTarget): TranscriptItem[] {
+  const banner = resumedConversationNotice(target);
+  const items: TranscriptItem[] = [
+    {
+      kind: 'notice',
+      id: 1,
+      title: banner.title,
+      lines: banner.lines,
+      tone: banner.tone ?? 'info',
+    },
+  ];
+  for (const turn of target.turns) {
+    items.push({
+      kind: 'restored',
+      id: items.length + 1,
+      prompt: turn.prompt ?? '',
+      response: turn.response ?? '',
+    });
+  }
+  return items;
+}
+
 export function App(props: TuiAppProps): React.ReactElement {
   const { agent, mode, modelDisplayName, readyMessage, exitMessage, initialMessage } = props;
-  const [transcript, setTranscript] = useState<TranscriptItem[]>([]);
+  // GS2-20 — a session started with `--resume` opens on the resumed conversation, not the greeting.
+  // Computed once, on mount: a lazy state that is never set again.
+  const [seeded] = useState<TranscriptItem[]>(() =>
+    props.resumed ? restoredTranscript(props.resumed) : []
+  );
+  const [transcript, setTranscript] = useState<TranscriptItem[]>(seeded);
   const [live, setLive] = useState<TurnViewModel | null>(null);
   const [running, setRunning] = useState(false);
-  const [turnCount, setTurnCount] = useState(0);
+  const [turnCount, setTurnCount] = useState(props.resumed?.turns.length ?? 0);
   // Subagent tree, folded from `task` tool calls on the live event stream. No backend dispatches
   // subagents in this release, so nothing fills it today; kept for GS2-25's lean primitive.
   const [subagents, setSubagents] = useState<SubagentTreeViewModel>(initialSubagentTree);
@@ -223,7 +265,8 @@ export function App(props: TuiAppProps): React.ReactElement {
   // from whatever the dispatch closure captured.
   const mouseEnabledRef = useRef(!!props.mouseEnabled);
   const abortRef = useRef<AbortController | null>(null);
-  const idRef = useRef(0);
+  // GS2-20 — starts past the seeded items so a later push never reuses a seeded key.
+  const idRef = useRef(seeded.length);
   const runningRef = useRef(false);
   /**
    * GS2-23 — whether a `/compact` is awaiting its summary. Read where `runningRef` is read at
@@ -231,7 +274,19 @@ export function App(props: TuiAppProps): React.ReactElement {
    * a second `/compact` is refused like any idle-only command. Nothing else keys on it.
    */
   const compactingRef = useRef(false);
-  const turnCountRef = useRef(0);
+  /**
+   * GS2-20 — whether a `/resume <id>` is being resolved. Held for the same reason as
+   * `compactingRef`: the thread is about to change under the session, and a turn started now
+   * would run on the one being left.
+   */
+  const resumingRef = useRef(false);
+  /**
+   * GS2-20 — the conversation this session records under, as `/status` names it. Seeded from the
+   * session module and moved here by `/resume`; a ref, because the slash dispatch reads it and
+   * nothing renders it.
+   */
+  const conversationIdRef = useRef<number | undefined>(props.conversationId);
+  const turnCountRef = useRef(props.resumed?.turns.length ?? 0);
   // Per-turn args buffers for the subagent fold (mirrors foldSubagentTree's internal map).
   const subagentBuffersRef = useRef<Map<string, string>>(new Map());
   const debugFocusedRef = useRef(false);
@@ -693,6 +748,73 @@ export function App(props: TuiAppProps): React.ReactElement {
     [agent]
   );
 
+  // GS2-20 — `/resume [<id>]`. The agent resolves and applies through the one seam `--resume`
+  // uses at boot and reports what was decided; this only renders that decision. A landed resume
+  // replaces the screen: the transcript on it belonged to the conversation being left, and the
+  // model is now continuing another one, so the banner and the restored turns take its place —
+  // the same wipe `/clear` does, without the cleared banner, because nothing was discarded (the
+  // conversation left keeps everything recorded under it). Bare, it lists what could be resumed.
+  const applyResume = useCallback(
+    async (id?: number): Promise<void> => {
+      const commit = (notice: { title: string; lines: string[]; tone?: CommandNoticeTone }) =>
+        push({
+          kind: 'notice',
+          title: notice.title,
+          lines: notice.lines,
+          tone: notice.tone ?? 'info',
+        });
+      if (id === undefined) {
+        if (!props.listResumeCandidates) {
+          commit(resumeUnavailableNotice());
+          return;
+        }
+        commit(resumePickerNotice(props.listResumeCandidates()));
+        return;
+      }
+      if (!agent.resumeConversation) {
+        commit(resumeUnavailableNotice());
+        return;
+      }
+      if (id === conversationIdRef.current) {
+        commit(resumeSameConversationNotice(id));
+        return;
+      }
+      resumingRef.current = true;
+      try {
+        const resolution = await agent.resumeConversation(id);
+        if (!resolution.ok) {
+          commit(resumeRefusalNotice(resolution.refusal, { inSession: true }));
+          return;
+        }
+        const { target } = resolution;
+        conversationIdRef.current = target.conversationId;
+        // Everything derived from the conversation being left goes with it: the subagent tree and
+        // the debug captures describe turns of that conversation.
+        setSubagents(initialSubagentTree());
+        setDebugHistory([]);
+        setDebugSystem([]);
+        setDebugTools([]);
+        setDebugMcp([]);
+        setDebugResponse([]);
+        setClearedBanner(false);
+        const items = restoredTranscript(target);
+        // Re-key the seeded ids past whatever this session has already committed, so the restored
+        // items cannot collide with a key still on screen for a frame.
+        const base = idRef.current;
+        idRef.current = base + items.length;
+        setTranscript(items.map((item) => ({ ...item, id: base + item.id }) as TranscriptItem));
+        turnCountRef.current = target.turns.length;
+        setTurnCount(target.turns.length);
+      } catch (err) {
+        commit(resumeFailedNotice(err instanceof Error ? err.message : String(err)));
+      } finally {
+        resumingRef.current = false;
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [agent, props.listResumeCandidates]
+  );
+
   // [[TUI-C68]] §6.1 — answer the attack banner and dequeue it. `run-anyway` runs exactly one
   // command, so it is the only answer that gets a notice: what a user cannot otherwise observe is
   // the SCOPE of what they granted (the command running is visible; only this one running is not),
@@ -843,14 +965,20 @@ export function App(props: TuiAppProps): React.ReactElement {
           // line is true on both branches and stays on both. The call is deliberately NOT quoted
           // here: a transcript notice is painted raw, and the command is the untrusted string this
           // whole dialog frames.
-          title: savedToProject ? 'Command refused and saved' : 'Command refused for this session',
+          // GS2-20 — a refusal that did not reach the project file lives with the CONVERSATION:
+          // it is kept in the history store and comes back when the conversation is resumed, so
+          // the sentence names the conversation and says a resume keeps it.
+          title: savedToProject
+            ? 'Command refused and saved'
+            : 'Command refused for this conversation',
           lines: [
             savedToProject
               ? 'This exact call will be refused from now on, without asking again.'
-              : 'This exact call will be refused for the rest of this session, without asking again.',
+              : 'This exact call will be refused for the rest of this conversation, without ' +
+                'asking again — including if you resume it later.',
             savedToProject
               ? 'It is saved to this project, so it stays refused in new sessions.'
-              : 'It was not written to the project, so a new session will ask about it again.',
+              : 'It was not written to the project, so another conversation will ask about it again.',
             'Lift it with /approvals undeny, which lists what is refused and takes its number.',
           ],
           tone: 'warn',
@@ -878,12 +1006,20 @@ export function App(props: TuiAppProps): React.ReactElement {
     const describe = (landed: ApprovalLifetime): string => {
       // EXT-71 §3.1 — a grant is exactly the command the human saw, so the confirmation says
       // that and not "this operation". A longer command that merely starts with it asks again.
+      // GS2-20 — a session-scoped grant is kept with the conversation and installed again on a
+      // resume, so its lifetime is the conversation's, and the sentence says so.
       if (landed === 'always')
         return 'Approved and remembered — this exact command is saved to the project allow-list.';
       if (scope === 'always')
-        return 'Approved for this session only — it was not written to the project allow-list.';
+        return (
+          'Approved for this conversation only — it was not written to the project allow-list, ' +
+          'so resuming this conversation keeps it and any other conversation will ask again.'
+        );
       if (landed === 'session')
-        return 'Approved — this exact command will not ask again this session.';
+        return (
+          'Approved — this exact command will not ask again in this conversation, even if you ' +
+          'resume it later.'
+        );
       return 'Approved this single invocation only.';
     };
     // [[TUI-C99]] — **every approve notice survives, including `once`, and CFG-28 is why.** The
@@ -922,7 +1058,8 @@ export function App(props: TuiAppProps): React.ReactElement {
 
       // GS2-23 — a compaction in flight holds the prompt exactly as a running turn does: the
       // thread is about to be rewritten, and a turn started now would race that write.
-      const running = runningRef.current || compactingRef.current;
+      // GS2-20 — and so does a resume being resolved, for the same reason.
+      const running = runningRef.current || compactingRef.current || resumingRef.current;
       const parsed = parseSlashCommand(value);
 
       // While a turn is streaming ("during inference") the prompt stays mounted so the user can
@@ -954,6 +1091,8 @@ export function App(props: TuiAppProps): React.ReactElement {
             mode,
             modelDisplayName: modelDisplayName ?? '',
             turnCount: turnCountRef.current,
+            // GS2-20 — the id `/status` names; live, so it follows a `/resume`.
+            conversationId: conversationIdRef.current,
             toolsExpanded: toolsExpandedRef.current,
             debugVisible: debugVisibleRef.current,
             // TUI-C37 — undefined (not false) when this surface has no mouse layer, so `/mouse`
@@ -1034,6 +1173,11 @@ export function App(props: TuiAppProps): React.ReactElement {
         if (result.compact) {
           void applyCompaction(result.compact.focus);
         }
+        // GS2-20 — `/resume`: the same shape as `/compact` — awaited inside the helper, which
+        // commits its own notices or replaces the transcript with the resumed conversation.
+        if (result.resume) {
+          void applyResume(result.resume.id);
+        }
         if (result.toggleDebug) {
           setDebugVisible((v) => {
             const next = !v;
@@ -1088,6 +1232,7 @@ export function App(props: TuiAppProps): React.ReactElement {
       applyApprovalRung,
       showApprovals,
       applyCompaction,
+      applyResume,
       applyMcpTrust,
       liftRefusal,
       applyMouse,

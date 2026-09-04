@@ -562,6 +562,11 @@
       "arity": 0
     },
     {
+      "name": "StoredConversation",
+      "file": "history/recordSession.d.ts",
+      "arity": 0
+    },
+    {
       "name": "SubagentProfileSpec",
       "file": "config/types.d.ts",
       "arity": 0

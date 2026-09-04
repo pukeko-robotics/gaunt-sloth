@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import {
   HistoryStore,
   openHistoryStore,
@@ -209,6 +210,93 @@ describe('history/historyStore', () => {
       expect(store.insights().sessionCount).toBe(0);
       // record after close is a no-op that returns null, not a throw.
       expect(store.record({ command: 'ask', prompt: 'y' })).toBeNull();
+    });
+  });
+
+  /**
+   * GS2-20 — the two reads a resume makes of one conversation, and the grants column it writes.
+   */
+  describe('resume: one conversation, and its grants document', () => {
+    it('getConversation returns a row WITH zero turns, which listConversations hides', () => {
+      const store = HistoryStore.open(':memory:', { create: true })!;
+      const emptyId = store.openConversation({ command: 'code', threadId: 'thread-empty' })!;
+      const fullId = store.openConversation({ command: 'chat', threadId: 'thread-full' })!;
+      store.record({ conversationId: fullId, command: 'chat', prompt: 'p1', response: 'r1' });
+      store.record({ conversationId: fullId, command: 'chat', prompt: 'p2', response: 'r2' });
+
+      // The listing excludes the empty one (its existing contract), the point read does not: a
+      // resume has to see it to refuse it for the RIGHT reason.
+      expect(store.listConversations().map((c) => c.id)).toEqual([fullId]);
+      const empty = store.getConversation(emptyId);
+      expect(empty).not.toBeNull();
+      expect(empty!.turnCount).toBe(0);
+      expect(empty!.threadId).toBe('thread-empty');
+      expect(empty!.command).toBe('code');
+
+      const full = store.getConversation(fullId)!;
+      expect(full.turnCount).toBe(2);
+      expect(full.lastPrompt).toBe('p2');
+      expect(full.threadId).toBe('thread-full');
+      // An unknown id is null, never a neighbour — probed past both ends.
+      expect(store.getConversation(fullId + 1000)).toBeNull();
+      expect(store.getConversation(0)).toBeNull();
+      expect(store.getConversation(-1)).toBeNull();
+      store.close();
+    });
+
+    it('getConversation reports no thread for a cleared link and for an empty string', () => {
+      const store = HistoryStore.open(':memory:', { create: true })!;
+      const id = store.openConversation({ command: 'code', threadId: 'thread-x' })!;
+      store.clearConversationThread(id);
+      expect(store.getConversation(id)!.threadId).toBeUndefined();
+      const blank = store.openConversation({ command: 'code', threadId: '' })!;
+      expect(store.getConversation(blank)!.threadId).toBeUndefined();
+      store.close();
+    });
+
+    it('stores and returns the grants document verbatim, and clears it with null', () => {
+      const store = HistoryStore.open(':memory:', { create: true })!;
+      const id = store.openConversation({ command: 'code', threadId: 't' })!;
+      expect(store.getConversationGrants(id)).toBeNull();
+      expect(store.setConversationGrants(id, '{"version":1,"allow":[],"deny":[]}')).toBe(true);
+      expect(store.getConversationGrants(id)).toBe('{"version":1,"allow":[],"deny":[]}');
+      expect(store.setConversationGrants(id, null)).toBe(true);
+      expect(store.getConversationGrants(id)).toBeNull();
+      // An unknown id updates nothing and says so.
+      expect(store.setConversationGrants(id + 1000, '{}')).toBe(false);
+      expect(store.getConversationGrants(id + 1000)).toBeNull();
+      store.close();
+    });
+
+    it('adds the grants column to a database written before it existed', () => {
+      const dbPath = resolve(dir, 'pre-grants.db');
+      const legacy = openHistoryStore(dbPath, { create: true })!;
+      legacy.close();
+      const raw = new DatabaseSync(dbPath);
+      raw.exec('DROP TABLE conversations');
+      raw.exec(
+        `CREATE TABLE conversations (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           started_ts TEXT NOT NULL,
+           project TEXT,
+           command TEXT,
+           model TEXT,
+           thread_id TEXT
+         )`
+      );
+      raw.exec(
+        `INSERT INTO conversations (started_ts, command, thread_id)
+         VALUES ('2020-01-01T00:00:00Z', 'chat', 'old-thread')`
+      );
+      raw.close();
+
+      const migrated = openHistoryStore(dbPath, { create: false })!;
+      // The old row is readable, has no grants, and can be given some.
+      expect(migrated.getConversation(1)!.threadId).toBe('old-thread');
+      expect(migrated.getConversationGrants(1)).toBeNull();
+      expect(migrated.setConversationGrants(1, '{"version":1,"allow":[],"deny":[]}')).toBe(true);
+      expect(migrated.getConversationGrants(1)).toContain('"version":1');
+      migrated.close();
     });
   });
 

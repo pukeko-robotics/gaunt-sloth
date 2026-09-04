@@ -325,8 +325,8 @@ describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity
     const said = confirmation();
     expect(said).toContain('saved to this project');
     expect(said).toContain('/approvals undeny');
-    // The old promise is gone: this refusal does NOT end with the session.
-    expect(said).not.toContain('for the rest of this session');
+    // The old promise is gone: this refusal does NOT end with the conversation.
+    expect(said).not.toContain('in this conversation');
     // And it is not confused with the allow side's file.
     expect(said).not.toContain('saved to the project allow-list');
   });
@@ -348,8 +348,9 @@ describe('interactiveSessionModule — [[TUI-C26]] §6 the menu and the severity
     const said = confirmation();
     // Committed at all — asserted first, because every absence below is satisfied by silence.
     expect(said).not.toBe('');
-    expect(said).toContain('will not ask again this session');
-    expect(said).toContain('a new session will ask about it again');
+    // GS2-20 — the lifetime named is the conversation's, and a resume keeps the refusal.
+    expect(said).toContain('will not ask again in this conversation, even if you resume it later');
+    expect(said).toContain('another conversation will ask about it again');
     // The claim the file would have earned, and only that file's claim.
     expect(said).not.toContain('saved to this project');
     expect(said).not.toContain('stays refused in new sessions');

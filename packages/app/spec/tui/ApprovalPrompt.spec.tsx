@@ -623,7 +623,7 @@ describe('tui approval flow through <App>', () => {
       const flat = () => plain(frames);
       await vi.waitFor(() => expect(flat()).toContain('Command rejected'));
       expect(flat()).not.toContain('Command approved');
-      expect(flat()).not.toContain('will not ask again this session');
+      expect(flat()).not.toContain('will not ask again in this conversation');
       expect(flat()).not.toContain('saved to the project allow-list');
       unmount();
     }
@@ -659,7 +659,10 @@ describe('tui approval flow through <App>', () => {
 
     const flat = () => plain(frames);
     await vi.waitFor(() => expect(flat()).toContain('Command approved (session)'));
-    expect(flat()).toContain('will not ask again this session');
+    // GS2-20 — the grant is kept with the conversation and comes back on a resume, and says so.
+    expect(flat()).toContain(
+      'will not ask again in this conversation, even if you resume it later'
+    );
     unmount();
   });
 
@@ -1291,8 +1294,8 @@ describe('tui approvals — the [d]eny always key, and the fallthrough it must n
     const block = () => noticeBlock(lastFrame() ?? '', 'Command refused and saved');
     expect(block()).toContain('saved to this project');
     expect(block()).toContain('/approvals undeny');
-    // The old promise is gone: this refusal does NOT end with the session.
-    expect(block()).not.toContain('a new session will ask about it again');
+    // The old promise is gone: this refusal does NOT end with the conversation.
+    expect(block()).not.toContain('another conversation will ask about it again');
     // ...and it does not borrow the ALLOW side's promise, which has a different file behind it.
     expect(flat()).not.toContain('saved to the project allow-list');
     expect(flat()).not.toContain('Approved');
@@ -1336,12 +1339,14 @@ describe('tui approvals — the [d]eny always key, and the fallthrough it must n
 
     // The notice IS committed — half of the pair, and the half that makes the negative below mean
     // something rather than pass on an empty screen.
+    // GS2-20 — the lifetime named is the conversation's, and a resume keeps the refusal.
     await vi.waitFor(() =>
-      expect(noticeBlock(lastFrame() ?? '', 'Command refused for this session')).not.toBe('')
+      expect(noticeBlock(lastFrame() ?? '', 'Command refused for this conversation')).not.toBe('')
     );
-    const block = () => noticeBlock(lastFrame() ?? '', 'Command refused for this session');
-    expect(block()).toContain('refused for the rest of this session');
-    expect(block()).toContain('a new session will ask about it again');
+    const block = () => noticeBlock(lastFrame() ?? '', 'Command refused for this conversation');
+    expect(block()).toContain('refused for the rest of this conversation');
+    expect(block()).toContain('including if you resume it later');
+    expect(block()).toContain('another conversation will ask about it again');
     // ...and the way out is still named, because a session refusal is listable and liftable too.
     expect(block()).toContain('/approvals undeny');
     // The claim this node removes, absent from the ANSWER. Asked of the block rather than of the
@@ -1567,7 +1572,10 @@ describe('tui approvals — the confirmation names what was actually stored (§6
     expect(await decisionP).toEqual({ type: 'approve', scope: 'session' });
     const flat = () => plain(frames);
     await vi.waitFor(() => expect(flat()).toContain('Command approved (session)'));
-    expect(flat()).toContain('will not ask again this session');
+    // GS2-20 — the grant is kept with the conversation and comes back on a resume, and says so.
+    expect(flat()).toContain(
+      'will not ask again in this conversation, even if you resume it later'
+    );
     unmount();
   });
 
@@ -1611,7 +1619,9 @@ describe('tui approvals — the confirmation names what was actually stored (§6
       expect(noticeBlock(lastFrame() ?? '', 'Command approved (session)')).not.toBe('')
     );
     const block = () => noticeBlock(lastFrame() ?? '', 'Command approved (session)');
-    expect(block()).toContain('Approved for this session only');
+    // GS2-20 — the fallback lifetime is the conversation's, and a resume keeps the grant.
+    expect(block()).toContain('Approved for this conversation only');
+    expect(block()).toMatch(/resuming this\s+conversation keeps it/);
     expect(block()).toContain('not written to the project allow-list');
     // The heading moved with the body — a title saying `always` over a body saying otherwise is the
     // same contradiction one line up.

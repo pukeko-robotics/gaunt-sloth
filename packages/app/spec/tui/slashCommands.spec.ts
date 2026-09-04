@@ -275,7 +275,8 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
     expect(notice.title).toBe('Approvals: Assisted');
     const body = notice.lines.join(' ');
     expect(body).toContain('safety-rater');
-    expect(body).toContain('3 this session');
+    // GS2-20 — a menu grant lives with the conversation, and the count says so.
+    expect(body).toContain('3 this conversation');
     expect(body).toContain('Denied: 1');
     // Not loaded → `—`, never a misleading 0.
     expect(body).toContain('— remembered');
@@ -296,7 +297,7 @@ describe('tui/slashCommands dispatchSlashCommand', () => {
     expect(body).not.toContain('could not read a command');
     // ...and the rest of the display is still there, so the assertion above is about the removed
     // row rather than about a notice that stopped rendering.
-    expect(body).toContain('Allowed: 0 this session');
+    expect(body).toContain('Allowed: 0 this conversation');
   });
 
   it('the /approvals display says the rater is unused at the three deterministic rungs', async () => {
@@ -826,7 +827,8 @@ describe('tui/slashCommands /approvals trust (EXT-70 §4.7.1)', () => {
       const lines = notice.lines;
       expect(lines[0]).toContain('1. npm publish — from your approvals.deny');
       expect(lines[1]).toContain('2. git push --force — saved to this project');
-      expect(lines[2]).toContain('3. rm -rf dist — this session only');
+      // GS2-20 — a menu refusal lives with the conversation (it comes back on a resume).
+      expect(lines[2]).toContain('3. rm -rf dist — this conversation only');
       expect(lines.join(' ')).toContain('/approvals undeny <number>');
     });
 
@@ -904,10 +906,11 @@ describe('tui/slashCommands /approvals trust (EXT-70 §4.7.1)', () => {
         stillConfigured: false,
         stillSaved: true,
       });
-      expect(notice.title).toBe('Refusal lifted for this session only');
+      // GS2-20 — the lift is held with the conversation, so that is the lifetime it names.
+      expect(notice.title).toBe('Refusal lifted for this conversation only');
       expect(notice.lines.join(' ')).not.toContain('will not come back in a new session');
       expect(notice.lines.join(' ')).toContain('could not be updated');
-      expect(notice.lines.join(' ')).toContain('refuse again in a new session');
+      expect(notice.lines.join(' ')).toContain('refuse again in any other conversation');
       expect(notice.tone).toBe('warn');
     });
 
@@ -922,7 +925,7 @@ describe('tui/slashCommands /approvals trust (EXT-70 §4.7.1)', () => {
         stillSaved: false,
       });
       expect(notice.title).toBe('Refusal lifted');
-      expect(notice.lines.join(' ')).toContain('for the rest of this session');
+      expect(notice.lines.join(' ')).toContain('for the rest of this conversation');
       expect(notice.lines.join(' ')).not.toContain('could not be updated');
       expect(notice.tone).toBe('info');
     });

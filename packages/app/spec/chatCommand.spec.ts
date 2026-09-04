@@ -154,11 +154,16 @@ describe('chatCommand', () => {
     expect(interactiveSessionModuleMock.createInteractiveSession).toHaveBeenCalledWith(
       expect.objectContaining({
         mode: 'chat',
-        readModePrompt: llmUtilsMock.readChatPrompt,
+        readModePrompt: expect.any(Function),
       }),
       {},
       undefined
     );
+    // The reader is resolved when a session asks for it, through the shared `readChatPrompt`.
+    const [[sessionConfig]] = interactiveSessionModuleMock.createInteractiveSession.mock.calls;
+    llmUtilsMock.readChatPrompt.mockReturnValue('Mock chat prompt');
+    expect(sessionConfig.readModePrompt({ identityProfile: undefined })).toBe('Mock chat prompt');
+    expect(llmUtilsMock.readChatPrompt).toHaveBeenCalledWith({ identityProfile: undefined });
   });
 
   it('REL-3: chat does NOT register a no-subcommand default action', async () => {

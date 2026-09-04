@@ -5,6 +5,7 @@ import {
 } from '@gaunt-sloth/core/config.js';
 import {
   createInteractiveSession,
+  type InteractiveSessionOptions,
   type SessionConfig,
 } from '@gaunt-sloth/agent/modules/interactiveSessionModule.js';
 import {
@@ -31,7 +32,11 @@ import { isInkAvailable } from '#src/tui/loadInk.js';
 export async function startSession(
   sessionConfig: SessionConfig,
   commandLineConfigOverrides: CommandLineConfigOverrides,
-  message?: string
+  message?: string,
+  // GS2-20 — `--resume <id>` travels here unchanged to whichever surface is chosen, so both
+  // surfaces resume through the same seam with the same id. Forwarded only when given, so a
+  // session started without it is called exactly as it always was.
+  options?: InteractiveSessionOptions
 ): Promise<void> {
   // CFG-10 — when no configuration exists anywhere (no project AND no global config),
   // run the interactive first-run setup instead of letting initConfig die with
@@ -138,9 +143,20 @@ export async function startSession(
       // this polarity: an unrecognised failure leaves it false and therefore propagates.
       let inRenderPhase = false;
       try {
-        await createTuiSession(sessionConfig, commandLineConfigOverrides, message, () => {
+        const onRenderStart = () => {
           inRenderPhase = true;
-        });
+        };
+        if (options) {
+          await createTuiSession(
+            sessionConfig,
+            commandLineConfigOverrides,
+            message,
+            onRenderStart,
+            options
+          );
+        } else {
+          await createTuiSession(sessionConfig, commandLineConfigOverrides, message, onRenderStart);
+        }
         return;
       } catch (err) {
         // Pre-render: readline cannot help, and saying "TUI unavailable" would be a false
@@ -154,7 +170,11 @@ export async function startSession(
     }
   }
 
-  await createInteractiveSession(sessionConfig, commandLineConfigOverrides, message);
+  if (options) {
+    await createInteractiveSession(sessionConfig, commandLineConfigOverrides, message, options);
+  } else {
+    await createInteractiveSession(sessionConfig, commandLineConfigOverrides, message);
+  }
 }
 
 /** The one "the TUI itself could not run; use readline" notice, worded as it always has been. */

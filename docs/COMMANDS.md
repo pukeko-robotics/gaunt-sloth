@@ -272,13 +272,16 @@ gth exec scripts/release-notes.md -w RELEASE_NOTES.md
 Start an interactive chat session with Gaunt Sloth.
 
 ```bash
-gth chat [message]
+gth chat [message] [--resume <id>]
 ```
 
 It is possible to press Escape during inference to interrupt it.
 
 ### Arguments
 - `[message]` - Initial message to start the chat
+
+### Options
+- `--resume <id>` - Pick up a recorded conversation where it left off, instead of starting a new one. The id is the number `gth history list` prints. See [Resuming a conversation](#resuming-a-conversation).
 
 ### Description
 Opens an interactive chat session where you can have a conversation with the AI. The session maintains context throughout the conversation. (Running `gth` with no subcommand starts a [`code`](#code) session, not chat.) Writing the session to disk is off by default; enable it with `writeOutputToFile` (or `-w`) to save the history as `gth_<timestamp>_CHAT.md` (in `.gsloth/` when present, otherwise the project root).
@@ -290,6 +293,8 @@ Guide-shaped walkthrough: [Work interactively](guides/interactive-sessions.md).
 - Type 'exit', run /exit, or press Ctrl+C with nothing typed, to end the session
   (in the TUI, Ctrl+C scraps a half-written message first, and stops a running turn)
 - Chat history saved to file when `writeOutputToFile` is enabled
+- The conversation is recorded locally and can be resumed later with `--resume <id>`,
+  `gth history resume <id>`, or `/resume <id>` from inside another session
 - `/debug-dump` writes a diagnostic archive to attach to a bug report — see
   [debug-dump.md](debug-dump.md)
 
@@ -300,6 +305,9 @@ gth chat
 
 # Start with an initial message
 gth chat "Let's discuss the architecture of this project"
+
+# Pick up conversation 42 (from `gth history list`) where it left off
+gth chat --resume 42
 ```
 
 ## code
@@ -307,13 +315,17 @@ gth chat "Let's discuss the architecture of this project"
 Write code interactively with full file system access within your project.
 
 ```bash
-gth code [message]
+gth code [message] [--resume <id>]
+gth --resume <id>
 ```
 
 It is possible to press Escape during inference to interrupt it.
 
 ### Arguments
 - `[message]` - Initial message to start the code session
+
+### Options
+- `--resume <id>` - Pick up a recorded conversation where it left off, instead of starting a new one. The id is the number `gth history list` prints. Bare `gth --resume <id>` does the same. See [Resuming a conversation](#resuming-a-conversation).
 
 ### Description
 Opens an interactive coding session where the AI has full read access to your project files. This command is specifically designed for code writing tasks with enhanced context awareness. Running `gth` with no subcommand starts this code session automatically. Writing the session to disk is off by default; enable it with `writeOutputToFile` (or `-w`) to save the history to `gth_<timestamp>_CODE.md`.
@@ -326,6 +338,8 @@ Guide-shaped walkthrough: [Work interactively](guides/interactive-sessions.md).
 - Type 'exit', run /exit, or press Ctrl+C with nothing typed, to end the session
   (in the TUI, Ctrl+C scraps a half-written message first, and stops a running turn)
 - Code history saved to file when `writeOutputToFile` is enabled
+- The conversation is recorded locally and can be resumed later with `--resume <id>`,
+  `gth history resume <id>`, or `/resume <id>` from inside another session
 - Streaming disabled for better interactive experience
 - `/debug-dump` writes a diagnostic archive to attach to a bug report — see
   [debug-dump.md](debug-dump.md)
@@ -337,7 +351,38 @@ gth code
 
 # Start with specific coding task
 gth code "Help me refactor the authentication module"
+
+# Pick up conversation 42 (from `gth history list`) where it left off
+gth code --resume 42
 ```
+
+### Resuming a conversation
+
+Every interactive `chat` / `code` session is recorded in the local history store (see
+[`history`](#history)) together with the model's conversation state, so it can be picked up later
+from where it stopped. Three spellings do the same thing:
+
+- `gth chat --resume <id>` / `gth code --resume <id>` / `gth --resume <id>` — start a session inside
+  that conversation, in the mode you name;
+- `gth history resume <id>` — the same, in the mode the conversation was recorded under;
+- `/resume <id>` inside a running session — move this session onto that conversation
+  (`/resume` alone lists the ones that can be resumed).
+
+A resumed session shows a banner naming the conversation (its id, when it started, how many turns it
+holds and which command and model recorded it), replays the recorded turns, and then continues: the
+model picks up with the state it had, including a `/compact` summary. The approvals you granted in
+that conversation from the escalation menu — a **session** approve or a **deny always** whose
+project file could not be written — are kept with it and are in force again, so a grant's lifetime
+is the conversation, not the process that made it. Nothing already in the project allow-list or
+deny-list is affected either way.
+
+A resume is refused, with a message saying which of these it was, when: history is off
+(`history.enabled: false`); the store could not be opened; there is no such conversation; the
+conversation has no state to re-enter (a single-shot `ask` / `exec` run, or one whose checkpoint
+could not be written); or it was recorded in a different directory — a conversation is resumed
+from the project it was recorded in, because its tools and file paths point there. A `--resume`
+typed in front of any other subcommand (`gth --resume 12 ask "…"`) is refused as well: resuming
+into `ask` or `exec` is not available yet, and nothing runs in its place.
 
 ## eval
 
@@ -1103,21 +1148,23 @@ Search and list locally-recorded session history.
 gth history list [--limit <n>] [--db <path>]
 gth history search <query...> [--limit <n>] [--db <path>]
 gth history show <id> [--db <path>]
+gth history resume <id>
 ```
 
-Recording is **on by default and local only** — nothing here touches the network. Set `history.enabled: false` in your config to turn it off; with no store present these commands report that there is no history yet rather than creating one. The store defaults to `~/.gsloth/history.db` (overridable via the `history.dbPath` config key or the `--db` flag), and interactive `chat`/`code` sessions keep their conversation state in the same file.
+Recording is **on by default and local only** — nothing here touches the network. Set `history.enabled: false` in your config to turn it off; with no store present these commands report that there is no history yet rather than creating one. The store defaults to `~/.gsloth/history.db` (overridable via the `history.dbPath` config key or the `--db` flag), and interactive `chat`/`code` sessions keep their conversation state in the same file, which is what `history resume` picks up — see [Resuming a conversation](#resuming-a-conversation).
 
 ### Subcommands
 - `history list` - List the most recent conversations, grouped with a turn count and timespan.
 - `history search` - Full-text search across past turns (SQLite FTS5); each hit shows the conversation it belongs to.
 - `history show` - Print a whole conversation thread, all turns in order.
+- `history resume` - Start an interactive session inside a recorded conversation, in the mode (`chat` or `code`) it was recorded under, with its approvals in force again. A conversation recorded by a single-shot command (`ask`, `exec`, …) has nothing to resume and is reported as such. Takes no `--db`: the session reads the store its own config names.
 
 ### Arguments
 - `<query...>` - (`history search`) One or more search terms.
-- `<id>` - (`history show`) Conversation id, as printed by `history list` / `history search`.
+- `<id>` - (`history show` / `history resume`) Conversation id, as printed by `history list` / `history search`.
 
 ### Options
-- `--db <path>` - Path to the history DB (defaults to `~/.gsloth/history.db`).
+- `--db <path>` - (`history list` / `history search` / `history show`) Path to the history DB (defaults to `~/.gsloth/history.db`).
 - `--limit <n>` - (`history list` / `history search`) Maximum results (default: `20`).
 
 ### Examples
@@ -1130,6 +1177,9 @@ gth history search vertexai timeout
 
 # Print one conversation thread by id (from `history list`)
 gth history show 42
+
+# Pick conversation 42 up where it left off, in the mode it was recorded under
+gth history resume 42
 ```
 
 ## insights

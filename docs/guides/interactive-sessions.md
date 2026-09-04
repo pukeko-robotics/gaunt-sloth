@@ -59,7 +59,13 @@ there opens a searchable command menu. A few worth knowing:
   summary should concentrate on. The transcript on screen stays as it is — only the model's
   context shrinks — and the change is written into the conversation's saved state, so a resumed
   session stays compacted
-- `/status` — mode, model, and turn count
+- `/resume <id>` — move this session onto a recorded conversation and continue it: the screen shows
+  the conversation's banner and its recorded turns, the model picks up with the state it had, and
+  the approvals you granted in it are in force again. `/resume` alone lists the conversations that
+  can be resumed. The same thing from a shell is `gth chat --resume <id>`, `gth code --resume <id>`
+  or `gth history resume <id>` — see [Resuming a conversation](../COMMANDS.md#resuming-a-conversation)
+- `/status` — mode, model, turn count, and the id of the conversation being recorded (the number
+  `/resume` and `gth history resume` take)
 - `/model` — show the current model / provider
 - `/verbose` — expand or collapse tool-call detail (Ctrl+T does the same, at any time)
 - `/reasoning` — reprint a turn's thinking (`/reasoning 2` for turn 2)
@@ -70,8 +76,9 @@ there opens a searchable command menu. A few worth knowing:
   `/approvals manual|write|assisted|auto|bypass` sets any of the five directly, for this session
 - `/approvals undeny <number>` — lift one of the refusals `/approvals` lists, by the number beside
   it. Each line says where its refusal came from: a line in your config's `approvals.deny`, a
-  **deny always** you saved to this project, or one held for this session only. The first is
-  removed by editing your config; the other two this command lifts
+  **deny always** you saved to this project, or one held for this conversation only (it is kept
+  with the conversation, so resuming it brings the refusal back; another conversation does not
+  have it). The first is removed by editing your config; the other two this command lifts
 - `/approvals trust <server> <hint…>` — believe one MCP server's tool annotations, named by the key
   you gave it under `mcpServers`; `/approvals untrust` stops believing them. Each hint
   (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) is believed separately, so

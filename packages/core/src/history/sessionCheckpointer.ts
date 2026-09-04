@@ -40,10 +40,14 @@ export interface SessionCheckpointer {
   threadId: string;
   /**
    * Name the conversation row this session's turns group under, so a later checkpoint-write failure
-   * can mark it unresumable ON DISK. Call once, immediately after `openConversationSafe`; passing
-   * `undefined` (history off, or the row could not be opened) is fine and simply leaves nothing to
-   * mark. Safe to call before or after a failure has already happened — a failure that arrives
-   * first is applied here instead. Never throws.
+   * can mark it unresumable ON DISK. Call once per conversation the session records under:
+   * immediately after `openConversationSafe`, and again when a mid-session `/resume` moves the
+   * session onto another conversation — the saver is the same, so the row it would mark has to
+   * follow the session. Passing `undefined` (history off, or the row could not be opened) is fine
+   * and simply leaves nothing to mark. Safe to call before or after a failure has already happened
+   * — a failure that arrives first is applied here instead, and a rebind after one marks the new
+   * row too, which is correct: a saver that has stopped writing is truncating whichever
+   * conversation it is now on. Never throws.
    *
    * **Optional on the interface, and called with `?.`**, because a dozen-odd specs stub
    * `openSessionCheckpointerSafe` with a plain object literal to keep a session off the real

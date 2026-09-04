@@ -18,19 +18,29 @@ import type {
 } from '@gaunt-sloth/core/core/types.js';
 import {
   beginWarningCapture,
+  displayNotice,
   endWarningCapture,
   flushSessionLog,
   initSessionLogging,
   stopSessionLogging,
 } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { appendToFile, getCommandOutputFilePath } from '@gaunt-sloth/core/utils/fileUtils.js';
-import { env, getProjectDir, stdin, stdout } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { env, exit, getProjectDir, stdin, stdout } from '@gaunt-sloth/core/utils/systemUtils.js';
 import {
   openConversationSafe,
   recordSessionSafe,
 } from '@gaunt-sloth/core/history/recordSession.js';
 import { openSessionCheckpointerSafe } from '@gaunt-sloth/core/history/sessionCheckpointer.js';
 import { openHistoryStore, resolveHistoryDbPath } from '@gaunt-sloth/core/history/historyStore.js';
+import { saveConversationGrantsSafe } from '@gaunt-sloth/core/core/approvals/conversationGrants.js';
+import {
+  applyResumeTarget,
+  listResumeCandidates,
+  resolveResumeTarget,
+  resumeRefusalNotice,
+  type ResumeTarget,
+} from '@gaunt-sloth/agent/modules/sessionResume.js';
+import type { InteractiveSessionOptions } from '@gaunt-sloth/agent/modules/interactiveSessionModule.js';
 import {
   formatConversationList,
   formatInsightsSummary,
@@ -459,7 +469,8 @@ export async function createTuiSession(
   sessionConfig: SessionConfig,
   commandLineConfigOverrides: CommandLineConfigOverrides,
   message?: string,
-  onRenderStart?: () => void
+  onRenderStart?: () => void,
+  options: InteractiveSessionOptions = {}
 ): Promise<void> {
   // Hermetic e2e seam: when GTH_TUI_E2E_FIXTURE is set, drive the real <App> (Ink renderer +
   // foldEvents) from a deterministic, key-free replay of recorded events instead of a model.
@@ -569,6 +580,28 @@ export async function createTuiSession(
   const checkpointer = openSessionCheckpointerSafe(config, {
     notify: (message) => emitNotice(message),
   });
+
+  // GS2-20 — `--resume <id>`: decided here, before a row is opened or a log started, through the
+  // same seam `/resume` uses once the App is up. This is still before the render phase, so a
+  // refusal is printed to the plain console — Ink does not own the screen yet — and the process
+  // leaves with status 1 and nothing changed. Not thrown: `startSession` would (correctly) treat a
+  // pre-render throw as a config-class failure, and this is a person's typo, not a broken install.
+  let bootResume: ResumeTarget | undefined;
+  if (options.resumeConversationId !== undefined) {
+    const resolution = await resolveResumeTarget(
+      { config, checkpointer, workspace: getProjectDir() },
+      options.resumeConversationId
+    );
+    if (!resolution.ok) {
+      const notice = resumeRefusalNotice(resolution.refusal);
+      displayNotice(notice.title, notice.lines, { tone: notice.tone ?? 'info' });
+      checkpointer.close();
+      exit(1);
+      return;
+    }
+    bootResume = resolution.target;
+  }
+
   // GS2-19: one conversation per TUI session; each completed turn (logTurn) is stamped with its id
   // so the whole chat groups under one conversation. Fail-soft (undefined when history is off or the
   // store did not open); turns fall back to per-turn conversations otherwise.
@@ -576,13 +609,17 @@ export async function createTuiSession(
   // GS2-20: it carries the thread id too — the link from the conversation `gth history list` prints
   // to the checkpoint holding this session's state. Written before the runner exists, because
   // `runner.init` can throw partway and a conversation with no thread recorded can never be resumed.
-  const conversationId =
-    openConversationSafe(config, {
-      command: sessionConfig.mode,
-      project: getProjectDir(),
-      model: config.modelDisplayName,
-      threadId: checkpointer.threadId,
-    }) ?? undefined;
+  //
+  // GS2-20: a resumed session opens NO new row — its turns keep recording under the conversation it
+  // re-entered. `let`, because `/resume` moves it and `logTurn` reads it live.
+  let conversationId: number | undefined = bootResume
+    ? bootResume.conversationId
+    : (openConversationSafe(config, {
+        command: sessionConfig.mode,
+        project: getProjectDir(),
+        model: config.modelDisplayName,
+        threadId: checkpointer.threadId,
+      }) ?? undefined);
 
   // GS2-20: tell the checkpointer which row to mark unresumable if a checkpoint write fails later.
   // Optional call — a spec that stubs the checkpointer with a plain object has nothing to bind.
@@ -627,6 +664,19 @@ export async function createTuiSession(
     await runner.init(sessionConfig.mode, agentConfig, checkpointer.saver, {
       threadId: checkpointer.threadId,
     });
+
+    // GS2-20 — Ruling 3: every grant made at the approval dialog is written against the
+    // conversation as it lands, so it outlives the process and a resume installs it again. Reads
+    // the LIVE `conversationId`, because `/resume` moves it. Optional call, like `bindConversation`:
+    // a spec that stubs the runner with a plain object has nothing to listen with.
+    runner.setSessionGrantsListener?.(() => {
+      saveConversationGrantsSafe(config, conversationId, runner.getSessionScopedGrants());
+    });
+
+    // GS2-20 — the boot half of `--resume`: the SAME apply call the `/resume` agent method makes
+    // below, after `runner.init` built the graph on a thread of its own. One seam for both
+    // spellings; breaking it breaks both.
+    if (bootResume) await applyResumeTarget({ runner, checkpointer }, bootResume);
 
     // Any MCP server that failed to connect during init (resolveTools ran inside runner.init).
     // Captured here so the persistent NoticeBar can name it — otherwise the only signal is a
@@ -785,6 +835,19 @@ export async function createTuiSession(
       compactConversation(input) {
         return runner.compactConversation(input);
       },
+      // GS2-20 — `/resume <id>`: resolve and apply through the seam `--resume` used above, then
+      // move THIS module's recorder id so `logTurn` records the next turn under the resumed
+      // conversation. The App gets back exactly what was decided.
+      async resumeConversation(id) {
+        const resolution = await resolveResumeTarget(
+          { config, checkpointer, workspace: getProjectDir() },
+          id
+        );
+        if (!resolution.ok) return resolution;
+        await applyResumeTarget({ runner, checkpointer }, resolution.target);
+        conversationId = resolution.target.conversationId;
+        return resolution;
+      },
     };
 
     // TUI-C31 (d): from here on Ink owns the terminal frame. Mark the tool-output channel
@@ -825,6 +888,12 @@ export async function createTuiSession(
         advisories={startupAdvisories}
         mcpFailures={mcpFailures}
         {...buildHistorySlashProps(config)}
+        // GS2-20 — the conversation `/status` names, what a bare `/resume` offers (read live, so
+        // the session is never offered the conversation it has moved to), and the resumed
+        // conversation whose banner and turns seed the transcript on a `--resume` start.
+        conversationId={conversationId}
+        listResumeCandidates={() => listResumeCandidates(config, conversationId)}
+        resumed={bootResume}
         readyMessage={sessionConfig.readyMessage}
         exitMessage={sessionConfig.exitMessage}
         initialMessage={message}

@@ -61,6 +61,7 @@ import {
   toolGrantEntry,
   trustWithdrawalWeakens,
 } from '#src/core/approvals/grants.js';
+import type { ConversationGrants } from '#src/core/approvals/conversationGrants.js';
 import { renderApprovalEntryObject } from '#src/config/schema.js';
 import { classifyCommand } from '#src/core/shell/arity.js';
 import { describeAbstention } from '#src/core/shell/abstention.js';
@@ -492,6 +493,16 @@ export class GthAgentRunner {
   private denyGrants = new ApprovalGrantStore();
 
   /**
+   * GS2-20 — told whenever the session-scoped contents of {@link sessionGrants} or
+   * {@link denyGrants} change, so the session can write them against its conversation and a resume
+   * can restore them. Set via {@link setSessionGrantsListener}; `null` means nobody records them,
+   * which is where every surface without a conversation row (ACP, AG-UI, a single-shot run) stays.
+   * Deliberately NOT fired by {@link resumeConversation}: what it installs was read from the store
+   * a moment ago, and writing it straight back would be a no-op with a disk write in it.
+   */
+  private sessionGrantsListener: (() => void) | null = null;
+
+  /**
    * The persisted (`always`) grant store, loaded lazily on first use from
    * `.gsloth/.gsloth-settings/shell-allowlist.json`. Null until a gated call actually needs it, and
    * null when the file cannot be loaded at all (in which case `always` grants degrade to session).
@@ -792,6 +803,9 @@ export class GthAgentRunner {
       target.origin === 'persisted'
         ? (this.getPersistedDenials()?.remove(target.entry) ?? false)
         : false;
+    // GS2-20 — a lifted session refusal must leave the conversation's record too, or a resume
+    // would put back the very refusal the person just removed.
+    this.notifySessionGrantsChanged();
     const key = renderApprovalEntryObject(target.entry);
     return {
       outcome: 'lifted',
@@ -845,6 +859,114 @@ export class GthAgentRunner {
       });
     }
     return grants;
+  }
+
+  /**
+   * GS2-20 — **the grants that belong to the conversation**: every `session`-scoped entry in the
+   * two runtime stores, deep-copied on the way out for the reason {@link getGrants} gives.
+   *
+   * `always` entries are deliberately left out. They mirror the project's allow-list / deny-list
+   * files, which every run reads for itself; recording them against the conversation as well would
+   * make one decision two records that can disagree, and a resume that restored a lifted one would
+   * resurrect a refusal the person had already removed. What is here is exactly what a fresh
+   * process would otherwise have lost.
+   */
+  public getSessionScopedGrants(): ConversationGrants {
+    const copy = (grant: ApprovalGrant): ApprovalGrant => ({
+      ...grant,
+      entry: copyApprovalEntry(grant.entry),
+      ...(grant.annotations ? { annotations: { ...grant.annotations } } : {}),
+    });
+    return {
+      allow: this.sessionGrants
+        .list()
+        .filter((grant) => grant.scope === 'session')
+        .map(copy),
+      deny: this.denyGrants
+        .list()
+        .filter((grant) => grant.scope === 'session')
+        .map(copy),
+    };
+  }
+
+  /**
+   * GS2-20 — hear about every change to the conversation's grants ({@link getSessionScopedGrants}),
+   * after it has landed. The session records them against its conversation row, which is how a
+   * grant outlives the process and reaches a resume. Pass `null` to stop listening.
+   */
+  public setSessionGrantsListener(listener: (() => void) | null): void {
+    this.sessionGrantsListener = listener;
+  }
+
+  /** Fire the listener; a listener that throws must not turn a recorded grant into a failed turn. */
+  private notifySessionGrantsChanged(): void {
+    try {
+      this.sessionGrantsListener?.();
+    } catch {
+      /* fail-soft: recording a grant is a side benefit, never the critical path of the gate */
+    }
+  }
+
+  /**
+   * GS2-20 — **re-enter a stored conversation: its thread, and its grants.** The ONE seam both
+   * `--resume <id>` (at boot, after {@link init}) and `/resume <id>` (mid-session) go through, so
+   * the two spellings cannot come to mean different things.
+   *
+   * The thread half is {@link resetThread}'s rotation pointed at a stored id instead of a fresh
+   * one: the durable checkpointer is one database serving any thread, so re-entering a conversation
+   * needs no new saver, only `configurable.thread_id` naming the thread whose checkpoint holds its
+   * state. The negotiation window and the rater's noted clarifications go with the old thread for
+   * the reason {@link resetThread} gives — they are context of the conversation being LEFT.
+   *
+   * The grants half replaces the session-scoped grants with the conversation's own. Replaces, not
+   * adds: a grant's lifetime is the conversation, so what the session granted while it was in
+   * another conversation does not follow it here — that stays recorded against the conversation it
+   * was made in. The `always` mirrors stay, because the project files they mirror are still in
+   * force. Every restored grant is stamped `session` whatever the document said, since that is the
+   * only scope this seam is handed and the only one the stores should hold for it.
+   *
+   * The listener is NOT fired: what was installed is what the store already holds.
+   *
+   * **Refuses while a turn is running, and refuses a graph suspended on a pending tool approval**
+   * — the same two refusals as {@link compactConversation}, for the same reason: the runnable
+   * config is what the in-flight work resumes through. Measured without the guard: a mid-turn
+   * call returned normally, the turn's approval `Command({ resume })` then went to the OTHER
+   * thread, the gated tool never ran, the turn died as "Model returned an empty response after
+   * tool execution" — a failure blamed on the model — and the thread being resumed INTO received
+   * a checkpoint from the turn being left. Neither shipped surface can reach this (`/resume` is
+   * idle-only on both), so this is the seam refusing on its own behalf, for its next caller.
+   */
+  public async resumeConversation(target: {
+    threadId: string;
+    grants: ConversationGrants;
+  }): Promise<void> {
+    if (!this.agent || !this.config || !this.runConfig) {
+      throw new Error('AgentRunner not initialized. Call init() first.');
+    }
+    if (this.turnsInFlight > 0) {
+      throw new Error(
+        'A turn is still running; wait for it to finish before resuming another conversation.'
+      );
+    }
+    const pendingApprovals = (await this.agent.getPendingToolInterrupts?.(this.runConfig)) ?? [];
+    if (pendingApprovals.length > 0) {
+      throw new Error(
+        'A tool approval is still pending; answer it before resuming another conversation.'
+      );
+    }
+    this.rotateThread(target.threadId);
+    for (const grant of this.sessionGrants.list()) {
+      if (grant.scope === 'session') this.sessionGrants.remove(grant.entry);
+    }
+    for (const grant of this.denyGrants.list()) {
+      if (grant.scope === 'session') this.denyGrants.remove(grant.entry);
+    }
+    for (const grant of target.grants.allow) {
+      this.sessionGrants.add({ ...grant, scope: 'session' });
+    }
+    for (const grant of target.grants.deny) {
+      this.denyGrants.add({ ...grant, scope: 'session' });
+    }
   }
 
   /**
@@ -3015,6 +3137,8 @@ export class GthAgentRunner {
     // refusal in force for this run even when the file cannot be written, and the display
     // de-duplicates by entry identity.
     this.denyGrants.add({ entry, grantedAt, scope: landed });
+    // GS2-20 — after the record, never before it: the listener reads the stores.
+    this.notifySessionGrantsChanged();
     return landed;
   }
 
@@ -3054,6 +3178,8 @@ export class GthAgentRunner {
     const saved = persisted?.add({ ...grant, grantedAt, scope: 'always' }) ?? false;
     const grantScope: ApprovalGrantScope = saved ? 'always' : 'session';
     this.sessionGrants.add({ ...grant, grantedAt, scope: grantScope });
+    // GS2-20 — after the record, never before it: the listener reads the stores.
+    this.notifySessionGrantsChanged();
     return grantScope;
   }
 
@@ -3113,6 +3239,9 @@ export class GthAgentRunner {
       // place would silently swallow the human's re-approval of the same tool.
       this.sessionGrants.remove(entry);
       persisted?.remove(entry);
+      // GS2-20 — and out of the conversation's record, so a resume cannot bring back a grant the
+      // tool has since weakened out from under.
+      this.notifySessionGrantsChanged();
       this.statusUpdate(
         StatusLevel.WARNING,
         describeWeakenedGrant(entry, weakened, held.annotations, effective)
@@ -3526,6 +3655,14 @@ export class GthAgentRunner {
    * of any checkpointer-specific delete API, mirroring how `init()` mints the initial config.
    */
   public resetThread(): void {
+    this.rotateThread();
+  }
+
+  /**
+   * Move the runner onto another thread: a fresh one (`/clear`) or a stored one (a resume — see
+   * {@link resumeConversation}). Everything that is context of the thread being left goes with it.
+   */
+  private rotateThread(threadId?: string): void {
     // [[EXT-29]] §5.1 — the negotiation goes with the thread, user messages included. The rater's
     // last-5 window is conversation context; leaving it behind a `/clear` would quote the user's
     // previous conversation into a rating made after they asked for it to be forgotten.
@@ -3535,7 +3672,12 @@ export class GthAgentRunner {
     // sentence above is the whole argument for dropping them: they would decide how rows are drawn
     // in a conversation the user has just asked to start fresh.
     this.clearRaterClarifications();
-    this.runConfig = getNewRunnableConfig();
+    const minted = getNewRunnableConfig();
+    // GS2-20 — overlaid on the minted config exactly as `init` overlays a caller's thread, so the
+    // recursion limit and anything else `getNewRunnableConfig` sets survive the switch.
+    this.runConfig = threadId
+      ? { ...minted, configurable: { ...minted.configurable, thread_id: threadId } }
+      : minted;
     debugLogObject('Reset Runnable Config', this.runConfig);
   }
 

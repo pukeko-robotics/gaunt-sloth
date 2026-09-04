@@ -13,6 +13,11 @@ import { apiCommand } from '#src/commands/apiCommand.js';
 import { getCommand } from '#src/commands/getCommand.js';
 import { configCommand } from '#src/commands/configCommand.js';
 import { historyCommand } from '#src/commands/historyCommand.js';
+import {
+  RESUMABLE_COMMANDS,
+  resumeOption,
+  rootResumeRefusalMessage,
+} from '#src/commands/resumeOption.js';
 import { insightsCommand } from '#src/commands/insightsCommand.js';
 import { modelsCommand } from '#src/commands/modelsCommand.js';
 import { argv, exit, getSlothVersion, readStdin } from '@gaunt-sloth/core/utils/systemUtils.js';
@@ -59,6 +64,9 @@ program
       '(overrides GTH_NO_TUI, the tui config key and CI auto-off)'
   )
   .option('--no-tui', 'Force the plain readline session for chat/code (disable the TUI)')
+  // GS2-20 — on the root so the bare `gth` (a code session) can resume too; `chat` and `code`
+  // carry the same option themselves.
+  .addOption(resumeOption())
   .addOption(new Option('--nopipe').hideHelp(true))
   .addOption(new Option('--no-pipe').hideHelp(true));
 
@@ -139,7 +147,9 @@ getCommand(program, cliConfigOverrides);
 configCommand(program, cliConfigOverrides);
 // GS2-7 (B20) — read-only, local history/insights surfaces. They resolve their own DB path (global
 // default or --db) and do not build the LLM, so they stay decoupled from config/provider setup.
-historyCommand(program);
+// GS2-20 — `history resume <id>` is the exception: it starts a session, so it takes the overrides
+// the session commands take.
+historyCommand(program, cliConfigOverrides);
 insightsCommand(program);
 // GS2-6 (B16) — model catalog: lists providers/models enriched with models.dev cost/limit metadata.
 // Read-only; enrichment never gates what `/v1/models` reports as callable.
@@ -158,6 +168,20 @@ const invokedCommand = resolveInvokedCommandName(
 );
 if (commandSkipsStdin(invokedCommand)) {
   program.setOptionValue('nopipe', true);
+}
+
+// GS2-20 — the root `--resume` belongs to the bare command (a code session) and rides along for
+// `chat`/`code`; in front of any other subcommand it would be accepted and silently dropped, and a
+// fresh `ask`/`exec` would run as though nothing had been asked. Refused here, once, before the
+// subcommand's action can run: a typed intent is never answered with a different command.
+const rootResume = program.getOptionValue('resume') as number | undefined;
+if (
+  rootResume !== undefined &&
+  invokedCommand !== undefined &&
+  !RESUMABLE_COMMANDS.has(invokedCommand)
+) {
+  displayError(rootResumeRefusalMessage(invokedCommand, rootResume));
+  exit(1);
 }
 
 // CFG-35 — the config loader raises a catchable error when a provider has no resolvable API key,

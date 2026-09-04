@@ -107,6 +107,36 @@ describe('startSession dispatcher', () => {
     );
   });
 
+  // GS2-20 — `--resume <id>` reaches whichever surface is chosen, unchanged; and a session started
+  // without it is called exactly as before (the three-argument shapes pinned above).
+  it('forwards the resume options to the readline session when given', async () => {
+    systemUtilsMock.stdout.isTTY = false;
+    const { startSession } = await import('#src/modules/startSession.js');
+
+    await startSession(sessionConfig, {}, undefined, { resumeConversationId: 42 });
+
+    expect(interactiveSessionMock.createInteractiveSession).toHaveBeenCalledWith(
+      sessionConfig,
+      {},
+      undefined,
+      { resumeConversationId: 42 }
+    );
+  });
+
+  it('forwards the resume options to the TUI session when given', async () => {
+    const { startSession } = await import('#src/modules/startSession.js');
+
+    await startSession(sessionConfig, {}, undefined, { resumeConversationId: 42 });
+
+    expect(tuiSessionMock.createTuiSession).toHaveBeenCalledWith(
+      sessionConfig,
+      {},
+      undefined,
+      expect.any(Function),
+      { resumeConversationId: 42 }
+    );
+  });
+
   it('forces readline (and skips the Ink probe) when --no-tui is set', async () => {
     const { startSession } = await import('#src/modules/startSession.js');
 
