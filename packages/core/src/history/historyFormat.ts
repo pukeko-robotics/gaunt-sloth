@@ -199,13 +199,25 @@ export function formatPrunePlan(
         `  #${c.conversationId}  ${c.lastActivityTs}` +
           `${c.command ? `  [${c.command}]` : ''}  ${c.turnCount} ` +
           `${c.turnCount === 1 ? 'turn' : 'turns'}  ${c.checkpointCount} checkpoints  ` +
-          formatBytes(c.bytes)
+          formatBytes(c.bytes) +
+          (c.recentlyActive ? '  <- active today' : '')
       );
     }
     lines.push(
       'Their transcripts stay: `gth history list` and `gth history show <id>` keep working. What ' +
         'goes is the state a resume needs, so those conversations can no longer be resumed.'
     );
+    // GS2-107 — the one thing the plan cannot work out for itself. A conversation open in another
+    // terminal is indistinguishable from a finished one at this distance, so the person holding
+    // both windows is told which rows are recent enough to be that, and asked before anything goes.
+    if (candidates.some((c) => c.recentlyActive)) {
+      lines.push(
+        'One or more of those were active in the last day and may be open in another window right ' +
+          'now. Prune does not skip an open conversation — it removes exactly what the bounds you ' +
+          'gave select — and a session whose state is removed under it loses the earlier part of ' +
+          'its conversation.'
+      );
+    }
   }
   if (unaddressableThreads > 0) {
     lines.push(

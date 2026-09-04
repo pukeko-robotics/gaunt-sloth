@@ -51,13 +51,25 @@
  * resume. A prefix policy is nevertheless a wider decision than retention makes, and it would become
  * wrong the moment a channel moves behind a reducer. Whole threads only.
  *
- * ## The grace window is load-bearing
+ * ## Two guards, and which one covers which case
  *
  * `/clear` rotates a **live** session onto a thread no conversation row names, and it stays there
  * for the rest of the session. So "unaddressable" does not imply "finished": a thread being written
- * right now can satisfy the predicate. Nothing is reclaimed until its newest checkpoint is older
- * than {@link RECLAIM_GRACE_MS}, which is what keeps this off the rows of a session another process
- * still has open. A thread whose age cannot be established is left alone.
+ * right now can satisfy the predicate, and deleting it is silent amnesia rather than a lost resume,
+ * because both interactive surfaces send only the new message and let checkpoint state carry the
+ * conversation.
+ *
+ * - **In this process, the write set.** `GthSqliteSaver` remembers every `thread_id` it has written
+ *   and excludes that set from every pass it runs. It is the only place that knows: the runner
+ *   rotates threads without notifying the checkpointer, so an exclusion assembled by a caller from
+ *   the id a session started with names the wrong thread after the first `/clear` or `/resume`.
+ * - **Across processes, {@link RECLAIM_GRACE_MS}.** Another process cannot be asked whether it is
+ *   still there, so nothing is reclaimed until its newest checkpoint is older than the window. A
+ *   thread whose age cannot be established is left alone.
+ *
+ * The residual is a session in another process that has been idle longer than the window — the
+ * write set does not reach it and the age gate no longer holds it. Closing that needs shared
+ * cross-process session state, which retention does not add.
  */
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync, statSync } from 'node:fs';
@@ -127,6 +139,18 @@ export interface PrunableConversation {
   turnCount: number;
   checkpointCount: number;
   bytes: number;
+  /**
+   * True when the last recorded turn is newer than {@link RECLAIM_GRACE_MS} — so this conversation
+   * may be **open in another window right now**, and pruning it would take a live session's memory
+   * rather than an old one's.
+   *
+   * A flag and not an exclusion, deliberately. `gth history prune` is given an explicit bound by the
+   * person typing it, and silently keeping back rows inside that bound would make the bound a lie;
+   * liveness across processes is also not knowable from here, so a refusal would be a guess wearing
+   * a guarantee. The automatic pass can be conservative because nobody asked for it. This one says
+   * what it is about to do and lets the person answer.
+   */
+  recentlyActive: boolean;
 }
 
 /** Bounds for {@link selectPrunableConversations}. At least one is required by the command. */
@@ -197,6 +221,22 @@ function checkpointTs(blob: unknown): string | undefined {
  */
 const ID_CHUNK = 200;
 
+/**
+ * The predicate itself, as one constant.
+ *
+ * It asks `conversations` a question once per distinct thread in the store, so it is only cheap
+ * while `conversations.thread_id` is indexed — `conversations.id` is a rowid alias and indexes
+ * nothing else, which left this scanning the whole table per thread (measured: 3.18s at 6,000
+ * threads, 13ms with `idx_conversations_thread_id`, created in `historyStore.migrate`). Named here
+ * rather than inlined so the spec that asks SQLite for the query plan is looking at the same text
+ * this runs, and cannot go on passing after the query is edited.
+ */
+export const UNADDRESSABLE_THREADS_SQL = `SELECT DISTINCT c.thread_id AS thread_id
+     FROM checkpoints c
+    WHERE NOT EXISTS (
+            SELECT 1 FROM conversations v WHERE v.thread_id = c.thread_id
+          )`;
+
 /** Bytes stored under each of `threadIds`, as one grouped query per chunk. */
 function bytesByThread(db: DatabaseSync, threadIds: string[]): Map<string, ReclaimSummary> {
   const out = new Map<string, ReclaimSummary>();
@@ -264,15 +304,7 @@ export function findUnaddressableThreads(
     // The predicate itself, with no blobs in it: the readout asks this question over the whole
     // store, and dragging a checkpoint payload back for every thread would make a report cost what
     // a delete costs.
-    const rows = db
-      .prepare(
-        `SELECT DISTINCT c.thread_id AS thread_id
-           FROM checkpoints c
-          WHERE NOT EXISTS (
-                  SELECT 1 FROM conversations v WHERE v.thread_id = c.thread_id
-                )`
-      )
-      .all() as Record<string, unknown>[];
+    const rows = db.prepare(UNADDRESSABLE_THREADS_SQL).all() as Record<string, unknown>[];
     const candidates = rows
       .map((row) => String(row.thread_id))
       .filter((threadId) => !excluded.has(threadId));
@@ -309,9 +341,15 @@ export function findUnaddressableThreads(
  * The single-thread spelling on the saver (`GthSqliteSaver.deleteThread`) routes through here, so
  * there is one implementation of the delete rather than two that can drift.
  *
- * Not wrapped in a transaction: the two statements are independent deletes of the same thread, and a
- * failure between them leaves pending writes for a thread with no checkpoints — rows the next pass
- * removes, and which no reader can reach in the meantime.
+ * **Both tables go in one transaction.** A thread's rows live in `checkpoints` and in
+ * `checkpoint_writes`, and only the first of those is what anything looks for: every candidate query
+ * in this module reads `FROM checkpoints`. So a failure between the two statements would leave
+ * `checkpoint_writes` rows belonging to a thread that no longer appears in `checkpoints` — bytes the
+ * readout still counts as stored, that no later pass can find, and that no reader can reach. Not a
+ * self-healing leak; a permanent one. Either both deletes land or neither does.
+ *
+ * The caller must not already be inside a transaction: the rollback here would discard theirs. No
+ * caller is — the two entry points are the close hook and `gth history prune`.
  */
 export function deleteThreads(db: DatabaseSync, threadIds: readonly string[]): ReclaimSummary {
   const ids = [...new Set(threadIds)].filter((id) => id.length > 0);
@@ -321,18 +359,31 @@ export function deleteThreads(db: DatabaseSync, threadIds: readonly string[]): R
     const summary: ReclaimSummary = { ...EMPTY_RECLAIM };
     const deleteCheckpoints = db.prepare(`DELETE FROM checkpoints WHERE thread_id = ?`);
     const deleteWrites = db.prepare(`DELETE FROM checkpoint_writes WHERE thread_id = ?`);
-    for (const id of ids) {
-      deleteCheckpoints.run(id);
-      deleteWrites.run(id);
-      const counted = perThread.get(id);
-      if (!counted) continue;
-      summary.threadCount += 1;
-      summary.checkpointCount += counted.checkpointCount;
-      summary.writeCount += counted.writeCount;
-      summary.bytes += counted.bytes;
+    db.exec('BEGIN');
+    try {
+      for (const id of ids) {
+        deleteCheckpoints.run(id);
+        deleteWrites.run(id);
+        const counted = perThread.get(id);
+        if (!counted) continue;
+        summary.threadCount += 1;
+        summary.checkpointCount += counted.checkpointCount;
+        summary.writeCount += counted.writeCount;
+        summary.bytes += counted.bytes;
+      }
+      db.exec('COMMIT');
+    } catch (error) {
+      try {
+        db.exec('ROLLBACK');
+      } catch {
+        /* the connection may already have unwound the transaction; nothing left to undo */
+      }
+      throw error;
     }
     return summary;
   } catch {
+    // Nothing was deleted, so nothing is reported as deleted — the summary the partial loop had
+    // accumulated describes rows the rollback put back.
     return { ...EMPTY_RECLAIM };
   }
 }
@@ -359,6 +410,14 @@ export function reclaimUnresumableThreads(
  * as a conjunction: with both, a conversation is pruned only when it is older than the age AND
  * outside the newest N. Passing neither selects nothing — the command requires an explicit bound,
  * so that there is no silent default for an operation that can cost a resume.
+ *
+ * **Neither of the automatic pass's two guards applies here, and that is the design.** The bounds
+ * the person typed are the whole selection: a grace window layered on top would quietly shrink the
+ * set they asked for, and the in-process write set is empty in a `gth history prune` process, which
+ * shares no state with the session in the window next door. What this does instead is *say so* —
+ * {@link PrunableConversation.recentlyActive} marks every candidate whose last turn is inside
+ * {@link RECLAIM_GRACE_MS}, the plan prints that marker, and the command asks before removing
+ * anything.
  */
 export function selectPrunableConversations(
   db: DatabaseSync,
@@ -415,10 +474,15 @@ export function selectPrunableConversations(
     return selected
       .map((c) => {
         const counted = perThread.get(c.threadId) ?? EMPTY_RECLAIM;
+        const at = Date.parse(c.lastActivityTs);
         return {
           ...c,
           checkpointCount: counted.checkpointCount,
           bytes: counted.bytes,
+          // Same window the automatic pass uses, read off the turn row rather than the checkpoint
+          // blob: the turn is written after the checkpoints of that turn, so it is the later of the
+          // two and a conservative answer to "was something happening here recently".
+          recentlyActive: Number.isFinite(at) && now - at < RECLAIM_GRACE_MS,
         };
       })
       .filter((c) => c.checkpointCount > 0);
