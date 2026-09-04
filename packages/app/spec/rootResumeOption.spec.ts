@@ -11,7 +11,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,7 +37,13 @@ describe('gth --resume in front of a subcommand (real CLI definition)', () => {
 
   const runCli = (args: string[]): { status: number | null; output: string } => {
     const env = { ...process.env, HOME: homeDir, USERPROFILE: homeDir };
+    // `INIT_CWD` is set by pnpm to wherever `pnpm test` ran, and the CLI prefers it as its working
+    // directory — inherited, this run would aim at the repository instead of the temp project.
     delete env.INIT_CWD;
+    // Tracing would turn a hermetic run into a networked one; this desktop exports it.
+    delete env.LANGCHAIN_TRACING_V2;
+    delete env.LANGCHAIN_TRACING;
+    delete env.LANGSMITH_TRACING;
     const result = spawnSync('node', [cliEntry, '--nopipe', ...args], {
       encoding: 'utf8',
       cwd: projectDir,
@@ -78,6 +84,45 @@ describe('gth --resume in front of a subcommand (real CLI definition)', () => {
       expect(output, command).not.toContain('Cannot resume into');
       expect(output, command).toContain('--resume <id>');
     }
+  });
+
+  /**
+   * The cells above run in a project with no configuration, where `ask` exits 1 on its own — so an
+   * assertion on the status there cannot tell a refusal from a warning followed by a real run. This
+   * one runs in a project where `ask` SUCCEEDS: the `fake` provider replays a canned answer, so a
+   * dropped `exit(1)` after the refusal would leave the flag's own message on the screen followed
+   * by the model's answer and a status of 0 — which is precisely the defect the message alone
+   * cannot rule out. Hermetic and key-free; no network and no API key.
+   */
+  describe('in a project where ask would otherwise succeed', () => {
+    const FAKE_ANSWER = 'FAKE-ASK-ANSWER-GS2-20';
+    let configPath: string;
+
+    beforeEach(() => {
+      configPath = resolve(projectDir, 'gth-fake.json');
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          llm: { type: 'fake', responses: [FAKE_ANSWER] },
+          commands: { ask: { filesystem: 'none' } },
+        })
+      );
+    });
+
+    it('CONTROL: ask answers and exits 0 when the flag is not in front of it', () => {
+      const { status, output } = runCli(['-c', configPath, 'ask', 'hello there']);
+      expect(status, output).toBe(0);
+      expect(output).toContain(FAKE_ANSWER);
+      expect(output).not.toContain('Cannot resume into');
+    });
+
+    it('the refusal ENDS the run: no answer is produced and the status is not 0', () => {
+      const { status, output } = runCli(['--resume', '1', '-c', configPath, 'ask', 'hello there']);
+      expect(status, output).toBe(1);
+      expect(output).toContain('Cannot resume into `gth ask`');
+      // The whole point: the command the person typed did not run in place of the one they meant.
+      expect(output).not.toContain(FAKE_ANSWER);
+    });
   });
 
   it('rejects an id that is not one before any command is chosen', () => {
