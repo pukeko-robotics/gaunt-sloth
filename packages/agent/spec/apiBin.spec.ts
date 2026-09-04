@@ -47,6 +47,14 @@ const cliEntry = resolve(here, '..', 'cli.js'); // packages/agent/cli.js — the
 const BOOT_TIMEOUT_MS = 25000;
 /** Per-cell timeout, above BOOT_TIMEOUT_MS so a slow boot fails on the poll's own message. */
 const CELL_TIMEOUT_MS = 40000;
+/** How long a killed child gets to actually die before cleanup stops waiting and says so. */
+const EXIT_TIMEOUT_MS = 5000;
+/**
+ * The cleanup hook's own budget. Vitest's default hook timeout is 10s, which sits below the worst
+ * case here (waiting out EXIT_TIMEOUT_MS, then the removal's retry backoff for each temp dir) — and
+ * an opaque "hook timed out" would replace the message that names what actually went wrong.
+ */
+const CLEANUP_TIMEOUT_MS = 30000;
 
 /** A port nothing is listening on, straight from the OS. */
 function freePort(): Promise<number> {
@@ -88,6 +96,43 @@ function writeFixtureConfig(path: string, port?: number): void {
 
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
 
+/** The bound expiring, as a value no child's error message can impersonate. */
+const TIMED_OUT = Symbol('the child did not exit within the bound');
+
+/**
+ * Resolve once the child is no longer running: `undefined` when it exited, a description when it
+ * never ran at all.
+ *
+ * **Call this when the child is spawned, not during cleanup.** `exit` fires exactly once, so a
+ * listener attached after the fact would wait out the whole bound on a process that is long gone.
+ * A failure to spawn emits `error` and may emit no `exit`; that child holds nothing either, and is
+ * reported as itself rather than as a wedged process.
+ */
+function whenGone(child: ChildProcess): Promise<string | undefined> {
+  return new Promise((done) => {
+    if (child.exitCode !== null || child.signalCode !== null) return done(undefined);
+    child.once('exit', () => done(undefined));
+    child.once('error', (err: Error) => done(`it never ran (${err.message})`));
+  });
+}
+
+/** Wait for a child to be gone, but not forever — a wedged one must fail this hook, not hang it. */
+async function goneWithin(gone: Promise<string | undefined>): Promise<string | undefined> {
+  let timer: NodeJS.Timeout | undefined;
+  const expired = new Promise<typeof TIMED_OUT>((done) => {
+    timer = setTimeout(() => done(TIMED_OUT), EXIT_TIMEOUT_MS);
+  });
+  try {
+    const outcome = await Promise.race([gone, expired]);
+    return outcome === TIMED_OUT
+      ? `it was still running ${EXIT_TIMEOUT_MS}ms after SIGKILL`
+      : outcome;
+  } finally {
+    // Otherwise every cell leaves a pending timer behind at teardown.
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Poll `GET /health` until it answers or the deadline passes.
  *
@@ -121,7 +166,8 @@ async function waitForHealth(
 }
 
 describe('the gaunt-sloth-api bin reads the flags it accepts', () => {
-  const children: ChildProcess[] = [];
+  /** Each spawned server, paired with the promise that resolves when it is really gone. */
+  const children: { child: ChildProcess; gone: Promise<string | undefined> }[] = [];
   const tempDirs: string[] = [];
 
   /** Spawn the bin and collect both streams; the child is killed in afterEach either way. */
@@ -131,7 +177,7 @@ describe('the gaunt-sloth-api bin reads the flags it accepts', () => {
     home: string
   ): { child: ChildProcess; transcript: () => string } {
     const child = spawn('node', [cliEntry, ...args], { cwd, env: childEnv(home) });
-    children.push(child);
+    children.push({ child, gone: whenGone(child) });
     let output = '';
     child.stdout?.on('data', (chunk) => (output += String(chunk)));
     child.stderr?.on('data', (chunk) => (output += String(chunk)));
@@ -146,14 +192,36 @@ describe('the gaunt-sloth-api bin reads the flags it accepts', () => {
     return { dir, home };
   }
 
-  afterEach(() => {
+  afterEach(async () => {
+    const failures: string[] = [];
     // Unconditionally, including on the failure path: an orphan holding a port makes the NEXT
     // cell fail in a way that reads like a defect in the code under test.
-    for (const child of children.splice(0)) {
-      if (child.exitCode === null) child.kill('SIGKILL');
+    for (const { child, gone } of children.splice(0)) {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      // `kill()` only SENDS the signal, so wait for the process to actually be gone before the
+      // removal below. A live process is no obstacle to unlinking its directory on POSIX, but on
+      // win32 it holds a lock on its own `cwd` — which is what the spawning cells run in — and the
+      // removal fails there with EPERM. `force: true` does not cover that: it suppresses a missing
+      // path, not a permission error.
+      const problem = await goneWithin(gone);
+      if (problem) failures.push(`the server (pid ${child.pid}) was not cleaned up: ${problem}`);
     }
-    for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
-  });
+    for (const dir of tempDirs.splice(0)) {
+      try {
+        // Node's own EPERM/EBUSY backoff, for a win32 handle that outlives the process by a moment.
+        // It is belt-and-braces around the wait above, not a substitute for it, and it THROWS when
+        // it never succeeds — so this catch records a persistent failure and rethrows it below
+        // rather than swallowing it. Catching at all only keeps one stuck directory from stranding
+        // the others, and keeps a wedged child and a failed removal from masking each other.
+        rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      } catch (err) {
+        failures.push(
+          `${dir} could not be removed: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+    if (failures.length > 0) throw new Error(failures.join('\n'));
+  }, CLEANUP_TIMEOUT_MS);
 
   it(
     'binds the port named by --port, over the one in the config file',
