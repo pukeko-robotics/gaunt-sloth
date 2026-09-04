@@ -248,6 +248,71 @@ describe('EXT-160 — the estimate, anchored on a real token count', () => {
     expect(estimatePromptTokens(longerText)).toBeGreaterThan(plain);
   });
 
+  /**
+   * The cell above pins that a non-text block is counted AT ALL. This one pins that it is counted
+   * with a BOUND, which is a different claim and the one the first version of this code got wrong:
+   * it charged the block's serialised length, and an inline image's encoded length is nothing like
+   * its cost. Measured on the pre-cap code, a 100 KB PNG was charged **42 920 tokens** — more than
+   * any window this project wires, so the guard folded the conversation on every single turn.
+   *
+   * Both bounds are written out as literals rather than derived from the allowance constant. A cell
+   * that computed its own ceiling from the constant under test would follow it anywhere and could
+   * not fail — the defect the C item existed to remove from this file.
+   */
+  it('caps one non-text block, so a large image cannot fold every turn', () => {
+    const plain = estimatePromptTokens([
+      new HumanMessage({ content: [{ type: 'text', text: 'hello' }] }),
+    ]);
+    // ~136 500 base64 characters is a 100 KB PNG — an ordinary screenshot, not a pathological input.
+    const huge = estimatePromptTokens([
+      new HumanMessage({
+        content: [
+          { type: 'text', text: 'hello' },
+          { type: 'image_url', image_url: `data:image/png;base64,${'A'.repeat(136500)}` },
+        ],
+      }),
+    ]);
+    const attributedToTheImage = huge - plain;
+    // Still counted — the under-count this function exists to fix must not come back.
+    expect(attributedToTheImage).toBeGreaterThan(1000);
+    // And bounded. Providers charge on the order of a thousand tokens for such an image; this errs
+    // high on purpose, but by a bounded factor. Pre-cap this number was 42 920.
+    expect(attributedToTheImage).toBeLessThan(2000);
+
+    // The cap is a CEILING, not a flat charge: a block smaller than it is still counted at its own
+    // length, so a modest structured tool result is not billed as if it were an image.
+    const small = estimatePromptTokens([
+      new HumanMessage({ content: [{ type: 'json', value: 'v'.repeat(1000) }] }),
+    ]);
+    expect(small).toBeGreaterThan(200);
+    expect(small).toBeLessThan(attributedToTheImage);
+  });
+
+  /**
+   * A block carrying BOTH a string `text` field and a payload. The earlier version mirrored
+   * `contentText`'s accept conditions exactly, which meant it skipped such a block whole: its text
+   * was counted by `contentText` and **its payload was counted by nothing**. That is the same
+   * under-count in a narrower shape, and it is the unsafe direction — a silent zero lets a turn
+   * through that overflows, where an over-count only wastes a summary call.
+   */
+  it('counts the payload of a block that also carries text', () => {
+    const withPayload = estimatePromptTokens([
+      new HumanMessage({ content: [{ type: 'thing', text: 'ok', data: 'z'.repeat(40000) }] }),
+    ]);
+    // Before this was fixed the whole block weighed 1 token: 'ok' and nothing else.
+    expect(withPayload).toBeGreaterThan(1000);
+
+    // THE CONTROL, and the reason this cannot be fixed by simply counting every block whole: an
+    // ORDINARY text block must still weigh exactly what the same text weighs as a bare string.
+    // Charging a text block's leftover keys would make these two differ, and the system prompt is
+    // itself an array of text blocks, so that noise would land on every single request.
+    const asBlock = estimatePromptTokens([
+      new HumanMessage({ content: [{ type: 'text', text: 'x'.repeat(3500) }] }),
+    ]);
+    const asString = estimatePromptTokens([new HumanMessage('x'.repeat(3500))]);
+    expect(asBlock).toBe(asString);
+  });
+
   it('does not add the system prompt on top of an anchor that already contains it', () => {
     const anchored = new AIMessage({
       content: 'a',
@@ -511,6 +576,61 @@ describe('EXT-160 — the pre-call guard hook', () => {
     expect(compact).toHaveBeenCalledTimes(5);
   });
 
+  /**
+   * The two cells above pin the estimator's arithmetic on blocks. This pins the DECISION that
+   * arithmetic feeds, which is the thing a user would actually notice, and it pins it in both
+   * directions from one fixture — the same conversation shape, once inside the window and once
+   * genuinely past it.
+   *
+   * The window is 16384, a realistic ollama `num_ctx`, so the default reserve clamps to 4096 and
+   * lands at 2048; the guard therefore fires above 14336 estimated tokens. Three 100 KB images
+   * estimate at about 5280, so they sit well inside it. On the pre-cap code the same three were
+   * charged over 128 000 tokens, so the first arm below folded a conversation that fits — every
+   * turn, for as long as the images stayed in the history.
+   */
+  it('leaves an image-bearing conversation that FITS alone, and still folds one that does not', async () => {
+    const image = () => ({
+      type: 'image_url',
+      image_url: `data:image/png;base64,${'A'.repeat(136500)}`,
+    });
+    // Twelve messages either way, so there is always a foldable span past the kept-recent tail.
+    const conversation = (padding: number): BaseMessage[] => {
+      const messages: BaseMessage[] = [];
+      for (let i = 0; i < 6; i++) {
+        messages.push(
+          new HumanMessage({
+            content:
+              i < 3
+                ? [{ type: 'text', text: `ask ${i} ` + 'x'.repeat(padding) }, image()]
+                : [{ type: 'text', text: `ask ${i} ` + 'x'.repeat(padding) }],
+          })
+        );
+        messages.push(new AIMessage(`answer ${i} ` + 'y'.repeat(padding)));
+      }
+      return messages;
+    };
+
+    // FITS: three images and a few words each. Nothing is folded — the hook returns undefined.
+    const fitting = vi.fn(realCompact);
+    expect(
+      await runHook(
+        createContextGuardMiddleware({ windowSource: async () => 16384, compact: fitting }),
+        conversation(20)
+      )
+    ).toBeUndefined();
+    expect(fitting).not.toHaveBeenCalled();
+
+    // DOES NOT FIT: the same three images, now with a genuinely oversized conversation around them.
+    // The cap must not have turned the guard off — only bounded what one block can claim.
+    const overflowing = vi.fn(realCompact);
+    const result = await runHook(
+      createContextGuardMiddleware({ windowSource: async () => 16384, compact: overflowing }),
+      conversation(4500)
+    );
+    expect(result).toBeDefined();
+    expect(overflowing).toHaveBeenCalled();
+  });
+
   it('sends the request as it is when the compaction itself fails', async () => {
     const middleware = createContextGuardMiddleware({
       windowSource: async () => 1000,
@@ -532,6 +652,7 @@ class RecordingModel extends BaseChatModel {
   requests: BaseMessage[][] = [];
   llmType = 'scripted';
   numCtx?: number;
+  numPredict?: number;
   baseUrl?: string;
   model = 'test-model';
 
@@ -709,5 +830,60 @@ describe('EXT-160 — the guard as the lean agent installs it', () => {
         prompts: { system: off, chat: off, backstory: off, guidelines: off },
       })
     ).toBe(false);
+  });
+
+  /**
+   * The four cells that pin the two reserve fractions all construct the middleware directly with
+   * `reserve` already set, so what they pin is the clamping ARITHMETIC. None of them asserts that
+   * production ever hands the user's `numPredict` to it — deleting that forwarding in `init` left
+   * every other cell in this file green, so a user's configured answer budget could stop reaching
+   * the guard entirely with nothing red. This is the wiring cell, built the way the system-prompt
+   * one above is: drive a real runner through `init` and make the guard's DECISION depend on it.
+   *
+   * The discriminator is the window arithmetic. At `numCtx` 4096 a reserve nobody chose is clamped
+   * to a quarter of the window (1024) and one the user set to a half (2048), so between those two
+   * bars lies a band of conversation sizes that folds under a configured `numPredict: 2048` and not
+   * under the default. Measured in this fixture that band runs from about 700 to about 1300
+   * characters of padding per turn; 1000 sits in the middle, roughly 300 clear on either side.
+   */
+  it('hands the user configured numPredict to the guard, not just the default', async () => {
+    const runTurns = async (numPredict?: number) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => {
+          throw new Error('ECONNREFUSED');
+        })
+      );
+      const model = new RecordingModel();
+      model.llmType = 'ollama';
+      model.numCtx = 4096;
+      model.baseUrl = 'http://127.0.0.1:11434';
+      if (numPredict !== undefined) model.numPredict = numPredict;
+      const runner = new GthAgentRunner(statusUpdate, {
+        resolveTools: vi.fn().mockResolvedValue([lookup]),
+        resolveMiddleware: async (m: unknown[] | undefined) => m ?? [],
+      });
+      await runner.init(
+        'chat',
+        { ...BASE_CONFIG, llm: model } as unknown as GthConfig,
+        new MemorySaver()
+      );
+      const padding = ' ' + 'x'.repeat(1000);
+      for (const text of ['one', 'two', 'three', 'four', 'five', 'six']) {
+        await runner.processMessages([new HumanMessage(text + padding)]);
+      }
+      return statusUpdate.mock.calls.some((call) =>
+        /context is nearly full/i.test(String(call[1] ?? ''))
+      );
+    };
+
+    // The user asked for a 2048-token answer, so 2048 is held back and this history no longer fits.
+    expect(await runTurns(2048)).toBe(true);
+
+    // THE CONTROL: the identical conversation with no `numPredict` configured. The default reserve
+    // clamps to 1024 and the same history fits — which is also what the run above would report if
+    // `init` stopped forwarding the user's number.
+    statusUpdate.mockClear();
+    expect(await runTurns()).toBe(false);
   });
 });

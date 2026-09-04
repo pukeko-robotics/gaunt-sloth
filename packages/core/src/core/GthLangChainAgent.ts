@@ -384,6 +384,51 @@ export const ESTIMATE_SAFETY_MARGIN = 1.1;
 export const DEFAULT_OUTPUT_RESERVE_TOKENS = 2048;
 
 /**
+ * EXT-160 — the most any ONE non-text content block may add to the estimate, in tokens.
+ *
+ * **This is an approximation and does not model any provider's image tokenisation.** It cannot: the
+ * real number depends on the provider, the model, and how the image is tiled, and none of that is
+ * knowable from the block. What it does instead is bound the damage in both directions.
+ *
+ * The bound is needed because a block's ENCODED LENGTH is not a proxy for its size at all. A 100 KB
+ * inline image is roughly 136 500 base64 characters, which at the ratio above is about 43 000
+ * tokens, while providers charge on the order of a thousand for it — an over-count near 33×, larger
+ * than any window this project wires. Charging that would fold the conversation on every single
+ * turn, which is the same thrashing the reserve clamp exists to prevent, arriving from the other
+ * side.
+ *
+ * 1600 sits at the top of the range providers charge for a large image, so it **errs high** — the
+ * same direction as every other approximation here, and the direction the node prefers, because an
+ * early compaction costs one summary call while a late one costs a silently truncated conversation.
+ * It errs high by a bounded factor rather than an unbounded one, which is the whole point.
+ *
+ * It is a CAP, not a flat charge: a block shorter than this is counted at its real length, so a
+ * small structured tool result stays accurate instead of being inflated to an image's cost.
+ */
+export const NON_TEXT_BLOCK_TOKEN_ALLOWANCE = 1600;
+
+/**
+ * EXT-160 — {@link NON_TEXT_BLOCK_TOKEN_ALLOWANCE} in the characters the estimator actually sums,
+ * so the cap survives the division by {@link ESTIMATE_CHARS_PER_TOKEN} that follows.
+ */
+export const NON_TEXT_BLOCK_CHARACTER_ALLOWANCE = Math.round(
+  NON_TEXT_BLOCK_TOKEN_ALLOWANCE * ESTIMATE_CHARS_PER_TOKEN
+);
+
+/**
+ * EXT-160 — a residual this small is a block's structural keys, not its payload.
+ *
+ * After a block's `text` is removed (already counted elsewhere) an ordinary text block leaves only
+ * its discriminator — `{"type":"text"}` is fifteen characters. Charging that would add noise
+ * proportional to the NUMBER of blocks rather than to what they carry, and the system prompt alone
+ * is an array of them. Anything above this floor is treated as payload and counted.
+ *
+ * This is the one approximation here that errs LOW, and only ever by this many characters per
+ * block, because a residual under the floor cannot be a payload worth compacting for.
+ */
+export const BLOCK_STRUCTURE_FLOOR_CHARACTERS = 64;
+
+/**
  * EXT-160 — the largest fraction of the window the **default** reserve is allowed to claim.
  *
  * A fixed reserve is meaningless against a window near its own size: measured live on a
@@ -475,12 +520,22 @@ export interface ContextGuardOptions {
  * wrong for a token estimate: an image block or a structured MCP tool result would contribute zero
  * characters, so the guard would under-count precisely the payload most likely to fill the window.
  *
- * That is the UNSAFE direction, and it is the only approximation here that errs that way — every
- * other one deliberately reads high. The serialised length of the block is a rough proxy for what
- * the provider will charge for it, and rough-but-present beats exact-and-missing.
+ * That is the UNSAFE direction, and it is the only approximation the estimator errs that way — every
+ * other one deliberately reads high.
  *
- * The skip conditions mirror `contentText`'s accept conditions exactly, so a text block counted
- * there is never counted again here.
+ * **What is counted is the block MINUS its `text`, capped.** Both halves matter:
+ *
+ * - Removing `text` is what stops a block from being counted twice, since `contentText` already
+ *   returned it. It also closes the gap the mirror-the-skip-conditions version left: a block
+ *   carrying BOTH a `text` field and a payload used to be skipped whole, so `contentText` counted
+ *   its text and its payload was free. That is the under-count this function exists to fix,
+ *   surviving inside the fix.
+ * - Capping at {@link NON_TEXT_BLOCK_CHARACTER_ALLOWANCE} is what stops the opposite failure: an
+ *   encoded payload's LENGTH is not its cost, and charging it in full over-counts an inline image by
+ *   enough to fold the conversation on every turn. That constant carries the reasoning.
+ *
+ * A residual at or below {@link BLOCK_STRUCTURE_FLOOR_CHARACTERS} is a type discriminator rather
+ * than a payload and is not charged.
  */
 function nonTextBlockCharacters(messages: readonly BaseMessage[]): number {
   let total = 0;
@@ -488,19 +543,22 @@ function nonTextBlockCharacters(messages: readonly BaseMessage[]): number {
     const content = message.content;
     if (!Array.isArray(content)) continue;
     for (const block of content) {
+      // A bare string block is content `contentText` already returned in full.
       if (typeof block === 'string') continue;
-      if (
-        block &&
-        typeof block === 'object' &&
-        typeof (block as { text?: unknown }).text === 'string'
-      ) {
-        continue;
-      }
+      if (!block || typeof block !== 'object') continue;
+      let payload: string;
       try {
-        total += JSON.stringify(block ?? {}).length;
+        const { text: _countedByContentText, ...rest } = block as Record<string, unknown>;
+        payload = JSON.stringify(
+          typeof (block as { text?: unknown }).text === 'string' ? rest : block
+        );
       } catch {
         /* a block that cannot be serialised is left uncounted rather than crashing the estimate */
+        continue;
       }
+      const length = payload?.length ?? 0;
+      if (length <= BLOCK_STRUCTURE_FLOOR_CHARACTERS) continue;
+      total += Math.min(length, NON_TEXT_BLOCK_CHARACTER_ALLOWANCE);
     }
   }
   return total;
