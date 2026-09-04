@@ -199,194 +199,226 @@ describe('GS2-107 — retention at the policy boundary, on a real runner', () =>
     return Number(row.n);
   };
 
-  it('ACCEPTANCE: reclamation deletes the thread no conversation names and leaves the named one resumable, tool result and all', async () => {
-    const named = 'thread-named-by-a-conversation';
-    const orphan = 'thread-nothing-names';
+  /**
+   * Every case below that calls `makeRunner` compiles and drives a real graph over a real sqlite
+   * file, several times each, so it costs whole seconds rather than milliseconds. The suite-wide
+   * `testTimeout` of 10s is sized for unit work and is not enough headroom on a slow CI runner —
+   * measured at 14.2s on the Windows node 24.x cell, which is the same shape as the repo's other
+   * real-agent gates carrying an explicit 30s. These budgets are wall-clock only: no assertion is
+   * relaxed by them, and a genuine hang still fails rather than running forever.
+   */
+  const REAL_AGENT_TIMEOUT_MS = 30_000;
+  /** The acceptance case builds four runners and resumes twice — roughly double the others. */
+  const ACCEPTANCE_TIMEOUT_MS = 60_000;
 
-    // Two real sessions, one of each kind, both with a completed tool call in their state.
-    const first = openSaver();
-    await say(await makeRunner(first, named), 'look up the code');
-    await say(await makeRunner(first, orphan), 'look up the code');
-    expect(toolCalls).toBe(2);
-    nameThread(named);
-    first.close();
+  it(
+    'ACCEPTANCE: reclamation deletes the thread no conversation names and leaves the named one resumable, tool result and all',
+    async () => {
+      const named = 'thread-named-by-a-conversation';
+      const orphan = 'thread-nothing-names';
 
-    expect(countCheckpoints(named)).toBeGreaterThan(0);
-    expect(countCheckpoints(orphan)).toBeGreaterThan(0);
-
-    // A pass from far enough in the future that BOTH threads are past the grace window — so what
-    // protects the named one is the predicate, not its age.
-    const sweeper = openSaver();
-    const removed = sweeper.reclaimUnresumableThreads({ now: Date.now() + 30 * DAY });
-    expect(removed.threadCount).toBe(1);
-    expect(removed.checkpointCount).toBeGreaterThan(0);
-    expect(countCheckpoints(orphan)).toBe(0);
-    expect(countCheckpoints(named)).toBeGreaterThan(0);
-
-    // THE PROPERTY: a fresh runner — a new process, its own thread — resumed onto the surviving
-    // conversation is handed the tool result the first session produced. Not "the rows are there":
-    // the model answers with a value only the tool knew, and the tool is not run again.
-    const second = openSaver();
-    const resumed = await makeRunner(second);
-    await resumed.resumeConversation({ threadId: named, grants: NO_CONVERSATION_GRANTS });
-    expect(await say(resumed, 'what was the code')).toContain(`recall:${SECRET}`);
-    expect(toolCalls).toBe(2);
-
-    // CONTROL: the same move onto the thread reclamation DID delete answers from nothing, which is
-    // what makes the assertion above about state rather than about the model.
-    const control = await makeRunner(second);
-    await control.resumeConversation({ threadId: orphan, grants: NO_CONVERSATION_GRANTS });
-    expect(await say(control, 'what was the code')).toContain(NOTHING);
-  });
-
-  it('a conversation whose thread link was CUT loses its protection, and a resume of it was already refused', async () => {
-    const thread = 'thread-write-failed';
-    const saver = openSaver();
-    await say(await makeRunner(saver, thread), 'look up the code');
-    const conversationId = nameThread(thread);
-    saver.close();
-
-    // What `clearConversationThread` writes when a checkpoint write fails mid-session. From here the
-    // conversation names no thread — `getConversationThreadId` answers null, which is the refusal
-    // every resume path already makes, proven behaviourally in the agent package's own spec.
-    const store = openHistoryStore(dbPath)!;
-    store.clearConversationThread(conversationId);
-    expect(store.getConversationThreadId(conversationId)).toBeNull();
-    store.close();
-
-    const sweeper = openSaver();
-    const removed = sweeper.reclaimUnresumableThreads({ now: Date.now() + 30 * DAY });
-    expect(removed.threadCount).toBe(1);
-    expect(countCheckpoints(thread)).toBe(0);
-  });
-
-  describe('the parentConfig walk — the node`s supposition, measured', () => {
-    it('a hole in the MIDDLE of a thread does not break the resume: the ancestor walk is never reached', async () => {
-      const thread = 'thread-with-a-hole';
+      // Two real sessions, one of each kind, both with a completed tool call in their state.
       const first = openSaver();
-      const one = await makeRunner(first, thread);
-      await say(one, 'look up the code');
-      await say(one, 'and again');
-      await say(one, 'a third super-step');
-      nameThread(thread);
+      await say(await makeRunner(first, named), 'look up the code');
+      await say(await makeRunner(first, orphan), 'look up the code');
+      expect(toolCalls).toBe(2);
+      nameThread(named);
       first.close();
 
-      const db = new DatabaseSync(dbPath);
-      const ids = (
-        db
-          .prepare(
-            `SELECT checkpoint_id FROM checkpoints WHERE thread_id = ? ORDER BY checkpoint_id ASC`
-          )
-          .all(thread) as Record<string, unknown>[]
-      ).map((r) => String(r.checkpoint_id));
-      expect(ids.length).toBeGreaterThan(4);
-      const middle = ids[Math.floor(ids.length / 2)];
-      db.prepare(`DELETE FROM checkpoints WHERE thread_id = ? AND checkpoint_id = ?`).run(
-        thread,
-        middle
-      );
-      db.prepare(`DELETE FROM checkpoint_writes WHERE thread_id = ? AND checkpoint_id = ?`).run(
-        thread,
-        middle
-      );
-      db.close();
+      expect(countCheckpoints(named)).toBeGreaterThan(0);
+      expect(countCheckpoints(orphan)).toBeGreaterThan(0);
 
-      // Count the ancestor walk directly: `channelsFromCheckpoint` calls this only for a
-      // `DeltaChannel` missing from `channel_values`, and this graph's `messages` is a
-      // `BinaryOperatorAggregate` whose full array is in every checkpoint. Zero calls is the reason
-      // a middle hole cannot produce "transcript present, tool result missing".
+      // A pass from far enough in the future that BOTH threads are past the grace window — so what
+      // protects the named one is the predicate, not its age.
+      const sweeper = openSaver();
+      const removed = sweeper.reclaimUnresumableThreads({ now: Date.now() + 30 * DAY });
+      expect(removed.threadCount).toBe(1);
+      expect(removed.checkpointCount).toBeGreaterThan(0);
+      expect(countCheckpoints(orphan)).toBe(0);
+      expect(countCheckpoints(named)).toBeGreaterThan(0);
+
+      // THE PROPERTY: a fresh runner — a new process, its own thread — resumed onto the surviving
+      // conversation is handed the tool result the first session produced. Not "the rows are there":
+      // the model answers with a value only the tool knew, and the tool is not run again.
       const second = openSaver();
-      let deltaWalks = 0;
-      const original = second.getDeltaChannelHistory.bind(second);
-
-      (second as any).getDeltaChannelHistory = async (options: unknown) => {
-        deltaWalks++;
-        return original(options as never);
-      };
-
       const resumed = await makeRunner(second);
-      await resumed.resumeConversation({ threadId: thread, grants: NO_CONVERSATION_GRANTS });
+      await resumed.resumeConversation({ threadId: named, grants: NO_CONVERSATION_GRANTS });
       expect(await say(resumed, 'what was the code')).toContain(`recall:${SECRET}`);
-      expect(deltaWalks).toBe(0);
-      expect(toolCalls).toBe(1);
+      expect(toolCalls).toBe(2);
 
-      // CONTROL — the same resume once the whole thread is gone answers from nothing, so the
-      // assertion above is about what the checkpoints hold and not about the model's habits.
-      const db2 = new DatabaseSync(dbPath);
-      db2.prepare(`DELETE FROM checkpoints WHERE thread_id = ?`).run(thread);
-      db2.prepare(`DELETE FROM checkpoint_writes WHERE thread_id = ?`).run(thread);
-      db2.close();
-      const third = await makeRunner(second);
-      await third.resumeConversation({ threadId: thread, grants: NO_CONVERSATION_GRANTS });
-      expect(await say(third, 'what was the code')).toContain(NOTHING);
-    });
+      // CONTROL: the same move onto the thread reclamation DID delete answers from nothing, which is
+      // what makes the assertion above about state rather than about the model.
+      const control = await makeRunner(second);
+      await control.resumeConversation({ threadId: orphan, grants: NO_CONVERSATION_GRANTS });
+      expect(await say(control, 'what was the code')).toContain(NOTHING);
+    },
+    ACCEPTANCE_TIMEOUT_MS
+  );
+
+  it(
+    'a conversation whose thread link was CUT loses its protection, and a resume of it was already refused',
+    async () => {
+      const thread = 'thread-write-failed';
+      const saver = openSaver();
+      await say(await makeRunner(saver, thread), 'look up the code');
+      const conversationId = nameThread(thread);
+      saver.close();
+
+      // What `clearConversationThread` writes when a checkpoint write fails mid-session. From here the
+      // conversation names no thread — `getConversationThreadId` answers null, which is the refusal
+      // every resume path already makes, proven behaviourally in the agent package's own spec.
+      const store = openHistoryStore(dbPath)!;
+      store.clearConversationThread(conversationId);
+      expect(store.getConversationThreadId(conversationId)).toBeNull();
+      store.close();
+
+      const sweeper = openSaver();
+      const removed = sweeper.reclaimUnresumableThreads({ now: Date.now() + 30 * DAY });
+      expect(removed.threadCount).toBe(1);
+      expect(countCheckpoints(thread)).toBe(0);
+    },
+    REAL_AGENT_TIMEOUT_MS
+  );
+
+  describe('the parentConfig walk — the node`s supposition, measured', () => {
+    it(
+      'a hole in the MIDDLE of a thread does not break the resume: the ancestor walk is never reached',
+      async () => {
+        const thread = 'thread-with-a-hole';
+        const first = openSaver();
+        const one = await makeRunner(first, thread);
+        await say(one, 'look up the code');
+        await say(one, 'and again');
+        await say(one, 'a third super-step');
+        nameThread(thread);
+        first.close();
+
+        const db = new DatabaseSync(dbPath);
+        const ids = (
+          db
+            .prepare(
+              `SELECT checkpoint_id FROM checkpoints WHERE thread_id = ? ORDER BY checkpoint_id ASC`
+            )
+            .all(thread) as Record<string, unknown>[]
+        ).map((r) => String(r.checkpoint_id));
+        expect(ids.length).toBeGreaterThan(4);
+        const middle = ids[Math.floor(ids.length / 2)];
+        db.prepare(`DELETE FROM checkpoints WHERE thread_id = ? AND checkpoint_id = ?`).run(
+          thread,
+          middle
+        );
+        db.prepare(`DELETE FROM checkpoint_writes WHERE thread_id = ? AND checkpoint_id = ?`).run(
+          thread,
+          middle
+        );
+        db.close();
+
+        // Count the ancestor walk directly: `channelsFromCheckpoint` calls this only for a
+        // `DeltaChannel` missing from `channel_values`, and this graph's `messages` is a
+        // `BinaryOperatorAggregate` whose full array is in every checkpoint. Zero calls is the reason
+        // a middle hole cannot produce "transcript present, tool result missing".
+        const second = openSaver();
+        let deltaWalks = 0;
+        const original = second.getDeltaChannelHistory.bind(second);
+
+        (second as any).getDeltaChannelHistory = async (options: unknown) => {
+          deltaWalks++;
+          return original(options as never);
+        };
+
+        const resumed = await makeRunner(second);
+        await resumed.resumeConversation({ threadId: thread, grants: NO_CONVERSATION_GRANTS });
+        expect(await say(resumed, 'what was the code')).toContain(`recall:${SECRET}`);
+        expect(deltaWalks).toBe(0);
+        expect(toolCalls).toBe(1);
+
+        // CONTROL — the same resume once the whole thread is gone answers from nothing, so the
+        // assertion above is about what the checkpoints hold and not about the model's habits.
+        const db2 = new DatabaseSync(dbPath);
+        db2.prepare(`DELETE FROM checkpoints WHERE thread_id = ?`).run(thread);
+        db2.prepare(`DELETE FROM checkpoint_writes WHERE thread_id = ?`).run(thread);
+        db2.close();
+        const third = await makeRunner(second);
+        await third.resumeConversation({ threadId: thread, grants: NO_CONVERSATION_GRANTS });
+        expect(await say(third, 'what was the code')).toContain(NOTHING);
+      },
+      REAL_AGENT_TIMEOUT_MS
+    );
   });
 
   describe('where the automatic reclamation is hooked', () => {
     const configFor = () => ({ history: { dbPath } }) as never;
 
-    it('reclaims on the orderly close of a session that ran, using the connection it already had', async () => {
-      // An old orphan, written by a session that is long gone.
-      const stale = openSaver();
-      await say(await makeRunner(stale, 'stale-orphan'), 'look up the code');
-      stale.close();
-      const db = new DatabaseSync(dbPath);
-      // Age it past the grace window by rewriting the `ts` the saver stored — the field the age gate
-      // reads, left exactly as the serializer shapes it.
-      const rows = db
-        .prepare(
-          `SELECT checkpoint_id, checkpoint FROM checkpoints WHERE thread_id = 'stale-orphan'`
-        )
-        .all() as Record<string, unknown>[];
-      const update = db.prepare(
-        `UPDATE checkpoints SET checkpoint = ? WHERE thread_id = 'stale-orphan' AND checkpoint_id = ?`
-      );
-      for (const row of rows) {
-        const body = JSON.parse(new TextDecoder().decode(row.checkpoint as Uint8Array)) as Record<
-          string,
-          unknown
-        >;
-        body.ts = new Date(Date.now() - 30 * DAY).toISOString();
-        update.run(new TextEncoder().encode(JSON.stringify(body)), String(row.checkpoint_id));
-      }
-      db.close();
-      expect(countCheckpoints('stale-orphan')).toBeGreaterThan(0);
+    it(
+      'reclaims on the orderly close of a session that ran, using the connection it already had',
+      async () => {
+        // An old orphan, written by a session that is long gone.
+        const stale = openSaver();
+        await say(await makeRunner(stale, 'stale-orphan'), 'look up the code');
+        stale.close();
+        const db = new DatabaseSync(dbPath);
+        // Age it past the grace window by rewriting the `ts` the saver stored — the field the age gate
+        // reads, left exactly as the serializer shapes it.
+        const rows = db
+          .prepare(
+            `SELECT checkpoint_id, checkpoint FROM checkpoints WHERE thread_id = 'stale-orphan'`
+          )
+          .all() as Record<string, unknown>[];
+        const update = db.prepare(
+          `UPDATE checkpoints SET checkpoint = ? WHERE thread_id = 'stale-orphan' AND checkpoint_id = ?`
+        );
+        for (const row of rows) {
+          const body = JSON.parse(new TextDecoder().decode(row.checkpoint as Uint8Array)) as Record<
+            string,
+            unknown
+          >;
+          body.ts = new Date(Date.now() - 30 * DAY).toISOString();
+          update.run(new TextEncoder().encode(JSON.stringify(body)), String(row.checkpoint_id));
+        }
+        db.close();
+        expect(countCheckpoints('stale-orphan')).toBeGreaterThan(0);
 
-      const checkpointer = openSessionCheckpointerSafe(configFor(), { notify: () => {} });
-      expect(checkpointer.durable).toBe(true);
-      checkpointer.bindConversation?.(1); // the session got past the resume checks and ran
-      checkpointer.close();
-      expect(countCheckpoints('stale-orphan')).toBe(0);
-    });
+        const checkpointer = openSessionCheckpointerSafe(configFor(), { notify: () => {} });
+        expect(checkpointer.durable).toBe(true);
+        checkpointer.bindConversation?.(1); // the session got past the resume checks and ran
+        checkpointer.close();
+        expect(countCheckpoints('stale-orphan')).toBe(0);
+      },
+      REAL_AGENT_TIMEOUT_MS
+    );
 
-    it('CONTROL: a checkpointer closed before the session ran — the --resume refusal path — deletes nothing', async () => {
-      const stale = openSaver();
-      await say(await makeRunner(stale, 'stale-orphan-2'), 'look up the code');
-      stale.close();
-      const db = new DatabaseSync(dbPath);
-      const rows = db
-        .prepare(
-          `SELECT checkpoint_id, checkpoint FROM checkpoints WHERE thread_id = 'stale-orphan-2'`
-        )
-        .all() as Record<string, unknown>[];
-      const update = db.prepare(
-        `UPDATE checkpoints SET checkpoint = ? WHERE thread_id = 'stale-orphan-2' AND checkpoint_id = ?`
-      );
-      for (const row of rows) {
-        const body = JSON.parse(new TextDecoder().decode(row.checkpoint as Uint8Array)) as Record<
-          string,
-          unknown
-        >;
-        body.ts = new Date(Date.now() - 30 * DAY).toISOString();
-        update.run(new TextEncoder().encode(JSON.stringify(body)), String(row.checkpoint_id));
-      }
-      db.close();
+    it(
+      'CONTROL: a checkpointer closed before the session ran — the --resume refusal path — deletes nothing',
+      async () => {
+        const stale = openSaver();
+        await say(await makeRunner(stale, 'stale-orphan-2'), 'look up the code');
+        stale.close();
+        const db = new DatabaseSync(dbPath);
+        const rows = db
+          .prepare(
+            `SELECT checkpoint_id, checkpoint FROM checkpoints WHERE thread_id = 'stale-orphan-2'`
+          )
+          .all() as Record<string, unknown>[];
+        const update = db.prepare(
+          `UPDATE checkpoints SET checkpoint = ? WHERE thread_id = 'stale-orphan-2' AND checkpoint_id = ?`
+        );
+        for (const row of rows) {
+          const body = JSON.parse(new TextDecoder().decode(row.checkpoint as Uint8Array)) as Record<
+            string,
+            unknown
+          >;
+          body.ts = new Date(Date.now() - 30 * DAY).toISOString();
+          update.run(new TextEncoder().encode(JSON.stringify(body)), String(row.checkpoint_id));
+        }
+        db.close();
 
-      const checkpointer = openSessionCheckpointerSafe(configFor(), { notify: () => {} });
-      // No `bindConversation`: this is the shape of a boot that refused the `--resume` id and left.
-      checkpointer.close();
-      expect(countCheckpoints('stale-orphan-2')).toBeGreaterThan(0);
-    });
+        const checkpointer = openSessionCheckpointerSafe(configFor(), { notify: () => {} });
+        // No `bindConversation`: this is the shape of a boot that refused the `--resume` id and left.
+        checkpointer.close();
+        expect(countCheckpoints('stale-orphan-2')).toBeGreaterThan(0);
+      },
+      REAL_AGENT_TIMEOUT_MS
+    );
 
     it('does not reclaim twice, and a second close is harmless', async () => {
       const checkpointer = openSessionCheckpointerSafe(configFor(), { notify: () => {} });
