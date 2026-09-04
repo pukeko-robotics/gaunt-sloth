@@ -84,7 +84,9 @@ try {
   if (configName === 'ollama' && providerConfig?.llm) {
     const ollamaModel = process.env.OLLAMA_IT_MODEL || 'gemma4:12b';
     providerConfig.llm.model = ollamaModel;
-    console.log(`Ollama model set to "${ollamaModel}" (OLLAMA_IT_MODEL) in workdir/.gsloth.config.json`);
+    console.log(
+      `Ollama model set to "${ollamaModel}" (OLLAMA_IT_MODEL) in workdir/.gsloth.config.json`
+    );
   }
   // Always rewritten, never only copied: the copy carries the source file's keys, and the history
   // redirect above has to be in the file the run actually reads. temperature/numCtx and everything
