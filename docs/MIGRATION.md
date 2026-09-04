@@ -670,6 +670,16 @@ To keep it on but put the file elsewhere, set `history.dbPath`. A config that al
 `history.enabled` either way is unaffected; only configs that never mentioned the key change
 behaviour.
 
+**What reclaims the space, since it now accumulates for everyone.** Conversation state that no
+conversation can reach — what `/clear` leaves behind, a session that ended before recording
+anything, a conversation marked unresumable because a write failed — is deleted automatically at the
+end of a session, a day after its last step so a running session is never swept. Nothing there was
+resumable, so nothing is lost. **State you could still have resumed is only ever removed by
+`gth history prune`, which you type**, with an explicit `--older-than <days>` or `--keep-last <n>`
+and a plan printed before anything goes; it takes whole conversations and keeps their transcripts,
+so `gth history show <id>` goes on working and only the resume stops. `gth history list` prints the
+store's size and `gth insights` breaks it down.
+
 ## Interactive slash commands (renames)
 
 Inside `chat`/`code` sessions (both the TUI and the plain `--no-tui` readline surface, which now

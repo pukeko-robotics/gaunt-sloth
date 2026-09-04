@@ -18,6 +18,15 @@
   when history is off, the conversation is unknown, it has no state to re-enter, or it was recorded
   in a different directory. `/status` now names the conversation id. See
   [Resuming a conversation](../docs/COMMANDS.md#resuming-a-conversation).
+- The conversation store now has a retention policy, and its size is visible. `gth history list`
+  prints how much the store holds and `gth insights` breaks it down by thread. State that no
+  conversation can reach — what `/clear` leaves behind, a session that ended before recording
+  anything — is reclaimed automatically a day after the session that wrote it ends. State you could
+  still have resumed is only removed by `gth history prune`, which needs an explicit
+  `--older-than <days>` or `--keep-last <n>`, prints what it will remove, and removes nothing until
+  you add `--yes`. Pruning takes whole conversations and keeps their transcripts, so
+  `gth history show <id>` goes on working and only the resume stops. See
+  [What the store keeps, and what reclaims it](../docs/COMMANDS.md#what-the-store-keeps-and-what-reclaims-it).
 - `/compact [focus]` in interactive `chat` / `code` sessions folds the older conversation into a
   summary and keeps the last few messages word for word, so a session that has grown too long can
   keep going without starting over. The summary is written into the conversation's saved state, so

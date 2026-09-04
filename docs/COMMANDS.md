@@ -1149,6 +1149,7 @@ gth history list [--limit <n>] [--db <path>]
 gth history search <query...> [--limit <n>] [--db <path>]
 gth history show <id> [--db <path>]
 gth history resume <id>
+gth history prune [--older-than <days>] [--keep-last <n>] [--yes] [--db <path>]
 ```
 
 Recording is **on by default and local only** — nothing here touches the network. Set `history.enabled: false` in your config to turn it off; with no store present these commands report that there is no history yet rather than creating one. The store defaults to `~/.gsloth/history.db` (overridable via the `history.dbPath` config key or the `--db` flag), and interactive `chat`/`code` sessions keep their conversation state in the same file, which is what `history resume` picks up — see [Resuming a conversation](#resuming-a-conversation).
@@ -1158,14 +1159,29 @@ Recording is **on by default and local only** — nothing here touches the netwo
 - `history search` - Full-text search across past turns (SQLite FTS5); each hit shows the conversation it belongs to.
 - `history show` - Print a whole conversation thread, all turns in order.
 - `history resume` - Start an interactive session inside a recorded conversation, in the mode (`chat` or `code`) it was recorded under, with its approvals in force again. A conversation recorded by a single-shot command (`ask`, `exec`, …) has nothing to resume and is reported as such. Takes no `--db`: the session reads the store its own config names.
+- `history prune` - Remove stored conversation state and give the disk space back. See [What the store keeps, and what reclaims it](#what-the-store-keeps-and-what-reclaims-it).
+
+### What the store keeps, and what reclaims it
+
+A checkpoint is not a transcript. A recorded turn is a prompt and a response; the conversation state behind `history resume` is everything the agent was working with — tool results verbatim, file contents that were read, command output, whatever an MCP server returned — written once per step of every interactive session. It grows faster than the turn count suggests, so `gth history list` prints the store's size under the listing and `gth insights` breaks it down by thread.
+
+**A resume is never taken away without being asked for.** Two things reclaim space, and only one of them runs on its own:
+
+- **Automatic**, at the end of a session: conversation state that *no conversation can reach* is deleted. That is state left behind by `/clear`, by a session that ended before it recorded anything, and by a conversation whose state was marked unresumable because a write failed. Nothing here was resumable, so nothing is lost. It waits a day after a session's last step before touching its state, so a running session is never swept.
+- **`gth history prune`**, which you type: it removes conversation state you *could* still have resumed. It needs an explicit `--older-than <days>` or `--keep-last <n>` — there is no default, because a default would be an age policy applied to everyone without asking. It prints what it will remove and removes nothing until you add `--yes`.
+
+Pruning takes whole conversations, never part of one, and it **keeps the transcripts**: `gth history list` and `gth history show <id>` go on working for a pruned conversation, and only `history resume` stops. `--keep-last <n>` means "keep the *n* most recently active conversations", not "keep the last *n* steps of each".
 
 ### Arguments
 - `<query...>` - (`history search`) One or more search terms.
 - `<id>` - (`history show` / `history resume`) Conversation id, as printed by `history list` / `history search`.
 
 ### Options
-- `--db <path>` - (`history list` / `history search` / `history show`) Path to the history DB (defaults to `~/.gsloth/history.db`).
+- `--db <path>` - (`history list` / `history search` / `history show` / `history prune`) Path to the history DB (defaults to `~/.gsloth/history.db`).
 - `--limit <n>` - (`history list` / `history search`) Maximum results (default: `20`).
+- `--older-than <days>` - (`history prune`) Prune conversations with no activity for this many days.
+- `--keep-last <n>` - (`history prune`) Keep the `n` most recently active conversations and prune the rest.
+- `--yes` - (`history prune`) Actually remove. Without it the command prints its plan and changes nothing.
 
 ### Examples
 ```bash
@@ -1180,6 +1196,12 @@ gth history show 42
 
 # Pick conversation 42 up where it left off, in the mode it was recorded under
 gth history resume 42
+
+# See what pruning everything untouched for 30 days would remove — removes nothing
+gth history prune --older-than 30
+
+# Keep the 20 most recent conversations resumable and reclaim the rest
+gth history prune --keep-last 20 --yes
 ```
 
 ## insights
@@ -1190,7 +1212,7 @@ Show local analytics over recorded session history.
 gth insights [--db <path>]
 ```
 
-Read-only analytics over the same [`history`](#history) store — token and cost totals, a top-tool tally, and a per-command breakdown. Local only: nothing leaves the machine, and with no store present it reports that there is no history yet rather than creating one. Recording is on by default; `history.enabled: false` in your config turns it off.
+Read-only analytics over the same [`history`](#history) store — token and cost totals, a top-tool tally, a per-command breakdown, and the size of the conversation store: how many bytes it holds, across how many threads, how much of that nothing can resume, and which threads are the largest (see [What the store keeps, and what reclaims it](#what-the-store-keeps-and-what-reclaims-it)). Local only: nothing leaves the machine, and with no store present it reports that there is no history yet rather than creating one. Recording is on by default; `history.enabled: false` in your config turns it off.
 
 ### Options
 - `--db <path>` - Path to the history DB (defaults to `~/.gsloth/history.db`).
