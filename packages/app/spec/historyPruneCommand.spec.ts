@@ -155,9 +155,12 @@ describe('gth history prune (GS2-107)', () => {
     // The transcript is not what went: both conversations are still listable and readable.
     const { openHistoryStore } = await import('@gaunt-sloth/core/history/historyStore.js');
     const store = openHistoryStore(dbPath)!;
-    expect(store.listConversations(10).map((c) => c.id).sort()).toEqual(
-      [oldId!, keptId!].sort()
-    );
+    expect(
+      store
+        .listConversations(10)
+        .map((c) => c.id)
+        .sort()
+    ).toEqual([oldId!, keptId!].sort());
     expect(store.getConversationThread(oldId!)).toHaveLength(1);
     store.close();
     expect(output()).toContain('Removed 3 checkpoints');

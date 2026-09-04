@@ -81,8 +81,13 @@ describe('GS2-107 checkpoint retention', () => {
       const body = new TextEncoder().encode(
         JSON.stringify({ v: 4, id, ts, channel_values: { messages: payload } })
       );
-      insert.run(threadId, id, i === 0 ? null : `ckpt-${String(i - 1).padStart(4, '0')}`, body,
-        new TextEncoder().encode(JSON.stringify({ step: i })));
+      insert.run(
+        threadId,
+        id,
+        i === 0 ? null : `ckpt-${String(i - 1).padStart(4, '0')}`,
+        body,
+        new TextEncoder().encode(JSON.stringify({ step: i }))
+      );
       insertWrite.run(threadId, id, i, new TextEncoder().encode(JSON.stringify(payload)));
     }
   };
@@ -140,9 +145,10 @@ describe('GS2-107 checkpoint retention', () => {
 
       expect(findUnaddressableThreads(db, { now: NOW })).toEqual(['finished']);
       // The readout asks a different question — what is unaddressable at all — and sees both.
-      expect(
-        findUnaddressableThreads(db, { now: NOW, includeWithinGrace: true }).sort()
-      ).toEqual(['finished', 'live-after-clear']);
+      expect(findUnaddressableThreads(db, { now: NOW, includeWithinGrace: true }).sort()).toEqual([
+        'finished',
+        'live-after-clear',
+      ]);
       db.close();
     });
 
@@ -337,8 +343,9 @@ describe('GS2-107 checkpoint retention', () => {
       expect(stats.fileBytes).toBeGreaterThan(stats.checkpointBytes);
       expect(stats.largestThreads[0].threadId).toBe('big');
       expect(stats.largestThreads[0].command).toBe('code');
-      expect(stats.largestThreads.find((t) => t.threadId === 'orphaned')?.conversationId)
-        .toBeUndefined();
+      expect(
+        stats.largestThreads.find((t) => t.threadId === 'orphaned')?.conversationId
+      ).toBeUndefined();
       maintenance.close();
     });
 

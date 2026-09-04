@@ -95,7 +95,12 @@ describe('GS2-107 — what automatic reclamation deletes was already unresumable
       project: '/work/here',
       threadId: 'thread-live',
     })!;
-    recordSessionSafe(config, { conversationId: liveId, command: 'code', prompt: 'p', response: 'r' });
+    recordSessionSafe(config, {
+      conversationId: liveId,
+      command: 'code',
+      prompt: 'p',
+      response: 'r',
+    });
     await checkpoint(ckpt.saver, 'thread-live');
 
     // There is no id whose resume reaches the orphan: a resume travels conversation → thread, and

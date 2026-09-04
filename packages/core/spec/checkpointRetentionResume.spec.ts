@@ -101,7 +101,6 @@ class RecallingModel extends BaseChatModel {
 const DAY = 24 * 60 * 60 * 1000;
 
 describe('GS2-107 — retention at the policy boundary, on a real runner', () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let GthAgentRunner: any;
   const BASE_CONFIG = {
     llm: undefined,
@@ -166,7 +165,6 @@ describe('GS2-107 — retention at the policy boundary, on a real runner', () =>
     return saver!;
   };
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const makeRunner = async (saver: unknown, threadId?: string): Promise<any> => {
     const runner = new GthAgentRunner(vi.fn(), {
       resolveTools: vi.fn().mockResolvedValue([lookupCode()]),
@@ -180,7 +178,6 @@ describe('GS2-107 — retention at the policy boundary, on a real runner', () =>
     return runner;
   };
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const say = (runner: any, text: string): Promise<string> =>
     runner.processMessages([new HumanMessage(text)]);
 
@@ -301,7 +298,7 @@ describe('GS2-107 — retention at the policy boundary, on a real runner', () =>
       const second = openSaver();
       let deltaWalks = 0;
       const original = second.getDeltaChannelHistory.bind(second);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       (second as any).getDeltaChannelHistory = async (options: unknown) => {
         deltaWalks++;
         return original(options as never);
@@ -337,7 +334,9 @@ describe('GS2-107 — retention at the policy boundary, on a real runner', () =>
       // Age it past the grace window by rewriting the `ts` the saver stored — the field the age gate
       // reads, left exactly as the serializer shapes it.
       const rows = db
-        .prepare(`SELECT checkpoint_id, checkpoint FROM checkpoints WHERE thread_id = 'stale-orphan'`)
+        .prepare(
+          `SELECT checkpoint_id, checkpoint FROM checkpoints WHERE thread_id = 'stale-orphan'`
+        )
         .all() as Record<string, unknown>[];
       const update = db.prepare(
         `UPDATE checkpoints SET checkpoint = ? WHERE thread_id = 'stale-orphan' AND checkpoint_id = ?`

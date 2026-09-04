@@ -185,7 +185,13 @@ describe('history/historyFormat', () => {
       writeCount: 300,
       threadCount: 10,
       largestThreads: [
-        { threadId: 't-a', conversationId: 7, command: 'code', checkpointCount: 22, bytes: 900_000 },
+        {
+          threadId: 't-a',
+          conversationId: 7,
+          command: 'code',
+          checkpointCount: 22,
+          bytes: 900_000,
+        },
         { threadId: 't-b', checkpointCount: 5, bytes: 1000 },
       ],
       unresumableThreadCount: 3,

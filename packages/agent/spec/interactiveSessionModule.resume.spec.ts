@@ -330,7 +330,10 @@ describe('interactiveSessionModule — resume (GS2-20)', () => {
       const id = await seed({ checkpoint: false });
       const notice = await refused(id);
       expect(notice.title).toBe(`Conversation #${id} cannot be resumed`);
-      expect(notice.lines[0]).toContain('never written');
+      // GS2-107 widened this sentence: a prune is a second way for a named thread to hold no state,
+      // and the row cannot tell the two apart, so the notice claims neither.
+      expect(notice.lines[0]).toContain('is not in the store');
+      expect(notice.lines[0]).toContain('gth history prune');
     });
 
     it('a conversation recorded in another directory — both directories named', async () => {
