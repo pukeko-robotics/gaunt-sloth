@@ -92,6 +92,13 @@ describe('CFG-38 — /status and /model on the Ink TUI surface', () => {
         modelProviderType: 'openrouter',
       });
       expect(out).toContain('Model: claude-sonnet-4-5 (openrouter)');
+      // …and the status bar in the same frames, which is the OTHER thing this live `<App>` can
+      // prove: that `App` hands the field down to `StatusBar` at all. The component's own logic is
+      // asserted below through `statusBarSegments`, but a component that renders correctly from a
+      // prop nobody passes it renders the bare model on screen and looks right — the same silent
+      // divergence TUI-C48 classes as a regression. Lowercase `model:` is the bar's own label, so
+      // this cannot be satisfied by the `Model:` notice above.
+      expect(out).toContain('model: claude-sonnet-4-5 (openrouter)');
     }
   );
 

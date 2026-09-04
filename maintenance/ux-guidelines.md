@@ -415,7 +415,7 @@ Gaunt Sloth · exec · claude-haiku-4-5 (anthropic)
   several providers, and which one is in play changes cost, rate limits, tool-call behaviour and
   where the traffic goes. So `/status`, `/model`, `/config`, the `debug` rung's `Model:` line and
   the TUI status bar all render `modelProviderLabel`'s output, and a change to the spelling lands on
-  every one of them at once. Adding a sixth site means importing the helper, not retyping the
+  every one of them at once. Adding another site means importing the helper, not retyping the
   format: a local `${model} (${provider})` passes every rendered-string test and is exactly how one
   surface drifts to `google-genai:gemini` while its neighbour says `gemini (google-genai)`.
 - **Drop rather than mislead (DL-7).** No provider — a JS config hands us an already-built model —

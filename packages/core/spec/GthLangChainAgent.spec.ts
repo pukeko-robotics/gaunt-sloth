@@ -113,6 +113,37 @@ vi.mock('#src/utils/llmUtils.js', async (importOriginal) => {
   };
 });
 
+/**
+ * CFG-38 — a TOGGLED stub of the shared model/provider helper, off by default.
+ *
+ * The `debug` rung's `Model:` line has to be asserted to go THROUGH `modelProviderLabel`, not
+ * merely to produce the string that helper would have produced. A rendered-string assertion cannot
+ * tell those apart: a local `${model} (${provider})` here passes `DEBUG_PREAMBLE` below identically,
+ * which is the limitation REL-12 recorded and the one the sharing sweep exists to close.
+ *
+ * The sweep for the slash commands, the status bar and the launch banner stubs the helper for a
+ * whole file (`packages/app/spec/tui/cfg38SharedModelLabel.spec.tsx`). That is not available in
+ * this file: `DEBUG_PREAMBLE` pins the rendered literals, and a file-wide stub would blind every
+ * one of them. So the stub is a toggle — the real helper unless a cell asks for the sentinel — and
+ * exactly one cell turns it on.
+ *
+ * The flag is a plain object rather than a `vi.fn`, so `vi.resetAllMocks()` does not clear it; the
+ * `beforeEach` below turns it off explicitly so a cell that throws mid-way cannot leak the sentinel
+ * into the next one.
+ */
+const sharedLabelStub = vi.hoisted(() => ({ sentinel: false }));
+const SHARED_LABEL_SENTINEL = 'SHARED-HELPER-SENTINEL';
+vi.mock('#src/core/modelLabel.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('#src/core/modelLabel.js')>();
+  return {
+    ...actual,
+    modelProviderLabel: (model?: string, provider?: string) =>
+      sharedLabelStub.sentinel
+        ? `${SHARED_LABEL_SENTINEL}:${model ?? ''}/${provider ?? ''}`
+        : actual.modelProviderLabel(model, provider),
+  };
+});
+
 describe('GthLangChainAgent', () => {
   let GthLangChainAgent: typeof import('#src/core/GthLangChainAgent.js').GthLangChainAgent;
   let statusUpdateCallback: Mock<StatusUpdateCallback>;
@@ -120,6 +151,8 @@ describe('GthLangChainAgent', () => {
 
   beforeEach(async () => {
     vi.resetAllMocks();
+    // CFG-38 — the shared-helper stub is opt-in per cell; `vi.resetAllMocks` cannot reach it.
+    sharedLabelStub.sentinel = false;
 
     systemUtilsMock.getCurrentWorkDir.mockReturnValue('/test/dir');
     multiServerMCPClientMock.mockImplementation(function () {
@@ -323,6 +356,34 @@ describe('GthLangChainAgent', () => {
         expect(modelLine).not.toContain('(');
         expect(modelLine).not.toContain('undefined');
         expect(modelLine).not.toContain('unknown');
+      });
+
+      /**
+       * CFG-38 — the `Model:` line is asserted to READ the shared helper, not to agree with it.
+       *
+       * The two cells above pin the rendered string, and a hand-rolled `${model} (${provider})` on
+       * this line passes both of them byte for byte — so on their own they say nothing about the
+       * sharing that DL-6 actually asks for. Here the helper is swapped for a sentinel no local
+       * template could produce by accident, and the line has to carry it.
+       *
+       * This is the core-side half of the sweep in
+       * `packages/app/spec/tui/cfg38SharedModelLabel.spec.tsx`; it lives in this file because the
+       * `debug` rung's line only exists once an agent has initialised, and the harness for that is
+       * here. `headerStatus` is the same emitter the pinned preamble reads, so the two halves are
+       * looking at one line from two directions: what it says, and where it got it.
+       */
+      it('reads the shared helper for the debug rung Model: line', async () => {
+        sharedLabelStub.sentinel = true;
+        const agent = new GthLangChainAgent(statusUpdateCallback);
+        mcpClientInstanceMock.getTools.mockResolvedValue([]);
+
+        await agent.init('ask', headerConfig({ header: 'debug' }));
+
+        const modelLine = infoLines().find((line) => line.startsWith('Model:'));
+        expect(modelLine).toBe(`Model: ${SHARED_LABEL_SENTINEL}:test-model/google-genai`);
+        // The failure this cell exists for, named rather than implied: a local template still
+        // rendering the real spelling while the helper it should have called was swapped out.
+        expect(infoLines()).not.toContain('Model: test-model (google-genai)');
       });
 
       /**

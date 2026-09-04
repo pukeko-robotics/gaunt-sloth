@@ -27,14 +27,19 @@ import stripAnsi from 'strip-ansi';
  * rendered the sentinel and nothing else; that one would pass if every surface re-implemented the
  * spelling locally.
  *
- * ## What is NOT swept here, and why it does not need to be
+ * ## What is swept elsewhere, and what is swept by nothing
  *
- * The run header (`compactHeaderStatus`, and the `debug` rung's `Model:` line this node changed)
- * lives in `@gaunt-sloth/core` and reaches the helper through the same import, in the same file
- * GS2-95 already made structural — it builds its line with `runHeaderLine`, a zero-import leaf that
- * `@gaunt-sloth/review` imports too, so the agent and the review document cannot drift apart. Its
- * rendering is pinned in `packages/core/spec/GthLangChainAgent.spec.ts`, whose `DEBUG_PREAMBLE`
- * captures the literal rather than deriving it.
+ * The five cells below are the surfaces reachable from this package. The sixth this node touched —
+ * the `debug` rung's `Model:` line — is not: it only exists once an agent has initialised, and the
+ * harness for that lives in `packages/core/spec/GthLangChainAgent.spec.ts`. So it is swept there,
+ * with the same sentinel, by a stub toggled on for that one cell (a file-wide stub would blind the
+ * captured preamble literals in that file). The two files together are the sweep; neither is it
+ * alone.
+ *
+ * Two renderers of the helper this node did not touch remain outside both: the `compact` run header
+ * (`GthAbstractAgent.ts`) and the review document's attribution line (`reviewHeading.ts`). Sweeping
+ * them belongs with a node that changes them — noted here so the boundary is stated rather than
+ * inferred from a list that reads as if it were complete.
  */
 const SENTINEL = 'SHARED-HELPER-SENTINEL';
 
