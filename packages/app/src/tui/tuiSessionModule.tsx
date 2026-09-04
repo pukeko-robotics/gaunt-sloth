@@ -676,7 +676,7 @@ export async function createTuiSession(
     // GS2-20 — the boot half of `--resume`: the SAME apply call the `/resume` agent method makes
     // below, after `runner.init` built the graph on a thread of its own. One seam for both
     // spellings; breaking it breaks both.
-    if (bootResume) applyResumeTarget({ runner, checkpointer }, bootResume);
+    if (bootResume) await applyResumeTarget({ runner, checkpointer }, bootResume);
 
     // Any MCP server that failed to connect during init (resolveTools ran inside runner.init).
     // Captured here so the persistent NoticeBar can name it — otherwise the only signal is a
@@ -844,7 +844,7 @@ export async function createTuiSession(
           id
         );
         if (!resolution.ok) return resolution;
-        applyResumeTarget({ runner, checkpointer }, resolution.target);
+        await applyResumeTarget({ runner, checkpointer }, resolution.target);
         conversationId = resolution.target.conversationId;
         return resolution;
       },

@@ -137,6 +137,18 @@ describe('gth history resume <id> (GS2-20)', () => {
     );
   });
 
+  it('with no store at all says there is no history yet — the sentence history list uses — not that the id is unknown', async () => {
+    // Nothing seeded: the database file does not exist.
+    const { NO_HISTORY_MESSAGE } = await import('#src/commands/historyCommand.js');
+    await run('1');
+    expect(startSessionMock).not.toHaveBeenCalled();
+    expect(consoleMock.displayWarning).toHaveBeenCalledTimes(1);
+    const [warning] = consoleMock.displayWarning.mock.calls[0];
+    expect(warning).toBe(NO_HISTORY_MESSAGE);
+    expect(warning).toContain('No session history found');
+    expect(warning).not.toContain('No conversation #1');
+  });
+
   it('takes no --db: the store is the one the session config names', async () => {
     const { codeId } = await seed();
     await expect(run(String(codeId), '--db', '/tmp/other.db')).rejects.toMatchObject({

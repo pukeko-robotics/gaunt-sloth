@@ -284,6 +284,49 @@ describe('sessionResume — resolveResumeTarget, the checks in order', () => {
     expect(result.ok).toBe(true);
   });
 
+  it('1 before 2 — with history off AND a store that did not open, the history-off sentence wins', async () => {
+    // Both conditions true at once is the only input that tells the two checks' order apart: the
+    // switch is the person's own setting and names what to change, while "did not open" would send
+    // them looking at the disk for a store the switch says not to keep.
+    const off = { history: { dbPath, enabled: false } };
+    const ckpt = durable();
+    const id = await seedResumable(ckpt.saver);
+    const result = await resolveResumeTarget(
+      { config: off, checkpointer: { saver: ckpt.saver, durable: false }, workspace: '/work/here' },
+      id
+    );
+    expect(result).toEqual({ ok: false, refusal: { kind: 'history-off' } });
+  });
+
+  it('5 — the comparison is on RESOLVED paths: a stored project that only differs in spelling matches on POSIX too', async () => {
+    // Every other cell here uses canonical absolute paths, on which `resolve()` is the identity on
+    // POSIX — so dropping it would survive everywhere but the Windows cell. These spellings name
+    // the current directory and match only once resolved; without `resolve()` each is a mismatch.
+    const ckpt = durable();
+    const spellings = ['/work/here/', '/work/./here', '/work//here', '/work/there/../here'];
+    for (const [i, project] of spellings.entries()) {
+      const id = await seedResumable(ckpt.saver, { project, threadId: `thread-spelling-${i}` });
+      const result = await resolveResumeTarget(
+        { config, checkpointer: ckpt, workspace: '/work/here' },
+        id
+      );
+      expect(result.ok, `stored as ${project}`).toBe(true);
+    }
+    // And the other way round: a canonical stored project against a workspace spelled loosely.
+    const id = await seedResumable(ckpt.saver, { project: '/work/here', threadId: 'thread-ws' });
+    const loose = await resolveResumeTarget(
+      { config, checkpointer: ckpt, workspace: '/work/./here/' },
+      id
+    );
+    expect(loose.ok).toBe(true);
+    // CONTROL — a genuinely different directory spelled loosely is still a mismatch.
+    const other = await resolveResumeTarget(
+      { config, checkpointer: ckpt, workspace: '/work/./elsewhere/' },
+      id
+    );
+    expect(other.ok).toBe(false);
+  });
+
   it('uses the SAME workspace comparison as ACP session/new — one function, case-folded on win32 only', () => {
     expect(acpIsSameWorkspace).toBe(isSameWorkspace);
     expect(isSameWorkspace('C:\\Proj', 'c:\\proj', 'win32')).toBe(true);
@@ -302,7 +345,7 @@ describe('sessionResume — resolveResumeTarget, the checks in order', () => {
     const target = (resolution as { target: ResumeTarget }).target;
     const runner = { resumeConversation: vi.fn() };
     const bindConversation = vi.fn();
-    applyResumeTarget({ runner, checkpointer: { bindConversation } }, target);
+    await applyResumeTarget({ runner, checkpointer: { bindConversation } }, target);
     expect(runner.resumeConversation).toHaveBeenCalledTimes(1);
     expect(runner.resumeConversation).toHaveBeenCalledWith({
       threadId: 'thread-ok',
@@ -313,7 +356,20 @@ describe('sessionResume — resolveResumeTarget, the checks in order', () => {
     ]);
     expect(bindConversation).toHaveBeenCalledWith(id);
     // A checkpointer stub with no bind (a spec's plain object) is fine.
-    expect(() => applyResumeTarget({ runner, checkpointer: {} }, target)).not.toThrow();
+    await expect(applyResumeTarget({ runner, checkpointer: {} }, target)).resolves.toBeUndefined();
+
+    // A runner that refuses (a turn in flight, an approval pending) rejects the apply, and the
+    // checkpointer is NOT re-bound: nothing has moved, so nothing is marked.
+    const refusing = {
+      resumeConversation: vi.fn(async () => {
+        throw new Error('A turn is still running; wait for it to finish before resuming.');
+      }),
+    };
+    const untouched = vi.fn();
+    await expect(
+      applyResumeTarget({ runner: refusing, checkpointer: { bindConversation: untouched } }, target)
+    ).rejects.toThrow(/turn is still running/);
+    expect(untouched).not.toHaveBeenCalled();
   });
 
   it('listResumeCandidates offers only resumable conversations and leaves out the current one', async () => {

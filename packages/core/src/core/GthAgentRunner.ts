@@ -924,8 +924,35 @@ export class GthAgentRunner {
    * only scope this seam is handed and the only one the stores should hold for it.
    *
    * The listener is NOT fired: what was installed is what the store already holds.
+   *
+   * **Refuses while a turn is running, and refuses a graph suspended on a pending tool approval**
+   * — the same two refusals as {@link compactConversation}, for the same reason: the runnable
+   * config is what the in-flight work resumes through. Measured without the guard: a mid-turn
+   * call returned normally, the turn's approval `Command({ resume })` then went to the OTHER
+   * thread, the gated tool never ran, the turn died as "Model returned an empty response after
+   * tool execution" — a failure blamed on the model — and the thread being resumed INTO received
+   * a checkpoint from the turn being left. Neither shipped surface can reach this (`/resume` is
+   * idle-only on both), so this is the seam refusing on its own behalf, for its next caller.
    */
-  public resumeConversation(target: { threadId: string; grants: ConversationGrants }): void {
+  public async resumeConversation(target: {
+    threadId: string;
+    grants: ConversationGrants;
+  }): Promise<void> {
+    if (!this.agent || !this.config || !this.runConfig) {
+      throw new Error('AgentRunner not initialized. Call init() first.');
+    }
+    if (this.turnsInFlight > 0) {
+      throw new Error(
+        'A turn is still running; wait for it to finish before resuming another conversation.'
+      );
+    }
+    const pendingApprovals =
+      (await this.agent.getPendingToolInterrupts?.(this.runConfig)) ?? [];
+    if (pendingApprovals.length > 0) {
+      throw new Error(
+        'A tool approval is still pending; answer it before resuming another conversation.'
+      );
+    }
     this.rotateThread(target.threadId);
     for (const grant of this.sessionGrants.list()) {
       if (grant.scope === 'session') this.sessionGrants.remove(grant.entry);

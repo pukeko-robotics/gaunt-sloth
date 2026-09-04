@@ -76,6 +76,8 @@ const NOTHING = 'recall:NOTHING-IN-STATE';
  * the tool once; asked anything else it reports the tool result it can see in state, or `NOTHING`.
  */
 class RecallingModel extends BaseChatModel {
+  /** When set, every generation waits on it: the way a test holds a turn in flight. */
+  gate?: Promise<void>;
   constructor() {
     super({});
   }
@@ -86,6 +88,7 @@ class RecallingModel extends BaseChatModel {
     return this;
   }
   async _generate(messages: BaseMessage[]) {
+    if (this.gate) await this.gate;
     const toolResult = [...messages].reverse().find((m) => ToolMessage.isInstance(m));
     const lastHuman = [...messages].reverse().find((m) => HumanMessage.isInstance(m));
     const ask = typeof lastHuman?.content === 'string' ? lastHuman.content : '';
@@ -274,7 +277,7 @@ describe('GS2-20: GthAgentRunner.resumeConversation (real lean agent over node:s
     expect(ownThread).toBeDefined();
     expect(ownThread).not.toBe(storedThread);
 
-    two.runner.resumeConversation({ threadId: storedThread, grants: NO_CONVERSATION_GRANTS });
+    await two.runner.resumeConversation({ threadId: storedThread, grants: NO_CONVERSATION_GRANTS });
     expect(threadOf(two.runner)).toBe(storedThread);
 
     const answer = await say(two.runner, 'what was the code');
@@ -304,11 +307,11 @@ describe('GS2-20: GthAgentRunner.resumeConversation (real lean agent over node:s
     await say(one.runner, 'hello'); // no tool yet: state holds NOTHING worth recalling
 
     const two = await makeRunner({ model: new RecallingModel(), tools: [lookupCode()], saver });
-    two.runner.resumeConversation({ threadId: storedThread, grants: NO_CONVERSATION_GRANTS });
+    await two.runner.resumeConversation({ threadId: storedThread, grants: NO_CONVERSATION_GRANTS });
     await say(two.runner, 'look up the code'); // the tool runs INSIDE the resumed conversation
 
     const three = await makeRunner({ model: new RecallingModel(), tools: [lookupCode()], saver });
-    three.runner.resumeConversation({ threadId: storedThread, grants: NO_CONVERSATION_GRANTS });
+    await three.runner.resumeConversation({ threadId: storedThread, grants: NO_CONVERSATION_GRANTS });
     expect(await say(three.runner, 'what was the code')).toContain(`recall:${SECRET}`);
     expect(toolCalls).toBe(1);
   });
@@ -345,7 +348,7 @@ describe('GS2-20: GthAgentRunner.resumeConversation (real lean agent over node:s
       tools: [shellTool()],
       saver: new MemorySaver(),
     });
-    resumed.runner.resumeConversation({ threadId: 'thread-x', grants: stored });
+    await resumed.runner.resumeConversation({ threadId: 'thread-x', grants: stored });
     await say(resumed.runner, 'status please');
     expect(resumed.human).not.toHaveBeenCalled();
     expect(executed).toEqual(['git status', 'git status', 'git status']);
@@ -368,7 +371,7 @@ describe('GS2-20: GthAgentRunner.resumeConversation (real lean agent over node:s
       tools: [shellTool()],
       saver: new MemorySaver(),
     });
-    resumed.runner.resumeConversation({ threadId: 'thread-y', grants: stored });
+    await resumed.runner.resumeConversation({ threadId: 'thread-y', grants: stored });
     await say(resumed.runner, 'clean');
     expect(resumed.human).not.toHaveBeenCalled();
     expect(executed).toEqual([]);
@@ -397,7 +400,7 @@ describe('GS2-20: GthAgentRunner.resumeConversation (real lean agent over node:s
       ['always', 'pwd'],
     ]);
 
-    runner.resumeConversation({
+    await runner.resumeConversation({
       threadId: 'thread-other',
       grants: {
         allow: [
@@ -429,7 +432,7 @@ describe('GS2-20: GthAgentRunner.resumeConversation (real lean agent over node:s
       tools: [shellTool()],
       saver: new MemorySaver(),
     });
-    runner.resumeConversation({
+    await runner.resumeConversation({
       threadId: 't',
       grants: {
         allow: [
@@ -474,7 +477,7 @@ describe('GS2-20: GthAgentRunner.resumeConversation (real lean agent over node:s
     expect(listener).toHaveBeenCalledTimes(3);
     expect(runner.getSessionScopedGrants().deny).toEqual([]);
 
-    runner.resumeConversation({ threadId: 'elsewhere', grants: NO_CONVERSATION_GRANTS });
+    await runner.resumeConversation({ threadId: 'elsewhere', grants: NO_CONVERSATION_GRANTS });
     expect(listener).toHaveBeenCalledTimes(3);
 
     // A listener that throws is not the gate's problem: the grant still lands. The script repeats
@@ -500,8 +503,90 @@ describe('GS2-20: GthAgentRunner.resumeConversation (real lean agent over node:s
     });
     const limit = recursionLimitOf(runner);
     expect(limit).toBeGreaterThan(0);
-    runner.resumeConversation({ threadId: 'stored', grants: NO_CONVERSATION_GRANTS });
+    await runner.resumeConversation({ threadId: 'stored', grants: NO_CONVERSATION_GRANTS });
     expect(threadOf(runner)).toBe('stored');
     expect(recursionLimitOf(runner)).toBe(limit);
+  });
+
+  // GS2-20 fix round, finding 1 — the seam refuses in the two states `compactConversation` refuses
+  // in, and for the same reason: the runnable config is what the in-flight work resumes through.
+  // Each refusal is pinned with the thread proven unmoved, and each has its control: the same call,
+  // once the state has cleared, proceeds.
+  describe('refuses to move a runner that is not idle', () => {
+    it('refuses while a turn is running, leaves the thread where it was, and proceeds once the turn has finished', async () => {
+      const model = new RecallingModel();
+      const saver = openSaver();
+      const { runner } = await makeRunner({ model, tools: [lookupCode()], saver });
+      const before = threadOf(runner);
+      let release!: () => void;
+      model.gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const running = say(runner, 'anything');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+
+      await expect(
+        runner.resumeConversation({ threadId: 'elsewhere', grants: NO_CONVERSATION_GRANTS })
+      ).rejects.toThrow(/turn is still running/);
+      expect(threadOf(runner)).toBe(before);
+
+      release();
+      await running;
+      // CONTROL — idle now, so the same call goes through.
+      await runner.resumeConversation({ threadId: 'elsewhere', grants: NO_CONVERSATION_GRANTS });
+      expect(threadOf(runner)).toBe('elsewhere');
+    });
+
+    it('refuses a graph suspended on a pending tool approval, and proceeds on a graph whose approval was answered', async () => {
+      const saver = openSaver();
+      // A gated shell call whose approval callback throws instead of answering: the turn ends, no
+      // turn is in flight, and the graph is still suspended on the interrupt.
+      const { runner } = await makeRunner({
+        model: new ScriptedShellCallingModel(['echo suspended']),
+        tools: [shellTool()],
+        saver,
+        decide: () => {
+          throw new Error('nobody answered');
+        },
+      });
+      await expect(say(runner, 'run it')).rejects.toThrow('nobody answered');
+      const before = threadOf(runner);
+      const agent = runner.getAgent() as {
+        getPendingToolInterrupts(c: unknown): Promise<unknown[]>;
+      };
+      const runConfig = (runner as unknown as { runConfig: unknown }).runConfig;
+      expect(await agent.getPendingToolInterrupts(runConfig)).toHaveLength(1);
+
+      await expect(
+        runner.resumeConversation({ threadId: 'elsewhere', grants: NO_CONVERSATION_GRANTS })
+      ).rejects.toThrow(/tool approval is still pending/);
+      expect(threadOf(runner)).toBe(before);
+      expect(await agent.getPendingToolInterrupts(runConfig)).toHaveLength(1);
+      expect(executed).toEqual([]);
+
+      // CONTROL — a runner whose approval WAS answered is idle and moves.
+      const answered = await makeRunner({
+        model: new ScriptedShellCallingModel(['echo answered']),
+        tools: [shellTool()],
+        saver,
+      });
+      await say(answered.runner, 'run it');
+      expect(executed).toEqual(['echo answered']);
+      await answered.runner.resumeConversation({
+        threadId: 'elsewhere',
+        grants: NO_CONVERSATION_GRANTS,
+      });
+      expect(threadOf(answered.runner)).toBe('elsewhere');
+    });
+
+    it('refuses before init, like compactConversation', async () => {
+      const runner = new GthAgentRunner(vi.fn(), {
+        resolveTools: vi.fn().mockResolvedValue([]),
+        resolveMiddleware: async (m: unknown[] | undefined) => m ?? [],
+      });
+      await expect(
+        runner.resumeConversation({ threadId: 'x', grants: NO_CONVERSATION_GRANTS })
+      ).rejects.toThrow('AgentRunner not initialized');
+    });
   });
 });

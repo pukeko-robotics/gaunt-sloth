@@ -10,6 +10,15 @@ import {
 } from '@gaunt-sloth/core/history/historyFormat.js';
 import { display, displayInfo, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { parseResumeId } from '@gaunt-sloth/agent/modules/sessionResume.js';
+
+/**
+ * The one sentence for "there is no store": `list`, `search`, `show` and `resume` all say it, so a
+ * person with nothing recorded yet hears the same thing whichever they typed — and is not told a
+ * conversation id is unknown when the file it would be in does not exist.
+ */
+export const NO_HISTORY_MESSAGE =
+  'No session history found. Recording is on by default; `history.enabled: false` in your ' +
+  'config turns it off.';
 import { startSession } from '#src/modules/startSession.js';
 import { sessionConfigFor } from '#src/modules/sessionConfigs.js';
 
@@ -62,10 +71,7 @@ export function historyCommand(
     .action((queryParts: string[], options: { db?: string; limit?: string }) => {
       const store = openHistoryStore(resolveHistoryDbPath(options.db), { create: false });
       if (!store) {
-        displayWarning(
-          'No session history found. Recording is on by default; `history.enabled: false` in your ' +
-            'config turns it off.'
-        );
+        displayWarning(NO_HISTORY_MESSAGE);
         return;
       }
       try {
@@ -86,10 +92,7 @@ export function historyCommand(
     .action((options: { db?: string; limit?: string }) => {
       const store = openHistoryStore(resolveHistoryDbPath(options.db), { create: false });
       if (!store) {
-        displayWarning(
-          'No session history found. Recording is on by default; `history.enabled: false` in your ' +
-            'config turns it off.'
-        );
+        displayWarning(NO_HISTORY_MESSAGE);
         return;
       }
       try {
@@ -110,10 +113,7 @@ export function historyCommand(
     .action((idArg: string, options: { db?: string }) => {
       const store = openHistoryStore(resolveHistoryDbPath(options.db), { create: false });
       if (!store) {
-        displayWarning(
-          'No session history found. Recording is on by default; `history.enabled: false` in your ' +
-            'config turns it off.'
-        );
+        displayWarning(NO_HISTORY_MESSAGE);
         return;
       }
       try {
@@ -156,6 +156,16 @@ export function historyCommand(
         );
         return;
       }
+      // No store at all is "no history yet", the same answer `history list` gives in that state —
+      // not an unknown id, which would send the person looking for a typo in a number.
+      const store = openHistoryStore(resolveHistoryDbPath(config.history?.dbPath), {
+        create: false,
+      });
+      if (!store) {
+        displayWarning(NO_HISTORY_MESSAGE);
+        return;
+      }
+      store.close();
       const stored = lookupConversationSafe(config, id);
       if (!stored) {
         displayWarning(

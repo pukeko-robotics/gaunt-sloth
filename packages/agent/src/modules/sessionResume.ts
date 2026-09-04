@@ -158,7 +158,10 @@ const refuse = (refusal: ResumeRefusal): ResumeResolution => ({ ok: false, refus
 
 /** The half of the runner a resume drives — `GthAgentRunner` satisfies it; specs pass a fake. */
 export interface ResumableRunner {
-  resumeConversation(target: { threadId: string; grants: ConversationGrants }): void;
+  resumeConversation(target: {
+    threadId: string;
+    grants: ConversationGrants;
+  }): void | Promise<void>;
 }
 
 /**
@@ -166,15 +169,19 @@ export interface ResumableRunner {
  * installs the conversation's grants, and the checkpointer is told which row to mark if a write
  * fails from here on. The caller switches its own recorder id to `target.conversationId`, because
  * that id is the caller's variable; nothing else is needed.
+ *
+ * Rejects when the runner refuses — a turn still running, or a tool approval still pending on the
+ * thread being left — and then nothing has moved: the checkpointer is bound only after the runner
+ * has actually rotated, so a refused resume leaves the session exactly where it was.
  */
-export function applyResumeTarget(
+export async function applyResumeTarget(
   session: {
     runner: ResumableRunner;
     checkpointer: { bindConversation?(conversationId: number | undefined): void };
   },
   target: ResumeTarget
-): void {
-  session.runner.resumeConversation({ threadId: target.threadId, grants: target.grants });
+): Promise<void> {
+  await session.runner.resumeConversation({ threadId: target.threadId, grants: target.grants });
   session.checkpointer.bindConversation?.(target.conversationId);
 }
 

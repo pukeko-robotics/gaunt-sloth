@@ -13,7 +13,11 @@ import { apiCommand } from '#src/commands/apiCommand.js';
 import { getCommand } from '#src/commands/getCommand.js';
 import { configCommand } from '#src/commands/configCommand.js';
 import { historyCommand } from '#src/commands/historyCommand.js';
-import { resumeOption } from '#src/commands/resumeOption.js';
+import {
+  RESUMABLE_COMMANDS,
+  resumeOption,
+  rootResumeRefusalMessage,
+} from '#src/commands/resumeOption.js';
 import { insightsCommand } from '#src/commands/insightsCommand.js';
 import { modelsCommand } from '#src/commands/modelsCommand.js';
 import { argv, exit, getSlothVersion, readStdin } from '@gaunt-sloth/core/utils/systemUtils.js';
@@ -164,6 +168,16 @@ const invokedCommand = resolveInvokedCommandName(
 );
 if (commandSkipsStdin(invokedCommand)) {
   program.setOptionValue('nopipe', true);
+}
+
+// GS2-20 — the root `--resume` belongs to the bare command (a code session) and rides along for
+// `chat`/`code`; in front of any other subcommand it would be accepted and silently dropped, and a
+// fresh `ask`/`exec` would run as though nothing had been asked. Refused here, once, before the
+// subcommand's action can run: a typed intent is never answered with a different command.
+const rootResume = program.getOptionValue('resume') as number | undefined;
+if (rootResume !== undefined && invokedCommand !== undefined && !RESUMABLE_COMMANDS.has(invokedCommand)) {
+  displayError(rootResumeRefusalMessage(invokedCommand, rootResume));
+  exit(1);
 }
 
 // CFG-35 — the config loader raises a catchable error when a provider has no resolvable API key,

@@ -23,6 +23,24 @@ export function resumeOption(): Option {
   });
 }
 
+/** The subcommands a root `--resume` can ride along with; the bare command is a `code` session. */
+export const RESUMABLE_COMMANDS: ReadonlySet<string> = new Set(['chat', 'code']);
+
+/**
+ * GS2-20 — the sentence for a root `--resume` typed in front of a subcommand that cannot take it
+ * (`gth --resume 12 ask "…"`). Commander accepts the root option before every subcommand, and only
+ * the session commands read it, so without this the intent would be dropped and a fresh `ask`
+ * would run as if nothing had been asked. Same register as the ordered checks: what applies, what
+ * does not yet, and that nothing ran.
+ */
+export function rootResumeRefusalMessage(subcommand: string, id: number): string {
+  return (
+    `Cannot resume into \`gth ${subcommand}\`: \`--resume\` applies to \`gth chat\`, \`gth code\` ` +
+    'and the bare `gth` command. Resuming a conversation into `ask` or `exec` is not available ' +
+    `yet (GS2-106). Nothing was run, and conversation #${id} was not touched.`
+  );
+}
+
 /**
  * The session options a command starts with: `{ resumeConversationId }` when `--resume` was given
  * — on the subcommand itself or on the root program, so `gth chat --resume 12` and

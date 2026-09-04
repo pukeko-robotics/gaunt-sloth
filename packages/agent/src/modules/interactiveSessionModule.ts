@@ -313,7 +313,7 @@ export async function createInteractiveSession(
     // here rather than initialising on it is deliberate: both spellings then go through one seam,
     // and breaking it breaks both.
     if (bootResume) {
-      applyResumeTarget({ runner, checkpointer }, bootResume);
+      await applyResumeTarget({ runner, checkpointer }, bootResume);
       showRestoredConversation(bootResume);
     }
 
@@ -811,7 +811,7 @@ export async function createInteractiveSession(
                 printNotice(resumeRefusalNotice(resolution.refusal, { inSession: true }));
               } else {
                 try {
-                  applyResumeTarget({ runner, checkpointer }, resolution.target);
+                  await applyResumeTarget({ runner, checkpointer }, resolution.target);
                   conversationId = resolution.target.conversationId;
                   turnCount = resolution.target.turns.length;
                   showRestoredConversation(resolution.target);
