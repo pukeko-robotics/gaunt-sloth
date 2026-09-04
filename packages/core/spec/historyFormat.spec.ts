@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  formatBytes,
+  formatCheckpointStoreStats,
   formatConversationList,
   formatConversationThread,
   formatInsightsSummary,
   formatSearchResults,
+  formatStoreSizeLine,
 } from '#src/history/historyFormat.js';
+import type { CheckpointStoreStats } from '#src/history/checkpointRetention.js';
 import type {
   ConversationSummary,
   HistoryInsights,
@@ -169,6 +173,61 @@ describe('history/historyFormat', () => {
         perCommand: [],
       };
       expect(formatInsightsSummary(empty)[0]).toContain('history.enabled');
+    });
+  });
+
+  describe('GS2-107 — the conversation-store readout', () => {
+    const stats = (over: Partial<CheckpointStoreStats> = {}): CheckpointStoreStats => ({
+      dbPath: '/home/somebody/.gsloth/history.db',
+      fileBytes: 5 * 1024 * 1024,
+      checkpointBytes: 3 * 1024 * 1024,
+      checkpointCount: 124,
+      writeCount: 300,
+      threadCount: 10,
+      largestThreads: [
+        { threadId: 't-a', conversationId: 7, command: 'code', checkpointCount: 22, bytes: 900_000 },
+        { threadId: 't-b', checkpointCount: 5, bytes: 1000 },
+      ],
+      unresumableThreadCount: 3,
+      unresumableBytes: 4096,
+      ...over,
+    });
+
+    it('reads bytes in units a person can act on', () => {
+      expect(formatBytes(0)).toBe('0 B');
+      expect(formatBytes(999)).toBe('999 B');
+      expect(formatBytes(1024)).toBe('1.0 KB');
+      expect(formatBytes(5 * 1024 * 1024)).toBe('5.0 MB');
+      // A negative or non-finite count is a bug upstream, not a number to render.
+      expect(formatBytes(Number.NaN)).toBe('0 B');
+    });
+
+    it('keeps the file size and the checkpoint share as SEPARATE numbers', () => {
+      // The same file holds the transcripts and the FTS index. One figure labelled as checkpoints
+      // would overstate them on the very screen this exists to make honest.
+      const line = formatStoreSizeLine(stats());
+      expect(line).toContain('5.0 MB on disk');
+      expect(line).toContain('3.0 MB is 124 checkpoints across 10 threads');
+      expect(line).toContain('gth history prune');
+    });
+
+    it('names the largest threads and says which of them nothing can resume', () => {
+      const lines = formatCheckpointStoreStats(stats());
+      expect(lines.some((l) => l.includes('conversation #7') && l.includes('[code]'))).toBe(true);
+      expect(lines.some((l) => l.includes('no conversation (not resumable)'))).toBe(true);
+      expect(lines.some((l) => l.includes('3 threads no conversation names'))).toBe(true);
+    });
+
+    it('says nothing about unresumable threads when there are none', () => {
+      const lines = formatCheckpointStoreStats(stats({ unresumableThreadCount: 0 }));
+      expect(lines.some((l) => l.includes('Unresumable'))).toBe(false);
+    });
+
+    it('an empty store explains which commands write checkpoints at all', () => {
+      const lines = formatCheckpointStoreStats(stats({ checkpointCount: 0 }));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain('chat');
+      expect(lines[0]).toContain('code');
     });
   });
 });
