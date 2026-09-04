@@ -199,6 +199,46 @@ describe('GS2-107 — retention at the policy boundary, on a real runner', () =>
     return Number(row.n);
   };
 
+  /** Every thread the checkpoint table currently holds — how a rotated thread is identified. */
+  const threadsInStore = (): string[] => {
+    const db = new DatabaseSync(dbPath);
+    const rows = db.prepare(`SELECT DISTINCT thread_id FROM checkpoints`).all() as Record<
+      string,
+      unknown
+    >[];
+    db.close();
+    return rows.map((r) => String(r.thread_id));
+  };
+
+  /**
+   * Push a thread's checkpoints back in time by rewriting the `ts` the saver stored — the one field
+   * the age gate reads, left exactly as the serializer shapes it. Used to take the grace window out
+   * of the picture, so a case that asserts a thread survived is asserting about the exclusion and
+   * nothing else.
+   */
+  const ageThread = (threadId: string, ms = 30 * DAY): void => {
+    const db = new DatabaseSync(dbPath);
+    const rows = db
+      .prepare(`SELECT checkpoint_id, checkpoint FROM checkpoints WHERE thread_id = ?`)
+      .all(threadId) as Record<string, unknown>[];
+    const update = db.prepare(
+      `UPDATE checkpoints SET checkpoint = ? WHERE thread_id = ? AND checkpoint_id = ?`
+    );
+    for (const row of rows) {
+      const body = JSON.parse(new TextDecoder().decode(row.checkpoint as Uint8Array)) as Record<
+        string,
+        unknown
+      >;
+      body.ts = new Date(Date.now() - ms).toISOString();
+      update.run(
+        new TextEncoder().encode(JSON.stringify(body)),
+        threadId,
+        String(row.checkpoint_id)
+      );
+    }
+    db.close();
+  };
+
   /**
    * Every case below that calls `makeRunner` compiles and drives a real graph over a real sqlite
    * file, several times each, so it costs whole seconds rather than milliseconds. The suite-wide
@@ -426,5 +466,172 @@ describe('GS2-107 — retention at the policy boundary, on a real runner', () =>
       checkpointer.close();
       expect(() => checkpointer.close()).not.toThrow();
     });
+  });
+
+  /**
+   * GS2-107 fix round, finding A — **the exclusion has to name the thread the session is writing
+   * to, and the runner moves that thread without telling anyone.** `resetThread()` mints a fresh one
+   * on `/clear`; `resumeConversation` rebinds onto a stored one. A thread minted by `/clear` is
+   * unaddressable by construction — no conversation row names it — so it is a reclamation candidate
+   * while a live session's whole cross-turn memory sits in it: both interactive surfaces send only
+   * the new `HumanMessage` and let checkpoint state carry the rest.
+   *
+   * Every case here is built so that **the exclusion is the only thing that can save the thread**:
+   * the live thread is aged past the grace window first, which is what makes these cells red under
+   * the reviewer's mutation (exclusion restored to the id captured at open) rather than passing on
+   * the age gate. And each one asserts a stale orphan planted by an earlier session WAS reclaimed in
+   * the same pass, so "it survived" can never be satisfied by a pass that did nothing at all.
+   *
+   * The last case is the other half of the guard and reds under the opposite mutation: a second
+   * process has never heard of the first, so what protects a live thread there is the grace window,
+   * and only that.
+   */
+  describe('the exclusion follows the thread the session actually writes to', () => {
+    const configFor = () => ({ history: { dbPath } }) as never;
+
+    /** A thread a finished session left behind, aged past the window: what the pass is FOR. */
+    const plantStaleOrphan = async (threadId: string): Promise<void> => {
+      const saver = openSaver();
+      await say(await makeRunner(saver, threadId), 'look up the code');
+      saver.close();
+      ageThread(threadId);
+      expect(countCheckpoints(threadId)).toBeGreaterThan(0);
+    };
+
+    /** The thread `/clear` rotated onto — the one id in the store that nothing else accounts for. */
+    const rotatedThread = (known: readonly string[]): string => {
+      const found = threadsInStore().filter((t) => !known.includes(t));
+      expect(found).toHaveLength(1);
+      return found[0];
+    };
+
+    it(
+      'a /clear mid-session: the rotated thread survives the close, and the stale orphan does not',
+      async () => {
+        const orphan = 'orphan-from-a-finished-session';
+        await plantStaleOrphan(orphan);
+
+        const checkpointer = openSessionCheckpointerSafe(configFor(), { notify: () => {} });
+        const boot = checkpointer.threadId;
+        const runner = await makeRunner(checkpointer.saver, boot);
+        checkpointer.bindConversation?.(nameThread(boot));
+        await say(runner, 'look up the code');
+
+        runner.resetThread(); // `/clear`
+        await say(runner, 'look up the code');
+        const rotated = rotatedThread([orphan, boot]);
+        const held = countCheckpoints(rotated);
+        expect(held).toBeGreaterThan(0);
+        ageThread(rotated);
+
+        checkpointer.close();
+
+        expect(countCheckpoints(rotated)).toBe(held);
+        expect(countCheckpoints(orphan)).toBe(0);
+      },
+      REAL_AGENT_TIMEOUT_MS
+    );
+
+    it(
+      'a --resume boot: the checkpointer opened on one thread, the session ran on another, and a /clear moved it again',
+      async () => {
+        // The conversation `--resume <id>` finds, written by a session that has ended.
+        const stored = 'thread-from-an-earlier-session';
+        const earlier = openSaver();
+        await say(await makeRunner(earlier, stored), 'look up the code');
+        const conversationId = nameThread(stored);
+        earlier.close();
+
+        const orphan = 'orphan-beside-a-resume';
+        await plantStaleOrphan(orphan);
+
+        // Production opens the checkpointer with no thread id — the id minted here is the one the
+        // old exclusion named — and the resume seam rotates the runner onto the stored thread
+        // (`applyResumeTarget` → `runner.resumeConversation`) before the first turn.
+        const checkpointer = openSessionCheckpointerSafe(configFor(), { notify: () => {} });
+        const boot = checkpointer.threadId;
+        const runner = await makeRunner(checkpointer.saver, boot);
+        await runner.resumeConversation({ threadId: stored, grants: NO_CONVERSATION_GRANTS });
+        checkpointer.bindConversation?.(conversationId);
+        expect(await say(runner, 'what was the code')).toContain(`recall:${SECRET}`);
+
+        runner.resetThread(); // `/clear`, after the resume
+        await say(runner, 'look up the code');
+        const rotated = rotatedThread([stored, orphan, boot]);
+        const held = countCheckpoints(rotated);
+        expect(held).toBeGreaterThan(0);
+        ageThread(rotated);
+
+        checkpointer.close();
+
+        expect(countCheckpoints(rotated)).toBe(held);
+        expect(countCheckpoints(orphan)).toBe(0);
+      },
+      REAL_AGENT_TIMEOUT_MS
+    );
+
+    it(
+      'a mid-session /resume, then a /clear: the last thread written is the one that is spared',
+      async () => {
+        const stored = 'thread-resumed-into-mid-session';
+        const earlier = openSaver();
+        await say(await makeRunner(earlier, stored), 'look up the code');
+        const storedConversation = nameThread(stored);
+        earlier.close();
+
+        const orphan = 'orphan-beside-a-mid-session-resume';
+        await plantStaleOrphan(orphan);
+
+        const checkpointer = openSessionCheckpointerSafe(configFor(), { notify: () => {} });
+        const boot = checkpointer.threadId;
+        const runner = await makeRunner(checkpointer.saver, boot);
+        checkpointer.bindConversation?.(nameThread(boot));
+        await say(runner, 'look up the code');
+
+        // `/resume <id>` mid-session: the same seam, with the conversation rebound under it.
+        await runner.resumeConversation({ threadId: stored, grants: NO_CONVERSATION_GRANTS });
+        checkpointer.bindConversation?.(storedConversation);
+        expect(await say(runner, 'what was the code')).toContain(`recall:${SECRET}`);
+
+        runner.resetThread(); // `/clear`
+        await say(runner, 'look up the code');
+        const rotated = rotatedThread([stored, orphan, boot]);
+        const held = countCheckpoints(rotated);
+        expect(held).toBeGreaterThan(0);
+        ageThread(rotated);
+
+        checkpointer.close();
+
+        expect(countCheckpoints(rotated)).toBe(held);
+        expect(countCheckpoints(orphan)).toBe(0);
+      },
+      REAL_AGENT_TIMEOUT_MS
+    );
+
+    it(
+      'a second process closing leaves the thread the first is still writing alone — on the shipped grace window',
+      async () => {
+        // Process A: a live session sitting on a thread no conversation names, written just now.
+        const liveThread = 'live-thread-in-another-process';
+        const live = openSaver();
+        await say(await makeRunner(live, liveThread), 'look up the code');
+        const stillHeld = countCheckpoints(liveThread);
+        expect(stillHeld).toBeGreaterThan(0);
+
+        const orphan = 'orphan-seen-by-the-second-process';
+        await plantStaleOrphan(orphan);
+
+        // Process B: its own connection and its own write set, which has never heard of A. Nothing
+        // is injected — the pass runs on the shipped RECLAIM_GRACE_MS, which is the only thing
+        // standing between B's delete and A's memory.
+        const second = openSessionCheckpointerSafe(configFor(), { notify: () => {} });
+        second.bindConversation?.(1);
+        second.close();
+
+        expect(countCheckpoints(liveThread)).toBe(stillHeld);
+        expect(countCheckpoints(orphan)).toBe(0);
+      },
+      REAL_AGENT_TIMEOUT_MS
+    );
   });
 });

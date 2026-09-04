@@ -163,6 +163,18 @@ export class GthSqliteSaver extends BaseCheckpointSaver {
 
   private onWriteFailure: (error: unknown) => void;
 
+  /**
+   * GS2-107 — every thread this saver has written to, which is what automatic reclamation excludes.
+   *
+   * The thread a session writes to is not fixed at open: `resetThread()` mints a fresh one on
+   * `/clear` and `resumeConversation` rebinds onto a stored one, and neither tells this object. An
+   * exclusion built from the id the session started with therefore names a thread nobody is writing
+   * and misses the one that is — which on the `/clear` path is a thread no conversation row names,
+   * i.e. exactly a reclamation candidate. Recording the ids as they arrive needs no notification at
+   * all: whatever the runner rotated onto, the write came through here.
+   */
+  private readonly writtenThreads = new Set<string>();
+
   private constructor(db: DatabaseSync, onWriteFailure?: (error: unknown) => void) {
     super();
     this.db = db;
@@ -401,6 +413,10 @@ export class GthSqliteSaver extends BaseCheckpointSaver {
           'to persist state for.'
       );
     }
+    // Recorded BEFORE the write is attempted, and kept even when it fails. A thread whose write was
+    // dropped is one the degrade path has just marked unresumable, and a live session is still
+    // sitting on it; excluding it costs a delete that the next process's pass will make anyway.
+    this.writtenThreads.add(threadId);
     const checkpointNs = stringField(config, 'checkpoint_ns') ?? '';
     try {
       const [checkpointType, serializedCheckpoint] = await this.serde.dumpsTyped(
@@ -458,6 +474,7 @@ export class GthSqliteSaver extends BaseCheckpointSaver {
           '"configurable" property.'
       );
     }
+    this.writtenThreads.add(threadId);
     const checkpointNs = stringField(config, 'checkpoint_ns') ?? '';
     try {
       // Two statements, chosen per write by the sign of its slot, because the two halves of the
@@ -523,11 +540,20 @@ export class GthSqliteSaver extends BaseCheckpointSaver {
    * GS2-107 — delete every thread no conversation row names, past the grace window. The retention
    * module owns the policy and the reasoning; this is the saver's own connection lent to it, so a
    * session that already has the store open can reclaim without opening it again.
+   *
+   * **Every thread this saver wrote is excluded, always**, on top of whatever the caller names. A
+   * caller cannot supply that set: the runner rotates threads without telling anyone, so the only
+   * place that knows which thread the session ended on is the object the writes went through. The
+   * union is the contract — `excludeThreadIds` adds to the protection and can never subtract from
+   * it.
    */
   reclaimUnresumableThreads(
     options: { now?: number; graceMs?: number; excludeThreadIds?: readonly string[] } = {}
   ): ReclaimSummary {
-    return reclaimUnresumableThreads(this.db, options);
+    return reclaimUnresumableThreads(this.db, {
+      ...options,
+      excludeThreadIds: [...this.writtenThreads, ...(options.excludeThreadIds ?? [])],
+    });
   }
 
   /** GS2-107 — what the checkpoint tables hold, over this saver's open connection. */

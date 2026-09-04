@@ -210,13 +210,21 @@ export function openSessionCheckpointerSafe(
     // so a checkpointer closed before that point is one whose session never started — the
     // `--resume` refusal path, which exits 1 promising that nothing was changed. Deleting rows there
     // would make that sentence false.
+    //
+    // **What keeps this session's own thread safe.** Not the id minted above: the runner rotates
+    // threads and does not tell anyone — `resetThread()` on `/clear`, `resumeConversation` onto a
+    // stored thread — so after any rotation that id names a thread nobody wrote. The saver excludes
+    // the threads IT wrote instead, which is the same set by construction however often the session
+    // rotated, so nothing is passed here. What remains outside that set is a live session in
+    // ANOTHER process, and it is bounded only by the grace window; closing that gap needs shared
+    // cross-process session state, which this ticket does not add.
     let served = false;
     let reclaimed = false;
     const reclaimOnClose = (): void => {
       if (reclaimed || !served || closed) return;
       reclaimed = true;
       try {
-        saver.reclaimUnresumableThreads({ excludeThreadIds: [threadId] });
+        saver.reclaimUnresumableThreads();
       } catch {
         /* retention is housekeeping: it must never be the reason a session fails to exit */
       }
