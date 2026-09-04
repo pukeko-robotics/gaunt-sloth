@@ -175,7 +175,11 @@ if (commandSkipsStdin(invokedCommand)) {
 // fresh `ask`/`exec` would run as though nothing had been asked. Refused here, once, before the
 // subcommand's action can run: a typed intent is never answered with a different command.
 const rootResume = program.getOptionValue('resume') as number | undefined;
-if (rootResume !== undefined && invokedCommand !== undefined && !RESUMABLE_COMMANDS.has(invokedCommand)) {
+if (
+  rootResume !== undefined &&
+  invokedCommand !== undefined &&
+  !RESUMABLE_COMMANDS.has(invokedCommand)
+) {
   displayError(rootResumeRefusalMessage(invokedCommand, rootResume));
   exit(1);
 }
