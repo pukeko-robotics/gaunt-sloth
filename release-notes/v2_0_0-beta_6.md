@@ -31,3 +31,10 @@
   request on **every** surface, because Ollama does not reject an oversized conversation — it
   silently drops the oldest messages and answers from the rest. See
   [Interactive sessions → When the session compacts without being asked](../docs/guides/interactive-sessions.md#when-the-session-compacts-without-being-asked).
+- The standalone `gaunt-sloth-api` server reads the `--port` and `--config` flags it accepts; both
+  were taken and dropped, so the server bound `commands.api.port` whatever port was asked for, and a
+  `--config` naming a file that is not there ran the configuration discovered from the working
+  directory instead. The port now comes from `--port`, else `commands.api.port`, else 3000, and an
+  unreadable `--config` path ends the run with an error naming it. `gaunt-sloth-api --help` prints
+  the flags, and one the server does not recognise is refused rather than ignored. See
+  [api ag-ui](../docs/COMMANDS.md#api-ag-ui).

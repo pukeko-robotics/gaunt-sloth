@@ -1000,7 +1000,30 @@ gth api ag-ui [--port <port>]
 ```
 
 ### Options
-- `--port <port>` – Port to listen on (default: `3000`, or the value of `commands.api.port` in config)
+- `--port <port>` – Port to listen on. The port comes from `--port` when given, otherwise from
+  `commands.api.port` in the config, otherwise `3000`.
+
+### The standalone server: `gaunt-sloth-api`
+
+`@gaunt-sloth/agent` ships the same server as its own binary, for a client that starts the agent on
+a machine without the full `gth` CLI:
+
+```bash
+gaunt-sloth-api [ag-ui] [--port <port>] [--config <path>]
+```
+
+- `--port <port>` – Port to listen on, in the precedence above.
+- `-c, --config <path>` – The configuration file to run under. Naming one skips discovery from the
+  working directory rather than falling back to it, so a path that is not there ends the run with an
+  error instead of a server quietly running the wrong configuration.
+- `-h, --help` – Usage, the flags, and the precedence rule.
+
+`ag-ui` is the only api-type and is the default, so `gaunt-sloth-api` on its own is the same as
+`gaunt-sloth-api ag-ui`. A flag the server does not recognise is refused rather than ignored.
+
+```bash
+gaunt-sloth-api ag-ui --port 4000 --config ./.gsloth.config.json
+```
 
 ### Endpoints
 
