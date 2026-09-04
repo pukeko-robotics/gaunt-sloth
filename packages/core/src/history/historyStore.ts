@@ -302,6 +302,19 @@ export class HistoryStore {
       if (!conversationCols.some((c) => c.name === 'grants')) {
         this.db.exec(`ALTER TABLE conversations ADD COLUMN grants TEXT`);
       }
+      // GS2-107 — the index the retention predicate needs, created here and not in `initSchema`
+      // because the column it covers is added by the ALTER just above: a database written before
+      // GS2-20 has no `conversations.thread_id` until this method has run, and indexing a column
+      // that does not exist yet fails the whole migration.
+      //
+      // `conversations.id` is an INTEGER PRIMARY KEY and therefore a rowid alias, which leaves
+      // `thread_id` unindexed. Retention asks "does any conversation name this thread?" once per
+      // thread in the store, at every session exit, so without this the pass is quadratic —
+      // measured at 3.18s for 6,000 threads against 13ms with it. `IF NOT EXISTS`, so it is a
+      // no-op on every open after the first.
+      this.db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_conversations_thread_id ON conversations(thread_id)`
+      );
       const orphans = this.db
         .prepare(
           `SELECT id, ts, project, command, model

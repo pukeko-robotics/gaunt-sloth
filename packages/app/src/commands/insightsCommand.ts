@@ -1,6 +1,10 @@
 import { Command } from 'commander';
 import { openHistoryStore, resolveHistoryDbPath } from '@gaunt-sloth/core/history/historyStore.js';
-import { formatInsightsSummary } from '@gaunt-sloth/core/history/historyFormat.js';
+import {
+  formatCheckpointStoreStats,
+  formatInsightsSummary,
+} from '@gaunt-sloth/core/history/historyFormat.js';
+import { openCheckpointMaintenance } from '@gaunt-sloth/core/history/checkpointRetention.js';
 import { display, displayInfo, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 
 /**
@@ -19,7 +23,8 @@ export function insightsCommand(program: Command): void {
       '\n' + 'Examples:\n' + '  $ gth insights\n' + '  $ gth insights --db ./project-history.db\n'
     )
     .action((options: { db?: string }) => {
-      const store = openHistoryStore(resolveHistoryDbPath(options.db), { create: false });
+      const dbPath = resolveHistoryDbPath(options.db);
+      const store = openHistoryStore(dbPath, { create: false });
       if (!store) {
         displayWarning(
           'No session history found. Recording is on by default; `history.enabled: false` in your ' +
@@ -33,6 +38,18 @@ export function insightsCommand(program: Command): void {
         for (const line of formatInsightsSummary(insights)) display(line);
       } finally {
         store.close();
+      }
+      // GS2-107 — the volume of the conversation store, reported where a person already comes for
+      // numbers about their own usage. A checkpoint is not a transcript: it carries tool results,
+      // file contents and command output verbatim, so the store grows far faster than the session
+      // count suggests, and nothing made that visible before.
+      const maintenance = openCheckpointMaintenance(dbPath);
+      if (!maintenance) return;
+      try {
+        displayInfo('Conversation store (local only):');
+        for (const line of formatCheckpointStoreStats(maintenance.stats(dbPath))) display(line);
+      } finally {
+        maintenance.close();
       }
     });
 }

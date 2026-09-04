@@ -198,9 +198,15 @@ describe('sessionResume — resolveResumeTarget, the checks in order', () => {
       ok: false,
       refusal: { kind: 'not-resumable', id, reason: 'no-checkpoint', command: 'chat' },
     });
-    expect(
-      resumeRefusalNotice({ kind: 'not-resumable', id, reason: 'no-checkpoint' }).lines[0]
-    ).toContain('never written');
+    // GS2-107 widened this sentence: `gth history prune` is a second way for a named thread to hold
+    // no state, and the row cannot tell the two apart, so the notice claims neither.
+    const noCheckpointLine = resumeRefusalNotice({
+      kind: 'not-resumable',
+      id,
+      reason: 'no-checkpoint',
+    }).lines[0];
+    expect(noCheckpointLine).toContain('is not in the store');
+    expect(noCheckpointLine).toContain('gth history prune');
     // CONTROL — the same row with a checkpoint under its thread resolves.
     await checkpoint(ckpt.saver, 'thread-never-written');
     const after = await resolveResumeTarget(

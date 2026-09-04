@@ -322,6 +322,14 @@
       "kind": "function"
     },
     {
+      "name": "formatBytes",
+      "kind": "function"
+    },
+    {
+      "name": "formatCheckpointStoreStats",
+      "kind": "function"
+    },
+    {
       "name": "formatConversationList",
       "kind": "function"
     },
@@ -334,7 +342,19 @@
       "kind": "function"
     },
     {
+      "name": "formatPrunePlan",
+      "kind": "function"
+    },
+    {
+      "name": "formatPruneResult",
+      "kind": "function"
+    },
+    {
       "name": "formatSearchResults",
+      "kind": "function"
+    },
+    {
+      "name": "formatStoreSizeLine",
       "kind": "function"
     },
     {

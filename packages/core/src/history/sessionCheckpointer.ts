@@ -195,15 +195,52 @@ export function openSessionCheckpointerSafe(
     openSavers.add(closeOnce);
     ensureTerminationHooks();
 
+    // GS2-107 — the automatic half of the retention policy runs HERE, on the orderly close of a
+    // session that actually ran, and nowhere else.
+    //
+    // **Why the close and not the open.** The connection is already there, so it adds no open of its
+    // own, and it lands after the person has stopped waiting on the tool rather than in front of
+    // their first prompt — a user with a large store must not pay for retention at startup.
+    //
+    // **Why not in `closeOnce`.** That closure is also what the process-exit and SIGHUP hooks call.
+    // A row delete while the process is already leaving is work nobody is waiting for and nothing
+    // can report, on a path that a signal can interrupt halfway.
+    //
+    // **Why the `bindConversation` gate.** Both surfaces bind straight after the resume checks pass,
+    // so a checkpointer closed before that point is one whose session never started — the
+    // `--resume` refusal path, which exits 1 promising that nothing was changed. Deleting rows there
+    // would make that sentence false.
+    //
+    // **What keeps this session's own thread safe.** Not the id minted above: the runner rotates
+    // threads and does not tell anyone — `resetThread()` on `/clear`, `resumeConversation` onto a
+    // stored thread — so after any rotation that id names a thread nobody wrote. The saver excludes
+    // the threads IT wrote instead, which is the same set by construction however often the session
+    // rotated, so nothing is passed here. What remains outside that set is a live session in
+    // ANOTHER process, and it is bounded only by the grace window; closing that gap needs shared
+    // cross-process session state, which this ticket does not add.
+    let served = false;
+    let reclaimed = false;
+    const reclaimOnClose = (): void => {
+      if (reclaimed || !served || closed) return;
+      reclaimed = true;
+      try {
+        saver.reclaimUnresumableThreads();
+      } catch {
+        /* retention is housekeeping: it must never be the reason a session fails to exit */
+      }
+    };
+
     return {
       saver,
       durable: true,
       threadId,
       bindConversation: (id) => {
+        served = true;
         conversationId = id;
         applyMark();
       },
       close: () => {
+        reclaimOnClose();
         openSavers.delete(closeOnce);
         closeOnce();
       },

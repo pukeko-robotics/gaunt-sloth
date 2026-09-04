@@ -109,6 +109,19 @@ vi.mock('@gaunt-sloth/core/history/recordSession.js', () => ({
   recordSessionSafe: () => null,
   lookupConversationThreadSafe: () => null,
 }));
+// GS2-107 — and the READ side of the same file, which the two stubs above do not cover. Every
+// session builds its `/history` `/insights` `/search` props at start from
+// `openHistoryStore(resolveHistoryDbPath(config.history?.dbPath))`, and a config naming no
+// `dbPath` — which is what these cells pass — resolves the developer's real `~/.gsloth/history.db`.
+// Opening it is not read-only: the store migrates on every open, so a real store predating a schema
+// addition is rewritten by a spec that only meant to look at it. `null` is the module's own
+// fail-soft path (the slash commands then carry their "history unavailable" notices), and no cell
+// in this file asserts on history content.
+vi.mock('@gaunt-sloth/core/history/historyStore.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@gaunt-sloth/core/history/historyStore.js')>()),
+  resolveHistoryDbPath: () => '/gsloth-spec-never-a-real-store/history.db',
+  openHistoryStore: () => null,
+}));
 vi.mock('@gaunt-sloth/agent/resolvers.js', () => ({ createResolvers: vi.fn() }));
 const resolvedFactory = vi.hoisted(() => vi.fn());
 const resolveAgentFactoryMock = vi.hoisted(() => vi.fn());

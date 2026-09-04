@@ -107,6 +107,11 @@
       "arity": 0
     },
     {
+      "name": "CheckpointStoreStats",
+      "file": "history/checkpointRetention.d.ts",
+      "arity": 0
+    },
+    {
       "name": "CommandLineConfigOverrides",
       "file": "config/types.d.ts",
       "arity": 0
@@ -482,6 +487,11 @@
       "arity": 0
     },
     {
+      "name": "PrunableConversation",
+      "file": "history/checkpointRetention.d.ts",
+      "arity": 0
+    },
+    {
       "name": "RaterNegotiationRound",
       "file": "core/shell/rater.d.ts",
       "arity": 0
@@ -504,6 +514,11 @@
     {
       "name": "RawGthConfig",
       "file": "config/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ReclaimSummary",
+      "file": "history/checkpointRetention.d.ts",
       "arity": 0
     },
     {
@@ -574,6 +589,11 @@
     {
       "name": "SummarizingModel",
       "file": "core/compaction.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ThreadUsage",
+      "file": "history/checkpointRetention.d.ts",
       "arity": 0
     },
     {
