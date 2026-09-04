@@ -85,6 +85,36 @@ there opens a searchable command menu. A few worth knowing:
 A pasted filesystem path such as `/usr/local/bin` is not swallowed as a command — only a line with
 no further `/` after the leading one is parsed as one.
 
+### When the session compacts without being asked
+
+`/compact` is the deliberate version of something the session also does on its own. If a provider
+rejects a turn because the conversation no longer fits, the session folds the older messages into a
+summary and sends the turn again, rather than ending with an error. It says so in one line and then
+carries on:
+
+```
+The context overflowed, so 9 earlier messages were folded into a summary (13→5 messages). Retrying.
+```
+
+On **Ollama** it happens *before* the request instead. Ollama does not reject an oversized
+conversation — the daemon quietly drops the oldest tokens to fit `num_ctx` and answers from what is
+left, so the reply looks normal while the model has forgotten the start of the session. There is
+nothing to detect afterwards, so the session estimates the size first and compacts if the turn would
+not fit:
+
+```
+Context is nearly full (about 3212 tokens of a 4096-token window, with 1024 reserved for the answer),
+so 9 earlier messages were folded into a summary before this call. 6 kept verbatim.
+```
+
+The window is the `num_ctx` your config sends (`llm.numCtx`, 16384 by default), capped by the
+model's own maximum when the daemon reports one. Some of that is held back for the reply, because
+`num_ctx` covers the question and the answer together.
+
+A turn is retried once. If the conversation still does not fit after being compacted, the turn ends
+and says why — folding it again would only eat the recent messages it just kept, so the next move is
+yours: `/clear` and start fresh, or ask for something narrower.
+
 ### Running a command with a message half-written
 
 Typing `/` only opens the menu on an empty line, so with `please refactor the fo` already in the

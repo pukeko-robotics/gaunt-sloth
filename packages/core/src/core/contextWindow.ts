@@ -56,8 +56,14 @@ export type ContextWindowSource = () => Promise<number | null>;
 /** A source that never knows — the honest answer for every provider no source is wired for. */
 export const UNKNOWN_CONTEXT_WINDOW: ContextWindowSource = async () => null;
 
-/** The fields the window resolver reads off a chat model, without depending on its class. */
-interface OllamaLikeModel {
+/**
+ * The fields the window resolver reads off a chat model, without depending on its class.
+ *
+ * Structural rather than a `ChatOllama` import on purpose: the provider module loads
+ * `@langchain/ollama` dynamically so a session that never uses ollama never pays for it, and typing
+ * against the class here would undo that.
+ */
+export interface OllamaLikeModel {
   _llmType?: () => string;
   numCtx?: number;
   model?: string;
