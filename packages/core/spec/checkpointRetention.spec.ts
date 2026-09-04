@@ -21,6 +21,7 @@ import {
   selectPrunableConversations,
   vacuumStore,
   RECLAIM_GRACE_MS,
+  UNADDRESSABLE_THREADS_SQL,
 } from '#src/history/checkpointRetention.js';
 import { openHistoryStore } from '#src/history/historyStore.js';
 import { openCheckpointSaver } from '#src/history/checkpointSaver.js';
@@ -28,6 +29,14 @@ import { openCheckpointSaver } from '#src/history/checkpointSaver.js';
 const NOW = Date.parse('2026-09-04T12:00:00.000Z');
 const ago = (ms: number) => new Date(NOW - ms).toISOString();
 const DAY = 24 * 60 * 60 * 1000;
+const HOUR = 60 * 60 * 1000;
+/**
+ * An age measured from the REAL clock, for the cells that run the pass with no injected `now`. The
+ * fixed `NOW` above cannot be used there: it is a written-down instant, so as real time moves past
+ * it every fixture placed against it silently gets older, and a cell meant to sit just inside the
+ * window would drift out of it.
+ */
+const realAgo = (ms: number) => new Date(Date.now() - ms).toISOString();
 
 describe('GS2-107 checkpoint retention', () => {
   let dir: string;
@@ -113,6 +122,16 @@ describe('GS2-107 checkpoint retention', () => {
     }
     return id;
   };
+
+  /** How many rows one table holds for a thread — `checkpoints` and `checkpoint_writes` alike. */
+  const rowsFor = (db: DatabaseSync, table: string, threadId: string): number =>
+    Number(
+      (
+        db
+          .prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE thread_id = ?`)
+          .get(threadId) as Record<string, unknown>
+      ).n
+    );
 
   describe('the predicate — a thread no conversation row names', () => {
     it('finds an orphan thread and leaves a named one alone', () => {
@@ -212,6 +231,63 @@ describe('GS2-107 checkpoint retention', () => {
       db.close();
     });
 
+    /**
+     * GS2-107 fix round, finding D — the two deletes are one transaction, pinned by making the
+     * SECOND one fail.
+     *
+     * The failure is produced by the engine rather than by a proxy or a mocked statement: a
+     * `BEFORE DELETE` trigger that raises makes `DELETE FROM checkpoint_writes` abort exactly where
+     * a disk error, a lock or a corrupt page would, with the first delete already issued. Without
+     * the transaction the checkpoints are gone and the pending writes remain — and they remain
+     * FOREVER, because every candidate query in this module reads `FROM checkpoints`, so nothing
+     * can ever name that thread again while the readout goes on counting its bytes.
+     */
+    it('rolls the whole delete back when the second table refuses — no orphaned pending writes', () => {
+      const db = openStoreAndSaver();
+      seedThread(db, 'both-tables', { count: 3 });
+      db.exec(
+        `CREATE TRIGGER refuse_write_deletes BEFORE DELETE ON checkpoint_writes
+         BEGIN SELECT RAISE(ABORT, 'blocked'); END`
+      );
+
+      expect(deleteThreads(db, ['both-tables'])).toMatchObject({
+        threadCount: 0,
+        checkpointCount: 0,
+        writeCount: 0,
+      });
+      expect(rowsFor(db, 'checkpoints', 'both-tables')).toBe(3);
+      expect(rowsFor(db, 'checkpoint_writes', 'both-tables')).toBe(3);
+
+      // CONTROL: with the refusal lifted the same call removes both halves, so the assertion above
+      // is about the rollback and not about a delete that never worked.
+      db.exec(`DROP TRIGGER refuse_write_deletes`);
+      expect(deleteThreads(db, ['both-tables'])).toMatchObject({
+        threadCount: 1,
+        checkpointCount: 3,
+        writeCount: 3,
+      });
+      expect(rowsFor(db, 'checkpoints', 'both-tables')).toBe(0);
+      expect(rowsFor(db, 'checkpoint_writes', 'both-tables')).toBe(0);
+      db.close();
+    });
+
+    it('a refusal on one thread leaves the threads deleted before it in the same call intact — nothing half-applied', () => {
+      const db = openStoreAndSaver();
+      seedThread(db, 'first', { count: 2 });
+      seedThread(db, 'second', { count: 2 });
+      db.exec(
+        `CREATE TRIGGER refuse_second BEFORE DELETE ON checkpoint_writes
+         WHEN OLD.thread_id = 'second'
+         BEGIN SELECT RAISE(ABORT, 'blocked'); END`
+      );
+      expect(deleteThreads(db, ['first', 'second'])).toMatchObject({ threadCount: 0 });
+      // The batch is atomic across threads too, which is what makes the reported summary true: a
+      // caller told "0 threads removed" can read the store and find every one of them still there.
+      expect(rowsFor(db, 'checkpoints', 'first')).toBe(2);
+      expect(rowsFor(db, 'checkpoints', 'second')).toBe(2);
+      db.close();
+    });
+
     it('the saver-level single-thread spelling and the batch are the same delete', async () => {
       const saverPath = join(dir, 'saver.db');
       const store = openHistoryStore(saverPath, { create: true });
@@ -290,6 +366,212 @@ describe('GS2-107 checkpoint retention', () => {
       seedConversation(db, { threadId: 'empty-thread', lastTs: ago(400 * DAY) });
       expect(selectPrunableConversations(db, { olderThanDays: 1, now: NOW })).toEqual([]);
       db.close();
+    });
+
+    /**
+     * GS2-107 fix round, finding F — the typed command has neither of the automatic pass's guards,
+     * and the shape that exposes it is `--keep-last`: an age bound cannot select a conversation
+     * that is active right now, but `--keep-last 1` with three windows open selects two of them.
+     *
+     * The choice made here is to SAY so rather than to hold the rows back. Silently keeping a
+     * conversation inside the bound the person typed would make the bound mean something other than
+     * what it says, and liveness in another process is not knowable from this connection anyway —
+     * a refusal would be a guess presented as a guarantee.
+     */
+    it('marks a candidate whose last turn is inside the grace window as recently active', () => {
+      const db = openStoreAndSaver();
+      for (const t of ['t-newest', 't-minutes-ago', 't-ancient']) seedThread(db, t);
+      seedConversation(db, { threadId: 't-newest', lastTs: ago(5 * 60_000) });
+      const recent = seedConversation(db, { threadId: 't-minutes-ago', lastTs: ago(20 * 60_000) });
+      const ancient = seedConversation(db, { threadId: 't-ancient', lastTs: ago(40 * DAY) });
+
+      const picked = selectPrunableConversations(db, { keepLast: 1, now: NOW });
+      const byId = new Map(picked.map((c) => [c.conversationId, c]));
+      expect([...byId.keys()].sort()).toEqual([recent, ancient].sort());
+      expect(byId.get(recent)?.recentlyActive).toBe(true);
+      expect(byId.get(ancient)?.recentlyActive).toBe(false);
+      db.close();
+    });
+
+    it('reads the flag off the same window the automatic pass uses, on both sides of it', () => {
+      const db = openStoreAndSaver();
+      for (const t of ['t-kept', 't-inside', 't-outside']) seedThread(db, t);
+      seedConversation(db, { threadId: 't-kept', lastTs: ago(60_000) });
+      const inside = seedConversation(db, {
+        threadId: 't-inside',
+        lastTs: ago(RECLAIM_GRACE_MS - 60_000),
+      });
+      const outside = seedConversation(db, {
+        threadId: 't-outside',
+        lastTs: ago(RECLAIM_GRACE_MS + 60_000),
+      });
+      const picked = selectPrunableConversations(db, { keepLast: 1, now: NOW });
+      const byId = new Map(picked.map((c) => [c.conversationId, c]));
+      expect(byId.get(inside)?.recentlyActive).toBe(true);
+      expect(byId.get(outside)?.recentlyActive).toBe(false);
+      db.close();
+    });
+  });
+
+  /**
+   * GS2-107 fix round, finding B — **the values that actually ship, exercised with nothing
+   * injected.** Every other grace cell in this file passes its own `now` and `graceMs`, which is
+   * right for testing the gate and useless for testing the constant: the reviewer zeroed
+   * `RECLAIM_GRACE_MS` and all 70 cells stayed green. These two run the pass the way the close hook
+   * runs it — no arguments at all — so the shipped number is the only thing deciding, and a change
+   * to it in either direction reds one of them.
+   */
+  describe('the constants that ship', () => {
+    it('a bare pass keeps a thread written 23 hours ago and reclaims one written 25 hours ago', () => {
+      const db = openStoreAndSaver();
+      seedThread(db, 'inside-the-window', { ts: realAgo(23 * HOUR) });
+      seedThread(db, 'past-the-window', { ts: realAgo(25 * HOUR) });
+
+      expect(reclaimUnresumableThreads(db)).toMatchObject({ threadCount: 1 });
+
+      expect(rowsFor(db, 'checkpoints', 'inside-the-window')).toBe(3);
+      expect(rowsFor(db, 'checkpoints', 'past-the-window')).toBe(0);
+      db.close();
+    });
+
+    it('a saver never reclaims a thread it has written, however old that thread is', async () => {
+      const path = join(dir, 'writeset.db');
+      openHistoryStore(path, { create: true })!.close();
+      const saver = openCheckpointSaver(path)!;
+
+      // A thread left by a session that is gone, and one this saver writes itself. Both are
+      // unaddressable and both are far past the window, so the exclusion is the only difference.
+      const seeder = new DatabaseSync(path);
+      seedThread(seeder, 'left-by-someone-else', { ts: realAgo(30 * DAY) });
+      seeder.close();
+      await saver.put(
+        { configurable: { thread_id: 'written-by-this-saver', checkpoint_ns: '' } },
+        {
+          v: 4,
+          id: 'cp-1',
+          ts: realAgo(30 * DAY),
+          channel_values: {},
+          channel_versions: {},
+          versions_seen: {},
+        },
+        { source: 'loop', step: 0, parents: {} },
+        {}
+      );
+
+      // No arguments: the shipped grace window and the saver's own write set, exactly as the close
+      // hook calls it.
+      expect(saver.reclaimUnresumableThreads()).toMatchObject({ threadCount: 1 });
+      saver.close();
+
+      const check = new DatabaseSync(path);
+      expect(rowsFor(check, 'checkpoints', 'written-by-this-saver')).toBe(1);
+      expect(rowsFor(check, 'checkpoints', 'left-by-someone-else')).toBe(0);
+      check.close();
+    });
+
+    it("a caller's exclusion adds to the saver's own and can never subtract from it", async () => {
+      const path = join(dir, 'writeset-union.db');
+      openHistoryStore(path, { create: true })!.close();
+      const saver = openCheckpointSaver(path)!;
+      const seeder = new DatabaseSync(path);
+      seedThread(seeder, 'named-by-the-caller', { ts: realAgo(30 * DAY) });
+      seedThread(seeder, 'nobody-protects-this', { ts: realAgo(30 * DAY) });
+      seeder.close();
+      await saver.put(
+        { configurable: { thread_id: 'written-by-this-saver', checkpoint_ns: '' } },
+        {
+          v: 4,
+          id: 'cp-1',
+          ts: realAgo(30 * DAY),
+          channel_values: {},
+          channel_versions: {},
+          versions_seen: {},
+        },
+        { source: 'loop', step: 0, parents: {} },
+        {}
+      );
+
+      expect(
+        saver.reclaimUnresumableThreads({ excludeThreadIds: ['named-by-the-caller'] })
+      ).toMatchObject({ threadCount: 1 });
+      saver.close();
+
+      const check = new DatabaseSync(path);
+      expect(rowsFor(check, 'checkpoints', 'written-by-this-saver')).toBe(1);
+      expect(rowsFor(check, 'checkpoints', 'named-by-the-caller')).toBe(3);
+      expect(rowsFor(check, 'checkpoints', 'nobody-protects-this')).toBe(0);
+      check.close();
+    });
+  });
+
+  /**
+   * GS2-107 fix round, finding C — the predicate asks `conversations` a question once per thread in
+   * the store, so it is quadratic without an index on `conversations.thread_id` (measured: 3.18s at
+   * 6,000 threads, 13ms with it) and it runs at every session exit.
+   *
+   * Pinned by the query plan rather than by a clock: a timing assertion on a shared CI runner is a
+   * flake generator, while the plan is a deterministic statement about the same property. It is
+   * matched on the index NAME — text SQLite takes from the schema — and not on the wording around
+   * it, which varies between SQLite versions and therefore between the matrix cells.
+   */
+  describe('the index the predicate rides on', () => {
+    it('the store creates it, and the predicate plans a lookup through it rather than a scan', () => {
+      const db = openStoreAndSaver();
+      seedThread(db, 'a');
+      seedConversation(db, { threadId: 'a' });
+      expect(
+        db
+          .prepare(`SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?`)
+          .get('idx_conversations_thread_id')
+      ).toBeDefined();
+
+      const plan = (
+        db.prepare(`EXPLAIN QUERY PLAN ${UNADDRESSABLE_THREADS_SQL}`).all() as Record<
+          string,
+          unknown
+        >[]
+      )
+        .map((r) => String(r.detail))
+        .join('\n');
+      expect(plan).toContain('idx_conversations_thread_id');
+      expect(plan).not.toContain('SCAN conversations');
+      db.close();
+    });
+
+    it('a database written before the thread column existed gets the column, the grants column AND the index', () => {
+      // The ordering constraint, pinned: the index covers a column the ALTER in `migrate` adds, and
+      // the whole migration is fail-soft — so creating the index first would throw, be swallowed,
+      // and quietly leave a legacy database without `grants`. Only the ALTERs landing alongside the
+      // index proves the order is right.
+      const legacyPath = join(dir, 'legacy.db');
+      const legacy = new DatabaseSync(legacyPath);
+      legacy.exec(`
+        CREATE TABLE conversations (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          started_ts TEXT NOT NULL, project TEXT, command TEXT, model TEXT
+        );
+        CREATE TABLE sessions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ts TEXT NOT NULL, project TEXT, command TEXT, model TEXT,
+          prompt TEXT, response TEXT
+        );
+      `);
+      legacy.close();
+
+      openHistoryStore(legacyPath, { create: true })!.close();
+
+      const check = new DatabaseSync(legacyPath);
+      const columns = (
+        check.prepare(`PRAGMA table_info(conversations)`).all() as Record<string, unknown>[]
+      ).map((c) => String(c.name));
+      expect(columns).toContain('thread_id');
+      expect(columns).toContain('grants');
+      expect(
+        check
+          .prepare(`SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?`)
+          .get('idx_conversations_thread_id')
+      ).toBeDefined();
+      check.close();
     });
   });
 
