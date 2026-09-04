@@ -410,6 +410,14 @@ Gaunt Sloth · exec · claude-haiku-4-5 (anthropic)
   never a second spelling of the same fact on a second surface. The line itself is assembled by the
   shared `runHeaderLine` (`@gaunt-sloth/core/core/runHeader.js`), which is what keeps its two
   writers from drifting.
+- **Everywhere the model is named, the provider is named beside it, through that same helper
+  (DL-4 transparency, DL-6 consistency).** A model id alone is ambiguous — one name is served by
+  several providers, and which one is in play changes cost, rate limits, tool-call behaviour and
+  where the traffic goes. So `/status`, `/model`, `/config`, the `debug` rung's `Model:` line and
+  the TUI status bar all render `modelProviderLabel`'s output, and a change to the spelling lands on
+  every one of them at once. Adding a sixth site means importing the helper, not retyping the
+  format: a local `${model} (${provider})` passes every rendered-string test and is exactly how one
+  surface drifts to `google-genai:gemini` while its neighbour says `gemini (google-genai)`.
 - **Drop rather than mislead (DL-7).** No provider — a JS config hands us an already-built model —
   prints the bare model, with no `(unknown)` and no empty parentheses. On a review, no model drops
   the label altogether and the line ends after the command: a provider name would sit exactly where
@@ -615,11 +623,23 @@ because those are signal, not chatter (DL-1 no important action is silent). Plai
   unmounted with it whenever something else owns the keyboard — an approval prompt, the attack
   banner, the approvals picker, a focused debug pane.
 - **Single-line, stable status bar** (`tui/components/StatusBar.tsx`). One dim line carrying
-  session context — **mode · model · turn counter · ready** — when idle; a spinner +
+  session context — **mode · model (provider) · turn counter · ready** — when idle; a spinner +
   `Thinking… (Esc to interrupt)` while a turn runs. Keep it to one line and free of streaming
   progress (that belongs to the live turn) so it never flickers. It names the approvals mode in its
   display spelling, and at `bypass` additionally carries the yellow **`⚡ Bypass`** badge in both
   states (see `/approvals`).
+- **The bar drops the provider before it overflows (DL-6 consistency, DL-7 graceful degradation).**
+  The model half is the shared `modelProviderLabel` spelling the run header and launch banner use,
+  so all three say `model (provider)` and none of them invents a second one. This is the only
+  surface where that costs anything — one line already carrying the mode, the turn counter, the
+  approvals badge and sometimes the debug hint — so it is the only one allowed a width-conditional
+  omission. When the assembled line will not fit, `statusBarSegments` drops the **provider** and
+  keeps the model, and truncates neither: the model is the half the user chose, and a clipped
+  `openrou…` or `claude-sonnet-4…` misleads rather than merely shortens, which is the same reason
+  the banner drops a version it cannot fit. The budget counts the badge and the hint, because they
+  are separate `<Text>` nodes on the row the terminal wraps as a whole. The width decision lives in
+  a pure exported function taking `columns` as a parameter, not in the render — a rule that only
+  exists inside a component can only be tested by driving a terminal.
 
 ## Persistent startup advisories (DL-1 nothing important is silent, TUI-C19)
 

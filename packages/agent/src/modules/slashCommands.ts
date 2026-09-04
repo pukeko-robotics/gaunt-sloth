@@ -36,6 +36,7 @@ import {
 import type { ApprovalGrant } from '@gaunt-sloth/core/core/approvals/grants.js';
 import { describeApprovalEntry } from '@gaunt-sloth/core/core/approvals/matcher.js';
 import type { ConversationCompaction } from '@gaunt-sloth/core/core/compaction.js';
+import { modelProviderLabel } from '@gaunt-sloth/core/core/modelLabel.js';
 import { MOUSE_SELECTION_HINT } from '@gaunt-sloth/core/config/mouse.js';
 import { parseResumeId } from '#src/modules/sessionResume.js';
 
@@ -65,6 +66,18 @@ export interface KeyBindingGroup {
 export interface SlashCommandContext {
   mode: string;
   modelDisplayName: string;
+  /**
+   * CFG-38 — the resolved provider (`config.modelProviderType`, the raw `llm.type` the loader
+   * stashes), so `/status` and `/model` can render the shared `model (provider)` spelling instead
+   * of a model id that is ambiguous on its own (the same id is served by `anthropic` and by
+   * `openrouter`, and an OpenAI-compatible endpoint answers to a name that says nothing about who
+   * is serving it).
+   *
+   * Optional and legitimately absent — a module config hands the loader an already-built
+   * `BaseChatModel`, so there is no provider string to stash. That case renders the bare model
+   * with nothing extra, which is what `modelProviderLabel` does with an absent provider.
+   */
+  modelProviderType?: string;
   /** Count of committed turns so far (for `/help`-style introspection if needed). */
   turnCount: number;
   /**
@@ -178,12 +191,41 @@ export interface DebugDumpInput {
  */
 export interface ConfigSummaryInput {
   modelDisplayName?: string;
+  /**
+   * CFG-38 — `config.modelProviderType`, rendered beside the model. Both surfaces already hand
+   * this function the whole resolved config, which carries the field, so widening the structural
+   * type is all the threading `/config` needs.
+   */
+  modelProviderType?: string;
   agent?: { backend?: string };
   filesystem?: unknown;
   streamOutput?: boolean;
   useColour?: boolean;
   consoleLevel?: unknown;
   commands?: Record<string, unknown>;
+}
+
+/**
+ * CFG-38 — the value for a field already LABELLED `Model:` (`/config`, `/status`, `/model`).
+ *
+ * It is the shared `modelProviderLabel` spelling and nothing else — never a second template — but
+ * it calls that helper only once a model has resolved, and that guard is the whole point of this
+ * function rather than a redundancy.
+ *
+ * `modelProviderLabel` returns whichever half it has, so a config naming `llm.type` and no
+ * `llm.model` (both are optional in the schema) would otherwise render `Model: anthropic`: a
+ * provider name sitting exactly where a model name sits, read by any user as the model. On the
+ * unlabelled surfaces — the launch banner, the compact run header — a lone provider is fine
+ * because there is no label to contradict; here there is one.
+ *
+ * This deliberately does NOT settle the open question of whether the banner's rule (a lone
+ * provider survives) and the review heading's (the label is dropped whole) should converge. Both
+ * are untouched, and both are still pinned by their own tests. This function only preserves what
+ * these three labelled lines already did with a missing model — report `unknown` — so that adding
+ * the provider is purely additive.
+ */
+function modelField(model: string | undefined, provider: string | undefined): string {
+  return model?.trim() ? (modelProviderLabel(model, provider) ?? 'unknown') : 'unknown';
 }
 
 /**
@@ -206,7 +248,11 @@ export function formatConfigSummary(config: ConfigSummaryInput, command?: string
   const fmt = (v: unknown): string =>
     typeof v === 'string' ? v : Array.isArray(v) ? JSON.stringify(v) : String(v);
   const lines: string[] = [];
-  lines.push(`Model: ${config.modelDisplayName || 'unknown'}`);
+  // CFG-38 — the shared `model (provider)` spelling, never a second local template. The helper is
+  // called only when a MODEL resolves, so this line's pre-existing `unknown` is untouched and the
+  // provider is only ever APPENDED. See the note on `modelField` for why the guard is not
+  // redundant with the helper's own.
+  lines.push(`Model: ${modelField(config.modelDisplayName, config.modelProviderType)}`);
   lines.push(`Agent backend: ${config.agent?.backend ?? 'lean'}`);
   const commandFilesystem = command
     ? (config.commands?.[command] as { filesystem?: unknown } | undefined)?.filesystem
@@ -1530,7 +1576,9 @@ export function createCommandRegistry(): SlashCommand[] {
           title: 'Session status',
           lines: [
             `Mode: ${ctx.mode} — how the agent handles your messages this session.`,
-            `Model: ${ctx.modelDisplayName || 'unknown'}`,
+            // CFG-38 — the shared spelling, so this line and `/config`, the run header, the launch
+            // banner and the status bar all move together when it changes.
+            `Model: ${modelField(ctx.modelDisplayName, ctx.modelProviderType)}`,
             `Turns so far: ${ctx.turnCount}`,
             // GS2-20 — the id a later `gth history resume` takes, or the fact that there is none.
             ctx.conversationId !== undefined
@@ -1578,7 +1626,9 @@ export function createCommandRegistry(): SlashCommand[] {
       availableDuringRun: true,
       run: (ctx) => ({
         notice: {
-          title: `Model: ${ctx.modelDisplayName || 'unknown'}`,
+          // CFG-38 — this command's description has always promised "the current model /
+          // provider"; until now it rendered only the model. Same shared spelling as everywhere.
+          title: `Model: ${modelField(ctx.modelDisplayName, ctx.modelProviderType)}`,
           lines: [
             'This is the model answering your messages this session.',
             'Change the default via `gth init` or your gsloth config.',

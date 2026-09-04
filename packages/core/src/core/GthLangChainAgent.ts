@@ -11,6 +11,7 @@ import { GthAgentInitOptions, GthCommand, StatusLevel } from '#src/core/types.js
 import { GthAbstractAgent } from '#src/core/GthAbstractAgent.js';
 import { debugLog, debugLogObject } from '#src/utils/debugUtils.js';
 import { buildSystemMessages, formatToolCalls, readModePrompt } from '#src/utils/llmUtils.js';
+import { modelProviderLabel } from '#src/core/modelLabel.js';
 import { getCurrentWorkDir } from '#src/utils/systemUtils.js';
 import { isToolAllowed } from '#src/utils/toolMatching.js';
 import {
@@ -714,8 +715,14 @@ export class GthLangChainAgent extends GthAbstractAgent {
     this.compactHeaderStatus();
     this.headerStatus(`Workdir: ${getCurrentWorkDir()}`);
 
+    // CFG-38 — the `debug` rung's own `Model:` line, beside the `compact` rung's run header, which
+    // has carried the provider since GS2-95. The label is the shared `model (provider)` spelling,
+    // and the guard on `modelDisplayName` is unchanged, so a run with no model prints no line at
+    // all rather than a bare provider under a `Model:` label.
     if (this.config.modelDisplayName) {
-      this.headerStatus(`Model: ${this.config.modelDisplayName}`);
+      this.headerStatus(
+        `Model: ${modelProviderLabel(this.config.modelDisplayName, this.config.modelProviderType)}`
+      );
     }
 
     // An empty allowedTools allow-list disables every tool. Skip resolution entirely so we

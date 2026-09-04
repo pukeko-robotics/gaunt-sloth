@@ -1090,6 +1090,9 @@ export function App(props: TuiAppProps): React.ReactElement {
           {
             mode,
             modelDisplayName: modelDisplayName ?? '',
+            // CFG-38 — the registry is shared with the readline surface, so this must be threaded
+            // at BOTH dispatch sites or `/status` and `/model` silently diverge between surfaces.
+            modelProviderType: props.modelProviderType,
             turnCount: turnCountRef.current,
             // GS2-20 — the id `/status` names; live, so it follows a `/resume`.
             conversationId: conversationIdRef.current,
@@ -1848,6 +1851,10 @@ export function App(props: TuiAppProps): React.ReactElement {
               running={running}
               mode={mode}
               modelDisplayName={modelDisplayName}
+              // CFG-38 — the provider beside the model, and the live width it has to fit in: the
+              // bar drops the provider rather than overflowing a narrow terminal.
+              modelProviderType={props.modelProviderType}
+              columns={terminalColumns}
               turnCount={turnCount}
               debugHint={debugVisible && !debugFocused}
               approvals={

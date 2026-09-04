@@ -278,7 +278,10 @@ describe('GthLangChainAgent', () => {
        */
       const DEBUG_PREAMBLE = [
         'Workdir: /test/dir',
-        'Model: test-model',
+        // CFG-38 — re-captured, not relaxed: the `debug` rung's `Model:` line now carries the
+        // provider beside the model, in the shared `model (provider)` spelling the `compact` rung
+        // above and the launch banner already use. `headerConfig` sets `google-genai`.
+        'Model: test-model (google-genai)',
         'Loaded tools: custom_tool_1, custom_tool_2',
         'Loaded middleware: GthLeanShellExitSoftening, GthMcpToolErrorSoftening, ' +
           'GthLeanToolErrorBudget, GthLeanToolLoopGuard, GthContextGuard, HumanInTheLoopMiddleware, ' +
@@ -293,6 +296,33 @@ describe('GthLangChainAgent', () => {
         await agent.init('ask', headerConfig({ header: 'debug' }));
 
         expect(infoLines()).toEqual(DEBUG_PREAMBLE);
+      });
+
+      /**
+       * CFG-38 — the OTHER half of the discriminating pair, and the reason it is a pair rather than
+       * one cell. `DEBUG_PREAMBLE` above pins the provider being PRESENT; on its own it would stay
+       * green if the provider became the only path and an absent one rendered `(undefined)` — the
+       * bug this node names explicitly. So the same line is asserted with the provider stripped.
+       *
+       * The absent case is not an error and not a fallback nobody hits: a module config
+       * (`.gsloth.config.js` returning a constructed `BaseChatModel`) hands the loader no provider
+       * string at all, so `modelProviderType` is legitimately undefined for every one of them. The
+       * line must then be the BARE model — no `unknown`, no `undefined`, and no empty parentheses.
+       */
+      it('renders the bare model, with no placeholder or stray parentheses, when no provider resolves', async () => {
+        const agent = new GthLangChainAgent(statusUpdateCallback);
+        mcpClientInstanceMock.getTools.mockResolvedValue([]);
+
+        const { modelProviderType: _dropped, ...noProvider } = headerConfig({ header: 'debug' });
+        await agent.init('ask', noProvider as unknown as GthConfig);
+
+        expect(infoLines()).toContain('Model: test-model');
+        // The failure modes this pair exists to catch, named rather than implied.
+        const modelLine = infoLines().find((line) => line.startsWith('Model:'));
+        expect(modelLine).toBe('Model: test-model');
+        expect(modelLine).not.toContain('(');
+        expect(modelLine).not.toContain('undefined');
+        expect(modelLine).not.toContain('unknown');
       });
 
       /**
@@ -486,7 +516,10 @@ describe('GthLangChainAgent', () => {
        */
       const DISABLED_TOOLS_PREAMBLE = [
         'Workdir: /test/dir',
-        'Model: test-model',
+        // CFG-38 — re-captured, not relaxed: the `debug` rung's `Model:` line now carries the
+        // provider beside the model, in the shared `model (provider)` spelling the `compact` rung
+        // above and the launch banner already use. `headerConfig` sets `google-genai`.
+        'Model: test-model (google-genai)',
         'Tool loading disabled by allowedTools: []; MCP/A2A servers will not be contacted. ' +
           'Omit allowedTools for no filtering.',
         'Loaded middleware: GthLeanShellExitSoftening, GthMcpToolErrorSoftening, ' +

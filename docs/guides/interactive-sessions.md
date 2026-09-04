@@ -64,9 +64,12 @@ there opens a searchable command menu. A few worth knowing:
   the approvals you granted in it are in force again. `/resume` alone lists the conversations that
   can be resumed. The same thing from a shell is `gth chat --resume <id>`, `gth code --resume <id>`
   or `gth history resume <id>` — see [Resuming a conversation](../COMMANDS.md#resuming-a-conversation)
-- `/status` — mode, model, turn count, and the id of the conversation being recorded (the number
-  `/resume` and `gth history resume` take)
-- `/model` — show the current model / provider
+- `/status` — mode, the model and the provider serving it, turn count, and the id of the
+  conversation being recorded (the number `/resume` and `gth history resume` take)
+- `/model` — show the current model / provider. The provider is shown because a model name alone is
+  ambiguous: the same name is served by more than one of them, and which one is in play changes
+  cost, rate limits and where your traffic goes. A config that builds its own model object has no
+  provider name to report, so those sessions show the model alone
 - `/verbose` — expand or collapse tool-call detail (Ctrl+T does the same, at any time)
 - `/reasoning` — reprint a turn's thinking (`/reasoning 2` for turn 2)
 - `/approvals` — show the current mode, the rater, the allow/deny counts, what you have approved so
