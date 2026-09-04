@@ -103,11 +103,15 @@ carries on:
 The context overflowed, so 9 earlier messages were folded into a summary (13→5 messages). Retrying.
 ```
 
-On **Ollama** it happens *before* the request instead. Ollama does not reject an oversized
-conversation — the daemon quietly drops the oldest tokens to fit `num_ctx` and answers from what is
-left, so the reply looks normal while the model has forgotten the start of the session. There is
-nothing to detect afterwards, so the session estimates the size first and compacts if the turn would
-not fit:
+*On the plain readline surface (`--no-tui`). The TUI and the editor integrations report the
+overflow and end the turn instead of retrying; bringing them up to this is in progress. The Ollama
+check below is not affected — it runs on every surface.*
+
+On **Ollama** it happens *before* the request instead, on **every** surface. Ollama does not reject
+an oversized conversation — the daemon quietly drops the oldest tokens to fit `num_ctx` and answers
+from what is left, so the reply looks normal while the model has forgotten the start of the session.
+There is nothing to detect afterwards, so the session estimates the size first and compacts if the
+turn would not fit:
 
 ```
 Context is nearly full (about 3212 tokens of a 4096-token window, with 1024 reserved for the answer),
