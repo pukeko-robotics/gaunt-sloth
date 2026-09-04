@@ -16,7 +16,13 @@
  * node, so it is asserted as a number (messages AND characters), never as "a compaction happened".
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { AIMessage, HumanMessage, SystemMessage, type BaseMessage } from '@langchain/core/messages';
+import {
+  AIMessage,
+  HumanMessage,
+  SystemMessage,
+  ToolMessage,
+  type BaseMessage,
+} from '@langchain/core/messages';
 import { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import type { RunnableConfig } from '@langchain/core/runnables';
 import { ContextOverflowError } from '@langchain/core/errors';
@@ -26,6 +32,7 @@ import { z } from 'zod';
 import type { GthConfig } from '#src/config.js';
 import type { GthAbstractAgent } from '#src/core/GthAbstractAgent.js';
 import { conversationSize, isCompactionSummary } from '#src/core/compaction.js';
+import { terminationReasonOf } from '#src/core/terminationReason.js';
 
 vi.mock('#src/utils/consoleUtils.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('#src/utils/consoleUtils.js')>();
@@ -53,6 +60,16 @@ class OverflowingModel extends BaseChatModel {
   summaryCalls = 0;
   /** How many of the NEXT turn calls throw a context overflow. */
   overflowsRemaining = 0;
+  /**
+   * EXT-160 — overflow while the stream is being DRAINED rather than while it is created.
+   *
+   * The model answers the first call of the turn with a tool call, so by the time it is asked again
+   * the graph is already inside `drainTextStream` — which is the inner `catch`, the one that wraps
+   * the failure as `Stream processing failed: …` and attaches the classified reason to the wrapper.
+   * The message it throws is deliberately meaningless, so the wrapper's own text classifies as
+   * nothing at all and the ONLY carrier of "this was an overflow" is the attached reason.
+   */
+  midIterationOverflows = 0;
   /** Response metadata stamped on the next answer — used for the output-truncation cell. */
   responseMetadata: Record<string, unknown> | undefined;
 
@@ -76,6 +93,26 @@ class OverflowingModel extends BaseChatModel {
     if (this.overflowsRemaining > 0) {
       this.overflowsRemaining--;
       throw new ContextOverflowError("This model's maximum context length is 100 tokens.");
+    }
+    if (this.midIterationOverflows > 0) {
+      if (!messages.some((m) => ToolMessage.isInstance(m))) {
+        // First call of the turn: ask for a tool, which puts the graph inside the drain loop.
+        return {
+          generations: [
+            {
+              message: new AIMessage({
+                content: '',
+                tool_calls: [{ name: 'lookup', args: {}, id: 'mid-iteration-1' }],
+              }),
+              text: '',
+            },
+          ],
+        };
+      }
+      this.midIterationOverflows--;
+      // A message that says NOTHING about size. The type is what makes this an overflow, and the
+      // wrapper built from it keeps only the text — so the reason has to travel by attachment.
+      throw new ContextOverflowError('k');
     }
     const lastHuman = [...messages].reverse().find((m) => HumanMessage.isInstance(m));
     const ask = typeof lastHuman?.content === 'string' ? lastHuman.content : '';
@@ -204,7 +241,12 @@ describe('EXT-160 — compact and retry once on a context overflow', () => {
       const turnsBefore = model.requests.length;
 
       model.overflowsRemaining = 2;
-      await expect(runner.processMessages([new HumanMessage('SIX' + PADDING)])).rejects.toThrow();
+      const thrown = await runner.processMessages([new HumanMessage('SIX' + PADDING)]).then(
+        () => {
+          throw new Error('the turn was expected to fail on the second overflow');
+        },
+        (error: unknown) => error
+      );
 
       // Two attempts and no third: the retry budget is one, and it is spent.
       expect(model.requests.length).toBe(turnsBefore + 2);
@@ -215,8 +257,48 @@ describe('EXT-160 — compact and retry once on a context overflow', () => {
       expect(reason?.category).toBe('context_overflow');
       expect(reason?.site).toBe('runner.overflow-compact-exhausted');
       expect(reason?.remedy).toBe('reduce-context');
+
+      // BOTH carriers, not just the runner's field. The override writes the runner's own reason and
+      // re-stamps the error it is about, and the second write is the whole justification for
+      // exporting `replaceTerminationReason` — so a caller that only ever sees the thrown error
+      // (every catcher outside this class) must read the same site, not the one it was first
+      // classified as. Asserting only `getTerminationReason()` left that unpinned.
+      expect(terminationReasonOf(thrown)?.site).toBe('runner.overflow-compact-exhausted');
+      expect(terminationReasonOf(thrown)?.category).toBe('context_overflow');
     });
   }
+
+  /**
+   * The two cells above provoke the overflow at stream CREATION, where the error reaches the seam
+   * unwrapped and carrying no reason, so the seam classifies it from the exception itself. That
+   * left the seam's other leg — reading a reason already attached — unexercised: dropping
+   * `terminationReasonOf(error)?.category` from the predicate changed nothing anywhere.
+   *
+   * This is the other arrival. The failure happens while the stream is being drained, so the inner
+   * catch wraps it as `Stream processing failed: k` and attaches the classified reason to the
+   * wrapper. The wrapper's own text says nothing about size — deliberately — so classifying the
+   * exception a second time yields `unknown`, and the attached reason is the only thing that can
+   * tell the seam this was an overflow. If that leg goes, this turn stops recovering.
+   */
+  it('recovers an overflow raised mid-iteration, where the reason travels attached', async () => {
+    const model = new OverflowingModel();
+    const runner = await makeRunner(model, { streamOutput: true });
+    await buildHistory(runner);
+    const turnsBefore = model.requests.length;
+
+    model.midIterationOverflows = 1;
+    const answer = await runner.processMessages([new HumanMessage('SEVEN' + PADDING)]);
+
+    // The turn recovered: a compaction happened and the retry produced a real answer.
+    expect(answer).toContain('answer:');
+    expect(model.summaryCalls).toBe(1);
+    expect(model.requests.length).toBeGreaterThan(turnsBefore);
+    // The turn ends as a success, not as an overflow: nothing terminal was recorded for it.
+    expect(runner.getTerminationReason()?.category).toBe('completed');
+    expect(
+      noticesFrom().some((notice) => /context overflowed|folded into a summary/i.test(notice))
+    ).toBe(true);
+  });
 
   it('does not compact when there is nothing left to fold, and says so at its own site', async () => {
     const model = new OverflowingModel();
