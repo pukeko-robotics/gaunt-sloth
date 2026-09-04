@@ -43,6 +43,24 @@ if (!validConfigs.includes(configName)) {
 const sourceFile = path.join(__dirname, 'configs', `${configName}.gsloth.config.json`);
 const workdirTargetFile = path.join(__dirname, 'workdir', '.gsloth.config.json');
 
+/**
+ * GS2-107 — every generated config points the history store INSIDE this tree.
+ *
+ * The integration suite drives the real `gth` binary, and history recording is on by default, so
+ * without this every run of it records into the developer's own `~/.gsloth/history.db`. That was
+ * already untidy when the only effect was rows appended; it stopped being tidiable once retention
+ * shipped, because an interactive `chat` / `code` cell now also reclaims unreachable conversation
+ * state on the way out — a delete, against a real person's file, from a test.
+ *
+ * The path is under `workdir/`, which is gitignored and cleaned per run.
+ */
+const historyDbPath = path.join(__dirname, 'workdir', 'it-history.db');
+
+/** Return `config` with the history store pointed at this suite's own database. */
+function withIsolatedHistory(config) {
+  return { ...config, history: { ...(config.history ?? {}), dbPath: historyDbPath } };
+}
+
 // Copy the selected config to workdir
 try {
   fs.copyFileSync(sourceFile, workdirTargetFile);
@@ -66,13 +84,17 @@ try {
   if (configName === 'ollama' && providerConfig?.llm) {
     const ollamaModel = process.env.OLLAMA_IT_MODEL || 'gemma4:12b';
     providerConfig.llm.model = ollamaModel;
-    // copyFileSync above wrote the source's default model; re-write workdir config with the
-    // resolved model. temperature:0 and numCtx are left exactly as authored.
-    fs.writeFileSync(workdirTargetFile, JSON.stringify(providerConfig, null, 2), 'utf8');
-    console.log(
-      `Ollama model set to "${ollamaModel}" (OLLAMA_IT_MODEL) in workdir/.gsloth.config.json`
-    );
+    console.log(`Ollama model set to "${ollamaModel}" (OLLAMA_IT_MODEL) in workdir/.gsloth.config.json`);
   }
+  // Always rewritten, never only copied: the copy carries the source file's keys, and the history
+  // redirect above has to be in the file the run actually reads. temperature/numCtx and everything
+  // else stay exactly as authored.
+  fs.writeFileSync(
+    workdirTargetFile,
+    JSON.stringify(withIsolatedHistory(providerConfig), null, 2),
+    'utf8'
+  );
+  console.log(`History store pointed at ${path.relative(__dirname, historyDbPath)} for this run`);
 
   providerLLM = providerConfig?.llm;
   if (!providerLLM) {
@@ -120,10 +142,10 @@ if (fs.existsSync(settingsRoot)) {
       const raw = fs.readFileSync(srcPath, 'utf8');
       const baseConfig = JSON.parse(raw);
 
-      const merged = {
+      const merged = withIsolatedHistory({
         ...baseConfig,
         ...(providerLLM ? { llm: providerLLM } : {}),
-      };
+      });
 
       const outPath = path.join(path.dirname(srcPath), '.gsloth.config.json');
       fs.writeFileSync(outPath, JSON.stringify(merged, null, 2), 'utf8');
@@ -147,6 +169,14 @@ const workdirReviewPath = path.join(workdirPath, 'testreview.md');
 if (fs.existsSync(workdirReviewPath)) {
   fs.unlinkSync(workdirReviewPath);
   console.log(`Removed workdir/testreview.md`);
+}
+
+// The suite's own history database, so one run never reads another's rows.
+for (const suffix of ['', '-wal', '-shm']) {
+  const stale = `${historyDbPath}${suffix}`;
+  if (!fs.existsSync(stale)) continue;
+  fs.unlinkSync(stale);
+  console.log(`Removed workdir/${path.basename(stale)}`);
 }
 
 for (const name of fs.readdirSync(workdirPath)) {
