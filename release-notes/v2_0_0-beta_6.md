@@ -33,3 +33,10 @@
   a resumed session stays compacted; the transcript on screen is left as it is. Free text after the
   command says what the summary should concentrate on. See
   [Interactive sessions → Slash commands](../docs/guides/interactive-sessions.md#slash-commands).
+- A conversation that outgrows the model's context window no longer ends the turn. When a provider
+  rejects a turn for size, the session compacts and sends it again, once; a second overflow ends the
+  turn and says why. That retry is on the plain readline surface (`--no-tui`) for now — the TUI and
+  the editor integrations still report the overflow and stop. On Ollama a check runs *before* the
+  request on **every** surface, because Ollama does not reject an oversized conversation — it
+  silently drops the oldest messages and answers from the rest. See
+  [Interactive sessions → When the session compacts without being asked](../docs/guides/interactive-sessions.md#when-the-session-compacts-without-being-asked).

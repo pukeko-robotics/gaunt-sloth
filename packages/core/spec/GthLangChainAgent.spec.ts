@@ -281,7 +281,7 @@ describe('GthLangChainAgent', () => {
         'Model: test-model',
         'Loaded tools: custom_tool_1, custom_tool_2',
         'Loaded middleware: GthLeanShellExitSoftening, GthMcpToolErrorSoftening, ' +
-          'GthLeanToolErrorBudget, GthLeanToolLoopGuard, HumanInTheLoopMiddleware, ' +
+          'GthLeanToolErrorBudget, GthLeanToolLoopGuard, GthContextGuard, HumanInTheLoopMiddleware, ' +
           'GthMiddlewareToolCallStatusUpdate, GthMiddlewareToolCallRepair, ' +
           'GthMiddlewareDebugCapture',
       ];
@@ -490,7 +490,7 @@ describe('GthLangChainAgent', () => {
         'Tool loading disabled by allowedTools: []; MCP/A2A servers will not be contacted. ' +
           'Omit allowedTools for no filtering.',
         'Loaded middleware: GthLeanShellExitSoftening, GthMcpToolErrorSoftening, ' +
-          'GthLeanToolErrorBudget, GthLeanToolLoopGuard, GthMiddlewareToolCallStatusUpdate, ' +
+          'GthLeanToolErrorBudget, GthLeanToolLoopGuard, GthContextGuard, GthMiddlewareToolCallStatusUpdate, ' +
           'GthMiddlewareToolCallRepair, GthMiddlewareDebugCapture',
       ];
 

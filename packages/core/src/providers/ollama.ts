@@ -6,6 +6,7 @@ import type {
 } from '@langchain/core/language_models/chat_models';
 import type { ChatOllamaInput } from '@langchain/ollama';
 
+import { DEFAULT_OLLAMA_NUM_CTX } from '#src/core/contextWindow.js';
 import { writeConfigFileWithMessages } from '#src/utils/fileUtils.js';
 import { buildInitConfigContent, getCuratedFallbackModel } from '#src/providers/modelDiscovery.js';
 import {
@@ -22,25 +23,8 @@ import {
  */
 const DEFAULT_OLLAMA_HOST = 'http://127.0.0.1:11434';
 
-/**
- * GS2-59 — default context window (`num_ctx`) for Ollama models. Ollama's OWN default is 4096, but
- * gaunt-sloth's agentic prompt (system + full lean toolset + a tool result) already lands ~4000
- * tokens; at 4096 a thinking model (e.g. gemma4:31b) spends its entire remaining budget on the
- * reasoning field and emits EMPTY `content` on the turn after a tool executes — the GS2-59
- * blank-answer regression. The previous `ChatOpenAI`→`/v1` path could not fix this because the
- * OpenAI-compat shim IGNORES `num_ctx`; the native `/api/chat` path honors it.
- *
- * 16384 is chosen as the largest window that is BOTH safely above the ~4000-token starvation point
- * (4× headroom for reasoning + a few tool results) AND fits constrained consumer VRAM: Ollama
- * preallocates the KV cache at `num_ctx`, so on a box where a large model already spills partly to
- * CPU (e.g. a 19GB model on ~18GB of GPU), a 32768 cache tips the GPU allocation into an
- * out-of-memory error. 16384 was verified live to run the agentic tool→synthesis turn on such a
- * box; 32768 OOM'd it. Overridable per config via `llm.numCtx` — raise it if you have the VRAM and
- * run long sessions, lower it on very tight hardware. NOTE: a per-request `num_ctx` overrides the
- * daemon's `OLLAMA_CONTEXT_LENGTH`, so a user who tuned their server window higher should set
- * `llm.numCtx` to match rather than rely on the server default.
- */
-const DEFAULT_OLLAMA_NUM_CTX = 16384;
+// GS2-59's `num_ctx` default lives with the EXT-160 window resolver, because the pre-call context
+// guard has to reason about the same number this client puts on the request. See its docblock.
 
 /**
  * Resolve the base URL for the local Ollama daemon — the NATIVE root (no `/v1` suffix; `ChatOllama`

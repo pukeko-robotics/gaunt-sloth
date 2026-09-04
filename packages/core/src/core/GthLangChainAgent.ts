@@ -25,8 +25,15 @@ import { isShellCommandFailedError } from '#src/core/shell/ShellCommandFailedErr
 import { extractDebugRequestExtras, type DebugRequestExtras } from '#src/core/debugCapture.js';
 import { promoteTextEmittedToolCallMessage } from '#src/core/toolCallRepair/index.js';
 import { terminationReason, type GthTerminationReason } from '#src/core/terminationReason.js';
-import { AIMessage, ToolMessage } from '@langchain/core/messages';
-import { BaseCheckpointSaver } from '@langchain/langgraph';
+import {
+  compactMessages,
+  conversationSize,
+  createModelSummarizer,
+  type CompactMessagesResult,
+} from '#src/core/compaction.js';
+import { resolveContextWindowSource, type ContextWindowSource } from '#src/core/contextWindow.js';
+import { AIMessage, RemoveMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages';
+import { BaseCheckpointSaver, REMOVE_ALL_MESSAGES } from '@langchain/langgraph';
 import {
   createAgent,
   createMiddleware,
@@ -342,6 +349,332 @@ export function createToolLoopGuardMiddleware(
           );
         }
         return undefined;
+      },
+    },
+  });
+}
+
+/**
+ * EXT-160 — how many characters of prompt one token is assumed to carry.
+ *
+ * 3.5 rather than the usual English rule of thumb of 4, because the prompt this guard measures is
+ * not English: it is a system prompt full of tool schemas, JSON tool arguments and file paths, which
+ * tokenise far worse than prose. Erring low makes the estimate HIGH, which is the safe direction —
+ * an early compaction costs one summary call, a late one costs a silently truncated conversation.
+ */
+export const ESTIMATE_CHARS_PER_TOKEN = 3.5;
+
+/**
+ * EXT-160 — the multiplier applied to the whole estimate, on top of the pessimistic ratio above.
+ *
+ * The estimate is anchored on a real token count and extrapolates only the delta, so 10% covers the
+ * part that is genuinely guessed: the tokens of messages added since the anchor, plus whatever the
+ * provider adds per message that no character count can see (role headers, tool-call framing).
+ */
+export const ESTIMATE_SAFETY_MARGIN = 1.1;
+
+/**
+ * EXT-160 — tokens reserved for the model's own answer when nothing else says.
+ *
+ * On ollama `num_ctx` covers the prompt **and** the generation from one budget, so a prompt that
+ * "fits" with nothing left over does not fail — it produces a truncated answer, which is the second
+ * failure of the spike's three wearing the first's clothes. Reserving the room is what keeps a
+ * guard that is about input overflow from shipping output truncation instead.
+ */
+export const DEFAULT_OUTPUT_RESERVE_TOKENS = 2048;
+
+/**
+ * EXT-160 — the most any ONE non-text content block may add to the estimate, in tokens.
+ *
+ * **This is an approximation and does not model any provider's image tokenisation.** It cannot: the
+ * real number depends on the provider, the model, and how the image is tiled, and none of that is
+ * knowable from the block. What it does instead is bound the damage in both directions.
+ *
+ * The bound is needed because a block's ENCODED LENGTH is not a proxy for its size at all. A 100 KB
+ * inline image is roughly 136 500 base64 characters, which at the ratio above is about 43 000
+ * tokens, while providers charge on the order of a thousand for it — an over-count near 33×, larger
+ * than any window this project wires. Charging that would fold the conversation on every single
+ * turn, which is the same thrashing the reserve clamp exists to prevent, arriving from the other
+ * side.
+ *
+ * 1600 sits at the top of the range providers charge for a large image, so it **errs high** — the
+ * same direction as every other approximation here, and the direction the node prefers, because an
+ * early compaction costs one summary call while a late one costs a silently truncated conversation.
+ * It errs high by a bounded factor rather than an unbounded one, which is the whole point.
+ *
+ * It is a CAP, not a flat charge: a block shorter than this is counted at its real length, so a
+ * small structured tool result stays accurate instead of being inflated to an image's cost.
+ */
+export const NON_TEXT_BLOCK_TOKEN_ALLOWANCE = 1600;
+
+/**
+ * EXT-160 — {@link NON_TEXT_BLOCK_TOKEN_ALLOWANCE} in the characters the estimator actually sums,
+ * so the cap survives the division by {@link ESTIMATE_CHARS_PER_TOKEN} that follows.
+ */
+export const NON_TEXT_BLOCK_CHARACTER_ALLOWANCE = Math.round(
+  NON_TEXT_BLOCK_TOKEN_ALLOWANCE * ESTIMATE_CHARS_PER_TOKEN
+);
+
+/**
+ * EXT-160 — a residual this small is a block's structural keys, not its payload.
+ *
+ * After a block's `text` is removed (already counted elsewhere) an ordinary text block leaves only
+ * its discriminator — `{"type":"text"}` is fifteen characters. Charging that would add noise
+ * proportional to the NUMBER of blocks rather than to what they carry, and the system prompt alone
+ * is an array of them. Anything above this floor is treated as payload and counted.
+ *
+ * This is the one approximation here that errs LOW, and only ever by this many characters per
+ * block, because a residual under the floor cannot be a payload worth compacting for.
+ */
+export const BLOCK_STRUCTURE_FLOOR_CHARACTERS = 64;
+
+/**
+ * EXT-160 — the largest fraction of the window the **default** reserve is allowed to claim.
+ *
+ * A fixed reserve is meaningless against a window near its own size: measured live on a
+ * deliberately small `num_ctx` of 2048, the flat 2048-token reserve made `estimate + reserve >
+ * window` true for every call whatever the conversation held, so the guard folded on every turn and
+ * spent a summary call each time. The clamp keeps the reserve proportionate — a quarter of the
+ * window is still real headroom for an answer, and it can never be the whole budget.
+ *
+ * This applies to the number nobody chose. A reserve the user configured is clamped by
+ * {@link MAX_EXPLICIT_RESERVE_FRACTION_OF_WINDOW} instead, and the reason is below.
+ */
+export const MAX_RESERVE_FRACTION_OF_WINDOW = 0.25;
+
+/**
+ * EXT-160 — the largest fraction of the window a **configured** reserve is allowed to claim.
+ *
+ * A user who sets `llm.numPredict` has named an answer budget, which the default has not, so
+ * clamping it to a quarter of the window silently gives them less than they asked for and then
+ * truncates the answer — the exact failure the reserve exists to prevent, reintroduced by the fix
+ * for a different one. Measured: at `numCtx: 16384` with `numPredict: 8192`, a quarter-clamp holds
+ * back 4096, the guard sees 16140 against 16384 and passes the turn, and the answer is then short
+ * by 3852 tokens.
+ *
+ * **A configured number can still be reduced, and this is where.** Above half the window it is cut
+ * to half, because a reserve larger than that leaves less room for the conversation than for the
+ * answer, and at that point no conversation fits and the guard would fold on every turn — the
+ * thrashing the default clamp exists to stop. So: honoured up to half the window, reduced beyond
+ * it.
+ */
+export const MAX_EXPLICIT_RESERVE_FRACTION_OF_WINDOW = 0.5;
+
+/** EXT-160 — what {@link createContextGuardMiddleware} needs to decide, all of it injectable. */
+export interface ContextGuardOptions {
+  /**
+   * The window to guard against, in tokens. **`null` is a first-class answer meaning "unknown", and
+   * an unknown window never triggers a compaction** — see `contextWindow.ts`.
+   */
+  windowSource: ContextWindowSource;
+  /**
+   * Compact the conversation. Returns the unchanged list with `changed: false` when there is
+   * nothing worth folding, which is what stops this guard looping (see the hook).
+   */
+  compact: (_messages: BaseMessage[]) => Promise<CompactMessagesResult>;
+  /**
+   * Tokens held back for the answer; {@link DEFAULT_OUTPUT_RESERVE_TOKENS} when omitted.
+   *
+   * Whether this was set matters, not just its value: an omitted reserve is clamped by
+   * {@link MAX_RESERVE_FRACTION_OF_WINDOW}, a configured one by the more generous
+   * {@link MAX_EXPLICIT_RESERVE_FRACTION_OF_WINDOW}, because a number the user chose says something
+   * the default does not. Passing the default value explicitly therefore takes the configured
+   * path — which is what a caller forwarding `llm.numPredict` wants, and what a test pinning the
+   * default must avoid.
+   */
+  reserve?: number;
+  /**
+   * The static system prompt's characters, read at call time. `createAgent` applies the system
+   * prompt on every call without ever putting it in `state.messages`, so a guard that measured only
+   * the state would under-count by the largest single block in the request. A function rather than
+   * a number because the graph's middleware is assembled before the prompt it will be built with.
+   */
+  systemPromptCharacters?: () => number;
+  /** Estimator override; {@link estimatePromptTokens} when omitted. Injected by the tests. */
+  estimateTokens?: (_messages: readonly BaseMessage[], _systemPromptCharacters: number) => number;
+  /** User-visible notice sink, wired to the agent's status channel. */
+  onCompact?: (_message: string) => void;
+}
+
+/**
+ * EXT-160 — **an estimate, and it says so in its name.**
+ *
+ * Ollama exposes no tokenizer over its API, so there is no way to count the prompt exactly before
+ * sending it. Rather than guess from characters alone, this anchors on the last REAL number the
+ * provider gave us: `usage_metadata.input_tokens` on the most recent `AIMessage` (ChatOllama maps
+ * ollama's `prompt_eval_count` into it), which is exactly the token count of everything that
+ * preceded that message — system prompt included. Only what has arrived SINCE the anchor is
+ * extrapolated from characters, so the guessed fraction shrinks as the conversation grows, which is
+ * precisely when the number starts to matter.
+ *
+ * With no anchor (the first call of a session) everything is extrapolated, and the system prompt's
+ * characters are added because nothing has measured them yet. With an anchor they are already
+ * inside the anchor's count and adding them again would double-count the single largest block.
+ */
+/**
+ * EXT-160 — the characters `conversationSize` cannot see, added back.
+ *
+ * `conversationSize` reads message content through `compaction.ts`'s `contentText`, which keeps a
+ * string block and a block with a string `text` field and returns `''` for everything else. That is
+ * right for compaction, whose before/after comparison only has to agree with itself, but it is
+ * wrong for a token estimate: an image block or a structured MCP tool result would contribute zero
+ * characters, so the guard would under-count precisely the payload most likely to fill the window.
+ *
+ * That is the UNSAFE direction, and it is the only approximation the estimator errs that way — every
+ * other one deliberately reads high.
+ *
+ * **What is counted is the block MINUS its `text`, capped.** Both halves matter:
+ *
+ * - Removing `text` is what stops a block from being counted twice, since `contentText` already
+ *   returned it. It also closes the gap the mirror-the-skip-conditions version left: a block
+ *   carrying BOTH a `text` field and a payload used to be skipped whole, so `contentText` counted
+ *   its text and its payload was free. That is the under-count this function exists to fix,
+ *   surviving inside the fix.
+ * - Capping at {@link NON_TEXT_BLOCK_CHARACTER_ALLOWANCE} is what stops the opposite failure: an
+ *   encoded payload's LENGTH is not its cost, and charging it in full over-counts an inline image by
+ *   enough to fold the conversation on every turn. That constant carries the reasoning.
+ *
+ * A residual at or below {@link BLOCK_STRUCTURE_FLOOR_CHARACTERS} is a type discriminator rather
+ * than a payload and is not charged.
+ */
+function nonTextBlockCharacters(messages: readonly BaseMessage[]): number {
+  let total = 0;
+  for (const message of messages) {
+    const content = message.content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      // A bare string block is content `contentText` already returned in full.
+      if (typeof block === 'string') continue;
+      if (!block || typeof block !== 'object') continue;
+      let payload: string;
+      try {
+        const { text: _countedByContentText, ...rest } = block as Record<string, unknown>;
+        payload = JSON.stringify(
+          typeof (block as { text?: unknown }).text === 'string' ? rest : block
+        );
+      } catch {
+        /* a block that cannot be serialised is left uncounted rather than crashing the estimate */
+        continue;
+      }
+      const length = payload?.length ?? 0;
+      if (length <= BLOCK_STRUCTURE_FLOOR_CHARACTERS) continue;
+      total += Math.min(length, NON_TEXT_BLOCK_CHARACTER_ALLOWANCE);
+    }
+  }
+  return total;
+}
+
+export function estimatePromptTokens(
+  messages: readonly BaseMessage[],
+  systemPromptCharacters = 0
+): number {
+  let anchorIndex = -1;
+  let anchorTokens = 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (!AIMessage.isInstance(message)) continue;
+    const input = message.usage_metadata?.input_tokens;
+    if (typeof input === 'number' && Number.isFinite(input) && input > 0) {
+      anchorIndex = i;
+      anchorTokens = input;
+      break;
+    }
+  }
+  // From the anchor message onward: the anchor's own tokens covered everything BEFORE it, so the
+  // anchor message itself is part of the next prompt and is counted in the delta.
+  const counted = anchorIndex === -1 ? messages : messages.slice(anchorIndex);
+  const deltaCharacters =
+    conversationSize(counted).characters +
+    nonTextBlockCharacters(counted) +
+    (anchorIndex === -1 ? systemPromptCharacters : 0);
+  const estimate = anchorTokens + deltaCharacters / ESTIMATE_CHARS_PER_TOKEN;
+  return Math.ceil(estimate * ESTIMATE_SAFETY_MARGIN);
+}
+
+/**
+ * EXT-160 — **the pre-call context guard: compact BEFORE the request, never after the damage.**
+ *
+ * Why a `beforeModel` middleware and not the runner's turn funnel: every model call inside a tool
+ * loop grows the context, and the runner only ever sees the turn boundary — so a turn that fits
+ * when it starts and overflows on its fourth tool round is invisible there. A `beforeModel` hook
+ * sees `state.messages` on every call, which is the only place this can be caught.
+ *
+ * **Pre-call means pre-call, and that is the whole point.** Ollama does not raise on overflow: the
+ * daemon silently drops the oldest tokens to fit `num_ctx` and answers happily from what is left,
+ * so there is no error, no stop reason, and nothing on the wire that differs from a healthy turn.
+ * By the time a response exists the evidence is gone — a check that ran after it could only ever
+ * confirm damage already done, and the damage is not a missing answer but a plausible one built on
+ * a conversation whose head was quietly discarded.
+ *
+ * **The loop hazard, and the bail that closes it.** The factory runs once per session, so like its
+ * two siblings above this hook holds NO state and recomputes everything from `state.messages`. That
+ * means a compaction which folds nothing would leave the state identical, the estimate identical,
+ * and this hook firing again on the next entry — forever. So `changed: false` **lets the call
+ * proceed**: a conversation already at its irreducible minimum is sent as it is and allowed to fail
+ * honestly (reactively compacted or reported), which is strictly better than a hang.
+ *
+ * The `compact` closure must call the model DIRECTLY, never through the graph, or the summariser's
+ * own call re-enters this hook.
+ */
+export function createContextGuardMiddleware(options: ContextGuardOptions) {
+  // Whether the caller named a reserve, kept separately from its value: the two are clamped
+  // differently, and `reserve === DEFAULT_OUTPUT_RESERVE_TOKENS` cannot tell "chose the default"
+  // from "said nothing".
+  const reserveWasConfigured = typeof options.reserve === 'number';
+  const reserve = options.reserve ?? DEFAULT_OUTPUT_RESERVE_TOKENS;
+  const reserveFraction = reserveWasConfigured
+    ? MAX_EXPLICIT_RESERVE_FRACTION_OF_WINDOW
+    : MAX_RESERVE_FRACTION_OF_WINDOW;
+  const systemPromptCharacters = options.systemPromptCharacters ?? (() => 0);
+  const estimateTokens = options.estimateTokens ?? estimatePromptTokens;
+  return createMiddleware({
+    name: 'GthContextGuard',
+    beforeModel: {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      hook: async (state: any) => {
+        const messages: BaseMessage[] = Array.isArray(state?.messages) ? state.messages : [];
+        if (messages.length === 0) return undefined;
+        let window: number | null = null;
+        try {
+          window = await options.windowSource();
+        } catch {
+          /* a source that failed knows nothing, which is already the no-trigger answer */
+        }
+        // The 4097 case: an unknown window yields no guard, never a guess.
+        if (window === null || !Number.isFinite(window) || window <= 0) return undefined;
+        const estimate = estimateTokens(messages, systemPromptCharacters());
+        // Proportionate, never absolute — and how proportionate depends on who chose the number:
+        // a quarter of the window for the default, half for a reserve the user configured.
+        const effectiveReserve = Math.min(reserve, Math.floor(window * reserveFraction));
+        if (estimate + effectiveReserve <= window) return undefined;
+        debugLog(
+          `Context guard: estimated ${estimate} prompt tokens + ${effectiveReserve} reserved for ` +
+            `the answer exceeds the ${window}-token window; compacting before the call.`
+        );
+        let result: CompactMessagesResult;
+        try {
+          result = await options.compact(messages);
+        } catch (error) {
+          // A compaction that could not get a summary leaves the conversation alone and says so.
+          // Proceeding is right: the request may still succeed, and on a provider that throws, the
+          // reactive seam gets its turn.
+          debugLog(
+            `Context guard: compaction failed, sending the request as it is: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+          return undefined;
+        }
+        if (!result.changed) return undefined;
+        options.onCompact?.(
+          `Context is nearly full (about ${estimate} tokens of a ${window}-token window, with ` +
+            `${effectiveReserve} reserved for the answer), so ${result.removedCount} earlier ` +
+            `messages were folded into a summary before this call. ${result.keptCount} kept verbatim.`
+        );
+        // The same write shape GS2-23 uses: discard everything, keep what follows.
+        return {
+          messages: [new RemoveMessage({ id: REMOVE_ALL_MESSAGES }), ...result.messages],
+        };
       },
     },
   });
@@ -668,6 +1001,39 @@ export class GthLangChainAgent extends GthAbstractAgent {
       (reason) => this.noteTermination(reason)
     );
 
+    // EXT-160: the PRE-CALL context guard. Installed UNCONDITIONALLY, and inert on every provider
+    // no window source is wired for — `resolveContextWindowSource` answers `null` there, and a null
+    // window never triggers. Wiring it that way rather than behind an `if (provider === 'ollama')`
+    // is what makes "unknown window ⇒ no compaction" the production default for nine of ten
+    // providers instead of a path only a test ever walks, and leaves [[EXT-161]] a pure addition in
+    // one file.
+    //
+    // The summariser is bound DIRECTLY to the session model — `createModelSummarizer` calls
+    // `model.invoke`, not the graph — because a summary routed through the graph would re-enter
+    // this same `beforeModel` hook. The system prompt is read through a closure because the
+    // middleware array below is assembled before the prompt is composed further down.
+    let systemPromptCharacters = 0;
+    const sessionModel = this.config.llm;
+    // The output headroom the user actually configured, when they configured one: on ollama
+    // `num_predict` caps the generation, so it is the true answer budget and a better number than
+    // any default. Absent, the default stands.
+    //
+    // Both are clamped to a fraction of the window — that is what stops a small `num_ctx` reserving
+    // its whole budget — but not to the SAME fraction, and the difference is deliberate: a number
+    // the user set is honoured up to half the window, the default only to a quarter. So a
+    // configured `numPredict` can still be reduced, and above half the window it is.
+    const configuredNumPredict = (sessionModel as { numPredict?: number } | undefined)?.numPredict;
+    const contextGuard = createContextGuardMiddleware({
+      windowSource: resolveContextWindowSource(sessionModel),
+      compact: (messages) =>
+        compactMessages({ messages, summarize: createModelSummarizer(sessionModel) }),
+      systemPromptCharacters: () => systemPromptCharacters,
+      ...(typeof configuredNumPredict === 'number' && configuredNumPredict > 0
+        ? { reserve: configuredNumPredict }
+        : {}),
+      onCompact: (message) => statusUpdate(StatusLevel.INFO, message),
+    });
+
     // EXT-52: gate the opt-in run_shell_command tool behind the per-command approval interrupt —
     // langchain's `humanInTheLoopMiddleware`. Without it,
     // no interrupt ever fires, so the runner's whole approval stack
@@ -769,6 +1135,11 @@ export class GthLangChainAgent extends GthAbstractAgent {
       mcpToolErrorSoftening,
       toolErrorBudget,
       toolLoopGuard,
+      // EXT-160: after the two guards and before user middleware. `beforeModel` hooks run forward
+      // with `jumpTo` short-circuiting, so a run the error budget or the loop guard is about to end
+      // never first pays for a summary call; and outboard of user middleware means it cannot be
+      // bypassed, like its two siblings.
+      contextGuard,
       ...approvalMiddleware,
       ...configuredMiddleware,
       toolCallStatusMiddleware,
@@ -846,6 +1217,10 @@ export class GthLangChainAgent extends GthAbstractAgent {
       ? []
       : (this.resolvers?.getMcpServerInstructions?.() ?? []);
     const systemPrompt = appendMcpServerInstructionsNote(modelContextPrompt, mcpInstructions);
+    // EXT-160: the guard above reads this through its closure. `createAgent` applies the system
+    // prompt on every call without ever putting it in `state.messages`, so without this the guard
+    // would under-count each request by its largest single block.
+    systemPromptCharacters = systemPrompt?.length ?? 0;
 
     // Create agent with configured middleware. Only pass systemPrompt when non-empty so we never
     // hand createAgent an empty system message.
