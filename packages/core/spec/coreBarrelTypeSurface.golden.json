@@ -77,6 +77,26 @@
       "arity": 0
     },
     {
+      "name": "AutocompactController",
+      "file": "core/compactionThreshold.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "AutocompactControllerOptions",
+      "file": "core/compactionThreshold.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "AutocompactStatus",
+      "file": "core/compactionThreshold.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "AutocompactThresholdOrigin",
+      "file": "core/compactionThreshold.d.ts",
+      "arity": 0
+    },
+    {
       "name": "BinaryFormatConfig",
       "file": "config/types.d.ts",
       "arity": 0
@@ -104,6 +124,11 @@
     {
       "name": "BuiltInToolsSetting",
       "file": "config/shell-policy.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "CatalogOptions",
+      "file": "providers/modelCatalog.d.ts",
       "arity": 0
     },
     {
@@ -154,6 +179,26 @@
     {
       "name": "ConsoleLevelInput",
       "file": "config/types.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ContextWindowOrigin",
+      "file": "core/contextWindow.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ContextWindowReading",
+      "file": "core/contextWindow.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ContextWindowResolutionOptions",
+      "file": "core/contextWindow.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ContextWindowSource",
+      "file": "core/contextWindow.d.ts",
       "arity": 0
     },
     {
@@ -219,6 +264,11 @@
     {
       "name": "DiscoveryKind",
       "file": "providers/modelDiscovery.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "EnrichedModel",
+      "file": "providers/modelCatalog.d.ts",
       "arity": 0
     },
     {
@@ -407,6 +457,16 @@
       "arity": 0
     },
     {
+      "name": "ModelCatalogEntry",
+      "file": "providers/modelCatalog.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ModelCost",
+      "file": "providers/modelCatalog.d.ts",
+      "arity": 0
+    },
+    {
       "name": "ModelDiscoveryOptions",
       "file": "providers/modelDiscovery.d.ts",
       "arity": 0
@@ -424,6 +484,21 @@
     {
       "name": "ModelInfo",
       "file": "providers/modelDiscovery.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ModelLimit",
+      "file": "providers/modelCatalog.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ModelModalities",
+      "file": "providers/modelCatalog.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "OllamaLikeModel",
+      "file": "core/contextWindow.d.ts",
       "arity": 0
     },
     {
@@ -472,6 +547,11 @@
       "arity": 0
     },
     {
+      "name": "ProviderCatalog",
+      "file": "providers/modelCatalog.d.ts",
+      "arity": 0
+    },
+    {
       "name": "ProviderDescriptor",
       "file": "providers/modelDiscovery.d.ts",
       "arity": 0
@@ -509,6 +589,16 @@
     {
       "name": "ResolvedApprovals",
       "file": "config/shell-policy.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ResolvedAutocompactConfig",
+      "file": "core/compactionThreshold.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "ResolvedContextWindow",
+      "file": "core/contextWindow.d.ts",
       "arity": 0
     },
     {
@@ -574,6 +664,11 @@
     {
       "name": "SummarizingModel",
       "file": "core/compaction.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "TokenBudget",
+      "file": "config/tokenBudget.d.ts",
       "arity": 0
     },
     {

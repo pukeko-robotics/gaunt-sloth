@@ -31,7 +31,8 @@ import {
   createModelSummarizer,
   type CompactMessagesResult,
 } from '#src/core/compaction.js';
-import { resolveContextWindowSource, type ContextWindowSource } from '#src/core/contextWindow.js';
+import { resolveContextWindow, type ContextWindowSource } from '#src/core/contextWindow.js';
+import { AutocompactController, resolveAutocompactConfig } from '#src/core/compactionThreshold.js';
 import { AIMessage, RemoveMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages';
 import { BaseCheckpointSaver, REMOVE_ALL_MESSAGES } from '@langchain/langgraph';
 import {
@@ -460,6 +461,43 @@ export const MAX_RESERVE_FRACTION_OF_WINDOW = 0.25;
  */
 export const MAX_EXPLICIT_RESERVE_FRACTION_OF_WINDOW = 0.5;
 
+/**
+ * EXT-160 — the answer reserve actually applied to a given window: the requested number, clamped to
+ * a fraction of the window that depends on **who chose it** (a quarter for the default, half for a
+ * number the user configured — see the two constants above).
+ *
+ * EXT-161 pulled it out of the hook because the preventive threshold's default is defined as
+ * `window − this`, and {@link AutocompactController} has to be able to compute the same number the
+ * guard would. Two copies of this arithmetic is exactly how `/status` would come to advertise a
+ * threshold the guard does not enforce.
+ */
+export function effectiveOutputReserve(
+  window: number,
+  reserve: number,
+  reserveWasConfigured: boolean
+): number {
+  const fraction = reserveWasConfigured
+    ? MAX_EXPLICIT_RESERVE_FRACTION_OF_WINDOW
+    : MAX_RESERVE_FRACTION_OF_WINDOW;
+  return Math.min(reserve, Math.floor(window * fraction));
+}
+
+/**
+ * EXT-161 — the prompt size at which a conversation is folded when the user named no threshold:
+ * the window, less the room held back for the answer.
+ *
+ * This is EXT-160's original trigger condition rearranged, not a new one — `estimate + reserve >
+ * window` and `estimate > window − reserve` are the same inequality — so the default path behaves
+ * exactly as it did before a threshold could be configured.
+ */
+export function defaultCompactionThreshold(
+  window: number,
+  reserve: number,
+  reserveWasConfigured: boolean
+): number {
+  return window - effectiveOutputReserve(window, reserve, reserveWasConfigured);
+}
+
 /** EXT-160 — what {@link createContextGuardMiddleware} needs to decide, all of it injectable. */
 export interface ContextGuardOptions {
   /**
@@ -494,6 +532,21 @@ export interface ContextGuardOptions {
   estimateTokens?: (_messages: readonly BaseMessage[], _systemPromptCharacters: number) => number;
   /** User-visible notice sink, wired to the agent's status channel. */
   onCompact?: (_message: string) => void;
+  /**
+   * EXT-161 — **the prompt size at which to fold, asked fresh on every call.**
+   *
+   * Supplied by {@link AutocompactController}, which resolves the session override, then the
+   * `autocompact` config key, then the derived default. `null` means nothing fires — an unknown
+   * window with no absolute threshold, or the off switch.
+   *
+   * A FUNCTION and not a number, for the same reason `systemPromptCharacters` is: the factory runs
+   * once per session and the hook holds no state, so a captured threshold could never be moved by
+   * an `/autocompact` typed later in the session.
+   *
+   * Omitted, the guard computes {@link defaultCompactionThreshold} itself, which is EXT-160's
+   * original behaviour and what every caller that does not configure compaction still gets.
+   */
+  thresholdSource?: () => Promise<number | null>;
 }
 
 /**
@@ -622,9 +675,6 @@ export function createContextGuardMiddleware(options: ContextGuardOptions) {
   // from "said nothing".
   const reserveWasConfigured = typeof options.reserve === 'number';
   const reserve = options.reserve ?? DEFAULT_OUTPUT_RESERVE_TOKENS;
-  const reserveFraction = reserveWasConfigured
-    ? MAX_EXPLICIT_RESERVE_FRACTION_OF_WINDOW
-    : MAX_RESERVE_FRACTION_OF_WINDOW;
   const systemPromptCharacters = options.systemPromptCharacters ?? (() => 0);
   const estimateTokens = options.estimateTokens ?? estimatePromptTokens;
   return createMiddleware({
@@ -640,16 +690,33 @@ export function createContextGuardMiddleware(options: ContextGuardOptions) {
         } catch {
           /* a source that failed knows nothing, which is already the no-trigger answer */
         }
-        // The 4097 case: an unknown window yields no guard, never a guess.
-        if (window === null || !Number.isFinite(window) || window <= 0) return undefined;
+        const hasWindow = window !== null && Number.isFinite(window) && window > 0;
+        // **ONE trigger point, however it was decided.** EXT-161 lets the session or the config
+        // name it; absent both, it is the window less the answer reserve — EXT-160's original
+        // condition rearranged, not a second notion of "full". A guard that compared the estimate
+        // against a configured threshold AND against the window would hold two ideas of full that
+        // could disagree, which is the silently-wrong-threshold failure this feature exists to end.
+        let threshold: number | null = null;
+        if (options.thresholdSource) {
+          try {
+            threshold = await options.thresholdSource();
+          } catch {
+            // A threshold that could not be resolved is not a threshold of zero; fall through to
+            // "nothing fires" and let the reactive seam catch an overflow if one comes.
+            threshold = null;
+          }
+        } else if (hasWindow) {
+          threshold = defaultCompactionThreshold(window as number, reserve, reserveWasConfigured);
+        }
+        // The 4097 case: an unknown window yields no guard, never a guess. It reaches here as a
+        // null threshold, because nothing downstream of an unknown window can name a number.
+        if (threshold === null || !Number.isFinite(threshold) || threshold <= 0) return undefined;
         const estimate = estimateTokens(messages, systemPromptCharacters());
-        // Proportionate, never absolute — and how proportionate depends on who chose the number:
-        // a quarter of the window for the default, half for a reserve the user configured.
-        const effectiveReserve = Math.min(reserve, Math.floor(window * reserveFraction));
-        if (estimate + effectiveReserve <= window) return undefined;
+        if (estimate <= threshold) return undefined;
         debugLog(
-          `Context guard: estimated ${estimate} prompt tokens + ${effectiveReserve} reserved for ` +
-            `the answer exceeds the ${window}-token window; compacting before the call.`
+          `Context guard: estimated ${estimate} prompt tokens exceeds the ${threshold}-token ` +
+            `compaction threshold${hasWindow ? ` of a ${window}-token window` : ''}; compacting ` +
+            `before the call.`
         );
         let result: CompactMessagesResult;
         try {
@@ -666,10 +733,13 @@ export function createContextGuardMiddleware(options: ContextGuardOptions) {
           return undefined;
         }
         if (!result.changed) return undefined;
+        // EXT-161 — a feature nobody opted into must be able to say what it did, so the notice
+        // names the estimate, the threshold that was crossed and the window it came from.
         options.onCompact?.(
-          `Context is nearly full (about ${estimate} tokens of a ${window}-token window, with ` +
-            `${effectiveReserve} reserved for the answer), so ${result.removedCount} earlier ` +
-            `messages were folded into a summary before this call. ${result.keptCount} kept verbatim.`
+          `Context is nearly full (about ${estimate} tokens, past the ${threshold}-token ` +
+            `compaction threshold${hasWindow ? ` for this model's ${window}-token window` : ''}), ` +
+            `so ${result.removedCount} earlier messages were folded into a summary before this ` +
+            `call. ${result.keptCount} kept verbatim.`
         );
         // The same write shape GS2-23 uses: discard everything, keep what follows.
         return {
@@ -1023,14 +1093,39 @@ export class GthLangChainAgent extends GthAbstractAgent {
     // the user set is honoured up to half the window, the default only to a quarter. So a
     // configured `numPredict` can still be reduced, and above half the window it is.
     const configuredNumPredict = (sessionModel as { numPredict?: number } | undefined)?.numPredict;
+    const reserveWasConfigured =
+      typeof configuredNumPredict === 'number' && configuredNumPredict > 0;
+    const guardReserve = reserveWasConfigured
+      ? configuredNumPredict
+      : DEFAULT_OUTPUT_RESERVE_TOKENS;
+    // EXT-161 — ONE window resolution for the whole session, read two ways: the guard takes the
+    // bare number before every model call, `/status` takes the same number with its provenance.
+    // Built from the CONFIGURED provider namespace rather than the model class's `_llmType()`,
+    // which reports `openai` for huggingface and `google` for both Gemini providers and would
+    // therefore read the wrong models.dev slice or none at all.
+    const resolvedWindow = resolveContextWindow(sessionModel, {
+      providerId: this.config.modelProviderType,
+      modelId:
+        (sessionModel as { model?: string } | undefined)?.model ?? this.config.modelDisplayName,
+    });
+    // The `autocompact` key, defaulted at the READ SITE (on by default — ruled), so an absent key
+    // stays absent in the effective-config snapshot.
+    this.autocompact = new AutocompactController({
+      config: resolveAutocompactConfig(
+        (this.config as { autocompact?: unknown } | undefined)?.autocompact
+      ),
+      window: resolvedWindow,
+      defaultThreshold: (window) =>
+        defaultCompactionThreshold(window, guardReserve, reserveWasConfigured),
+    });
+    const autocompact = this.autocompact;
     const contextGuard = createContextGuardMiddleware({
-      windowSource: resolveContextWindowSource(sessionModel),
+      windowSource: resolvedWindow.source,
+      thresholdSource: () => autocompact.threshold(),
       compact: (messages) =>
         compactMessages({ messages, summarize: createModelSummarizer(sessionModel) }),
       systemPromptCharacters: () => systemPromptCharacters,
-      ...(typeof configuredNumPredict === 'number' && configuredNumPredict > 0
-        ? { reserve: configuredNumPredict }
-        : {}),
+      ...(reserveWasConfigured ? { reserve: configuredNumPredict } : {}),
       onCompact: (message) => statusUpdate(StatusLevel.INFO, message),
     });
 

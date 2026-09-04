@@ -64,8 +64,12 @@ there opens a searchable command menu. A few worth knowing:
   the approvals you granted in it are in force again. `/resume` alone lists the conversations that
   can be resumed. The same thing from a shell is `gth chat --resume <id>`, `gth code --resume <id>`
   or `gth history resume <id>` — see [Resuming a conversation](../COMMANDS.md#resuming-a-conversation)
-- `/status` — mode, model, turn count, and the id of the conversation being recorded (the number
-  `/resume` and `gth history resume` take)
+- `/autocompact` — show the size the conversation is folded at automatically, and where that number
+  came from. With an argument it moves the threshold for this session: `/autocompact 300000`,
+  `/autocompact 300K`, `/autocompact 0.9M`, or `/autocompact 80%` for a share of the model's
+  context window. See [When the session compacts without being asked](#when-the-session-compacts-without-being-asked)
+- `/status` — mode, model, turn count, the id of the conversation being recorded (the number
+  `/resume` and `gth history resume` take), and the automatic-compaction threshold with its source
 - `/model` — show the current model / provider
 - `/verbose` — expand or collapse tool-call detail (Ctrl+T does the same, at any time)
 - `/reasoning` — reprint a turn's thinking (`/reasoning 2` for turn 2)
@@ -94,33 +98,80 @@ no further `/` after the leading one is parsed as one.
 
 ### When the session compacts without being asked
 
-`/compact` is the deliberate version of something the session also does on its own. If a provider
-rejects a turn because the conversation no longer fits, the session folds the older messages into a
-summary and sends the turn again, rather than ending with an error. It says so in one line and then
-carries on:
+`/compact` is the deliberate version of something the session does on its own, **on by default**.
+Before each request the session estimates how large the conversation has become, and if it has
+passed the threshold for your model it folds the older messages into a summary first, then sends the
+turn. It says so in one line and carries on:
+
+```
+Context is nearly full (about 158420 tokens, past the 160000-token compaction threshold for this
+model's 200000-token window), so 9 earlier messages were folded into a summary before this call.
+6 kept verbatim.
+```
+
+The transcript on screen is untouched — only what the model sees shrinks — and the change is written
+into the conversation's saved state, so a resumed session stays compacted.
+
+`/status` and `/autocompact` both print the threshold in force and where it came from, which is the
+first thing to look at if a session folds sooner or later than you expected.
+
+#### Where the threshold comes from
+
+The number is the model's real context window, less the room held back for the reply. The window is
+resolved in this order:
+
+1. the `num_ctx` your config sends on **Ollama** (`llm.numCtx`, 16384 by default), capped by the
+   model's own maximum when the daemon reports one;
+2. the [models.dev](https://models.dev) catalog, which is where cloud models' windows come from —
+   the same catalog `gth models` shows prices from, cached locally and refreshed daily;
+3. the model profile built into the provider's own package, as a backstop.
+
+**If none of them knows the model, nothing is compacted preventively** and `/status` says so. That
+is deliberate: a guessed threshold you cannot see is worse than none, because it would fold
+conversations that had room to spare. Set the number yourself if you hit this — the config key
+below, or `/autocompact` for one session — or run `gth models` once to fill the catalog cache for
+your provider.
+
+#### Setting it yourself: the `autocompact` key
+
+Fold once the prompt passes 300,000 tokens:
+
+```json
+{
+  "autocompact": 300000
+}
+```
+
+Accepted forms:
+
+| Value | Means |
+|---|---|
+| absent, or `true` | on, at the threshold derived from the model's window |
+| `false` | off — the conversation is never folded before a request |
+| `300000` | a plain token count |
+| `"300K"`, `"0.9M"`, `"1.5k"` | a suffixed count; `K` is 1000 and `M` is 1,000,000 |
+| `"80%"` | a share of the model's resolved context window |
+| `{ "enabled": true, "threshold": "80%" }` | the same, spelled out |
+
+A value the parser cannot read is a config error naming the text you wrote — it never quietly
+becomes a number. `gth init` writes a threshold for the model you pick, so a config created that way
+already carries a visible number you can edit.
+
+`/autocompact` changes it for the running session only; the key above is how you make it stick.
+
+#### When a turn overflows anyway
+
+The check above is an estimate, so a turn can still be rejected by the provider for being too large.
+When that happens the session folds the older messages and sends the turn again rather than ending
+with an error:
 
 ```
 The context overflowed, so 9 earlier messages were folded into a summary (13→5 messages). Retrying.
 ```
 
-*On the plain readline surface (`--no-tui`). The TUI and the editor integrations report the
-overflow and end the turn instead of retrying; bringing them up to this is in progress. The Ollama
-check below is not affected — it runs on every surface.*
-
-On **Ollama** it happens *before* the request instead, on **every** surface. Ollama does not reject
-an oversized conversation — the daemon quietly drops the oldest tokens to fit `num_ctx` and answers
-from what is left, so the reply looks normal while the model has forgotten the start of the session.
-There is nothing to detect afterwards, so the session estimates the size first and compacts if the
-turn would not fit:
-
-```
-Context is nearly full (about 3212 tokens of a 4096-token window, with 1024 reserved for the answer),
-so 9 earlier messages were folded into a summary before this call. 6 kept verbatim.
-```
-
-The window is the `num_ctx` your config sends (`llm.numCtx`, 16384 by default), capped by the
-model's own maximum when the daemon reports one. Some of that is held back for the reply, because
-`num_ctx` covers the question and the answer together.
+*On the plain readline surface (`--no-tui`). The TUI and the editor integrations report the overflow
+and end the turn instead of retrying; bringing them up to this is in progress. The preventive check
+above is not affected — it runs on every surface.*
 
 A turn is retried once. If the conversation still does not fit after being compacted, the turn ends
 and says why — folding it again would only eat the recent messages it just kept, so the next move is
@@ -137,7 +188,7 @@ untouched, and it comes back with the cursor where you left it once the command 
 after `/approvals`, which takes over the screen with its own picker while it runs.
 
 It works mid-turn as well, with the same rule as a typed command — the ones that are safe while the
-agent is working (`/approvals`, `/verbose`, `/debug`, `/model`, `/status`, …) run, and `/clear`,
+agent is working (`/approvals`, `/verbose`, `/debug`, `/model`, `/status`, `/autocompact`, …) run, and `/clear`,
 `/compact`, `/help`, `/exit` and `/quit` ask you to wait for the turn to finish. One thing to know before you
 open it there: while a reply is arriving, `Escape` stops the reply, and it does that as well as
 closing the menu. To leave the menu without stopping the turn, run one of the commands — or wait

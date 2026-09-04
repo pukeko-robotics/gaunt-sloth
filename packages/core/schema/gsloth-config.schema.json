@@ -2785,6 +2785,33 @@
         }
       ]
     },
+    "autocompact": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": [
+            "number",
+            "string"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "threshold": {
+              "type": [
+                "number",
+                "string"
+              ]
+            }
+          }
+        }
+      ]
+    },
     "reporters": {
       "type": "object",
       "propertyNames": {

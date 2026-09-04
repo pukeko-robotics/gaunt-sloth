@@ -9,14 +9,38 @@
  * model would compact a conversation that had all the room in the world. So every source here
  * either knows or says it does not.
  *
- * The source is **injectable and per-provider**. This node wires exactly one — ollama — because
- * ollama is the only provider that cannot report an overflow at all: it silently drops the oldest
- * tokens to fit `num_ctx` and answers from the remainder, so the only defence is to know the number
- * before the call. [[EXT-161]] adds the remaining sources (models.dev, config, the LangChain
- * profile) behind {@link resolveContextWindowSource}; every other provider resolves to `null` here
- * and is guarded reactively instead, by the compact-and-retry seam on the thrown error.
+ * The source is **injectable and per-provider**, and there are three of them, tried in a fixed
+ * order by {@link resolveContextWindow}:
+ *
+ * 1. **ollama** — the number this session will actually put on the request (`num_ctx`), capped by
+ *    the model's own `context_length`. Ollama is the only provider that cannot report an overflow
+ *    at all: it silently drops the oldest tokens to fit and answers from the remainder, so knowing
+ *    the number beforehand is the only defence.
+ * 2. **models.dev** ([[EXT-161]]) — the cloud catalog's `limit.context`, read through the
+ *    cache-first slice `providers/modelCatalog.ts` already maintains.
+ * 3. **the LangChain profile** ([[EXT-161]]) — `llm.profile.maxInputTokens`, a backstop.
+ *
+ * **models.dev outranks the profile, and the order is a ruling rather than a preference.** The
+ * profile is a table compiled into a provider package, so it moves only when that package is
+ * republished and we bump it, while the catalog refreshes on a 24h TTL. That makes a profile
+ * **wrong as well as absent**: measured on this repo's pinned packages, `deepseek-chat` reports a
+ * 1,000,000-token window from `@langchain/deepseek`'s own table. Wrong-and-confident is the failure
+ * this order avoids — an overstated window means no preventive compaction at all, which is exactly
+ * the case the reactive seam then has to catch.
+ *
+ * **A model none of the three knows resolves to `null`, and `null` triggers nothing.** There is
+ * deliberately no default anywhere in this chain: LangChain's own overflow fallback guesses 4097
+ * for an unrecognised model, which on a 262144-token local model would compact a conversation that
+ * had all the room in the world, and on an unknown cloud model would compact at roughly 3.3k tokens
+ * with nothing on screen to say why.
  */
 import { debugLog } from '#src/utils/debugUtils.js';
+import {
+  getProviderCatalog,
+  type CatalogOptions,
+  type ProviderCatalog,
+} from '#src/providers/modelCatalog.js';
+import type { ProviderId } from '#src/providers/modelDiscovery.js';
 
 /**
  * GS2-59 — default context window (`num_ctx`) for Ollama models. Ollama's OWN default is 4096, but
@@ -155,19 +179,172 @@ export function createOllamaContextWindowSource(llm: OllamaLikeModel): ContextWi
   };
 }
 
+/** Where a resolved context window came from — carried so `/status` can say, and a wrong one is
+ * diagnosable instead of mysterious. */
+export type ContextWindowOrigin = 'ollama' | 'models.dev' | 'profile' | 'unknown';
+
+/** A resolved window and its provenance. `tokens: null` means "not known", and never "zero". */
+export interface ContextWindowReading {
+  tokens: number | null;
+  origin: ContextWindowOrigin;
+}
+
+/** How each origin is described to a user, in a sentence that says where to go to change it. */
+export const CONTEXT_WINDOW_ORIGIN_LABELS: Readonly<Record<ContextWindowOrigin, string>> = {
+  ollama: "this session's num_ctx, capped by the model's own context length",
+  'models.dev': 'the models.dev catalog',
+  profile: "the provider package's built-in model profile",
+  unknown: 'nowhere — no source knows this model, so nothing is compacted preventively',
+};
+
 /**
- * The one place a provider is matched to a window source.
+ * The model's window as the LangChain provider package declares it: `llm.profile.maxInputTokens`.
  *
- * Ollama resolves to {@link createOllamaContextWindowSource}; everything else resolves to
- * {@link UNKNOWN_CONTEXT_WINDOW}, which is why the guard is installed unconditionally and is
- * nonetheless inert on nine of ten providers — no branch at the wiring site decides whether to
- * guard, so [[EXT-161]] adds providers here and nowhere else.
- *
- * **There is deliberately no `?? DEFAULT` on this path.** One fallback anywhere in the chain turns
- * every unknown window into a confident wrong number, which is the 4097 failure this file opens by
- * naming.
+ * A getter on `BaseLanguageModel` that the base class answers with `{}` and each provider package
+ * overrides, so an id its table has never heard of yields `undefined` rather than an error —
+ * measured: `gpt-4o-mini` gives 128000 and `mistralai/mistral-7b-instruct` gives nothing. Wrapped
+ * in a `try` because it is a getter on someone else's object and a throw here would take down a
+ * resolution that has a perfectly good answer to fall back to.
  */
-export function resolveContextWindowSource(llm: unknown): ContextWindowSource {
-  if (isOllamaModel(llm)) return createOllamaContextWindowSource(llm);
-  return UNKNOWN_CONTEXT_WINDOW;
+export function readProfileContextWindow(llm: unknown): number | null {
+  try {
+    const profile = (llm as { profile?: { maxInputTokens?: unknown } } | undefined)?.profile;
+    const max = profile?.maxInputTokens;
+    return typeof max === 'number' && Number.isFinite(max) && max > 0 ? max : null;
+  } catch {
+    return null;
+  }
+}
+
+/** What {@link resolveContextWindow} needs beyond the model itself — all of it injectable. */
+export interface ContextWindowResolutionOptions {
+  /**
+   * The gth provider namespace (`anthropic`, `google-genai`, …) — `config.modelProviderType`, NOT
+   * the model class's `_llmType()`. The two disagree exactly where it matters: `huggingface`
+   * reports `openai`, and both Gemini providers report `google`, so keying the catalog on the
+   * class's own label would read the wrong provider's slice or none at all.
+   */
+  providerId?: string;
+  /** The model id as models.dev keys it — `llm.model`, e.g. `claude-sonnet-4-5`. */
+  modelId?: string;
+  /**
+   * Options threaded to {@link getProviderCatalog} (cache dir, TTL, fetch impl) for hermetic tests.
+   *
+   * **`cacheOnly` defaults to `true` here and nowhere else.** This resolution sits in front of the
+   * first model call of a session, and a cold `api.json` fetch is a few MB behind a 10 s timeout —
+   * a delay the user would experience as the agent hanging before it said anything, to decide a
+   * threshold that already has a fallback. `gth init` passes `cacheOnly: false` because it is an
+   * explicit, interactive step that can afford to wait, and filling the cache there is what makes
+   * the runtime read a hit.
+   */
+  catalogOptions?: CatalogOptions;
+  /** Catalog reader override; {@link getProviderCatalog} when omitted. Injected by the tests. */
+  catalogReader?: (
+    _providerId: ProviderId,
+    _options: CatalogOptions
+  ) => Promise<ProviderCatalog | null>;
+  /** Profile reader override; {@link readProfileContextWindow} when omitted. Injected by the tests. */
+  profileReader?: (_llm: unknown) => number | null;
+}
+
+/**
+ * One resolution, read two ways: {@link ResolvedContextWindow.source} for the guard, which wants
+ * only the number, and {@link ResolvedContextWindow.read} for `/status`, which also wants the
+ * provenance.
+ *
+ * They are handed out as a pair from a single factory call, over a single memoised promise, so the
+ * number `/status` prints is by construction the number the guard enforced. Two independent
+ * resolvers could disagree — a stale catalog on one and a fresh fetch on the other — and a
+ * `/status` that describes a threshold nobody is using is worse than no `/status` line at all.
+ */
+export interface ResolvedContextWindow {
+  /** The window in tokens, or `null` for unknown. Memoised; safe to call before every model call. */
+  source: ContextWindowSource;
+  /** The same resolution with its provenance attached. Shares the memoised promise. */
+  read: () => Promise<ContextWindowReading>;
+}
+
+/**
+ * **The one place a model is matched to a context window.** Tries ollama, then models.dev, then the
+ * LangChain profile, and answers `{ tokens: null, origin: 'unknown' }` when none of them knows.
+ *
+ * **There is deliberately no `?? DEFAULT` anywhere on this path.** One fallback turns every unknown
+ * window into a confident wrong number, which is the 4097 failure this file opens by naming.
+ *
+ * The whole resolution is memoised as a PROMISE, for the reason the ollama source already gives:
+ * this runs before every model call, the answer cannot change during a session, and holding the
+ * promise rather than the value means concurrent calls share one catalog read instead of racing to
+ * make several.
+ */
+export function resolveContextWindow(
+  llm: unknown,
+  options: ContextWindowResolutionOptions = {}
+): ResolvedContextWindow {
+  const ollamaSource = isOllamaModel(llm) ? createOllamaContextWindowSource(llm) : null;
+  const catalogReader = options.catalogReader ?? getProviderCatalog;
+  const profileReader = options.profileReader ?? readProfileContextWindow;
+  const providerId = options.providerId?.trim();
+  const modelId = options.modelId?.trim();
+  let pending: Promise<ContextWindowReading> | undefined;
+
+  const resolve = async (): Promise<ContextWindowReading> => {
+    // 1. Ollama — the number the request will actually carry. It is asked first and not merely
+    //    preferred: models.dev deliberately has no ollama entry (local models have no catalog
+    //    row), so for ollama there is nothing below this to fall through to.
+    if (ollamaSource) {
+      try {
+        const tokens = await ollamaSource();
+        if (tokens !== null && Number.isFinite(tokens) && tokens > 0) {
+          return { tokens, origin: 'ollama' };
+        }
+      } catch {
+        /* the ollama source is documented never to throw; a stub still might */
+      }
+    }
+    // 2. models.dev — RULED to outrank the profile. See the module docblock for why.
+    if (providerId && modelId) {
+      try {
+        const catalog = await catalogReader(providerId as ProviderId, {
+          cacheOnly: true,
+          ...options.catalogOptions,
+        });
+        const context = catalog?.models?.[modelId]?.limit?.context;
+        if (typeof context === 'number' && Number.isFinite(context) && context > 0) {
+          return { tokens: context, origin: 'models.dev' };
+        }
+      } catch {
+        // `getProviderCatalog` never throws by contract (catalog availability must never block a
+        // model), so this catches an injected stub only — but a resolution that fell over here
+        // would take the profile backstop down with it, which is the opposite of degrading well.
+      }
+    }
+    // 3. The profile — a backstop, recorded as such so a wrong threshold is diagnosable.
+    try {
+      const profile = profileReader(llm);
+      if (profile !== null && Number.isFinite(profile) && profile > 0) {
+        return { tokens: profile, origin: 'profile' };
+      }
+    } catch {
+      /* see readProfileContextWindow: someone else's getter */
+    }
+    return { tokens: null, origin: 'unknown' };
+  };
+
+  const read = (): Promise<ContextWindowReading> => (pending ??= resolve());
+  return { read, source: async () => (await read()).tokens };
+}
+
+/**
+ * The window as a bare number, for a caller that does not need the provenance.
+ *
+ * A thin wrapper over {@link resolveContextWindow} rather than a second implementation, so the two
+ * cannot answer differently. With no options it consults only the sources that need no
+ * configuration — ollama and the profile — which is why a plain object with neither still answers
+ * `null`.
+ */
+export function resolveContextWindowSource(
+  llm: unknown,
+  options: ContextWindowResolutionOptions = {}
+): ContextWindowSource {
+  return resolveContextWindow(llm, options).source;
 }

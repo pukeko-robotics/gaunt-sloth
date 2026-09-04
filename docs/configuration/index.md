@@ -42,6 +42,7 @@ and tune. From there, follow the page for whatever you want to set up:
 | [Prompts](prompts.md) | The `prompts` object — guidelines, review, system, and the other prompt segments. |
 | [Output & files](output.md) | Where and whether `gth` writes output, run headers, logging, colour, and redaction. |
 | [Profiles & runtime](profiles.md) | Named identity profiles, subagents, the AG-UI server, and the agent backend. |
+| [Interactive sessions](../guides/interactive-sessions.md#setting-it-yourself-the-autocompact-key) | The `autocompact` key — the conversation size at which a session folds its own history. |
 
 ## Config file names and discovery
 

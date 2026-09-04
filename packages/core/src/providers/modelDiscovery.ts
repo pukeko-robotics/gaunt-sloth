@@ -466,10 +466,26 @@ export function getCuratedFallbackModel(providerId: ProviderId): string {
  * autocomplete/validation against the shipped JSON Schema (GS2-1). `$schema` is a known,
  * runtime-ignored config field (see the zod schema), so it never affects loading.
  */
-export function buildInitConfigContent(providerId: ProviderId, model?: string): string {
+export function buildInitConfigContent(
+  providerId: ProviderId,
+  model?: string,
+  options: { autocompact?: number | null } = {}
+): string {
   const llm: { type: ProviderId; model?: string } = { type: providerId };
   if (model) llm.model = model;
-  return JSON.stringify({ $schema: CONFIG_SCHEMA_POINTER, llm }, null, 2);
+  // EXT-161 — the preventive compaction threshold, seeded from the chosen model's real context
+  // window when one could be resolved. It is written as a plain number rather than a percentage
+  // because the point of seeding is that the user opens their config and reads the value that will
+  // actually be enforced, without a second lookup.
+  //
+  // **Absent when the window is unknown, and that is not a gap.** Compaction is on by default, so
+  // an omitted key still gets the runtime-derived threshold; writing a guessed number instead would
+  // put a value in the user's config that looks chosen and was not.
+  const autocompact =
+    typeof options.autocompact === 'number' && options.autocompact > 0
+      ? { autocompact: options.autocompact }
+      : {};
+  return JSON.stringify({ $schema: CONFIG_SCHEMA_POINTER, llm, ...autocompact }, null, 2);
 }
 
 /**

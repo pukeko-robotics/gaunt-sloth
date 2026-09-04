@@ -72,6 +72,7 @@ import type {
   GthRunStats,
   PendingToolInterrupt,
 } from '@gaunt-sloth/core/core/types.js';
+import type { AutocompactStatus } from '@gaunt-sloth/core/core/compactionThreshold.js';
 import { type BaseMessage, HumanMessage } from '@langchain/core/messages';
 import { createResolvers } from '#src/resolvers.js';
 import { resolveAgentFactory } from '#src/core/resolveAgentFactory.js';
@@ -85,6 +86,8 @@ import {
   compactionFailedNotice,
   compactionNotice,
   createCommandRegistry,
+  autocompactNotice,
+  autocompactUnavailableNotice,
   dispatchSlashCommand,
   formatConfigSummary,
   parseSlashCommand,
@@ -163,6 +166,25 @@ const rememberedAnswerLine = (decision: 'approve' | 'reject', landed: ApprovalLi
         'if you resume it later. It was not written to the project, so another conversation will ' +
         'ask about it again; lift it with /approvals undeny.';
 };
+
+/**
+ * EXT-161 — the preventive compaction threshold for `/status`, read fail-soft.
+ *
+ * **The method is optional in the parameter type on purpose.** Every runner this surface is given
+ * in production implements it, but a partially-stubbed one must not be able to break slash-command
+ * dispatch altogether: the worst an unavailable threshold may cost is the compaction line missing
+ * from `/status`, which is exactly what an unresolved model already produces. A status line that
+ * could take the session down would be worse than no status line.
+ */
+async function readAutocompactStatus(runner: {
+  getAutocompactStatus?: () => Promise<AutocompactStatus | undefined>;
+}): Promise<AutocompactStatus | undefined> {
+  try {
+    return await runner.getAutocompactStatus?.();
+  } catch {
+    return undefined;
+  }
+}
 
 export interface SessionConfig {
   mode: 'chat' | 'code';
@@ -714,10 +736,16 @@ export async function createInteractiveSession(
         // path (`/usr/home/bob/test.md`) is NOT a command and falls through to the model below.
         const parsed = parseSlashCommand(userInput);
         if (parsed) {
+          // EXT-161 — the threshold `/status` reports, read fresh on every dispatch rather than
+          // cached in this closure, so it follows an `/autocompact` typed a moment ago. The
+          // resolution behind it is memoised per session, so this is a promise wrapper after the
+          // first call and never touches the network twice.
+          const autocompactStatus = await readAutocompactStatus(runner);
           const result = dispatchSlashCommand(parsed, registry, {
             mode: sessionConfig.mode,
             modelDisplayName: config.modelDisplayName ?? '',
             turnCount,
+            autocompact: autocompactStatus,
             // GS2-20 — the id `/status` names and `gth history resume` takes; live, so it follows
             // a mid-session `/resume`.
             conversationId,
@@ -777,6 +805,21 @@ export async function createInteractiveSession(
               // Report the posture the runner actually LANDED on, not the one requested.
               printNotice(approvalsRungNotice(runner.getSessionApprovals()));
             }
+          } else if (result.autocompact) {
+            // EXT-161 — `/autocompact [budget]`: report or move the preventive compaction
+            // threshold for this session. The notice is built from the status the runner RETURNS,
+            // so it can only describe the threshold actually in force — including the case where
+            // there is no resolved model and nothing was changed.
+            const request = result.autocompact;
+            const status =
+              'show' in request
+                ? await readAutocompactStatus(runner)
+                : await runner.setAutocompactThreshold?.(request.budget);
+            printNotice(
+              status
+                ? autocompactNotice(status, !('show' in request))
+                : autocompactUnavailableNotice()
+            );
           } else if (result.compact) {
             // GS2-23 — `/compact [focus]`: the runner folds the older conversation in the live
             // graph and reports what LANDED; the notice is built from that, never from what was

@@ -39,6 +39,9 @@ import { z } from 'zod';
 // `constants.ts` is a plain, import-free string module, so this does NOT compromise the purity
 // this file depends on (it feeds `z.toJSONSchema` and must stay cwd/fs-independent).
 import { GSLOTH_DIR, GSLOTH_SETTINGS_DIR } from '#src/constants.js';
+// `tokenBudget.ts` is likewise import-free and pure, for the same reason: this file feeds
+// `z.toJSONSchema` and must stay cwd/fs-independent.
+import { parseTokenBudget, TOKEN_BUDGET_FORMS, TokenBudgetError } from '#src/config/tokenBudget.js';
 
 const filesystemSchema = z.union([z.array(z.string()), z.enum(['all', 'read', 'none'])]);
 
@@ -645,6 +648,53 @@ const toolLoopGuardSchema = z.union([
 ]);
 
 /**
+ * EXT-161 — a token budget as a user writes it: a count (`300000`), a suffixed count (`"300K"`,
+ * `"0.9M"`) or a share of the model's context window (`"80%"`).
+ *
+ * **Validation runs the real parser rather than a second regex.** A schema pattern that merely
+ * looked like the grammar would be a second implementation of it, free to drift from the one that
+ * actually computes the number — and the drift would surface as a value that validates and then
+ * resolves to something else. Running {@link parseTokenBudget} here means a value passes validation
+ * if and only if the parser can read it, and the rejection carries the parser's own message, which
+ * names the offending text.
+ */
+const tokenBudgetSchema = z.union([z.number(), z.string()]).superRefine((value, ctx) => {
+  try {
+    parseTokenBudget(value);
+  } catch (error) {
+    ctx.addIssue({
+      code: 'custom',
+      message:
+        error instanceof TokenBudgetError
+          ? error.message
+          : `Invalid token budget: ${TOKEN_BUDGET_FORMS}`,
+    });
+  }
+});
+
+/**
+ * EXT-161 — preventive conversation compaction. **On by default**, so an absent key means enabled
+ * with a threshold derived from the model's resolved context window.
+ *
+ * `false` is the whole off switch. A bare count or suffixed string sets the threshold. The object
+ * form spells both out: `{ enabled: false }` and `false` mean the same thing, and
+ * `{ threshold: "80%" }` is a share of the window rather than a count.
+ *
+ * The shorthand union mirrors `toolLoopGuard` deliberately — one config idiom for "off / on with
+ * defaults / on with a number", so a reader who has met one has met both. Defaulting happens at the
+ * read site (`resolveAutocompactConfig`), not in DEFAULT_CONFIG, so the effective-config snapshot
+ * does not churn.
+ */
+const autocompactSchema = z.union([
+  z.boolean(),
+  tokenBudgetSchema,
+  z.object({
+    enabled: z.boolean().optional(),
+    threshold: tokenBudgetSchema.optional(),
+  }),
+]);
+
+/**
  * CFG-18 — the per-tool config object carried as a value in the widened `builtInTools` registry.
  * One permissive shape covering every tool: `command` for the fixed dev-command tools
  * (run_tests/run_lint/run_build/run_single_test), the EXT-12 execution knobs for
@@ -1023,6 +1073,13 @@ export const rawGthConfigSchema = z.looseObject({
   // HALT (default OFF, opt-in) ends the run cleanly at the threshold. Defaulted at the read site
   // (warn on), not in DEFAULT_CONFIG, so the effective-config snapshot never churns.
   toolLoopGuard: toolLoopGuardSchema.optional(),
+  // EXT-161 — preventive conversation compaction: fold the older conversation into a summary
+  // BEFORE the request that would not fit, rather than after the provider has rejected it. ON BY
+  // DEFAULT (absent = enabled), with the threshold derived from the model's real context window —
+  // models.dev first, the provider package's model profile as a backstop, and NO compaction at all
+  // when neither knows the window. `false` turns it off; a count/`"300K"`/`"80%"` sets the
+  // threshold; `/autocompact` moves it for one session. See {@link autocompactSchema}.
+  autocompact: autocompactSchema.optional(),
   // BATCH-19 — custom `gth eval` reporters. Maps a reporter NAME (as selected with
   // `--reporter <name>`) to a MODULE PATH (relative to the project dir) whose default export is an
   // `EvalReporterFactory` (`() => EvalReporter`). Registered through the same seam the bundled

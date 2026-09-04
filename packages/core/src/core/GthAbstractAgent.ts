@@ -30,6 +30,7 @@ import { collectDeclaredMcpToolAnnotations } from '#src/core/approvals/toolAnnot
 import type { DebugCapture, DebugRequestExtras, LastModelRequest } from '#src/core/debugCapture.js';
 import { modelProviderLabel } from '#src/core/modelLabel.js';
 import { replaceGraphMessages } from '#src/core/compaction.js';
+import type { AutocompactController } from '#src/core/compactionThreshold.js';
 import { createPlainToolIndication } from '#src/core/plainToolIndication.js';
 import { runHeaderLine } from '#src/core/runHeader.js';
 import { debugLog, debugLogError, debugLogObject } from '#src/utils/debugUtils.js';
@@ -313,6 +314,19 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
    * only the LAST call — no accumulation, so the "pay nothing until you need it" intent is kept.
    */
   public lastModelRequest: LastModelRequest | undefined;
+
+  /**
+   * EXT-161 — the preventive compaction threshold in force, and the session's ability to move it.
+   *
+   * Set by the backend's `init` once the model is resolved, because the threshold is derived from
+   * that model's context window. It is the SAME object the context guard reads before every model
+   * call, so `/status` cannot advertise a threshold the guard is not enforcing and `/autocompact`
+   * cannot set one the guard will not see.
+   *
+   * Undefined before `init`, and on a surface with no lean graph behind it (the TUI fixture agent),
+   * where `/autocompact` and `/status` say the threshold is unavailable rather than inventing one.
+   */
+  public autocompact: AutocompactController | undefined;
 
   /**
    * GS2-56 — stash the last model request (the as-sent messages + {@link DebugRequestExtras}).

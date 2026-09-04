@@ -168,6 +168,8 @@ import {
   createModelSummarizer,
   DEFAULT_KEEP_RECENT,
 } from '#src/core/compaction.js';
+import type { AutocompactStatus } from '#src/core/compactionThreshold.js';
+import type { TokenBudget } from '#src/config/tokenBudget.js';
 
 /**
  * GS2-48 — how many trailing messages of the in-flight turn to hand the crash handler as the
@@ -3706,6 +3708,44 @@ export class GthAgentRunner {
    * next human turn present before the model is invoked again is the caller's job. Does nothing on
    * a conversation no longer than the kept tail: `changed: false`, nothing written.
    */
+  /**
+   * EXT-161 — the preventive compaction threshold in force, with its provenance, or `undefined`
+   * when this session has no resolved model to derive one from.
+   *
+   * Read by `/status` and by the bare `/autocompact`. Asynchronous because resolving a context
+   * window can reach the models.dev cache (and, on a cold cache, the network) — memoised behind
+   * the agent's one window resolution, so calling it per command costs nothing after the first.
+   *
+   * **Never throws.** A status line that could take a session down would be worse than a missing
+   * one, and every source under it already degrades to "unknown" rather than failing.
+   */
+  public async getAutocompactStatus(): Promise<AutocompactStatus | undefined> {
+    try {
+      return await this.agent?.autocompact?.status();
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * EXT-161 — move the preventive compaction threshold for the rest of this session.
+   *
+   * Returns the status that LANDED, so the surface's notice describes what is actually in force
+   * rather than what was asked for — the same discipline `/approvals` and `/compact` follow.
+   * `undefined` when there is no resolved model, in which case nothing was changed.
+   *
+   * Takes an already-parsed budget: the grammar is the shared parser's, and a second entry point
+   * accepting text would be a second place it could drift.
+   */
+  public async setAutocompactThreshold(
+    budget: TokenBudget
+  ): Promise<AutocompactStatus | undefined> {
+    const controller = this.agent?.autocompact;
+    if (!controller) return undefined;
+    controller.setSessionBudget(budget);
+    return this.getAutocompactStatus();
+  }
+
   public async compactConversation(
     options: CompactConversationOptions = {}
   ): Promise<ConversationCompaction> {

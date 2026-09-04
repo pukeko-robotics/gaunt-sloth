@@ -132,6 +132,20 @@ export interface CatalogOptions {
   fetchImpl?: typeof fetch;
   /** Override the TTL window in ms (defaults to {@link CATALOG_TTL_MS}). */
   ttlMs?: number;
+  /**
+   * EXT-161 — **read the cache and never reach the network**, returning the cached slice whether
+   * it is fresh or stale, and `null` when there is none.
+   *
+   * For callers on a latency-critical path that would rather have no answer than a slow one. The
+   * context guard runs before the first model call of a session, and `api.json` is a few MB behind
+   * a 10 s timeout: a cold cache would put that delay in front of the user's first turn, to decide
+   * a threshold that has a perfectly good fallback (the model profile) and whose absence costs only
+   * that one session's preventive compaction. The cache is filled by `gth init` and
+   * `gth models --refresh`, which are explicit and can afford to wait.
+   *
+   * Ignored when {@link refresh} is set — an explicit refresh is a request to go to the network.
+   */
+  cacheOnly?: boolean;
 }
 
 /** Resolve the per-provider cache directory. */
@@ -263,6 +277,9 @@ export async function getProviderCatalog(
   if (cached && !options.refresh && isFresh(cached, options)) {
     return cached;
   }
+  // EXT-161 — a cache-only caller takes what is on disk, stale or absent, and never waits on the
+  // network. `refresh` overrides it, because an explicit refresh IS a request to go and fetch.
+  if (options.cacheOnly && !options.refresh) return cached;
 
   const fetchImpl = options.fetchImpl ?? fetch;
   try {

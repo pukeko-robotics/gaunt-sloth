@@ -77,9 +77,14 @@ describe('GS2-23 /compact — registry', () => {
     expect(result.notice?.title).toBe('/compact is not available while the agent is working');
   });
 
-  it('is reachable from the slash menu by prefix', () => {
+  it('is reachable from the slash menu by prefix, and leads its sibling there', () => {
+    // EXT-161 added `/autocompact`, whose name CONTAINS `compact`, and the menu filter matches on
+    // substring — so `comp` now offers both. `/compact` staying FIRST is the part worth pinning:
+    // it is the command that prefix has always meant, and a menu that put the new sibling ahead of
+    // it would change what Enter does for everyone who already types `/comp` + Enter.
     expect(filterSlashCommands(createCommandRegistry(), 'comp').map((c) => c.name)).toEqual([
       'compact',
+      'autocompact',
     ]);
   });
 });

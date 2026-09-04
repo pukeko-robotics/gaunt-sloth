@@ -18,6 +18,8 @@ import type {
   TranscriptItem,
   TuiAppProps,
 } from '#src/tui/types.js';
+import type { AutocompactStatus } from '@gaunt-sloth/core/core/compactionThreshold.js';
+import type { TokenBudget } from '@gaunt-sloth/core/config.js';
 import type {
   ApprovalLifetime,
   AttackHaltAnswer,
@@ -64,6 +66,8 @@ import {
   approvalsUndenyNotice,
   COMPACTING_LINE,
   compactionFailedNotice,
+  autocompactNotice,
+  autocompactUnavailableNotice,
   compactionNotice,
   compactionUnavailableNotice,
   createCommandRegistry,
@@ -274,6 +278,15 @@ export function App(props: TuiAppProps): React.ReactElement {
    * a second `/compact` is refused like any idle-only command. Nothing else keys on it.
    */
   const compactingRef = useRef(false);
+  /**
+   * EXT-161 — the preventive compaction threshold in force, for `/status`.
+   *
+   * A ref rather than state because nothing on screen re-renders when it changes: it is read only
+   * when a slash command is dispatched, and `/status` builds its lines synchronously from the
+   * command context while resolving a context window is asynchronous. Seeded on mount and
+   * refreshed whenever `/autocompact` moves it.
+   */
+  const autocompactRef = useRef<AutocompactStatus | undefined>(undefined);
   /**
    * GS2-20 — whether a `/resume <id>` is being resolved. Held for the same reason as
    * `compactingRef`: the thread is about to change under the session, and a turn started now
@@ -748,6 +761,51 @@ export function App(props: TuiAppProps): React.ReactElement {
     [agent]
   );
 
+  // EXT-161 — `/autocompact [budget]`: report or move the preventive compaction threshold.
+  //
+  // The status is held in a ref as well as pushed as a notice, because `/status` renders from the
+  // SYNCHRONOUS command context and resolving a window is async. Refreshing the ref here (and once
+  // on mount, below) is what makes `/status` report a session override rather than the value it
+  // replaced — a `/status` still calling a hand-typed number "models.dev-derived" would send the
+  // next diagnosis to the wrong place entirely.
+  const applyAutocompact = useCallback(
+    async (request: { show: true } | { budget: TokenBudget }): Promise<void> => {
+      const commit = (notice: { title: string; lines: string[]; tone?: CommandNoticeTone }) =>
+        push({ kind: 'notice', ...notice, tone: notice.tone ?? 'info' });
+      const changed = !('show' in request);
+      const run = changed
+        ? agent.setAutocompactThreshold?.(request.budget)
+        : agent.getAutocompactStatus?.();
+      if (!run) {
+        commit(autocompactUnavailableNotice());
+        return;
+      }
+      const status = await run;
+      autocompactRef.current = status;
+      commit(status ? autocompactNotice(status, changed) : autocompactUnavailableNotice());
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [agent]
+  );
+
+  // EXT-161 — seed the `/status` snapshot once the session is up. Fire-and-forget and fail-soft:
+  // an unresolved threshold leaves the ref undefined, and `/status` then says nothing about
+  // compaction rather than claiming a state it does not know.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const status = await agent.getAutocompactStatus?.();
+        if (!cancelled) autocompactRef.current = status;
+      } catch {
+        /* a status line must never be able to take the session down */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [agent]);
+
   // GS2-20 — `/resume [<id>]`. The agent resolves and applies through the one seam `--resume`
   // uses at boot and reports what was decided; this only renders that decision. A landed resume
   // replaces the screen: the transcript on it belonged to the conversation being left, and the
@@ -1098,6 +1156,9 @@ export function App(props: TuiAppProps): React.ReactElement {
             // TUI-C37 — undefined (not false) when this surface has no mouse layer, so `/mouse`
             // says it is unavailable rather than silently reporting "off".
             mouseEnabled: props.mouseEnabled === undefined ? undefined : mouseEnabledRef.current,
+            // EXT-161 — the threshold `/status` reports; seeded on mount and refreshed by
+            // `/autocompact`, so a session override is what a later `/status` describes.
+            autocompact: autocompactRef.current,
             configSummary: props.configSummary,
             // TUI-C19 — the actual validation warnings so `/config` renders the details the
             // standing advisory line points at.
@@ -1172,6 +1233,11 @@ export function App(props: TuiAppProps): React.ReactElement {
         // handler itself stays synchronous, like every other effect here.
         if (result.compact) {
           void applyCompaction(result.compact.focus);
+        }
+        // EXT-161 — `/autocompact`: the same shape as `/compact`, awaited inside the helper, which
+        // commits its own notice and refreshes the snapshot `/status` reads.
+        if (result.autocompact) {
+          void applyAutocompact(result.autocompact);
         }
         // GS2-20 — `/resume`: the same shape as `/compact` — awaited inside the helper, which
         // commits its own notices or replaces the transcript with the resumed conversation.

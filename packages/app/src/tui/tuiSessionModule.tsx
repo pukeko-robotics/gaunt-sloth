@@ -835,6 +835,15 @@ export async function createTuiSession(
       compactConversation(input) {
         return runner.compactConversation(input);
       },
+      // EXT-161 — `/autocompact` and the `/status` threshold line. Both go through the runner,
+      // which reads the SAME controller the context guard consults before every model call, so
+      // the number on screen is the number being enforced.
+      getAutocompactStatus() {
+        return runner.getAutocompactStatus();
+      },
+      setAutocompactThreshold(budget) {
+        return runner.setAutocompactThreshold(budget);
+      },
       // GS2-20 — `/resume <id>`: resolve and apply through the seam `--resume` used above, then
       // move THIS module's recorder id so `logTurn` records the next turn under the resumed
       // conversation. The App gets back exactly what was decided.

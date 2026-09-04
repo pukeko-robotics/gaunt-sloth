@@ -30,6 +30,11 @@
  * public import path `@gaunt-sloth/core/config.js` (and `#src/config.js`) is unchanged.
  */
 export * from '#src/config/types.js';
+// EXT-161 — the ONE token-budget parser, shared by the `autocompact` config key and the in-session
+// `/autocompact` command. It is exported from the barrel precisely so the command can reach it:
+// `packages/agent` imports `@gaunt-sloth/core/config.js`, and a parser it could not reach is a
+// parser it would reimplement.
+export * from '#src/config/tokenBudget.js';
 export * from '#src/config/shell-policy.js';
 export * from '#src/config/tool-descriptions.js';
 export * from '#src/config/filesystem-tools.js';

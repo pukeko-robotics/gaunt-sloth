@@ -173,9 +173,14 @@ describe('EXT-160 — the ollama context window source', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('answers null for every provider no source is wired for', async () => {
-    // The production default for nine of ten providers, not a test-only path — which is why the
-    // guard is installed unconditionally and is nonetheless inert on all of them.
+  it('answers null when no window source, no catalog identity and no profile know the window', async () => {
+    // EXT-161 narrowed what this pins, and the name and comment are updated with it rather than
+    // left asserting something that stopped being true. Before EXT-161 this was "the production
+    // default for nine of ten providers"; now anthropic and its peers DO resolve, through
+    // models.dev or the LangChain profile. What survives — and what these fixtures actually
+    // exercise — is the floor underneath all three tiers: no ollama endpoint, no `providerId`
+    // passed so the catalog cannot be consulted, and a bare object with no `maxInputTokens`
+    // getter. That floor answers null, and an unknown window still fires nothing.
     expect(await resolveContextWindowSource({ _llmType: () => 'anthropic' })()).toBeNull();
     expect(await resolveContextWindowSource({})()).toBeNull();
     expect(await resolveContextWindowSource(undefined)()).toBeNull();

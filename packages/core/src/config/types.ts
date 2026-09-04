@@ -534,6 +534,31 @@ export interface GthConfig {
    */
   toolLoopGuard?: boolean | { warn?: boolean; halt?: boolean; threshold?: number };
   /**
+   * EXT-161 — **preventive conversation compaction: ON BY DEFAULT.**
+   *
+   * When the conversation is about to outgrow the model's context window, the older part is folded
+   * into a summary *before* the request is sent, rather than after the provider has rejected it.
+   * The threshold is derived from the model's real window — the models.dev catalog first, the
+   * provider package's own model profile as a backstop — and when neither knows the window,
+   * **nothing fires**: a guessed threshold is worse than none, because the user cannot see it.
+   *
+   * - `false` (or `{ enabled: false }`) turns it off; the conversation is never folded
+   *   preventively and `state.messages` is left exactly as it is.
+   * - `true` / omitted → on, with the threshold derived from the window.
+   * - a count (`300000`), a suffixed count (`'300K'`, `'0.9M'`) or a share of the window
+   *   (`'80%'`) sets the threshold explicitly. `K` is 1000 and `M` is 1,000,000 — decimal, because
+   *   provider token counts are decimal everywhere.
+   * - object → `{ enabled?, threshold? }` spells both out.
+   *
+   * A malformed threshold is a hard validation error naming the offending text; it never silently
+   * becomes `NaN`, `0` or a default. `/autocompact` moves the number for one session, and
+   * `/status` reports the number in force and where it came from.
+   *
+   * The on-by-default is applied at the read site (`resolveAutocompactConfig`), not in
+   * `DEFAULT_CONFIG`, to avoid churning the effective-config snapshot.
+   */
+  autocompact?: boolean | number | string | { enabled?: boolean; threshold?: number | string };
+  /**
    * CFG-37 — persistent surface preference for the `chat`/`code` interactive sessions, settable in
    * both the global and the project config (the project layer wins). `true` asks for the Ink TUI,
    * `false` for the plain readline session, absent leaves the terminal auto-detect in charge —

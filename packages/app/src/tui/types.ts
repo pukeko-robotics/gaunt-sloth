@@ -20,6 +20,8 @@ import type {
 } from '@gaunt-sloth/core/config.js';
 import type { ApprovalGrant } from '@gaunt-sloth/core/core/approvals/grants.js';
 import type { ConversationCompaction } from '@gaunt-sloth/core/core/compaction.js';
+import type { AutocompactStatus } from '@gaunt-sloth/core/core/compactionThreshold.js';
+import type { TokenBudget } from '@gaunt-sloth/core/config.js';
 import type { ApprovalStopPart } from '@gaunt-sloth/core/core/shell/approvalStop.js';
 import type { GthTerminationReason } from '@gaunt-sloth/core/core/terminationReason.js';
 import type { LiveNegotiationRound } from '@gaunt-sloth/core/core/shell/negotiation.js';
@@ -159,6 +161,23 @@ export interface TuiAgent {
    * says compaction is unavailable rather than pretending.
    */
   compactConversation?(input: { focus?: string }): Promise<ConversationCompaction>;
+  /**
+   * EXT-161 — the preventive compaction threshold in force, with its provenance. Wired to
+   * `runner.getAutocompactStatus`, and read both by `/autocompact` with no argument and by
+   * `/status`.
+   *
+   * Optional so the fixture agent (no resolved model, so no context window) may omit it, in which
+   * case `/status` says nothing about compaction and `/autocompact` reports it unavailable.
+   */
+  getAutocompactStatus?(): Promise<AutocompactStatus | undefined>;
+  /**
+   * EXT-161 — move that threshold for the rest of the session (`/autocompact 300K`). Returns the
+   * status that LANDED, so the notice can only describe the threshold actually in force.
+   *
+   * Takes an already-parsed budget: the grammar belongs to the one shared parser, and a surface
+   * that re-read text would be a second place it could drift.
+   */
+  setAutocompactThreshold?(budget: TokenBudget): Promise<AutocompactStatus | undefined>;
   /**
    * GS2-20 — re-enter a stored conversation: the session module resolves and applies it through
    * the one seam `--resume <id>` also uses (`sessionResume.ts`), moves its own recorder onto the

@@ -9,6 +9,10 @@ import {
   type ModelInfo,
   type ProviderId,
 } from '@gaunt-sloth/core/providers/modelDiscovery.js';
+// EXT-161 — the seeded preventive-compaction threshold, and the window resolution behind it.
+import { resolveContextWindow } from '@gaunt-sloth/core/core/contextWindow.js';
+import { seedAutocompactThreshold } from '@gaunt-sloth/core/core/compactionThreshold.js';
+import type { CatalogOptions } from '@gaunt-sloth/core/providers/modelCatalog.js';
 import { getGlobalGslothConfigWritePath } from '@gaunt-sloth/core/utils/globalConfigUtils.js';
 import { validateProfileName } from '@gaunt-sloth/core/config.js';
 import {
@@ -120,8 +124,29 @@ export function defaultModelIndex(models: ModelInfo[]): number {
  * First-run always has an explicit model chosen, so it is written into the config (unlike a bare
  * `init <provider>` template, which omits the model to track the curated fallback, CFG-14).
  */
-export function buildConfigContent(providerId: ProviderId, model: string): string {
-  return `${buildInitConfigContent(providerId, model)}\n`;
+export async function buildConfigContent(
+  providerId: ProviderId,
+  model: string,
+  options: { catalogOptions?: CatalogOptions } = {}
+): Promise<string> {
+  // EXT-161 — seed the preventive compaction threshold from the chosen model's REAL context
+  // window. This is the one init path that has an explicit model to look up (a bare
+  // `init <provider>` deliberately omits the model to track the curated fallback), which is why
+  // the seeding lives here.
+  //
+  // `undefined` for the model instance on purpose: nothing has been constructed yet, so there is
+  // no LangChain profile to read and the resolution is the models.dev tier alone — which is the
+  // ruled-preferred source anyway. An unresolved window seeds NO key, and the runtime default then
+  // applies; it never seeds a guess.
+  // `cacheOnly: false` — unlike the runtime guard, init is an explicit interactive step that can
+  // afford the fetch, and filling the cache here is what makes every later runtime read a hit.
+  const window = await resolveContextWindow(undefined, {
+    providerId,
+    modelId: model,
+    catalogOptions: { cacheOnly: false, ...options.catalogOptions },
+  }).source();
+  const autocompact = seedAutocompactThreshold(window);
+  return `${buildInitConfigContent(providerId, model, { autocompact })}\n`;
 }
 
 /**
@@ -403,7 +428,7 @@ export async function runFirstRunDialog(
     if (scope === 'project') {
       deps.ensureGslothDir();
     }
-    const writtenPath = deps.writeConfig(scope, buildConfigContent(provider.id, model));
+    const writtenPath = deps.writeConfig(scope, await buildConfigContent(provider.id, model));
 
     displaySuccess(`Configured ${provider.label} / ${model} (${scope}).`);
     displayInfo(`Config written to ${writtenPath}`);

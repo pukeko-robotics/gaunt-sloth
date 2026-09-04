@@ -23,6 +23,10 @@ import type {
   ResolvedApprovals,
   ToolAnnotationHint,
 } from '@gaunt-sloth/core/config.js';
+import type { TokenBudget } from '@gaunt-sloth/core/config.js';
+import { parseTokenBudget, TokenBudgetError } from '@gaunt-sloth/core/config.js';
+import type { AutocompactStatus } from '@gaunt-sloth/core/core/compactionThreshold.js';
+import { CONTEXT_WINDOW_ORIGIN_LABELS } from '@gaunt-sloth/core/core/contextWindow.js';
 import {
   APPROVAL_POSTURES,
   APPROVAL_PROTECTION_DOCS_LINES,
@@ -77,6 +81,16 @@ export interface SlashCommandContext {
   toolsExpanded: boolean;
   /** Whether the docked debug panel is currently shown (drives `/debug` copy). */
   debugVisible: boolean;
+  /**
+   * EXT-161 — the preventive compaction threshold in force, for `/status`.
+   *
+   * A snapshot rather than a live read because `run` is synchronous and resolving a window can do
+   * I/O. The surface refreshes it when the session starts and again whenever `/autocompact`
+   * changes it, which is what makes `/status` report a session override rather than the seeded
+   * value it replaced. Omitted on a surface with no resolved model (the fixture agent), where
+   * `/status` simply says nothing about compaction instead of claiming a state it cannot know.
+   */
+  autocompact?: AutocompactStatus;
   /**
    * TUI-C37 — whether terminal mouse reporting is currently on (drives `/mouse` copy). Undefined on
    * surfaces that have no mouse layer at all, where `/mouse` reports itself unavailable rather than
@@ -385,6 +399,18 @@ export interface SlashCommandResult {
    * the free text after the command — what the summary should concentrate on.
    */
   compact?: { focus?: string };
+  /**
+   * EXT-161 — a request from `/autocompact` to report or move the preventive compaction threshold.
+   *
+   * Takes the same route as `approvals` and `compact`: the command cannot reach the agent, so it
+   * states the request — already PARSED, so the surface never re-reads the grammar — and the
+   * surface applies it and reports what landed. `{ show: true }` is the bare form, which reports
+   * rather than erroring; `{ budget }` sets it for the rest of the session.
+   *
+   * A malformed argument never reaches here: the command answers with its own `notice` and leaves
+   * the threshold in force, because a typo must not switch a protection off.
+   */
+  autocompact?: { show: true } | { budget: TokenBudget };
   /**
    * GS2-20 — a request from `/resume` to re-enter a stored conversation. With an `id` the surface
    * resolves and applies it through the one seam in `sessionResume.ts` — the same two calls
@@ -1371,6 +1397,102 @@ export function compactionFailedNotice(reason: string): SlashCommandNotice {
 }
 
 /**
+ * EXT-161 — how a resolved threshold and its provenance read to a person.
+ *
+ * One renderer for both `/autocompact` and `/status`, so the two cannot describe the same number
+ * differently — which they would within a release of being written separately.
+ */
+export function autocompactLines(status: AutocompactStatus): string[] {
+  const windowPart =
+    status.window === null
+      ? "This model's context window is not known to any source we have."
+      : `Model context window: ${formatCount(status.window)} tokens, from ` +
+        `${CONTEXT_WINDOW_ORIGIN_LABELS[status.windowOrigin]}.`;
+
+  if (!status.enabled) {
+    return [
+      'Automatic compaction is OFF for this session (`autocompact: false`).',
+      windowPart,
+      'The conversation is never folded before a request; an overflow is caught after the fact ' +
+        'instead, if the provider reports one.',
+    ];
+  }
+  if (status.thresholdTokens === null) {
+    return [
+      'Automatic compaction is on, but nothing will trigger it.',
+      windowPart,
+      'A threshold is never guessed — a wrong one would fold conversations that had room to ' +
+        'spare, silently. Set one yourself with `/autocompact 300K` for this session, or the ' +
+        '`autocompact` config key to make it stick.',
+    ];
+  }
+  const provenance: Record<AutocompactStatus['thresholdOrigin'], string> = {
+    session: 'set with /autocompact in this session (the config value is overridden until it ends)',
+    config: 'from the `autocompact` key in your config',
+    default: "derived from the window, holding back room for the model's answer",
+    none: 'nothing will trigger it',
+  };
+  return [
+    `Automatic compaction is ON. The conversation is folded once the prompt passes about ` +
+      `${formatCount(status.thresholdTokens)} tokens.`,
+    `Threshold: ${provenance[status.thresholdOrigin]}.`,
+    windowPart,
+  ];
+}
+
+/** EXT-161 — the notice `/autocompact` prints, whether it reported or changed the threshold. */
+export function autocompactNotice(status: AutocompactStatus, changed: boolean): SlashCommandNotice {
+  return {
+    title: changed ? 'Automatic compaction threshold set' : 'Automatic compaction',
+    lines: [
+      ...autocompactLines(status),
+      ...(changed
+        ? [
+            'This applies to the rest of this session only. To make it permanent, set the ' +
+              '`autocompact` key in your config.',
+          ]
+        : []),
+    ],
+  };
+}
+
+/**
+ * EXT-161 — `/autocompact` on a surface with no resolved model behind it (the fixture agent), or
+ * before the agent has initialised. It reports unavailability rather than inventing a number.
+ */
+export function autocompactUnavailableNotice(): SlashCommandNotice {
+  return {
+    title: 'Automatic compaction unavailable',
+    lines: [
+      'This session has no resolved model, so there is no context window to set a threshold ' +
+        'against.',
+      'Nothing was changed.',
+    ],
+    tone: 'warn',
+  };
+}
+
+/**
+ * EXT-161 — a malformed `/autocompact` argument.
+ *
+ * **The previous threshold stays in force.** A bad argument must not disable compaction: the user
+ * asked to change a number, not to switch a protection off, and a typo that silently turned the
+ * feature off would be discovered only by an overflow much later.
+ */
+export function autocompactRejectedNotice(message: string): SlashCommandNotice {
+  return {
+    title: 'Not a token budget',
+    lines: [
+      message,
+      'Usage: /autocompact [<tokens>] — e.g. 300000, 300K, 0.9M, or 80% of the context window; ' +
+        'with no argument it reports the threshold in force.',
+      'The threshold already in force is unchanged.',
+    ],
+    tone: 'warn',
+  };
+}
+
+/**
  * Build the default command registry. Returns a fresh array each call so callers may push
  * extension commands onto it (EXT-5) without sharing mutable module state.
  */
@@ -1401,6 +1523,38 @@ export function createCommandRegistry(): SlashCommand[] {
       run: (_ctx, args) => {
         const focus = args.join(' ').trim();
         return { compact: focus.length > 0 ? { focus } : {} };
+      },
+    },
+    {
+      name: 'autocompact',
+      // **One line, deliberately.** `SlashCommandMenu` renders every matching command with no
+      // viewport, so each wrapped description costs a row of the screen the menu shares with the
+      // prompt — and the PTY cell that types a draft, opens the menu and asserts the draft is still
+      // underneath goes red when the list outgrows the terminal. The forms and the provenance are
+      // in the guide; `/help` gets the shortest line that still says what the command does.
+      description: 'Show or set the automatic compaction threshold (/autocompact [300K | 80%])',
+      // Read-only with no argument and a pure session setting with one, so it is safe mid-turn:
+      // the threshold is read before the NEXT model call, and moving it does not touch the
+      // conversation or the turn in flight.
+      availableDuringRun: true,
+      // EXT-161 — the parse happens HERE, in the pure command, through the SAME
+      // `parseTokenBudget` the `autocompact` config key validates with. That shared import is the
+      // point of the command living in this node: a second grammar for the same three forms would
+      // agree on the day it was written and drift afterwards.
+      run: (_ctx, args) => {
+        if (args.length === 0) return { autocompact: { show: true } };
+        // Joined rather than `args[0]`: `300 K` arrives as two tokens and is the same budget as
+        // `300K`, which the shared parser already accepts.
+        const text = args.join(' ').trim();
+        try {
+          return { autocompact: { budget: parseTokenBudget(text) } };
+        } catch (error) {
+          return {
+            notice: autocompactRejectedNotice(
+              error instanceof TokenBudgetError ? error.message : String(error)
+            ),
+          };
+        }
       },
     },
     {
@@ -1537,6 +1691,10 @@ export function createCommandRegistry(): SlashCommand[] {
               ? `Conversation: #${ctx.conversationId} — pick it up later with ` +
                 `\`gth history resume ${ctx.conversationId}\`, or switch with /resume <id>.`
               : 'Conversation: not being recorded, so this session cannot be resumed later.',
+            // EXT-161 — compaction is on by default, so `/status` is where a feature nobody opted
+            // into says what it will do and where its number came from. One line, the same
+            // renderer `/autocompact` uses; omitted entirely when no model is resolved.
+            ...(ctx.autocompact ? autocompactLines(ctx.autocompact) : []),
             'Restart with a different subcommand to change the mode (e.g. `gth chat`).',
           ],
         },

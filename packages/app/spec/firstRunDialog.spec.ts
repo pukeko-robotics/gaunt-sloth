@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DetectedProvider, ModelInfo } from '@gaunt-sloth/core/providers/modelDiscovery.js';
 import { CONFIG_SCHEMA_POINTER } from '@gaunt-sloth/core/constants.js';
+import { DEFAULT_AUTOCOMPACT_SEED_FRACTION } from '@gaunt-sloth/core/core/compactionThreshold.js';
 
 // Silence the menu output during tests.
 vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => ({
@@ -16,6 +17,21 @@ vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => ({
 // readline / non-TTY branch under test (a plain printed line, no real Ink). The runFirstRunDialog
 // tests inject their own select/withProgress, so they never reach this path.
 vi.mock('#src/tui/shouldUseTui.js', () => ({ shouldUseTui: vi.fn(() => false) }));
+
+/**
+ * EXT-161 — the dialog now seeds a compaction threshold from the chosen model's models.dev entry,
+ * so the catalog is stubbed here. Without this the suite would fetch `api.json` over the network
+ * and write the slice into the DEVELOPER'S OWN `~/.gsloth/model-catalog/` — measured, before this
+ * stub existed. A unit suite must not touch either.
+ *
+ * The default answer is `null` (no catalog entry), which is what leaves the written config
+ * unchanged for every assertion that predates this node; the seeding test below sets a slice.
+ */
+const getProviderCatalogMock = vi.fn(async (): Promise<unknown> => null);
+vi.mock('@gaunt-sloth/core/providers/modelCatalog.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@gaunt-sloth/core/providers/modelCatalog.js')>()),
+  getProviderCatalog: (...args: unknown[]) => getProviderCatalogMock(...(args as [])),
+}));
 
 import {
   displayError,
@@ -117,8 +133,8 @@ describe('firstRunDialog pure helpers', () => {
     expect(providerReadinessLabel(provider({ id: 'openai', available: false }))).toBe('No API Key');
   });
 
-  it('buildConfigContent stamps the $schema pointer + chosen llm, with a trailing newline', () => {
-    const content = buildConfigContent('anthropic', 'claude-sonnet-4-5');
+  it('buildConfigContent stamps the $schema pointer + chosen llm, with a trailing newline', async () => {
+    const content = await buildConfigContent('anthropic', 'claude-sonnet-4-5');
     const parsed = JSON.parse(content);
     // GS2-1: the interactive first-run path must stamp the same $schema pointer as the per-provider
     // template writers, so an editor offers autocomplete/validation on a config created via `gth init`.
@@ -126,9 +142,64 @@ describe('firstRunDialog pure helpers', () => {
     expect(parsed.llm).toEqual({ type: 'anthropic', model: 'claude-sonnet-4-5' });
     expect(content.endsWith('\n')).toBe(true);
   });
+
+  /**
+   * EXT-161 acceptance — **the seeded threshold is derived from THIS model's `limit.context`.**
+   *
+   * The discriminating part is the pair: two models in one catalog slice with different windows
+   * must seed different numbers. A single-model assertion would pass just as well against a
+   * hard-coded constant, which is the shape of "assertion that cannot fail" this node's acceptance
+   * explicitly warns about.
+   */
+  it('seeds the compaction threshold from the chosen model’s models.dev context limit', async () => {
+    getProviderCatalogMock.mockResolvedValue({
+      providerId: 'anthropic',
+      providerKey: 'anthropic',
+      fetchedAt: Date.now(),
+      models: {
+        'claude-sonnet-4-5': { limit: { context: 200_000 } },
+        'claude-haiku-4-5': { limit: { context: 500_000 } },
+      },
+    });
+
+    const big = JSON.parse(await buildConfigContent('anthropic', 'claude-haiku-4-5'));
+    const small = JSON.parse(await buildConfigContent('anthropic', 'claude-sonnet-4-5'));
+
+    expect(small.autocompact).toBe(Math.floor(200_000 * DEFAULT_AUTOCOMPACT_SEED_FRACTION));
+    expect(big.autocompact).toBe(Math.floor(500_000 * DEFAULT_AUTOCOMPACT_SEED_FRACTION));
+    // The two must actually differ, or neither number was read off the model that was asked for.
+    expect(big.autocompact).toBeGreaterThan(small.autocompact);
+  });
+
+  /**
+   * EXT-161 — a model the catalog has never heard of seeds NO key at all.
+   *
+   * The control for the test above: seeding a guess would put a number in the user's config that
+   * looks chosen and was not. An absent key leaves the runtime-derived default in charge, which is
+   * the honest outcome.
+   */
+  it('seeds no threshold at all for a model the catalog does not know', async () => {
+    getProviderCatalogMock.mockResolvedValue({
+      providerId: 'anthropic',
+      providerKey: 'anthropic',
+      fetchedAt: Date.now(),
+      models: { 'claude-sonnet-4-5': { limit: { context: 200_000 } } },
+    });
+    const parsed = JSON.parse(await buildConfigContent('anthropic', 'some-model-nobody-lists'));
+    expect(parsed.autocompact).toBeUndefined();
+    expect(parsed.llm).toEqual({ type: 'anthropic', model: 'some-model-nobody-lists' });
+  });
 });
 
 describe('runFirstRunDialog', () => {
+  // EXT-161 — back to "the catalog knows nothing" for this block, so the written-config assertions
+  // stay about what the DIALOG writes. The seeding tests above set a slice, and a mocked resolved
+  // value persists across tests; without this reset one of them would silently decide the config
+  // body asserted here.
+  beforeEach(() => {
+    getProviderCatalogMock.mockResolvedValue(null);
+  });
+
   let deps: FirstRunDialogDeps;
   let writeConfig: ReturnType<typeof vi.fn>;
   let ensureGslothDir: ReturnType<typeof vi.fn>;

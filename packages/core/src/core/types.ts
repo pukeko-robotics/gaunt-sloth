@@ -1,6 +1,7 @@
 import type { GthConfig } from '#src/config.js';
 import type { DeclaredToolAnnotations } from '#src/core/approvals/annotations.js';
 import type { ApprovalSubject } from '#src/core/approvals/matcher.js';
+import type { AutocompactController } from '#src/core/compactionThreshold.js';
 import type { RaterNegotiationRound, ShellSafetyVerdict } from '#src/core/shell/rater.js';
 import type {
   GthFinishReasonObservation,
@@ -647,6 +648,19 @@ export interface GthAgentInterface {
    * receives no granted list (and so suggests nothing).
    */
   getRegisteredToolNames?(): string[];
+
+  /**
+   * EXT-161 — the preventive compaction threshold in force, and the handle that moves it.
+   *
+   * The runner exposes it to the surfaces so `/status` can report the number and `/autocompact` can
+   * change it. It is the SAME object the context guard reads before every model call, which is what
+   * stops `/status` advertising a threshold nobody enforces.
+   *
+   * Optional and undefined before `init`: an agent with no resolved model (the TUI fixture agent)
+   * has no context window to set a threshold against, and the commands say so rather than
+   * inventing one.
+   */
+  autocompact?: AutocompactController | undefined;
 
   /**
    * EXT-70 (spec §4.7.1) — what the connected MCP servers declared about their own tools in their
