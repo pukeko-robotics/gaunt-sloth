@@ -46,6 +46,13 @@ import { DatabaseSync } from 'node:sqlite';
 import { BaseCheckpointSaver, copyCheckpoint } from '@langchain/langgraph';
 import type { Checkpoint, CheckpointMetadata, CheckpointTuple } from '@langchain/langgraph';
 import type { RunnableConfig } from '@langchain/core/runnables';
+import {
+  collectCheckpointStoreStats,
+  deleteThreads,
+  reclaimUnresumableThreads,
+  type CheckpointStoreStats,
+  type ReclaimSummary,
+} from '#src/history/checkpointRetention.js';
 
 /**
  * The abstract members' own parameter types, read off the base class rather than imported.
@@ -509,8 +516,23 @@ export class GthSqliteSaver extends BaseCheckpointSaver {
   }
 
   async deleteThread(threadId: string): Promise<void> {
-    this.db.prepare(`DELETE FROM checkpoints WHERE thread_id = ?`).run(threadId);
-    this.db.prepare(`DELETE FROM checkpoint_writes WHERE thread_id = ?`).run(threadId);
+    deleteThreads(this.db, [threadId]);
+  }
+
+  /**
+   * GS2-107 — delete every thread no conversation row names, past the grace window. The retention
+   * module owns the policy and the reasoning; this is the saver's own connection lent to it, so a
+   * session that already has the store open can reclaim without opening it again.
+   */
+  reclaimUnresumableThreads(
+    options: { now?: number; graceMs?: number; excludeThreadIds?: readonly string[] } = {}
+  ): ReclaimSummary {
+    return reclaimUnresumableThreads(this.db, options);
+  }
+
+  /** GS2-107 — what the checkpoint tables hold, over this saver's open connection. */
+  storeStats(dbPath: string, topN?: number): CheckpointStoreStats {
+    return collectCheckpointStoreStats(this.db, dbPath, topN);
   }
 }
 

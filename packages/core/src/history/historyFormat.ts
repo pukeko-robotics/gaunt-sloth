@@ -13,6 +13,11 @@ import type {
   SessionRecord,
   SessionSearchResult,
 } from '#src/history/historyStore.js';
+import type {
+  CheckpointStoreStats,
+  PrunableConversation,
+  ReclaimSummary,
+} from '#src/history/checkpointRetention.js';
 
 /** Collapse whitespace and clip to `max` chars with an ellipsis, for one-line previews. */
 function oneLine(text: string | undefined, max = 80): string {
@@ -94,6 +99,147 @@ export function formatConversationThread(turns: SessionRecord[]): string[] {
     const response = oneLine(t.response, 200);
     if (response) lines.push(`    ${response}`);
   });
+  return lines;
+}
+
+/**
+ * GS2-107 — a byte count a person can read at a glance. Binary units, one decimal above KB, because
+ * the number this renders is the answer to "how much of my disk is this", not an accounting figure.
+ */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '0 B';
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(1)} ${units[unit]}`;
+}
+
+/**
+ * GS2-107 — the one line that makes the conversation store's volume visible where a person already
+ * looks (`gth history list`), naming both the detail and the remedy so neither has to be discovered.
+ *
+ * The file size and the checkpoint share are separate numbers because the same file also holds the
+ * transcripts and the search index; one figure labelled as checkpoints would overstate them.
+ */
+export function formatStoreSizeLine(stats: CheckpointStoreStats): string {
+  const threads = `${stats.threadCount} ${stats.threadCount === 1 ? 'thread' : 'threads'}`;
+  return (
+    `Conversation store: ${formatBytes(stats.fileBytes)} on disk, of which ` +
+    `${formatBytes(stats.checkpointBytes)} is ${stats.checkpointCount} checkpoints across ` +
+    `${threads}. \`gth insights\` breaks it down; \`gth history prune\` reclaims it.`
+  );
+}
+
+/**
+ * GS2-107 — the readout in full, for `gth insights`: what the checkpoint tables hold, how much of it
+ * is already unreachable, and which threads are the big ones.
+ */
+export function formatCheckpointStoreStats(stats: CheckpointStoreStats): string[] {
+  if (stats.checkpointCount === 0) {
+    return [
+      'Conversation store: no checkpoints recorded. Interactive `chat` and `code` sessions ' +
+        'write the state a resume needs; other commands do not.',
+    ];
+  }
+  const lines: string[] = [];
+  lines.push(`Database file: ${formatBytes(stats.fileBytes)} (${stats.dbPath})`);
+  lines.push(
+    `Checkpoints: ${stats.checkpointCount} across ${stats.threadCount} ` +
+      `${stats.threadCount === 1 ? 'thread' : 'threads'}, ${formatBytes(stats.checkpointBytes)} ` +
+      `including ${stats.writeCount} pending writes`
+  );
+  if (stats.unresumableThreadCount > 0) {
+    lines.push(
+      `Unresumable: ${stats.unresumableThreadCount} ` +
+        `${stats.unresumableThreadCount === 1 ? 'thread' : 'threads'} no conversation names, ` +
+        `${formatBytes(stats.unresumableBytes)} — reclaimed automatically a day after the ` +
+        'session that wrote them ends.'
+    );
+  }
+  if (stats.largestThreads.length > 0) {
+    lines.push('Largest threads:');
+    for (const t of stats.largestThreads) {
+      const owner =
+        t.conversationId != null
+          ? `conversation #${t.conversationId}${t.command ? ` [${t.command}]` : ''}`
+          : 'no conversation (not resumable)';
+      lines.push(`  ${formatBytes(t.bytes)}  ${t.checkpointCount} checkpoints  ${owner}`);
+    }
+  }
+  return lines;
+}
+
+/**
+ * GS2-107 — what `gth history prune` will remove, said BEFORE it removes it. A prune costs a resume,
+ * so the plan names every conversation by the id a person would have typed to resume it, and states
+ * plainly that the transcript is not what is going away.
+ */
+export function formatPrunePlan(
+  candidates: PrunableConversation[],
+  unaddressableThreads: number,
+  unaddressableBytes: number
+): string[] {
+  const lines: string[] = [];
+  if (candidates.length === 0 && unaddressableThreads === 0) {
+    return ['Nothing to prune: no stored conversation state matches those bounds.'];
+  }
+  if (candidates.length > 0) {
+    const bytes = candidates.reduce((sum, c) => sum + c.bytes, 0);
+    lines.push(
+      `Would remove the stored state of ${candidates.length} ` +
+        `${candidates.length === 1 ? 'conversation' : 'conversations'} (${formatBytes(bytes)}):`
+    );
+    for (const c of candidates) {
+      lines.push(
+        `  #${c.conversationId}  ${c.lastActivityTs}` +
+          `${c.command ? `  [${c.command}]` : ''}  ${c.turnCount} ` +
+          `${c.turnCount === 1 ? 'turn' : 'turns'}  ${c.checkpointCount} checkpoints  ` +
+          formatBytes(c.bytes)
+      );
+    }
+    lines.push(
+      'Their transcripts stay: `gth history list` and `gth history show <id>` keep working. What ' +
+        'goes is the state a resume needs, so those conversations can no longer be resumed.'
+    );
+  }
+  if (unaddressableThreads > 0) {
+    lines.push(
+      `Also reclaims ${unaddressableThreads} ` +
+        `${unaddressableThreads === 1 ? 'thread' : 'threads'} no conversation names ` +
+        `(${formatBytes(unaddressableBytes)}), which nothing could have resumed.`
+    );
+  }
+  return lines;
+}
+
+/** GS2-107 — what a completed prune actually removed. */
+export function formatPruneResult(
+  removed: ReclaimSummary,
+  fileBytesBefore: number,
+  fileBytesAfter: number,
+  vacuumed: boolean
+): string[] {
+  const lines = [
+    `Removed ${removed.checkpointCount} checkpoints and ${removed.writeCount} pending writes ` +
+      `across ${removed.threadCount} ${removed.threadCount === 1 ? 'thread' : 'threads'} ` +
+      `(${formatBytes(removed.bytes)} of stored state).`,
+  ];
+  if (vacuumed) {
+    lines.push(
+      `Database file: ${formatBytes(fileBytesBefore)} → ${formatBytes(fileBytesAfter)} after VACUUM.`
+    );
+  } else {
+    lines.push(
+      'The rows are gone, but the file could not be compacted (VACUUM needs the database to ' +
+        'itself). It will be reused for new checkpoints; run the prune again with no other ' +
+        'session open to shrink it.'
+    );
+  }
   return lines;
 }
 

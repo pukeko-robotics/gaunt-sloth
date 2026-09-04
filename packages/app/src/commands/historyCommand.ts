@@ -6,9 +6,22 @@ import { lookupConversationSafe } from '@gaunt-sloth/core/history/recordSession.
 import {
   formatConversationList,
   formatConversationThread,
+  formatPrunePlan,
+  formatPruneResult,
   formatSearchResults,
+  formatStoreSizeLine,
 } from '@gaunt-sloth/core/history/historyFormat.js';
-import { display, displayInfo, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
+import {
+  openCheckpointMaintenance,
+  type PruneBounds,
+} from '@gaunt-sloth/core/history/checkpointRetention.js';
+import {
+  display,
+  displayInfo,
+  displaySuccess,
+  displayWarning,
+} from '@gaunt-sloth/core/utils/consoleUtils.js';
+import { statSync } from 'node:fs';
 import { parseResumeId } from '@gaunt-sloth/agent/modules/sessionResume.js';
 
 /**
@@ -90,7 +103,8 @@ export function historyCommand(
     .option('--db <path>', 'path to the history DB (defaults to ~/.gsloth/history.db)')
     .option('--limit <n>', 'maximum results', '20')
     .action((options: { db?: string; limit?: string }) => {
-      const store = openHistoryStore(resolveHistoryDbPath(options.db), { create: false });
+      const dbPath = resolveHistoryDbPath(options.db);
+      const store = openHistoryStore(dbPath, { create: false });
       if (!store) {
         displayWarning(NO_HISTORY_MESSAGE);
         return;
@@ -102,6 +116,17 @@ export function historyCommand(
         for (const line of formatConversationList(conversations)) display(line);
       } finally {
         store.close();
+      }
+      // GS2-107 — the size readout goes HERE, under the listing, because this is the screen a
+      // person is already on when they wonder what the store holds. One line: the volume, where
+      // the breakdown is, and what reclaims it.
+      const maintenance = openCheckpointMaintenance(dbPath);
+      if (!maintenance) return;
+      try {
+        const stats = maintenance.stats(dbPath);
+        if (stats.checkpointCount > 0) display(formatStoreSizeLine(stats));
+      } finally {
+        maintenance.close();
       }
     });
 
@@ -127,6 +152,85 @@ export function historyCommand(
         for (const line of formatConversationThread(turns)) display(line);
       } finally {
         store.close();
+      }
+    });
+
+  // GS2-107 — the half of the retention policy that can cost a resume, and therefore the half a
+  // person has to type. Automatic reclamation removes only threads no conversation names; this
+  // removes stored state someone could still have resumed, so:
+  //
+  // - it takes an explicit bound and refuses to guess one. A default here would be an age-based
+  //   retention policy applied to everybody without being asked, which is exactly what the ruling
+  //   GS2-20 was built to ("resume sheds nothing") forbids;
+  // - it prints the plan and removes nothing until `--yes`. The dry run is the default because the
+  //   second layer of it matters more than the keystroke: an invocation that forgets `--db` resolves
+  //   to the developer's own `~/.gsloth/history.db`;
+  // - it prunes WHOLE conversations. A count bound here means "keep the N most recent
+  //   conversations", never "keep the last N super-steps of a thread" — a checkpoint chain is not
+  //   safe to truncate in the middle as a policy, whatever one graph's channel schema allows today.
+  history
+    .command('prune')
+    .description('Remove stored conversation state (transcripts stay) and reclaim the file')
+    .option('--older-than <days>', 'prune conversations with no activity for this many days')
+    .option('--keep-last <n>', 'keep the N most recently active conversations, prune the rest')
+    .option('--yes', 'actually remove; without it this prints the plan and changes nothing')
+    .option('--db <path>', 'path to the history DB (defaults to ~/.gsloth/history.db)')
+    .addHelpText(
+      'after',
+      '\n' +
+        'A pruned conversation keeps its transcript — `gth history show <id>` still prints it —\n' +
+        'and loses only the state a resume needs. Threads no conversation names are reclaimed\n' +
+        'automatically a day after the session ends; this is for the rest.\n' +
+        '\n' +
+        'Examples:\n' +
+        '  $ gth history prune --older-than 30\n' +
+        '  $ gth history prune --keep-last 20 --yes\n'
+    )
+    .action((options: { olderThan?: string; keepLast?: string; yes?: boolean; db?: string }) => {
+      const olderThanDays = parseBound(options.olderThan, 'older-than');
+      const keepLast = parseBound(options.keepLast, 'keep-last');
+      if (olderThanDays === 'invalid' || keepLast === 'invalid') return;
+      if (olderThanDays === undefined && keepLast === undefined) {
+        displayWarning(
+          'Nothing was removed: `gth history prune` needs a bound. Use `--older-than <days>`, ' +
+            '`--keep-last <n>`, or both — this command can make a conversation unresumable, so it ' +
+            'never picks one for you.'
+        );
+        return;
+      }
+      const dbPath = resolveHistoryDbPath(options.db);
+      const maintenance = openCheckpointMaintenance(dbPath);
+      if (!maintenance) {
+        displayWarning(NO_HISTORY_MESSAGE);
+        return;
+      }
+      try {
+        const bounds: PruneBounds = { olderThanDays, keepLast };
+        const candidates = maintenance.prunable(bounds);
+        // The automatic set rides along: it is free, it cannot cost a resume, and reporting it here
+        // is how a person finds out how much of the store was never reachable in the first place.
+        const unaddressable = maintenance.unaddressable();
+        const unaddressableBytes = maintenance.bytesOf(unaddressable);
+        displayInfo('History prune:');
+        for (const line of formatPrunePlan(candidates, unaddressable.length, unaddressableBytes)) {
+          display(line);
+        }
+        if (candidates.length === 0 && unaddressable.length === 0) return;
+        if (!options.yes) {
+          displayWarning('Nothing was removed. Re-run with `--yes` to remove it.');
+          return;
+        }
+        const before = fileBytes(dbPath);
+        const removed = maintenance.remove([
+          ...candidates.map((c) => c.threadId),
+          ...unaddressable,
+        ]);
+        const vacuumed = maintenance.vacuum();
+        const after = fileBytes(dbPath);
+        for (const line of formatPruneResult(removed, before, after, vacuumed)) display(line);
+        displaySuccess('History prune complete.');
+      } finally {
+        maintenance.close();
       }
     });
 
@@ -187,6 +291,36 @@ export function historyCommand(
         resumeConversationId: id,
       });
     });
+}
+
+/**
+ * GS2-107 — parse a prune bound. `undefined` when the flag was not given, `'invalid'` (having said
+ * so) when it was given as something that is not a positive whole number.
+ *
+ * A bad bound is refused rather than clamped, unlike `--limit` below: clamping a listing to 20 rows
+ * costs a reader nothing, and quietly reinterpreting the bound on a command that deletes state would
+ * remove a different set from the one the person asked for.
+ */
+function parseBound(raw: string | undefined, flag: string): number | undefined | 'invalid' {
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) {
+    displayWarning(
+      `Nothing was removed: \`--${flag} ${raw}\` is not a whole number of ` +
+        `${flag === 'older-than' ? 'days' : 'conversations'}.`
+    );
+    return 'invalid';
+  }
+  return n;
+}
+
+/** The database file's size on disk, or 0 when it cannot be read. */
+function fileBytes(dbPath: string): number {
+  try {
+    return statSync(dbPath).size;
+  } catch {
+    return 0;
+  }
 }
 
 /** Parse and bound a `--limit` option (1..500); falls back to 20 on a bad value. */
