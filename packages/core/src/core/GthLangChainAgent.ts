@@ -384,15 +384,36 @@ export const ESTIMATE_SAFETY_MARGIN = 1.1;
 export const DEFAULT_OUTPUT_RESERVE_TOKENS = 2048;
 
 /**
- * EXT-160 — the largest fraction of the window the reserve is allowed to claim.
+ * EXT-160 — the largest fraction of the window the **default** reserve is allowed to claim.
  *
  * A fixed reserve is meaningless against a window near its own size: measured live on a
  * deliberately small `num_ctx` of 2048, the flat 2048-token reserve made `estimate + reserve >
  * window` true for every call whatever the conversation held, so the guard folded on every turn and
  * spent a summary call each time. The clamp keeps the reserve proportionate — a quarter of the
  * window is still real headroom for an answer, and it can never be the whole budget.
+ *
+ * This applies to the number nobody chose. A reserve the user configured is clamped by
+ * {@link MAX_EXPLICIT_RESERVE_FRACTION_OF_WINDOW} instead, and the reason is below.
  */
 export const MAX_RESERVE_FRACTION_OF_WINDOW = 0.25;
+
+/**
+ * EXT-160 — the largest fraction of the window a **configured** reserve is allowed to claim.
+ *
+ * A user who sets `llm.numPredict` has named an answer budget, which the default has not, so
+ * clamping it to a quarter of the window silently gives them less than they asked for and then
+ * truncates the answer — the exact failure the reserve exists to prevent, reintroduced by the fix
+ * for a different one. Measured: at `numCtx: 16384` with `numPredict: 8192`, a quarter-clamp holds
+ * back 4096, the guard sees 16140 against 16384 and passes the turn, and the answer is then short
+ * by 3852 tokens.
+ *
+ * **A configured number can still be reduced, and this is where.** Above half the window it is cut
+ * to half, because a reserve larger than that leaves less room for the conversation than for the
+ * answer, and at that point no conversation fits and the guard would fold on every turn — the
+ * thrashing the default clamp exists to stop. So: honoured up to half the window, reduced beyond
+ * it.
+ */
+export const MAX_EXPLICIT_RESERVE_FRACTION_OF_WINDOW = 0.5;
 
 /** EXT-160 — what {@link createContextGuardMiddleware} needs to decide, all of it injectable. */
 export interface ContextGuardOptions {
@@ -407,8 +428,14 @@ export interface ContextGuardOptions {
    */
   compact: (_messages: BaseMessage[]) => Promise<CompactMessagesResult>;
   /**
-   * Tokens held back for the answer; {@link DEFAULT_OUTPUT_RESERVE_TOKENS} when omitted, and
-   * clamped by {@link MAX_RESERVE_FRACTION_OF_WINDOW} whatever it is set to.
+   * Tokens held back for the answer; {@link DEFAULT_OUTPUT_RESERVE_TOKENS} when omitted.
+   *
+   * Whether this was set matters, not just its value: an omitted reserve is clamped by
+   * {@link MAX_RESERVE_FRACTION_OF_WINDOW}, a configured one by the more generous
+   * {@link MAX_EXPLICIT_RESERVE_FRACTION_OF_WINDOW}, because a number the user chose says something
+   * the default does not. Passing the default value explicitly therefore takes the configured
+   * path — which is what a caller forwarding `llm.numPredict` wants, and what a test pinning the
+   * default must avoid.
    */
   reserve?: number;
   /**
@@ -491,7 +518,14 @@ export function estimatePromptTokens(
  * own call re-enters this hook.
  */
 export function createContextGuardMiddleware(options: ContextGuardOptions) {
+  // Whether the caller named a reserve, kept separately from its value: the two are clamped
+  // differently, and `reserve === DEFAULT_OUTPUT_RESERVE_TOKENS` cannot tell "chose the default"
+  // from "said nothing".
+  const reserveWasConfigured = typeof options.reserve === 'number';
   const reserve = options.reserve ?? DEFAULT_OUTPUT_RESERVE_TOKENS;
+  const reserveFraction = reserveWasConfigured
+    ? MAX_EXPLICIT_RESERVE_FRACTION_OF_WINDOW
+    : MAX_RESERVE_FRACTION_OF_WINDOW;
   const systemPromptCharacters = options.systemPromptCharacters ?? (() => 0);
   const estimateTokens = options.estimateTokens ?? estimatePromptTokens;
   return createMiddleware({
@@ -510,11 +544,9 @@ export function createContextGuardMiddleware(options: ContextGuardOptions) {
         // The 4097 case: an unknown window yields no guard, never a guess.
         if (window === null || !Number.isFinite(window) || window <= 0) return undefined;
         const estimate = estimateTokens(messages, systemPromptCharacters());
-        // Proportionate, never absolute: see MAX_RESERVE_FRACTION_OF_WINDOW.
-        const effectiveReserve = Math.min(
-          reserve,
-          Math.floor(window * MAX_RESERVE_FRACTION_OF_WINDOW)
-        );
+        // Proportionate, never absolute — and how proportionate depends on who chose the number:
+        // a quarter of the window for the default, half for a reserve the user configured.
+        const effectiveReserve = Math.min(reserve, Math.floor(window * reserveFraction));
         if (estimate + effectiveReserve <= window) return undefined;
         debugLog(
           `Context guard: estimated ${estimate} prompt tokens + ${effectiveReserve} reserved for ` +
@@ -885,8 +917,12 @@ export class GthLangChainAgent extends GthAbstractAgent {
     const sessionModel = this.config.llm;
     // The output headroom the user actually configured, when they configured one: on ollama
     // `num_predict` caps the generation, so it is the true answer budget and a better number than
-    // any default. Absent, the default stands — and either way it is clamped to a fraction of the
-    // window, which is what stops a small `num_ctx` reserving its whole budget.
+    // any default. Absent, the default stands.
+    //
+    // Both are clamped to a fraction of the window — that is what stops a small `num_ctx` reserving
+    // its whole budget — but not to the SAME fraction, and the difference is deliberate: a number
+    // the user set is honoured up to half the window, the default only to a quarter. So a
+    // configured `numPredict` can still be reduced, and above half the window it is.
     const configuredNumPredict = (sessionModel as { numPredict?: number } | undefined)?.numPredict;
     const contextGuard = createContextGuardMiddleware({
       windowSource: resolveContextWindowSource(sessionModel),

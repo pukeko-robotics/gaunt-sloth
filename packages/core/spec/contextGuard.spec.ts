@@ -357,10 +357,12 @@ describe('EXT-160 — the pre-call guard hook', () => {
     // window` true for EVERY call whatever the conversation holds, so the guard folded on every
     // turn and spent a summary call each time. A short conversation in a small window must be left
     // alone.
+    // The reserve is deliberately NOT passed. This cell is the regression pin for the live
+    // thrashing, which happened on the DEFAULT reserve, and a default passed explicitly takes the
+    // configured path with its more generous clamp — the same number, a different rule.
     const compact = vi.fn(realCompact);
     const middleware = createContextGuardMiddleware({
       windowSource: async () => 2048,
-      reserve: DEFAULT_OUTPUT_RESERVE_TOKENS,
       compact,
     });
     const short = [new HumanMessage('hello'), new AIMessage('hi')];
@@ -370,25 +372,93 @@ describe('EXT-160 — the pre-call guard hook', () => {
     // The clamp is a ceiling, not a floor: a conversation genuinely near the window still trips.
     const nearlyFull = createContextGuardMiddleware({
       windowSource: async () => 2048,
-      reserve: DEFAULT_OUTPUT_RESERVE_TOKENS,
       compact: vi.fn(realCompact),
     });
     expect(await runHook(nearlyFull, longHistory())).toBeDefined();
   });
 
-  it('never lets the clamped reserve exceed its quarter of the window', async () => {
-    const window = 4000;
-    const cap = Math.floor(window * MAX_RESERVE_FRACTION_OF_WINDOW);
-    const messages = longHistory();
-    const estimate = estimatePromptTokens(messages);
-    // A history that clears the window with more than the CAP to spare must not trigger, however
-    // large the configured reserve.
-    const middleware = createContextGuardMiddleware({
-      windowSource: async () => estimate + cap + 10,
-      reserve: 100_000,
-      compact: vi.fn(realCompact),
-    });
-    expect(await runHook(middleware, messages)).toBeUndefined();
+  /**
+   * Every number below is written out rather than derived from the constant under test. An earlier
+   * version of this cell computed its own cap as `window * MAX_RESERVE_FRACTION_OF_WINDOW` and then
+   * sized the window from that, so the arithmetic followed the constant wherever it went and the
+   * cell could not fail on a change to it — the assertion-that-cannot-fail shape. The clamp's VALUE
+   * is the entire content of the fix for the live thrashing, so it is pinned here in both
+   * directions with fixed numbers and an injected estimate.
+   */
+  it('pins the DEFAULT reserve at a quarter of the window — in both directions', async () => {
+    const fixedEstimate = (estimate: number) => () => estimate;
+
+    // Raising the fraction must red this. Window 4096, estimate 3000, default reserve:
+    //   at 1/4 the reserve is 1024 and 3000 + 1024 = 4024 fits, so nothing happens;
+    //   at 1/2 it is 2048 and 3000 + 2048 = 5048 does not fit, so it would compact.
+    const fits = vi.fn(realCompact);
+    expect(
+      await runHook(
+        createContextGuardMiddleware({
+          windowSource: async () => 4096,
+          compact: fits,
+          estimateTokens: fixedEstimate(3000),
+        }),
+        longHistory()
+      )
+    ).toBeUndefined();
+    expect(fits).not.toHaveBeenCalled();
+
+    // Lowering it must red this too. Same window, estimate 3400, default reserve:
+    //   at 1/4 the reserve is 1024 and 3400 + 1024 = 4424 overflows, so it compacts;
+    //   at 1/8 it is 512 and 3400 + 512 = 3912 fits, so nothing would happen.
+    const overflows = vi.fn(realCompact);
+    expect(
+      await runHook(
+        createContextGuardMiddleware({
+          windowSource: async () => 4096,
+          compact: overflows,
+          estimateTokens: fixedEstimate(3400),
+        }),
+        longHistory()
+      )
+    ).toBeDefined();
+    expect(overflows).toHaveBeenCalledTimes(1);
+  });
+
+  it('honours a configured reserve above a quarter of the window, and reduces one above a half', async () => {
+    const fixedEstimate = (estimate: number) => () => estimate;
+
+    // The measured regression: `numCtx: 16384` with `numPredict: 8192`. Clamping a number the user
+    // chose down to a quarter (4096) makes the guard see 12044 + 4096 = 16140 and pass a turn whose
+    // answer is then 3852 tokens short. Honoured at a half (8192), 12044 + 8192 = 20236 overflows
+    // and the conversation is folded before the call — which is the point of the reserve.
+    const honoured = vi.fn(realCompact);
+    expect(
+      await runHook(
+        createContextGuardMiddleware({
+          windowSource: async () => 16384,
+          reserve: 8192,
+          compact: honoured,
+          estimateTokens: fixedEstimate(12044),
+        }),
+        longHistory()
+      )
+    ).toBeDefined();
+    expect(honoured).toHaveBeenCalledTimes(1);
+
+    // A configured number is still not unlimited. Window 4096, reserve 4000, estimate 2000:
+    // reduced to half the window it is 2048 and 2000 + 2048 = 4048 fits, so the turn goes through.
+    // Left unreduced it would be 4000, 2000 + 4000 = 6000 overflows, and the guard would fold a
+    // conversation on every turn — the thrashing the default clamp exists to stop.
+    const reduced = vi.fn(realCompact);
+    expect(
+      await runHook(
+        createContextGuardMiddleware({
+          windowSource: async () => 4096,
+          reserve: 4000,
+          compact: reduced,
+          estimateTokens: fixedEstimate(2000),
+        }),
+        longHistory()
+      )
+    ).toBeUndefined();
+    expect(reduced).not.toHaveBeenCalled();
   });
 
   it('LETS THE CALL PROCEED when there is nothing to fold — the bail that stops it looping', async () => {
