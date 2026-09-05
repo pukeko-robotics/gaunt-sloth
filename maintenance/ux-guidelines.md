@@ -627,19 +627,28 @@ because those are signal, not chatter (DL-1 no important action is silent). Plai
   `Thinking… (Esc to interrupt)` while a turn runs. Keep it to one line and free of streaming
   progress (that belongs to the live turn) so it never flickers. It names the approvals mode in its
   display spelling, and at `bypass` additionally carries the yellow **`⚡ Bypass`** badge in both
-  states (see `/approvals`).
-- **The bar drops the provider before it overflows (DL-6 consistency, DL-7 graceful degradation).**
-  The model half is the shared `modelProviderLabel` spelling the run header and launch banner use,
-  so all three say `model (provider)` and none of them invents a second one. This is the only
-  surface where that costs anything — one line already carrying the mode, the turn counter, the
-  approvals badge and sometimes the debug hint — so it is the only one allowed a width-conditional
-  omission. When the assembled line will not fit, `statusBarSegments` drops the **provider** and
-  keeps the model, and truncates neither: the model is the half the user chose, and a clipped
-  `openrou…` or `claude-sonnet-4…` misleads rather than merely shortens, which is the same reason
-  the banner drops a version it cannot fit. The budget counts the badge and the hint, because they
-  are separate `<Text>` nodes on the row the terminal wraps as a whole. The width decision lives in
-  a pure exported function taking `columns` as a parameter, not in the render — a rule that only
-  exists inside a component can only be tested by driving a terminal.
+  states (see `/approvals`). **One line is enforced, not assumed (DL-7):** the dock's row budget in
+  `App.tsx` counts the bar as one row, so every `<Text>` on it truncates with `…` rather than
+  wrapping, and the leading text sits in a `flexShrink={0}` box so that the badge, not the model,
+  is what gives way. The same rule holds the hint row at the foot of the dock to one line: it
+  truncates from the end of the scroll note, keeping the exit instruction at the front.
+- **The bar gives things up in a fixed order before it truncates (DL-6 consistency, DL-7 graceful
+  degradation).** The model half is the shared `modelProviderLabel` spelling the run header and
+  launch banner use, so all three say `model (provider)` and none of them invents a second one.
+  This is the only surface where that costs anything — one line already carrying the mode, the
+  turn counter, the approvals badge and sometimes the debug hint — so it is the only one allowed a
+  width-conditional omission. When the assembled line will not fit, the sacrifice runs least
+  informative first: the **provider** goes (`statusBarSegments` drops it and keeps the model),
+  then the **rater profile** on the approvals badge (`approvals: Assisted (auto-rater)` becomes
+  `approvals: Assisted`), and only then does the render truncate — the badge first, and the
+  segments only on a terminal narrower than the bare segments themselves. The model is never
+  clipped to make room for the badge: it is the half the user chose, and a clipped `openrou…` or
+  `claude-sonnet-4…` misleads rather than merely shortens, which is the same reason the banner
+  drops a version it cannot fit. The budget counts the badge and the hint, because they are
+  separate `<Text>` nodes on the row the terminal wraps as a whole. Both drop decisions live in
+  pure exported functions taking `columns` as a parameter (`statusBarSegments`, `statusBarRow`),
+  not in the render — a rule that only exists inside a component can only be tested by driving a
+  terminal.
 
 ## Persistent startup advisories (DL-1 nothing important is silent, TUI-C19)
 

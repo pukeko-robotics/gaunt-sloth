@@ -448,8 +448,9 @@ describe('<App> full-screen frame', () => {
     expect(frame).toContain('Verify output');
 
     // …and the conversation is not squeezed out. The dock runs from the pinned checklist panel to
-    // the closing rule; measured, it starts on row 9 — fifteen dock rows, leaving the conversation
-    // nine of the twenty-four. Asserted with one row of margin, so the next thing added to the
+    // the closing rule; measured, it starts on row 10 — fourteen dock rows, every bar one row by
+    // construction (TUI-C92), leaving the conversation ten of the twenty-four. Asserted with a
+    // margin, so the next thing added to the
     // dock at this size fails here rather than on someone's screen. The number moves only when
     // someone decides it should: this bound is re-measured against the frame above, never widened
     // to whatever the current dock happens to need.

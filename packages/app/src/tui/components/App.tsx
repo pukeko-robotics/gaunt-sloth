@@ -104,11 +104,15 @@ const DEBUG_MAX_MIN_HEIGHT = 6;
 /**
  * TUI-C92 — the dock rows drawn whenever the prompt is, in order down the screen: the blank row the
  * dock opens on, its opening rule, the status bar, the row of air above the prompt, the row of air
- * below it, the hint row, and the closing rule. The status bar and the hint are counted as one row
- * each, which they are at every width the dock is designed for. What the prompt block — the slash
- * menu, the chord door's query row and the editor — may take is what the terminal has left after
- * these, the optional dock panels, and the conversation's floor; so a row added to the dock is a
- * row taken from the menu, and it is counted here, beside the render that draws it.
+ * below it, the hint row, and the closing rule. The status bar and the hint are one row each BY
+ * CONSTRUCTION: each truncates with `…` rather than wrapping (DL-7), so no width can make either
+ * take a second row out of the conversation's floor. Two places enforce that — `StatusBar.tsx`,
+ * where the leading text refuses to shrink and every `<Text>` on the row is `truncate-end`, and
+ * the hint row at the foot of this dock, `truncate-end` on the `<Text>` that draws it. What the
+ * prompt block — the slash menu, the chord door's query row and the editor — may take is what the
+ * terminal has left after these, the optional dock panels, and the conversation's floor; so a row
+ * added to the dock is a row taken from the menu, and it is counted here, beside the render that
+ * draws it.
  */
 const DOCK_CHROME_ROWS = 7;
 /**
@@ -1932,7 +1936,13 @@ export function App(props: TuiAppProps): React.ReactElement {
           literal: the other surface is then untouched by construction, not by memory (GS2-87). The
           row stays a nudge — the Fn+↑/↓ note for keyboards without PgUp/PgDn belongs in /help, which
           has room to be honest about it (DL-5, DL-7, TUI-C11). */}
-            <Text dimColor>{`${exitMessage.trim()}${TUI_HINT_SUFFIX}`}</Text>
+            {/* TUI-C92 — one row by construction. The row truncates with `…` instead of wrapping
+          (DL-7), because DOCK_CHROME_ROWS counts it as one row and a second row would come out of
+          the conversation's floor: the code session's row is 88 cells, so at 80 columns it loses
+          its tail. What goes first is the END of TUI_HINT_SUFFIX — the last words of the
+          PgUp/PgDn scroll note — while the exit instruction at the front survives. Do not "fix"
+          this back to wrapping; the note's full form lives in /help. */}
+            <Text dimColor wrap="truncate-end">{`${exitMessage.trim()}${TUI_HINT_SUFFIX}`}</Text>
             <Rule />
           </Box>
         </Box>

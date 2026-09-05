@@ -19,9 +19,14 @@ import type { McpConnectionFailure } from '@gaunt-sloth/core/core/types.js';
  */
 export function NoticeBar({ advisories }: { advisories?: string[] }): React.ReactElement | null {
   if (!advisories || advisories.length === 0) return null;
+  // TUI-C92 — one row by construction: the dock's row budget in `App.tsx` charges this bar one
+  // row, so it truncates with `…` rather than wrapping (DL-7). The `/config` pointer sits before
+  // the tail that would go first.
   return (
     <Box>
-      <Text color="yellow">{'⚠ Your config has problems · type /config to see details'}</Text>
+      <Text color="yellow" wrap="truncate-end">
+        {'⚠ Your config has problems · type /config to see details'}
+      </Text>
     </Box>
   );
 }
@@ -43,9 +48,14 @@ export function McpFailureBar({
   if (!failures || failures.length === 0) return null;
   const names = failures.map((f) => f.server).join(', ');
   const noun = failures.length === 1 ? 'server' : 'servers';
+  // TUI-C92 — one row by construction, for the same reason as `NoticeBar`: the budget charges it
+  // one row, and with a single server the row is already 84 cells, two rows at 80 columns. It
+  // truncates with `…` (DL-7); what goes first is the END of the `/debug` pointer, then — with
+  // enough failed servers — the pointer itself, while the server names at the front survive. The
+  // full reason for each failure is in the MCP tab regardless (DL-2).
   return (
     <Box>
-      <Text color="yellow">
+      <Text color="yellow" wrap="truncate-end">
         {`⚠ MCP ${noun} unavailable: ${names} · type /debug and open the MCP tab for details`}
       </Text>
     </Box>
