@@ -287,8 +287,11 @@ export function resumeRefusalNotice(
               'was running and it was marked unresumable, or it was recorded before conversation ' +
               'state was kept.'
             : refusal.reason === 'no-checkpoint'
-              ? 'Its conversation state was never written — the session ended before its first ' +
-                'turn completed.'
+              ? // GS2-107 — two ways to arrive here, and the sentence has to be true of both: the
+                // session ended before it wrote anything, or `gth history prune` removed the state
+                // afterwards. Nothing on the row distinguishes them, so neither is claimed.
+                'Its conversation state is not in the store — either the session ended before its ' +
+                'first turn completed, or `gth history prune` has since removed it.'
               : 'Its conversation state could not be read from the store.';
       return {
         title: `Conversation #${refusal.id} cannot be resumed`,

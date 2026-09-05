@@ -44,7 +44,12 @@ not expose it to public networks. Port and CORS come from `commands.api.*` in th
 ## Binaries
 
 - **`gaunt-sloth-api`** — starts the AG-UI server standalone (the code above as a command):
-  `gaunt-sloth-api` (defaults to the `ag-ui` server on `commands.api.port`, 3000 by default).
+  `gaunt-sloth-api ag-ui --port 4000 --config ./.gsloth.config.json`. `ag-ui` is the only api-type
+  and is the default, so the bare `gaunt-sloth-api` is the same command. The port is taken from
+  `--port`, else `commands.api.port`, else 3000; a `--config` path that does not exist ends the run
+  with an error rather than falling back to the config discovered from the working directory. Full
+  reference:
+  [the api ag-ui command](https://github.com/pukeko-robotics/gaunt-sloth/blob/main/docs/COMMANDS.md#api-ag-ui).
 - **`gaunt-sloth-acp`** — serves the [Agent Client Protocol](https://agentclientprotocol.com/) over
   stdio, for an editor that spawns the agent as a subprocess. Serves **both ACP v1 and ACP v2**,
   choosing the version from the host's own `initialize`. Takes no arguments, and roots the session
