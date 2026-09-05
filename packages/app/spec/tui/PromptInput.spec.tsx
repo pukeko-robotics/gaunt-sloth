@@ -185,7 +185,9 @@ describe('tui <SlashCommandMenu> (TUI-C10 render)', () => {
   ];
 
   it('renders each command name with its description and marks the selected row', () => {
-    const { lastFrame } = render(<SlashCommandMenu commands={commands} selectedIndex={1} />);
+    const { lastFrame } = render(
+      <SlashCommandMenu commands={commands} selectedIndex={1} maxRows={10} />
+    );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('/help');
     expect(frame).toContain('List available slash commands');
@@ -196,25 +198,25 @@ describe('tui <SlashCommandMenu> (TUI-C10 render)', () => {
   });
 
   it('renders nothing when there are no matching commands', () => {
-    const { lastFrame } = render(<SlashCommandMenu commands={[]} selectedIndex={0} />);
+    const { lastFrame } = render(<SlashCommandMenu commands={[]} selectedIndex={0} maxRows={10} />);
     expect((lastFrame() ?? '').trim()).toBe('');
   });
 });
 
 describe('tui <PromptInput> slash-command menu (TUI-C10 interaction)', () => {
-  it('opens the menu listing every command when a bare "/" is typed', async () => {
-    const { stdin, lastFrame } = render(
-      <PromptInput onSubmit={vi.fn()} commands={createCommandRegistry()} />
-    );
+  it('opens the menu on every command when a bare "/" is typed, bounded with the rest counted', async () => {
+    // TUI-C92 — a prompt with no frame around it gets a ten-row menu: the first nine commands and
+    // a row counting the ones the window hides. The registry is the single source, in its order.
+    const registry = createCommandRegistry();
+    const { stdin, lastFrame } = render(<PromptInput onSubmit={vi.fn()} commands={registry} />);
     stdin.write('/');
     await tick();
     const frame = lastFrame() ?? '';
     expect(frame).toContain('/help');
-    expect(frame).toContain('/status');
-    expect(frame).toContain('/model');
     expect(frame).toContain('/verbose');
     expect(frame).toContain('/exit');
-    expect(frame).toContain('/quit');
+    expect(frame).toContain(`↓ ${registry.length - 9} more`);
+    expect(frame).not.toContain(`/${registry[9].name}`);
   });
 
   it('filters to matching commands as more of the name is typed', async () => {
@@ -383,10 +385,12 @@ describe('tui <PromptInput> the slash menu over an unfinished message (TUI-C51)'
     await tick();
 
     const frame = lastFrame() ?? '';
-    // The whole registry, because the menu's own query starts empty.
+    // The whole registry, because the menu's own query starts empty — the first window of it,
+    // with the rest counted below (TUI-C92).
     expect(frame).toMatch(/❯/);
-    expect(frame).toContain('/status');
+    expect(frame).toContain('/verbose');
     expect(frame).toContain('/help');
+    expect(frame).toMatch(/↓ \d+ more/);
     // …with the message still on the prompt row beneath it, caret where it was.
     expect(bufferIn(frame)).toBe(DRAFT);
     expect(caretIn(frame)).toEqual(caretBefore);
@@ -770,7 +774,8 @@ describe('tui <PromptInput> the chord menu tolerates a leading slash (TUI-C95)',
     const frame = lastFrame() ?? '';
     expect(commandMenuQueryIn(frame)).toBe('');
     expect(frame).toContain('/help');
-    expect(frame).toContain('/status');
+    expect(frame).toContain('/verbose');
+    expect(frame).toMatch(/↓ \d+ more/); // the whole registry, windowed (TUI-C92)
     expect(frame).toMatch(/❯/);
     // Indistinguishable from the menu as it opened, which is what "an empty query" means.
     expect(frame).toBe(opened);
@@ -1061,6 +1066,90 @@ describe('tui <PromptInput> the chord menu tolerates a leading slash (TUI-C95)',
     stdin.write(ENTER);
     await tick();
     expect(onSubmit).toHaveBeenCalledWith('//help');
+  });
+});
+
+/**
+ * TUI-C92 — the menu's row budget, sized by this component from what `<App>` says the whole
+ * prompt block may take. The frame-level arithmetic (dock chrome, the conversation's floor) is
+ * `AppSlashMenuViewport.spec.tsx`'s; these pin the prompt's own share of it: the editor's rows and
+ * the chord door's query row come off first, the menu keeps a floor of three where the block
+ * allows it, and a prompt with no budget at all gets a fixed ten.
+ */
+describe('tui <PromptInput> sizes the menu from the block budget (TUI-C92)', () => {
+  /** Every menu row in the frame: an entry, or an affordance. */
+  const menuRowCount = (frame: string): number =>
+    frame
+      .split('\n')
+      .map((row) => stripAnsi(row))
+      .filter((row) => /^(❯| ) \/[a-z]|^ {2}[↑↓] \d+ more$/.test(row)).length;
+
+  it('gives the typed door the block less the editor row', async () => {
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={vi.fn()} commands={createCommandRegistry()} promptBlockRows={9} />
+    );
+    stdin.write('/');
+    await tick();
+    // Nine rows for the block, one of them the `> /` row: eight for the menu.
+    expect(menuRowCount(lastFrame() ?? '')).toBe(8);
+    expect(lastFrame() ?? '').toMatch(/↓ \d+ more/);
+  });
+
+  it('gives the chord door one row fewer, for the query row', async () => {
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={vi.fn()} commands={createCommandRegistry()} promptBlockRows={9} />
+    );
+    await typeSlowly(stdin, 'hi');
+    stdin.write(CTRL_G);
+    await tick();
+    // Nine, less the draft's row, less the query row: seven.
+    expect(menuRowCount(lastFrame() ?? '')).toBe(7);
+    expect(commandMenuQueryIn(lastFrame() ?? '')).toBe('');
+  });
+
+  it('charges a multi-line draft its every row', async () => {
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={vi.fn()} commands={createCommandRegistry()} promptBlockRows={9} />
+    );
+    stdin.write('one\ntwo\nthree'); // three logical lines, as a paste arrives on this channel
+    await tick();
+    expect(promptRows(lastFrame() ?? '')).toHaveLength(3);
+    stdin.write(CTRL_G);
+    await tick();
+    // Nine, less three draft rows, less the query row: five.
+    expect(menuRowCount(lastFrame() ?? '')).toBe(5);
+  });
+
+  it('keeps three rows for the menu when the draft would leave it fewer', async () => {
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={vi.fn()} commands={createCommandRegistry()} promptBlockRows={5} />
+    );
+    stdin.write('one\ntwo\nthree\nfour');
+    await tick();
+    stdin.write(CTRL_G);
+    await tick();
+    // Five, less four draft rows, less the query row, is nothing: the floor of three applies.
+    expect(menuRowCount(lastFrame() ?? '')).toBe(3);
+    expect(promptRows(lastFrame() ?? '')).toHaveLength(4);
+  });
+
+  it('never goes below one row, on a block too small for the floor', async () => {
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={vi.fn()} commands={createCommandRegistry()} promptBlockRows={1} />
+    );
+    stdin.write('/');
+    await tick();
+    expect(menuRowCount(lastFrame() ?? '')).toBe(1);
+    expect(lastFrame() ?? '').toMatch(/❯ \/help/);
+  });
+
+  it('falls back to a fixed ten rows with no budget at all', async () => {
+    const { stdin, lastFrame } = render(
+      <PromptInput onSubmit={vi.fn()} commands={createCommandRegistry()} />
+    );
+    stdin.write('/');
+    await tick();
+    expect(menuRowCount(lastFrame() ?? '')).toBe(10);
   });
 });
 

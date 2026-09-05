@@ -294,6 +294,15 @@ function checklistRow(status: ChecklistItemViewModel['status']): { glyph: string
 }
 
 /**
+ * TUI-C92 — the rows the pinned {@link ChecklistPanel} occupies: its header and one row per item.
+ * Beside the render so the two cannot drift; `<App>` takes them off the slash menu's budget. A
+ * lower bound — an item long enough to wrap takes more.
+ */
+export function checklistPanelRows(items: readonly ChecklistItemViewModel[]): number {
+  return 1 + items.length;
+}
+
+/**
  * A `gth_checklist` tool call rendered as a live plan: a `📋 Checklist (done/total)` header and one
  * checkbox row per item, coloured by status. Shown expanded (unlike generic tool panels) because
  * the plan is meant to be seen — it is the lean agent's answer to deepagents' `write_todos`. The

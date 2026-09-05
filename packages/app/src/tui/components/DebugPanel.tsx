@@ -116,6 +116,21 @@ function subagentLines(tree: SubagentTreeViewModel): string[] {
 }
 
 /**
+ * TUI-C92 — the rows the panel draws around its viewport: the top border, the tab row, the hint
+ * row, the footer and the bottom border. Beside the render so a row added there is counted here.
+ */
+export const DEBUG_PANEL_CHROME_ROWS = 5;
+
+/**
+ * TUI-C92 — the rows the docked panel occupies at `viewportHeight`, with the search row while one
+ * is shown. `<App>` takes them off the slash menu's budget so an open panel and an open menu still
+ * fit the terminal together.
+ */
+export function debugPanelRows(viewportHeight: number, searchRow: boolean): number {
+  return viewportHeight + DEBUG_PANEL_CHROME_ROWS + (searchRow ? 1 : 0);
+}
+
+/**
  * Full-width panel in the pinned dock, below the conversation region and above the status bar.
  * Tabs select a section; the
  * body is a bounded viewport — `<Box height={n} overflow="hidden">` over a windowed slice of

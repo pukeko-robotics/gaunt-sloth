@@ -3,6 +3,11 @@ import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import { SelectCancelledError } from '#src/tui/selectCancelled.js';
 import { useTerminalSize } from '#src/tui/useTerminalSize.js';
 import { isTypedText, typedText } from '#src/tui/keyGuards.js';
+import { clampWindowStart } from '#src/tui/listWindow.js';
+
+// The windowing arithmetic lives in `listWindow.ts` (TUI-C92), shared with the slash menu; it is
+// re-exported here so this module keeps presenting the helpers it has always presented.
+export { clampWindowStart };
 
 export interface SelectItem {
   /** The text shown for this row. */
@@ -69,29 +74,6 @@ export function windowSize(rows: number | undefined): number {
     return Math.max(1, Math.floor(rows) - RESERVED_ROWS);
   }
   return DEFAULT_WINDOW;
-}
-
-/**
- * Standard "keep the cursor in view" windowing. Given the previous window start, the current
- * cursor index, the window `size` and total item `count`, return the window start that keeps
- * `cursor` visible while moving as little as possible (sticky: the window only shifts when the
- * cursor crosses an edge). Clamped to `[0, count - size]` so it never scrolls past either end,
- * which also makes wraparound (cursor jumping to the far end) resolve to that end cleanly.
- */
-export function clampWindowStart(
-  prevStart: number,
-  cursor: number,
-  size: number,
-  count: number
-): number {
-  const maxStart = Math.max(0, count - size);
-  let start = Math.min(Math.max(0, prevStart), maxStart);
-  if (cursor < start) {
-    start = cursor;
-  } else if (cursor >= start + size) {
-    start = cursor - size + 1;
-  }
-  return Math.max(0, Math.min(start, maxStart));
 }
 
 /**

@@ -47,6 +47,20 @@ const voiceColour = (voice: NegotiationVoice): string | undefined =>
  * give up rows, so an unbounded exchange here is taken out of the conversation and eventually out
  * of the input prompt. Passing the list is what lets the bound bind.
  */
+/**
+ * TUI-C92 — the rows the panel occupies at `columns`: one per rendered row of the exchange, and
+ * none while there is no exchange. The same rows the render draws, from the same renderer at the
+ * same framing width, so `<App>` can take them off the slash menu's budget without a second model
+ * of the panel.
+ */
+export function negotiationPanelRows(
+  rounds: readonly LiveNegotiationRound[],
+  columns: number | undefined
+): number {
+  if (rounds.length === 0) return 0;
+  return renderLiveNegotiationRows(rounds, { width: frameWidthFor(columns) }).length;
+}
+
 export function NegotiationPanel({
   rounds,
 }: {

@@ -22,6 +22,7 @@ import {
   type KillResult,
 } from '#src/tui/lineEditor.js';
 import { typedMultilineText } from '#src/tui/keyGuards.js';
+import { displayWidth } from '@gaunt-sloth/core/utils/displayWidth.js';
 
 /**
  * TUI-C25 — the prompt's editor: the keyboard on one side, {@link EditorState} on the other.
@@ -106,6 +107,24 @@ function withCaret(line: string, column: number): string {
   if (codePoint === undefined) return line + chalk.inverse(' ');
   const character = String.fromCodePoint(codePoint);
   return line.slice(0, column) + chalk.inverse(character) + line.slice(column + character.length);
+}
+
+/**
+ * TUI-C92 — the terminal rows the editor draws `state` on at `columns`: one row per logical line,
+ * plus the rows a line takes when it wraps at the width left after its four-column prefix. The
+ * caret's line is one cell wider when the caret sits at its end, because `withCaret` draws it there
+ * as an inverse space rather than over a character.
+ *
+ * Kept beside the render whose rows it counts, so the two cannot drift. It is a lower bound: Ink
+ * wraps at word boundaries, so a line can take one row more than its width alone says.
+ */
+export function editorRows(state: EditorState, columns: number): number {
+  const { lines, line: caretLine, column } = layout(state);
+  const width = Math.max(1, columns - PROMPT_PREFIX.length);
+  return lines.reduce((rows, text, index) => {
+    const caretCell = index === caretLine && text.codePointAt(column) === undefined ? 1 : 0;
+    return rows + Math.max(1, Math.ceil((displayWidth(text) + caretCell) / width));
+  }, 0);
 }
 
 export function PromptEditor({

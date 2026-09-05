@@ -726,6 +726,20 @@ their config has a problem.
   completely, the message is captured and put back around the dispatch (caret included), and `Esc`
   closes leaving it as it was — mid-turn, `Esc` also stops the turn (see the `Esc` entry above).
   **Only one of the two is ever on screen.**
+  - **The menu is a bounded, scrolling viewport, one row per entry (DL-7 legibility, DL-3 preserve
+    the user's content, TUI-C92).** The dock is pinned to the terminal floor and never gives up
+    rows, so a menu as tall as it has matches pushes the prompt — and, through the chord door, the
+    very message the menu exists to preserve — off the bottom of a short terminal. `<App>` works
+    out the rows the prompt block may take (the terminal, less the dock's chrome, less the optional
+    panels it is drawing, less a three-row floor for the conversation), the prompt takes its own
+    rows and the query row off that, and the menu windows itself in what is left — never fewer
+    than three rows where the terminal allows it, and one otherwise. The window is sticky around
+    the highlight, exactly as the first-run model picker scrolls (CFG-15), and the same dim
+    `↑ N more` / `↓ N more` rows say what is hidden; with fewer matches than rows none is drawn and
+    nothing differs from an unbounded list. An entry is exactly one row: the `/name` column stays
+    whole and the description truncates with `…` at the width the terminal leaves it — a wrapped
+    menu row is worse to read than a clipped one, and the full text is one `/help` away. Write a
+    description to lead with what matters, because its tail is what goes.
   - **The message comes back even when the command REPLACED the prompt while it ran.** `/approvals`
     opens a picker, and the prompt is not rendered while one is up, so a draft restored into the
     prompt's own state would be restored into something about to be unmounted and lost with it —

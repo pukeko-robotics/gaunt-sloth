@@ -1,7 +1,8 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Box, Text, useInput, usePaste } from 'ink';
-import { PromptEditor } from '#src/tui/components/PromptEditor.js';
+import { PromptEditor, editorRows } from '#src/tui/components/PromptEditor.js';
 import { SlashCommandMenu } from '#src/tui/components/SlashCommandMenu.js';
+import { useTerminalSize } from '#src/tui/useTerminalSize.js';
 import {
   filterSlashCommands,
   slashMenuQuery,
@@ -55,6 +56,36 @@ interface CommandMenu {
  * read downwards as one block: what matches, what you typed, what you were writing.
  */
 const COMMAND_MENU_PREFIX = '  / ';
+
+/**
+ * TUI-C92 — the rows the slash menu keeps even when the draft has grown tall enough to leave it
+ * fewer, so a command can still be found and chosen above a long message. Not enforced past what
+ * the block itself has: a terminal that cannot hold three rows gets what it can hold, and one.
+ */
+const MENU_MIN_ROWS = 3;
+/** The chord door's query row — {@link COMMAND_MENU_PREFIX} plus the query — between menu and draft. */
+const COMMAND_MENU_QUERY_ROWS = 1;
+/**
+ * Menu rows when no block budget is given — a prompt mounted with no `<App>` around it, which is
+ * what a spec does. Mirrors `<SelectList>`'s default window off a TTY, so a test without a size
+ * gets a deterministic bound rather than an unbounded list.
+ */
+const DEFAULT_MENU_ROWS = 10;
+
+/**
+ * TUI-C92 — the display rows the slash menu may occupy: what the block has left after the editor's
+ * own rows and, through the chord door, the query row — floored at {@link MENU_MIN_ROWS} where the
+ * block allows it and at one row always.
+ */
+function menuRowsWithin(
+  promptBlockRows: number,
+  editorRowCount: number,
+  queryRows: number
+): number {
+  const free = promptBlockRows - editorRowCount - queryRows;
+  if (free >= MENU_MIN_ROWS) return free;
+  return Math.max(1, Math.min(MENU_MIN_ROWS, promptBlockRows));
+}
 
 /**
  * TUI-C95 — the chord menu's query after `typed` is added to what it already held.
@@ -188,6 +219,13 @@ export type PromptDraftCarry = React.MutableRefObject<EditorState | null>;
  * at the caret without submitting; a subsequent explicit Enter submits the whole multi-line value.
  * While the chord's menu is open the paste goes to the MENU's query instead, for the same reason
  * every other key does.
+ *
+ * TUI-C92 — **the menu is bounded, and this component sizes it.** `<App>` says how many rows the
+ * whole prompt block may take (`promptBlockRows`); what is left after the editor's own rows — the
+ * draft can wrap, and it can hold several lines — and the chord door's query row is the menu's,
+ * never below `MENU_MIN_ROWS` where the block allows it. The menu windows itself inside that
+ * bound; `commands` and `selectedIndex` mean what they always did, so nothing about the arrow, Tab
+ * and Enter handling here knows the list scrolls.
  */
 export function PromptInput({
   onSubmit,
@@ -195,6 +233,7 @@ export function PromptInput({
   onMenuStateChange,
   handleRef,
   draftCarryRef,
+  promptBlockRows,
 }: {
   onSubmit: (value: string) => void;
   /** The slash-command registry (App builds it once) — the menu's single source of truth. */
@@ -207,6 +246,12 @@ export function PromptInput({
   handleRef?: React.MutableRefObject<PromptInputHandle | null>;
   /** TUI-C51 — the slot a draft waits in across a remount; see {@link PromptDraftCarry}. */
   draftCarryRef?: PromptDraftCarry;
+  /**
+   * TUI-C92 — the display rows this whole block (menu, query row, editor) may occupy, worked out
+   * by `<App>` from the terminal height, the dock's chrome and the conversation's floor. Omitted
+   * by a prompt with no frame around it, which gets `DEFAULT_MENU_ROWS` for the menu.
+   */
+  promptBlockRows?: number;
 }): React.ReactElement {
   /**
    * The buffer and its edit serial — authoritative in a REF, mirrored into state for rendering.
@@ -445,6 +490,16 @@ export function PromptInput({
   const commandMatches = commandMenu ? filterSlashCommands(commands, commandMenu.query) : [];
   const commandIndex = commandMenu ? Math.min(commandMenu.index, commandMatches.length - 1) : 0;
 
+  // TUI-C92 — the menu's row budget, from the rendered buffer: the rows the editor is about to
+  // draw come off the block's budget first, so a wrapped or multi-line draft costs the menu rows
+  // rather than pushing itself off the screen. The width is the frame's published size under
+  // `<App>` and the stream's own off it, as every other component reads it.
+  const { columns } = useTerminalSize();
+  const menuRows = (queryRows: number): number =>
+    promptBlockRows === undefined
+      ? DEFAULT_MENU_ROWS
+      : menuRowsWithin(promptBlockRows, editorRows(state, columns), queryRows);
+
   // Let the parent suppress its competing Tab handler (debug-panel focus) while EITHER menu owns
   // the navigation keys.
   const menuOwnsNavigation = menuActive || commandMenu !== null;
@@ -612,13 +667,20 @@ export function PromptInput({
 
   return (
     <Box flexDirection="column">
-      {menuActive ? <SlashCommandMenu commands={matches} selectedIndex={selectedIndex} /> : null}
+      {menuActive ? (
+        <SlashCommandMenu commands={matches} selectedIndex={selectedIndex} maxRows={menuRows(0)} />
+      ) : null}
       {/* TUI-C51 — the chord's menu: the matches, then the query row it is being filtered by, then
           the untouched message below. The query needs the row because it is nowhere else on
-          screen, and an empty one still draws it — that row IS the mode indicator (DL-4). */}
+          screen, and an empty one still draws it — that row IS the mode indicator (DL-4). It is
+          outside the menu's bound, and costs the menu a row (TUI-C92). */}
       {commandMenu ? (
         <Box flexDirection="column">
-          <SlashCommandMenu commands={commandMatches} selectedIndex={commandIndex} />
+          <SlashCommandMenu
+            commands={commandMatches}
+            selectedIndex={commandIndex}
+            maxRows={menuRows(COMMAND_MENU_QUERY_ROWS)}
+          />
           <Box>
             <Text color="cyan">{COMMAND_MENU_PREFIX}</Text>
             <Text>{commandMenu.query}</Text>

@@ -36,8 +36,8 @@ import { TranscriptViewport } from '#src/tui/components/TranscriptViewport.js';
 import { ApprovalPrompt } from '#src/tui/components/ApprovalPrompt.js';
 import { ApprovalRequestPanel } from '#src/tui/components/ApprovalRequestPanel.js';
 import { AttackBanner } from '#src/tui/components/AttackBanner.js';
-import { LiveTurn, ChecklistPanel } from '#src/tui/components/LiveTurn.js';
-import { NegotiationPanel } from '#src/tui/components/NegotiationPanel.js';
+import { LiveTurn, ChecklistPanel, checklistPanelRows } from '#src/tui/components/LiveTurn.js';
+import { NegotiationPanel, negotiationPanelRows } from '#src/tui/components/NegotiationPanel.js';
 import { extractActiveChecklist } from '#src/tui/viewModel.js';
 import { StatusBar } from '#src/tui/components/StatusBar.js';
 import { NoticeBar, McpFailureBar } from '#src/tui/components/NoticeBar.js';
@@ -51,6 +51,7 @@ import { MouseProvider } from '#src/tui/useMouse.js';
 import {
   DebugPanel,
   debugPanelLines,
+  debugPanelRows,
   DEBUG_TABS,
   type DebugTab,
 } from '#src/tui/components/DebugPanel.js';
@@ -99,6 +100,23 @@ const DEBUG_VIEWPORT_HEIGHT = 8;
 const DEBUG_MAX_CHROME_ROWS = 9;
 /** Floor for the maximised viewport so a short terminal still shows something usable. */
 const DEBUG_MAX_MIN_HEIGHT = 6;
+
+/**
+ * TUI-C92 — the dock rows drawn whenever the prompt is, in order down the screen: the blank row the
+ * dock opens on, its opening rule, the status bar, the row of air above the prompt, the row of air
+ * below it, the hint row, and the closing rule. The status bar and the hint are counted as one row
+ * each, which they are at every width the dock is designed for. What the prompt block — the slash
+ * menu, the chord door's query row and the editor — may take is what the terminal has left after
+ * these, the optional dock panels, and the conversation's floor; so a row added to the dock is a
+ * row taken from the menu, and it is counted here, beside the render that draws it.
+ */
+const DOCK_CHROME_ROWS = 7;
+/**
+ * TUI-C92 — the rows the conversation keeps above the dock while the slash menu is open. Three is
+ * enough to see that a turn is still streaming and what its last line says; a menu that took them
+ * would leave the user choosing a command over a screen that no longer shows what it is for.
+ */
+const TRANSCRIPT_MIN_ROWS = 3;
 
 /** The clipping-viewport height for the docked panel given the terminal height + maximise state. */
 function debugViewportHeight(maximized: boolean, terminalRows: number | undefined): number {
@@ -1706,6 +1724,23 @@ export function App(props: TuiAppProps): React.ReactElement {
     [live, transcript]
   );
 
+  // TUI-C92 — the rows the prompt block may occupy, so the slash menu can bound itself to them: the
+  // terminal, less the dock's unconditional chrome, less every optional panel the dock is drawing
+  // right now (each counted by the module that draws it), less the conversation's floor. The prompt
+  // takes its own rows and the query row off this before it sizes the menu. It can go to zero or
+  // below on a terminal too short for the dock; the prompt floors the menu at one row there.
+  const promptBlockRows =
+    terminalRows -
+    DOCK_CHROME_ROWS -
+    TRANSCRIPT_MIN_ROWS -
+    (props.advisories?.length ? 1 : 0) -
+    (props.mcpFailures?.length ? 1 : 0) -
+    (debugVisible
+      ? debugPanelRows(debugViewport, debugSearchInput || debugSearchQuery !== '')
+      : 0) -
+    (activeChecklist ? checklistPanelRows(activeChecklist) : 0) -
+    negotiationPanelRows(negotiationRounds, terminalColumns);
+
   return (
     // The measured terminal size, published once for the whole frame. A rule is rendered per
     // separator and per notice and a session mounts a screenful of them, so components measuring
@@ -1879,6 +1914,7 @@ export function App(props: TuiAppProps): React.ReactElement {
                   }}
                   handleRef={promptHandleRef}
                   draftCarryRef={promptDraftCarryRef}
+                  promptBlockRows={promptBlockRows}
                 />
                 <BlankRow />
               </>

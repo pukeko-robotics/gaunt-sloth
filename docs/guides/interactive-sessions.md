@@ -132,7 +132,9 @@ Typing `/` only opens the menu on an empty line, so with `please refactor the fo
 prompt there is nothing to type it into. In the TUI, press **Ctrl+G** (**Ctrl+/** works too, on
 terminals that send it — macOS sends nothing for it) and the menu opens *above* your message
 instead. Type to filter, `↑`/`↓` to move, `Tab` to complete the highlighted name, Enter to run it,
-`Esc` to close. What you type goes into the menu, not into the message: the message stays on screen
+`Esc` to close. When more commands match than fit above your message the list scrolls with the
+highlight, and a dim `↓ 7 more` line says how many are out of view. What you type goes into the
+menu, not into the message: the message stays on screen
 untouched, and it comes back with the cursor where you left it once the command has run — including
 after `/approvals`, which takes over the screen with its own picker while it runs.
 
