@@ -90,5 +90,24 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # GS2-109: every spec that drives a real node:sqlite file costs 20-45x more on this cell than
+      # on ubuntu or macOS (checkpointRetentionResume.spec.ts: 94 s against 3 s), because in
+      # SQLite's default rollback-journal mode each autocommit statement is a journal-file
+      # create/fsync/delete, and the suite's temp databases live under os.tmpdir(), which on this
+      # image is the profile directory on the C: OS disk. The workspace and RUNNER_TEMP sit on D:.
+      # Moving TEMP/TMP there puts the databases on the disk the runner is provisioned to work on.
+      # The two console lines are the measurement: they print the temp dir the suite gets.
+      - name: Put the temp dir on the runner's work disk (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          node -e "console.log('tmpdir before:', require('node:os').tmpdir())"
+          "TEMP=${{ runner.temp }}" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "TMP=${{ runner.temp }}" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Report the temp dir the suite will use (Windows)
+        if: runner.os == 'Windows'
+        run: node -e "console.log('tmpdir after:', require('node:os').tmpdir())"
+
       - name: Run Tests
         run: pnpm test
