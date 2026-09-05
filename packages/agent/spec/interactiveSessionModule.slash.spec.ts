@@ -470,6 +470,57 @@ describe('interactiveSessionModule shared slash-command registry (GS2-8)', () =>
     expect(out).not.toContain('Filesystem: none');
   });
 
+  /**
+   * CFG-38 — the provider beside the model on the READLINE surface.
+   *
+   * The registry is one shared source (GS2-8), so the commands themselves are already covered by
+   * the app-package sweep. What is covered HERE, and only here, is this surface's own dispatch
+   * call site: `createInteractiveSession` builds a `SlashCommandContext` by hand, and a field it
+   * forgets to thread is invisible to any test of the registry — the command renders whatever it
+   * was handed, which is `undefined`, which renders as the bare model and looks correct. That is
+   * the exact shape of the divergence TUI-C48 classes as a regression rather than a cosmetic miss,
+   * so it is asserted through the real session loop rather than by inspecting the context object.
+   *
+   * The base config in `beforeEach` deliberately has NO `modelProviderType` (a module config's
+   * real state), so every other cell in this file is the absent-provider control; these two cells
+   * supply one and are the present half of the pair.
+   */
+  describe('CFG-38 — the resolved provider is threaded into the shared context', () => {
+    const withProvider = () =>
+      initConfigMock.mockResolvedValue({
+        streamSessionInferenceLog: false,
+        modelDisplayName: 'test-model',
+        modelProviderType: 'google-genai',
+      });
+
+    it('/status and /model name the provider beside the model', async () => {
+      withProvider();
+      await runSession('/status', '/model', 'exit');
+      const out = allOutput();
+      expect(out).toContain('Model: test-model (google-genai)');
+      // Both commands rendered it, not just whichever ran first.
+      expect(
+        noticeCalls().filter((n) => JSON.stringify(n).includes('test-model (google-genai)')).length
+      ).toBe(2);
+    });
+
+    it('/config names the provider beside the model', async () => {
+      withProvider();
+      await runSession('/config', 'exit');
+      expect(allOutput()).toContain('Model: test-model (google-genai)');
+    });
+
+    it('renders the bare model with no placeholder when the config resolves no provider', async () => {
+      // The beforeEach config, unchanged — a module config has no provider string to stash.
+      await runSession('/status', '/config', '/model', 'exit');
+      const out = allOutput();
+      expect(out).toContain('Model: test-model');
+      expect(out).not.toContain('test-model (');
+      expect(out).not.toContain('(undefined)');
+      expect(out).not.toContain('(unknown)');
+    });
+  });
+
   it('/debug-dump on the readline (non-TUI) surface writes an archive threading the always-on model-request snapshot (GS2-56)', async () => {
     const { GthAbstractAgent } = await import('@gaunt-sloth/core/core/GthAbstractAgent.js');
     const agent = new (GthAbstractAgent as unknown as typeof FakeAbstractAgent)();

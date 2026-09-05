@@ -717,6 +717,9 @@ export async function createInteractiveSession(
           const result = dispatchSlashCommand(parsed, registry, {
             mode: sessionConfig.mode,
             modelDisplayName: config.modelDisplayName ?? '',
+            // CFG-38 — the TUI's twin of this call passes the same field; the registry is one
+            // source, so a provider threaded on only one surface is a divergence, not a subset.
+            modelProviderType: config.modelProviderType,
             turnCount,
             // GS2-20 — the id `/status` names and `gth history resume` takes; live, so it follows
             // a mid-session `/resume`.
