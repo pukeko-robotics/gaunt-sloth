@@ -85,19 +85,31 @@ describe('GS2-107 checkpoint retention', () => {
        (thread_id, checkpoint_ns, checkpoint_id, task_id, idx, channel, type, value)
        VALUES (?, '', ?, 'task', ?, 'messages', 'json', ?)`
     );
-    for (let i = 0; i < count; i++) {
-      const id = `ckpt-${String(i).padStart(4, '0')}`;
-      const body = new TextEncoder().encode(
-        JSON.stringify({ v: 4, id, ts, channel_values: { messages: payload } })
-      );
-      insert.run(
-        threadId,
-        id,
-        i === 0 ? null : `ckpt-${String(i - 1).padStart(4, '0')}`,
-        body,
-        new TextEncoder().encode(JSON.stringify({ step: i }))
-      );
-      insertWrite.run(threadId, id, i, new TextEncoder().encode(JSON.stringify(payload)));
+    // GS2-109: one transaction for the whole seed. The store runs in SQLite's default rollback-
+    // journal mode, where every autocommit statement is its own journal-file create/fsync/delete —
+    // the cycle that made this file cost 26 s on the Windows cell against 0.6 s on ubuntu. The rows
+    // that land are identical; only the number of journal cycles per seed changes, from 2 x count
+    // to one.
+    db.exec('BEGIN');
+    try {
+      for (let i = 0; i < count; i++) {
+        const id = `ckpt-${String(i).padStart(4, '0')}`;
+        const body = new TextEncoder().encode(
+          JSON.stringify({ v: 4, id, ts, channel_values: { messages: payload } })
+        );
+        insert.run(
+          threadId,
+          id,
+          i === 0 ? null : `ckpt-${String(i - 1).padStart(4, '0')}`,
+          body,
+          new TextEncoder().encode(JSON.stringify({ step: i }))
+        );
+        insertWrite.run(threadId, id, i, new TextEncoder().encode(JSON.stringify(payload)));
+      }
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
     }
   };
 
