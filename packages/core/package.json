@@ -36,13 +36,13 @@
     "#src/*.js": "./dist/*.js"
   },
   "dependencies": {
-    "@langchain/core": "^1.2.9",
-    "@langchain/langgraph": "^1.4.13",
+    "@langchain/core": "^1.2.10",
+    "@langchain/langgraph": "^1.4.14",
     "jiti": "^2.7.0",
     "jsonc-parser": "^3.3.1",
-    "langchain": "^1.5.10",
+    "langchain": "^1.5.11",
     "string-width": "^8.2.2",
-    "zod": "^4.5.4"
+    "zod": "^4.6.1"
   },
   "peerDependencies": {
     "@langchain/anthropic": "^1.5.0",
