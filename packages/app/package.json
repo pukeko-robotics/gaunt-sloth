@@ -52,17 +52,17 @@
     "@langchain/openrouter": "^0.4.13",
     "@langchain/xai": "^1.4.13",
     "commander": "^15.0.0",
-    "zod": "^4.6.3"
+    "zod": "^4.6.5"
   },
   "optionalDependencies": {
     "chalk": "^6.0.0",
     "ink": "^7.1.1",
     "ink-spinner": "^5.0.0",
-    "react": "19.2.8"
+    "react": "19.3.0"
   },
   "devDependencies": {
     "@microsoft/tui-test": "^0.0.4",
-    "@types/react": "19.2.18",
+    "@types/react": "19.3.0",
     "ink-testing-library": "^4.0.0"
   },
   "imports": {
