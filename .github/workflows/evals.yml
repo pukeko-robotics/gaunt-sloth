@@ -161,7 +161,7 @@ jobs:
       # the job. Whole dir, so a suite-per-subdir run from a directory input is covered as well.
       - name: Upload eval results
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: eval-results
           path: eval-out/
