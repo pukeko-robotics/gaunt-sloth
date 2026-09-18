@@ -77,7 +77,7 @@ jobs:
     # reported as a visible SKIP by scripts/eval-gate.mjs.
     environment: integration tests
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Enable Corepack
         run: corepack enable

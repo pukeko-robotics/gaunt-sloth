@@ -129,7 +129,7 @@ jobs:
       # its docblock for how that is kept from degrading into silence.
       - name: Check out the repo for the release notes preflight
         continue-on-error: true
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # `ref: main` for the same reason the release job pins it: that job ships main's version
           # whatever ref the dispatch was launched from. Without this, a dispatch from a branch
@@ -167,7 +167,7 @@ jobs:
       matrix:
         node-version: [24.x]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Enable Corepack
         run: corepack enable
       - name: Use Node.js ${{ matrix.node-version }}
@@ -206,7 +206,7 @@ jobs:
         provider: [openrouter]
       max-parallel: 2
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Enable Corepack
         run: corepack enable
       - name: Use Node.js ${{ matrix.node-version }}
@@ -263,7 +263,7 @@ jobs:
       # this on the assumption that it is a spend knob.
       max-parallel: 3
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Enable Corepack
         run: corepack enable
       - name: Use Node.js ${{ matrix.node-version }}
@@ -336,7 +336,7 @@ jobs:
       contents: write # push the <pkg>@<version> git tags + the post-bump commit
       id-token: write # npm Trusted Publishing (OIDC) + provenance
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: main
           # full history + tags so tag-packages.sh can skip already-tagged versions
@@ -513,7 +513,7 @@ jobs:
       # from the registry and nothing else may be resolvable. The smoke itself installs into a fresh
       # temp prefix and runs the bins out of it by absolute path.
       - name: Check out the helper script (no workspace, nothing installed)
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           path: ci-scripts
           sparse-checkout: scripts
