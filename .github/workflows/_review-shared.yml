@@ -95,7 +95,7 @@ jobs:
       # worth reading.
       - name: Hide older AI review comments and post new one
         if: hashFiles('review.md') != ''
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           github-token: ${{secrets.GITHUB_TOKEN}}
           script: |
