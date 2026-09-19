@@ -38,7 +38,7 @@
     "@langchain/core": "^1.2.11",
     "@langchain/langgraph": "^1.4.15",
     "langchain": "^1.5.11",
-    "zod": "^4.6.3"
+    "zod": "^4.6.5"
   },
   "files": [
     "./dist/*",
