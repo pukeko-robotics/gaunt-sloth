@@ -35,7 +35,7 @@
     "gth": "cli.js"
   },
   "dependencies": {
-    "@ag-ui/core": "^0.0.59",
+    "@ag-ui/core": "^1.0.0",
     "@gaunt-sloth/agent": "workspace:*",
     "@gaunt-sloth/batch": "workspace:*",
     "@gaunt-sloth/core": "workspace:*",
@@ -58,11 +58,11 @@
     "chalk": "^6.0.0",
     "ink": "^7.1.1",
     "ink-spinner": "^5.0.0",
-    "react": "19.2.8"
+    "react": "19.3.0"
   },
   "devDependencies": {
     "@microsoft/tui-test": "^0.0.4",
-    "@types/react": "19.2.18",
+    "@types/react": "19.3.0",
     "ink-testing-library": "^4.0.0"
   },
   "imports": {
