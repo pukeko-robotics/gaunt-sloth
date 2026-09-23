@@ -118,7 +118,7 @@ importers:
         specifier: ^1.5.11
         version: 1.5.11(@langchain/core@1.2.12(openai@7.20.0(undici@8.10.2)(ws@8.21.3)(zod@4.6.5))(ws@8.21.3))(openai@7.20.0(undici@8.10.2)(ws@8.21.3)(zod@4.6.5))(react@19.2.8)(ws@8.21.3)
       undici:
-        specifier: ^8.10.2
+        specifier: ~8.10.2
         version: 8.10.2
       uuid:
         specifier: ^14.0.2

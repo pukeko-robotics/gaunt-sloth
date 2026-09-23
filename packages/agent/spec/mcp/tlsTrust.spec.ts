@@ -11,6 +11,7 @@ import type { GthConfig } from '#src/config.js';
 // undici — the dispatcher install site. Stubbed so we assert on the Agent options without touching
 // the real global dispatcher (which would leak across the whole test process). vi.hoisted because
 // the module-under-test is imported statically (above the const-init that plain mocks would need).
+// Whether undici is loaded at all is a process-level fact, asserted in tlsTrustUndiciLoad.spec.ts.
 const { setGlobalDispatcherMock, AgentMock, readFileSyncMock } = vi.hoisted(() => ({
   setGlobalDispatcherMock: vi.fn(),
   AgentMock: vi.fn(),
@@ -123,8 +124,8 @@ describe('installMcpTlsTrust', () => {
 
   const cfg = (tls: GthConfig['tls']): GthConfig => ({ tls }) as GthConfig;
 
-  it('does nothing when there is no tls block', () => {
-    installMcpTlsTrust(cfg(undefined));
+  it('does nothing when there is no tls block', async () => {
+    await installMcpTlsTrust(cfg(undefined));
     expect(setGlobalDispatcherMock).not.toHaveBeenCalled();
   });
 
@@ -134,9 +135,9 @@ describe('installMcpTlsTrust', () => {
   // is a test-fixture gap, not a real bug (the same class as other win32 path-shape skips).
   it.skipIf(process.platform === 'win32')(
     'installs a global dispatcher whose ca includes the read cert, no insecure warning',
-    () => {
+    async () => {
       readFileSyncMock.mockReturnValue('USER_PEM');
-      installMcpTlsTrust(cfg({ extraCaCerts: ['support/ca.crt'] }));
+      await installMcpTlsTrust(cfg({ extraCaCerts: ['support/ca.crt'] }));
 
       expect(readFileSyncMock).toHaveBeenCalledWith('/proj/support/ca.crt', 'utf8');
       expect(AgentMock).toHaveBeenCalledTimes(1);
@@ -151,19 +152,19 @@ describe('installMcpTlsTrust', () => {
     }
   );
 
-  it('emits a loud security warning (naming LLM calls) when verification is disabled', () => {
-    installMcpTlsTrust(cfg({ rejectUnauthorized: false }));
+  it('emits a loud security warning (naming LLM calls) when verification is disabled', async () => {
+    await installMcpTlsTrust(cfg({ rejectUnauthorized: false }));
     expect(setGlobalDispatcherMock).toHaveBeenCalledTimes(1);
     const warning = consoleUtilsMock.displayWarning.mock.calls.map((c) => String(c[0])).join('\n');
     expect(warning).toMatch(/DISABLED/);
     expect(warning).toMatch(/LLM/);
   });
 
-  it('warns about an unreadable cert and, with nothing else to do, installs nothing', () => {
+  it('warns about an unreadable cert and, with nothing else to do, installs nothing', async () => {
     readFileSyncMock.mockImplementation(() => {
       throw new Error('ENOENT: no such file');
     });
-    installMcpTlsTrust(cfg({ extraCaCerts: ['nope.crt'] }));
+    await installMcpTlsTrust(cfg({ extraCaCerts: ['nope.crt'] }));
 
     const warning = consoleUtilsMock.displayWarning.mock.calls.map((c) => String(c[0])).join('\n');
     expect(warning).toMatch(/could not read CA certificate 'nope.crt'/);
@@ -176,18 +177,18 @@ describe('installMcpTlsTrust', () => {
   // class as above, not a real bug.
   it.skipIf(process.platform === 'win32')(
     'expands a ~-prefixed cert path against the home dir',
-    () => {
+    async () => {
       readFileSyncMock.mockReturnValue('USER_PEM');
-      installMcpTlsTrust(cfg({ extraCaCerts: ['~/certs/ca.crt'] }));
+      await installMcpTlsTrust(cfg({ extraCaCerts: ['~/certs/ca.crt'] }));
       const [readPath] = readFileSyncMock.mock.calls[0] as [string, string];
       expect(readPath.endsWith('/certs/ca.crt')).toBe(true);
       expect(readPath.startsWith('~')).toBe(false);
     }
   );
 
-  it('is idempotent — a second call does not re-install or re-warn', () => {
-    installMcpTlsTrust(cfg({ rejectUnauthorized: false }));
-    installMcpTlsTrust(cfg({ rejectUnauthorized: false }));
+  it('is idempotent — a second call does not re-install or re-warn', async () => {
+    await installMcpTlsTrust(cfg({ rejectUnauthorized: false }));
+    await installMcpTlsTrust(cfg({ rejectUnauthorized: false }));
     expect(setGlobalDispatcherMock).toHaveBeenCalledTimes(1);
     expect(consoleUtilsMock.displayWarning).toHaveBeenCalledTimes(1);
   });

@@ -213,7 +213,7 @@ async function getMcpClient(
 
   // Install any configured TLS trust (custom CA / insecure latch) BEFORE the client connects.
   // Process-global (see tlsTrust.ts) and idempotent, so it also covers LLM/tool fetches — desired.
-  installMcpTlsTrust(config);
+  await installMcpTlsTrust(config);
 
   const rawMcpServers = { ...(config.mcpServers || {}) } as Record<
     string,

@@ -20,7 +20,6 @@ import { rootCertificates } from 'node:tls';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
-import { Agent, setGlobalDispatcher } from 'undici';
 import type { GthConfig } from '@gaunt-sloth/core/config.js';
 import { getProjectDir } from '@gaunt-sloth/core/utils/systemUtils.js';
 import { displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
@@ -102,8 +101,11 @@ let installed = false;
  *
  * Wired into `getMcpClient` before the MCP client is created; because it is global it also covers
  * LLM/tool fetches — which is desired for the CA case and is the danger to flag for the latch.
+ *
+ * `undici` is imported only when there is a dispatcher to install: importing it registers its own
+ * global dispatcher as a side effect, which Node's built-in `fetch` then uses for every request.
  */
-export function installMcpTlsTrust(config: GthConfig): void {
+export async function installMcpTlsTrust(config: GthConfig): Promise<void> {
   if (installed) {
     debugLog('MCP TLS trust already installed this process; skipping.');
     return;
@@ -134,6 +136,7 @@ export function installMcpTlsTrust(config: GthConfig): void {
     );
   }
 
+  const { Agent, setGlobalDispatcher } = await import('undici');
   setGlobalDispatcher(
     new Agent({ connect: { ca: built.ca, rejectUnauthorized: built.rejectUnauthorized } })
   );
