@@ -1,7 +1,11 @@
 {
   "llm": {
     "type": "openrouter",
-    "model": "xiaomi/mimo-v2.6-flash"
+    "model": "xiaomi/mimo-v2.6-flash",
+    "provider": {
+      "order": ["xiaomi"],
+      "allow_fallbacks": true
+    }
   },
   "commands": {
     "api": {

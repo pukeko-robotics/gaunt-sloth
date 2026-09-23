@@ -75,6 +75,20 @@ weaken what `structuredOutput.xx-small.it.ts` guards on this provider (a request
 leaving an optional key out of `required`). It does apply to **every** openai case, because a config
 here is per provider and the openai leg runs unfiltered as `BIG_TEST_PROVIDER`.
 
+### The `openrouter` config prefers the Xiaomi upstream
+
+`configs/openrouter.gsloth.config.json` sets `llm.provider` to
+`{ "order": ["xiaomi"], "allow_fallbacks": true }`. OpenRouter serves `xiaomi/mimo-v2.6-flash` from
+two upstreams at the same price, Xiaomi and DeepInfra, and without a preference it may pick
+DeepInfra's shared pool. That pool rejects requests with HTTP 429 (`engine_overloaded`,
+"temporarily rate-limited upstream") when it is busy, and the release pipeline's platforms job runs
+four openrouter cells at once, so a busy pool fails every attempt of every case on several cells
+together. Retrying does not help, because the pool stays busy for longer than a test's retries last.
+
+The preference is routing only: the model, and therefore what each case exercises, is unchanged.
+Fallbacks stay on, so a Xiaomi outage falls back to DeepInfra rather than failing outright. If the
+model changes, re-check which upstreams serve it before keeping this block.
+
 ### Two kinds of test live here
 
 Most tests **spawn the real CLI** through `support/commandRunner.ts` and assert on its output and
