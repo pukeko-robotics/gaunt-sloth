@@ -172,7 +172,9 @@ Flexible review command that can process content from various sources including 
 The `git` content source runs `git --no-pager diff` itself, so you can review local changes
 without piping: `gth review --content-source git` reviews the working tree, and an optional
 `contentId` selects a ref range. It fails with a clear error outside a git repository or when
-the diff is empty.
+the diff is empty. To review a branch against its merge base with a remote branch, local edits
+included, set
+[`contentSourceConfig.git.mergeBase`](configuration/content-sources.md#git-local-diffs).
 
 ### Examples
 ```bash

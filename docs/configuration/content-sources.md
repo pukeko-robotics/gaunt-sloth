@@ -257,6 +257,38 @@ export async function configure() {
 }
 ```
 
+## Git (local diffs)
+
+The `git` content source runs `git --no-pager diff` in the current directory, so `gth review` can
+review local changes without a pipe (see [`review`](../COMMANDS.md#review)). Its one setting,
+`contentSourceConfig.git.mergeBase`, makes a run with no `contentId` review the branch the way its
+pull request will look, with your uncommitted edits on top:
+
+```json
+{
+  "commands": { "review": { "contentSource": "git" } },
+  "contentSourceConfig": { "git": { "mergeBase": "origin/main" } }
+}
+```
+
+With that config, `gth review` resolves the merge base of `origin/main` and `HEAD` with
+`git merge-base`, then diffs the working tree against that commit. Commits merged to `origin/main`
+after your branch forked stay out of the diff, instead of showing up as code your branch deletes.
+The reviewed content opens with the base and the commit it resolved to, for example
+`Local git diff against the merge base of "origin/main" and HEAD (<sha>)`. Fetch first if the
+remote-tracking branch is stale: the base is computed from what your clone already has.
+
+- **`mergeBase`** (string, optional): a ref such as `origin/main` or `main`. Unset, `gth review`
+  diffs the working tree against the index as before. It must be a non-empty string and must not
+  start with `-`; any other value stops the run with an error naming the setting. A ref that does
+  not exist, or that shares no history with `HEAD`, also stops the run with an error naming the
+  setting. There is no fallback to a plainer diff, because that would review less than you asked
+  for.
+- **An explicit `contentId` wins.** `gth review main...HEAD --content-source git` diffs exactly
+  that range whatever `mergeBase` says.
+- **Untracked files are not included**, as with any `git diff`. To have a new file reviewed before
+  you commit it, mark it with `git add -N <file>` (intent to add); it then appears in the diff.
+
 ## Change Requirements Discovery Configuration
 
 Running `gth pr` without positional arguments triggers change requirements discovery (see

@@ -57,6 +57,21 @@ Add requirements to check against, and focus the reviewer:
 gth review --content-source git -r requirements.md -m "focus on security implications"
 ```
 
+To review everything your branch will put in its pull request, uncommitted edits included, point
+the `git` source at the branch you will merge into:
+
+```json
+{
+  "commands": { "review": { "contentSource": "git" } },
+  "contentSourceConfig": { "git": { "mergeBase": "origin/main" } }
+}
+```
+
+Then a bare `gth review` diffs your working tree against the commit where the branch left
+`origin/main`, so work merged to `origin/main` since then is not reviewed as if you had deleted it.
+What the setting accepts, and why untracked files stay out:
+[Git (local diffs)](../configuration/content-sources.md#git-local-diffs).
+
 ## What a review is labelled with
 
 By default, every `review` and `pr` run opens its output with one line — the same run header every

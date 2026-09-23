@@ -117,6 +117,107 @@ describe('gitDiffSource', () => {
     expect((error as Error).message).not.toContain('--patch');
   });
 
+  describe('contentSourceConfig.git.mergeBase', () => {
+    const SHA = 'a'.repeat(40);
+
+    function mockMergeBaseThenDiff(diff: string): void {
+      execFileMock.mockImplementation(
+        (_cmd: string, args: string[], _opts: object, cb: ExecFileCallback) => {
+          cb(null, args[0] === 'merge-base' ? `${SHA}\n` : diff, '');
+        }
+      );
+    }
+
+    it('resolves the base with git merge-base, then diffs the working tree against that sha', async () => {
+      mockMergeBaseThenDiff('merge base diff body');
+
+      const { get } = await import('#src/sources/gitDiffSource.js');
+      const result = await get({ mergeBase: 'origin/main' }, undefined);
+
+      expect(execFileMock.mock.calls.map((call) => call[1])).toEqual([
+        ['merge-base', 'origin/main', 'HEAD'],
+        ['--no-pager', 'diff', SHA, '--'],
+      ]);
+      expect(result).toBe(
+        `Local git diff against the merge base of "origin/main" and HEAD (${SHA})\n\nmerge base diff body`
+      );
+    });
+
+    it('leaves an explicit contentId untouched and never resolves the base', async () => {
+      mockMergeBaseThenDiff('range diff body');
+
+      const { get } = await import('#src/sources/gitDiffSource.js');
+      const result = await get({ mergeBase: 'origin/main' }, 'origin/main...HEAD');
+
+      expect(execFileMock.mock.calls.map((call) => call[1])).toEqual([
+        ['--no-pager', 'diff', 'origin/main...HEAD'],
+      ]);
+      expect(result).toBe('Local git diff for "origin/main...HEAD"\n\nrange diff body');
+    });
+
+    it('rejects an option-shaped base, naming the setting, without invoking git', async () => {
+      const { get } = await import('#src/sources/gitDiffSource.js');
+
+      await expect(get({ mergeBase: '--output=/tmp/pwned' }, undefined)).rejects.toThrow(
+        'Invalid contentSourceConfig.git.mergeBase "--output=/tmp/pwned"'
+      );
+      expect(execFileMock).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a number', 42, '42'],
+      ['a boolean', true, 'true'],
+      ['an object', { ref: 'main' }, '{"ref":"main"}'],
+      ['null', null, 'null'],
+      ['an empty string', '', '""'],
+    ])('rejects %s rather than ignoring it, without invoking git', async (_, value, shown) => {
+      const { get } = await import('#src/sources/gitDiffSource.js');
+
+      await expect(get({ mergeBase: value }, undefined)).rejects.toThrow(
+        `Invalid contentSourceConfig.git.mergeBase ${shown}; expected a non-empty string`
+      );
+      expect(execFileMock).not.toHaveBeenCalled();
+    });
+
+    it('rejects a malformed base even when an explicit contentId means it would not be used', async () => {
+      const { get } = await import('#src/sources/gitDiffSource.js');
+
+      await expect(get({ mergeBase: 42 }, 'origin/main...HEAD')).rejects.toThrow(
+        'Invalid contentSourceConfig.git.mergeBase 42'
+      );
+      expect(execFileMock).not.toHaveBeenCalled();
+    });
+
+    it('rejects a git config block that is not an object', async () => {
+      const { get } = await import('#src/sources/gitDiffSource.js');
+
+      await expect(
+        get('origin/main' as unknown as Record<string, unknown>, undefined)
+      ).rejects.toThrow('Invalid contentSourceConfig.git; expected an object');
+      expect(execFileMock).not.toHaveBeenCalled();
+    });
+
+    it('behaves exactly as before when the block has no mergeBase', async () => {
+      mockGitResult(null, 'diff body', '');
+
+      const { get } = await import('#src/sources/gitDiffSource.js');
+      const result = await get({}, undefined);
+
+      expect(execFileMock.mock.calls.map((call) => call[1])).toEqual([['--no-pager', 'diff']]);
+      expect(result).toBe('Local git diff for the working tree\n\ndiff body');
+    });
+
+    it('reports an empty merge-base diff with the base in the message', async () => {
+      mockMergeBaseThenDiff('\n');
+
+      const { get } = await import('#src/sources/gitDiffSource.js');
+
+      await expect(get({ mergeBase: 'origin/main' }, undefined)).rejects.toThrow(
+        `No changes found in git diff against the merge base of "origin/main" and HEAD (${SHA}); nothing to review.`
+      );
+    });
+  });
+
   it('surfaces a bad ref error with the ref range in the message', async () => {
     mockGitResult(
       new Error('Command failed'),
