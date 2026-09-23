@@ -70,11 +70,6 @@ declare module '@gaunt-sloth/core/config.js' {
   }
 }
 
-/** Whether `gth review` should discover its requirements: only when explicitly enabled. */
-export function isReviewDiscoveryEnabled(config: GthConfig): boolean {
-  return config.commands?.review?.discovery?.enabled === true;
-}
-
 /**
  * Read the review discovery agent prompt, honouring project / identity-profile overrides and
  * falling back to the default prompt shipped with the assistant package.
@@ -121,28 +116,44 @@ export async function readCurrentBranchName(): Promise<string> {
   }
 }
 
+/** Which change the review is of, when the command line names one. */
+export interface ReviewDiscoveryTarget {
+  /**
+   * The pull request the review's diff comes from (`gth review 42 --content-source github`), the
+   * same id `reviewCommand` binds the review tools to. When set, the evidence is that PR alone:
+   * the checked-out branch may be a different change entirely, and requirements taken from it
+   * would grade PR 42 against another ticket.
+   */
+  prId?: string;
+}
+
 /**
- * Gather the evidence: the branch name, then — only when there is a branch, since `gh` resolves
- * the PR from it — the branch's PR. No `gh`, no PR for the branch, or any other `gh` failure
- * contributes nothing and stays at debug level: most branches under review have no PR yet.
+ * Gather the evidence. For a bound PR id, that PR's metadata only. Otherwise the branch name,
+ * then — only when there is a branch, since `gh` resolves the PR from it — the branch's PR. No
+ * `gh`, no PR for the branch, or any other `gh` failure contributes nothing and stays at debug
+ * level: most branches under review have no PR yet.
  */
-async function gatherReviewDiscoveryEvidence(config: GthConfig): Promise<ReviewDiscoveryEvidence> {
-  const branch = await readCurrentBranchName();
+async function gatherReviewDiscoveryEvidence(
+  config: GthConfig,
+  target: ReviewDiscoveryTarget
+): Promise<ReviewDiscoveryEvidence> {
+  const branch = target.prId ? '' : await readCurrentBranchName();
   let prMetadata = '';
-  if (branch) {
+  if (branch || target.prId) {
     try {
-      prMetadata = (await getGhPrView(getGithubContentSourceConfig(config), undefined)) ?? '';
+      prMetadata = (await getGhPrView(getGithubContentSourceConfig(config), target.prId)) ?? '';
       if (prMetadata) {
         const prNumber = extractGithubPrNumber(prMetadata);
+        const which = target.prId ? '' : 'current-branch ';
         displayInfo(
           prNumber
-            ? `Retrieved current-branch PR #${prNumber} metadata with gh.`
-            : 'Retrieved current-branch PR metadata with gh.'
+            ? `Retrieved ${which}PR #${prNumber} metadata with gh.`
+            : `Retrieved ${which}PR metadata with gh.`
         );
       }
     } catch (error) {
       debugLog(
-        `No current-branch PR metadata for requirements discovery: ${error instanceof Error ? error.message : String(error)}`
+        `No PR metadata for requirements discovery: ${error instanceof Error ? error.message : String(error)}`
       );
     }
   }
@@ -259,12 +270,16 @@ Discover the requirements for the change under review, then call set_requirement
  *
  * @param requirementSource the review's effective requirement source (`-p`, else
  *   `commands.review.requirementSource`, else the root `requirementSource`).
+ * @param target the change the command line names, if any. A git ref range is not a target: the
+ *   evidence for it is still the checked-out branch, which is the branch under review in the
+ *   intended use (`gth review main` on a feature branch).
  */
 export async function runReviewDiscovery(
   config: GthConfig,
-  requirementSource: string | undefined
+  requirementSource: string | undefined,
+  target: ReviewDiscoveryTarget = {}
 ): Promise<string> {
-  const evidence = await gatherReviewDiscoveryEvidence(config);
+  const evidence = await gatherReviewDiscoveryEvidence(config, target);
 
   const fastPathRequirements = (
     await resolveReviewRequirementsFastPath(config, requirementSource, evidence)

@@ -21,6 +21,7 @@ const {
   ghPrViewMock,
   jiraIssueMock,
   gitDiffGetMock,
+  ghPrDiffGetMock,
   writeReviewFailureReportMock,
   setExitCodeMock,
   consoleUtilsMock,
@@ -40,6 +41,7 @@ const {
     ghPrViewMock: vi.fn(),
     jiraIssueMock: vi.fn(),
     gitDiffGetMock: vi.fn(),
+    ghPrDiffGetMock: vi.fn(),
     writeReviewFailureReportMock: vi.fn(),
     setExitCodeMock: vi.fn(),
     consoleUtilsMock: {
@@ -78,6 +80,7 @@ vi.mock('@gaunt-sloth/review/utils/git.js', () => ({ runGit: runGitMock }));
 vi.mock('@gaunt-sloth/review/sources/ghPrViewSource.js', () => ({ get: ghPrViewMock }));
 vi.mock('@gaunt-sloth/review/sources/jiraIssueSource.js', () => ({ get: jiraIssueMock }));
 vi.mock('@gaunt-sloth/review/sources/gitDiffSource.js', () => ({ get: gitDiffGetMock }));
+vi.mock('@gaunt-sloth/review/sources/ghPrDiffSource.js', () => ({ get: ghPrDiffGetMock }));
 
 const DIFF = 'diff --git a/src/a.ts b/src/a.ts\n+changed';
 
@@ -121,6 +124,7 @@ describe('gth review with requirements discovery (CFG-80)', () => {
     runnerInstance.getTerminationReason.mockReturnValue(null);
     runnerInstance.processMessages.mockResolvedValue(undefined);
     gitDiffGetMock.mockResolvedValue(DIFF);
+    ghPrDiffGetMock.mockResolvedValue(DIFF);
     runGitMock.mockResolvedValue('feature/ABC-123-add-thing\n');
     ghPrViewMock.mockRejectedValue(new Error('no pull requests found'));
     // Like the real source: no id, no issue.
@@ -228,6 +232,29 @@ describe('gth review with requirements discovery (CFG-80)', () => {
       'Agent processing failed: 429'
     );
     expect(setExitCodeMock).toHaveBeenCalledWith(1);
+  });
+
+  it('takes the evidence from the PR under review, not the checked-out branch', async () => {
+    // Checked out on a branch for ABC-123, reviewing PR 42, which is for XYZ-9.
+    ghPrViewMock.mockResolvedValue(`GitHub PR: #42
+Head branch: feature/XYZ-9-other-change
+Description:
+Something else entirely.`);
+    jiraIssueMock.mockImplementation(async (_config: unknown, id: string | undefined) =>
+      id ? `${id} requirements` : null
+    );
+
+    const content = await runReview({ discovery: { enabled: true } }, [
+      '42',
+      '--content-source',
+      'github',
+    ]);
+
+    expect(ghPrViewMock).toHaveBeenCalledWith(null, '42');
+    expect(runGitMock).not.toHaveBeenCalled();
+    expect(jiraIssueMock.mock.calls.map((call) => call[1])).toEqual(['XYZ-9']);
+    expect(content).toContain('XYZ-9 requirements');
+    expect(content).not.toContain('ABC-123');
   });
 
   it('does not run discovery when the content fetch fails', async () => {

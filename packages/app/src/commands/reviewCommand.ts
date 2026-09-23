@@ -159,7 +159,12 @@ export function reviewCommand(
       if (discoverRequirements) {
         const { runReviewDiscovery } = await import('#src/commands/reviewDiscovery.js');
         try {
-          const discovered = await runReviewDiscovery(config, requirementSource);
+          // Bound to the same PR id the review tools are bound to below (CFG-54), so a
+          // `gth review 42 --content-source github` finds PR 42's requirements rather than the
+          // checked-out branch's.
+          const discovered = await runReviewDiscovery(config, requirementSource, {
+            prId: resolvePrIdFromArg(contentId),
+          });
           if (discovered) {
             content.unshift(wrapContent(discovered, 'discovered-requirements', 'requirements'));
           } else {

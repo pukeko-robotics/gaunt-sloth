@@ -204,7 +204,12 @@ no key, when the branch and its PR name different keys, or when the Jira source 
 key (for example, Jira is reachable only through an MCP server), a discovery agent runs with your
 configured tools and records what it finds as the review's requirements. If it finds nothing, the
 review runs without requirements. A detached `HEAD`, a missing `gh` and a branch with no pull
-request are not errors; they only leave less evidence.
+request are not errors; they only leave less evidence. When the `contentId` is a pull request
+number (`gth review 42 --content-source github`), the evidence is that pull request's metadata
+instead of the checked-out branch. A git ref range is not treated that way: the evidence is still
+the checked-out branch.
+
+The direct Jira lookup needs Jira REST credentials; see [JIRA](configuration/content-sources.md#jira).
 
 Discovery is off by default, and an explicit `-r/--requirements` always skips it. Its settings,
 its prompt override and how to give the agent more evidence are under
