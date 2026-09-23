@@ -288,6 +288,10 @@ remote-tracking branch is stale: the base is computed from what your clone alrea
   that range whatever `mergeBase` says.
 - **Untracked files are not included**, as with any `git diff`. To have a new file reviewed before
   you commit it, mark it with `git add -N <file>` (intent to add); it then appears in the diff.
+- **Other keys in the `git` block are ignored with a warning** that names them and the known key,
+  so a typo such as `mergebase` is reported rather than silently reviewing the plain working-tree
+  diff. The run continues, so a config shared with teammates on an older gth never breaks their
+  reviews over a key their version does not know.
 
 ## Change Requirements Discovery Configuration
 

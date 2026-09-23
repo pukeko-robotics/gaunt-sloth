@@ -1,6 +1,10 @@
 import type { ProviderConfig } from './types.js';
 import { ProgressIndicator } from '@gaunt-sloth/core/utils/ProgressIndicator.js';
+import { displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { MERGE_BASE_SETTING, resolveMergeBase, runGit } from '#src/utils/git.js';
+
+/** The keys this source reads from `contentSourceConfig.git`. */
+const KNOWN_GIT_CONFIG_KEYS = ['mergeBase'] as const;
 
 /**
  * Gets a local diff via `git --no-pager diff` — review the working tree, a ref range, or a
@@ -25,7 +29,8 @@ import { MERGE_BASE_SETTING, resolveMergeBase, runGit } from '#src/utils/git.js'
  * be used: a malformed value is a config error that should surface on the first run, not on the
  * first run that happens to omit the id.
  *
- * @param config `contentSourceConfig.git`, if any. Recognised key: `mergeBase` (string).
+ * @param config `contentSourceConfig.git`, if any. Recognised key: `mergeBase` (string); any
+ *   other key is ignored with a warning, so a typo such as `mergebase` is reported.
  * @param refRange optional revision selection passed to `git diff`, e.g. `origin/main...HEAD`
  *   or `HEAD~3`.
  * @returns the diff content; throws with a clear message outside a git repository, on a bad
@@ -61,6 +66,12 @@ export async function get(
  * Read `mergeBase` from the git source's config block. `undefined` when unset; throws, naming
  * the setting, for anything that is set but is not a non-empty string (and for a block that is
  * not an object), so a mistyped value is reported instead of silently ignored.
+ *
+ * Any other key in the block gets a warning, not an error. A mistyped key such as `mergebase`
+ * would otherwise review the plain working-tree diff with nothing said. It is not rejected
+ * because a project config is shared by people on different gth versions: a key a later release
+ * adds must not break an older one's reviews. That matches the top-level rule in core's config
+ * schema, where unknown keys warn and only known deprecated names fail.
  */
 function readMergeBase(config: ProviderConfig | null | undefined): string | undefined {
   if (config === null || config === undefined) {
@@ -69,6 +80,17 @@ function readMergeBase(config: ProviderConfig | null | undefined): string | unde
   if (typeof config !== 'object' || Array.isArray(config)) {
     throw new Error(
       `Invalid contentSourceConfig.git; expected an object such as { "mergeBase": "origin/main" }.`
+    );
+  }
+  const unknownKeys = Object.keys(config).filter(
+    (key) => !(KNOWN_GIT_CONFIG_KEYS as readonly string[]).includes(key)
+  );
+  if (unknownKeys.length > 0) {
+    const names = unknownKeys.map((key) => `"${key}"`).join(', ');
+    const noun = unknownKeys.length === 1 ? 'key' : 'keys';
+    const verb = unknownKeys.length === 1 ? 'is' : 'are';
+    displayWarning(
+      `contentSourceConfig.git: unknown ${noun} ${names} ${verb} ignored; known keys: ${KNOWN_GIT_CONFIG_KEYS.join(', ')}.`
     );
   }
   const value = config.mergeBase;

@@ -4,9 +4,13 @@ type ExecFileCallback = (_error: Error | null, _stdout: string, _stderr: string)
 
 const execFileMock = vi.fn();
 const progressIndicatorStopMock = vi.fn();
+const displayWarningMock = vi.fn();
 
 vi.mock('node:child_process', () => ({
   execFile: execFileMock,
+}));
+vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => ({
+  displayWarning: displayWarningMock,
 }));
 vi.mock('@gaunt-sloth/core/utils/ProgressIndicator.js', () => {
   const ProgressIndicator = vi.fn();
@@ -205,6 +209,48 @@ describe('gitDiffSource', () => {
 
       expect(execFileMock.mock.calls.map((call) => call[1])).toEqual([['--no-pager', 'diff']]);
       expect(result).toBe('Local git diff for the working tree\n\ndiff body');
+      expect(displayWarningMock).not.toHaveBeenCalled();
+    });
+
+    it('warns about a mistyped key, naming it and the known key, and still reviews', async () => {
+      mockGitResult(null, 'diff body', '');
+
+      const { get } = await import('#src/sources/gitDiffSource.js');
+      const result = await get({ mergebase: 'origin/main' }, undefined);
+
+      expect(displayWarningMock).toHaveBeenCalledTimes(1);
+      expect(displayWarningMock).toHaveBeenCalledWith(
+        'contentSourceConfig.git: unknown key "mergebase" is ignored; known keys: mergeBase.'
+      );
+      expect(execFileMock.mock.calls.map((call) => call[1])).toEqual([['--no-pager', 'diff']]);
+      expect(result).toBe('Local git diff for the working tree\n\ndiff body');
+    });
+
+    it('names every unknown key in one warning and still honours mergeBase', async () => {
+      mockMergeBaseThenDiff('merge base diff body');
+
+      const { get } = await import('#src/sources/gitDiffSource.js');
+      const result = await get(
+        { mergeBase: 'origin/main', untracked: true, base: 'main' },
+        undefined
+      );
+
+      expect(displayWarningMock).toHaveBeenCalledTimes(1);
+      expect(displayWarningMock).toHaveBeenCalledWith(
+        'contentSourceConfig.git: unknown keys "untracked", "base" are ignored; known keys: mergeBase.'
+      );
+      expect(result).toBe(
+        `Local git diff against the merge base of "origin/main" and HEAD (${SHA})\n\nmerge base diff body`
+      );
+    });
+
+    it('does not warn when the block holds only mergeBase', async () => {
+      mockMergeBaseThenDiff('merge base diff body');
+
+      const { get } = await import('#src/sources/gitDiffSource.js');
+      await get({ mergeBase: 'origin/main' }, undefined);
+
+      expect(displayWarningMock).not.toHaveBeenCalled();
     });
 
     it('reports an empty merge-base diff with the base in the message', async () => {
