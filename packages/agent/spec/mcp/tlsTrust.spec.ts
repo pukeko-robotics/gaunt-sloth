@@ -11,20 +11,16 @@ import type { GthConfig } from '#src/config.js';
 // undici — the dispatcher install site. Stubbed so we assert on the Agent options without touching
 // the real global dispatcher (which would leak across the whole test process). vi.hoisted because
 // the module-under-test is imported statically (above the const-init that plain mocks would need).
-// The factory counts how often undici is loaded, since the module imports it lazily.
+// Whether undici is loaded at all is a process-level fact, asserted in tlsTrustUndiciLoad.spec.ts.
 const { setGlobalDispatcherMock, AgentMock, readFileSyncMock } = vi.hoisted(() => ({
   setGlobalDispatcherMock: vi.fn(),
   AgentMock: vi.fn(),
   readFileSyncMock: vi.fn(),
 }));
-const undiciLoads = vi.hoisted(() => ({ count: 0 }));
-vi.mock('undici', () => {
-  undiciLoads.count++;
-  return {
-    Agent: AgentMock,
-    setGlobalDispatcher: setGlobalDispatcherMock,
-  };
-});
+vi.mock('undici', () => ({
+  Agent: AgentMock,
+  setGlobalDispatcher: setGlobalDispatcherMock,
+}));
 
 const consoleUtilsMock = vi.hoisted(() => ({
   display: vi.fn(),
@@ -131,19 +127,6 @@ describe('installMcpTlsTrust', () => {
   it('does nothing when there is no tls block', async () => {
     await installMcpTlsTrust(cfg(undefined));
     expect(setGlobalDispatcherMock).not.toHaveBeenCalled();
-  });
-
-  it('loads undici only when there is a dispatcher to install', async () => {
-    vi.resetModules();
-    undiciLoads.count = 0;
-    const fresh = await import('#src/mcp/tlsTrust.js');
-
-    await fresh.installMcpTlsTrust(cfg(undefined));
-    expect(undiciLoads.count).toBe(0);
-
-    await fresh.installMcpTlsTrust(cfg({ rejectUnauthorized: false }));
-    expect(undiciLoads.count).toBe(1);
-    expect(setGlobalDispatcherMock).toHaveBeenCalledTimes(1);
   });
 
   // getProjectDir is mocked to a POSIX literal ('/proj'); tlsTrust.ts resolves the cert path with
