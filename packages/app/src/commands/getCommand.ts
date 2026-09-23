@@ -10,7 +10,16 @@ import {
 import { display, displayError } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { setExitCode } from '@gaunt-sloth/core/utils/systemUtils.js';
 
-const PROMPT_COMMANDS = ['ask', 'review', 'pr', 'pr-discovery', 'chat', 'code', 'exec'] as const;
+const PROMPT_COMMANDS = [
+  'ask',
+  'review',
+  'pr',
+  'pr-discovery',
+  'review-discovery',
+  'chat',
+  'code',
+  'exec',
+] as const;
 const SOURCE_COMMANDS = ['review', 'pr'] as const;
 const INPUT_TYPES = ['content', 'requirements'] as const;
 

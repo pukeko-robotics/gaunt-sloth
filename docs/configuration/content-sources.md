@@ -336,6 +336,58 @@ The discovery agent's prompt can be replaced by placing a `.gsloth.pr-discovery.
 `.gsloth/.gsloth-settings/` (or the project root when not using the `.gsloth` directory), or in an
 identity profile directory, the same way as other prompts.
 
+## Review Requirements Discovery Configuration
+
+`gth review` with no `-r/--requirements` can find its own requirements (see
+[Commands](../COMMANDS.md#requirements-discovery)). It is configured under
+`commands.review.discovery`, with the same keys as `commands.pr.discovery` less
+`deterministicDiff`, because the review's diff comes from its content source:
+
+- **`enabled`** (boolean, default: `false`): Run requirements discovery when no `--requirements`
+  is given. Off by default because it adds a `git` call, a `gh` call, possibly an issue-tracker
+  call and an agent run to every review.
+- **`filesystem`**, **`builtInTools`**, **`customTools`**, **`tools`**: Tool overrides applied
+  only while the discovery agent runs; when omitted, the discovery agent uses the **top-level**
+  values, not the `commands.review.*` ones.
+- **`allowedTools`** (string[]): Allow-list of tool names for the discovery agent, with the same
+  rule as `commands.pr.discovery.allowedTools`: `set_requirements` is always kept, and the
+  top-level `allowedTools` is never inherited.
+
+The evidence is the current branch name and, when the branch has one, its pull request's title,
+branch names and description from `gh pr view`. With a `jira` or `jira-legacy` requirement source
+(`-p`, else `commands.review.requirementSource`, else `requirementSource`), exactly one distinct
+Jira key across that evidence is fetched directly; with any other source, a GitHub issue the pull
+request description designates is. Commit messages are not read.
+
+The review discovery agent has one helper tool of its own, `set_requirements`, and no diff tools.
+Everything else it can use is what you configure — MCP servers such as Jira, built-in tools and
+custom tools. To give it more evidence, add a custom tool and point the agent at it in the prompt.
+For example, to let it read the branch's commit subjects:
+
+```json
+{
+  "requirementSource": "jira",
+  "commands": {
+    "review": {
+      "discovery": {
+        "enabled": true,
+        "customTools": {
+          "branch_commits": {
+            "command": "git log --format=%s origin/main..HEAD",
+            "description": "List the subjects of the commits on this branch that are not on origin/main"
+          }
+        },
+        "allowedTools": ["branch_commits", "mcp__jira__getJiraIssue"]
+      }
+    }
+  }
+}
+```
+
+The discovery agent's prompt can be replaced by placing a `.gsloth.review-discovery.md` file in
+`.gsloth/.gsloth-settings/` (or the project root when not using the `.gsloth` directory), or in an
+identity profile directory. `gth get review-discovery prompt` prints the prompt in effect.
+
 ## Review rating
 
 The `review` and `pr` commands **automatically provide** automated review scoring with configurable pass/fail thresholds. **Rating is enabled by default** - the AI concludes every review with a numerical rating (0-10) and a comment explaining the rating.

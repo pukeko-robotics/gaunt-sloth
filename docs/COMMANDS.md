@@ -63,7 +63,7 @@ gth get <review|pr> <content|requirements> <id>
 ```
 
 ### Arguments
-- `<command>` - Command to inspect. Supported prompt targets: `ask`, `review`, `pr`, `pr-discovery`, `chat`, `code`
+- `<command>` - Command to inspect. Supported prompt targets: `ask`, `review`, `pr`, `pr-discovery`, `review-discovery`, `chat`, `code`
 - `<content|requirements>` - Provider-backed input type for `review` or `pr`
 - `<id>` - Provider-backed content identifier, such as a PR number or issue key
 
@@ -79,6 +79,9 @@ gth get review prompt
 
 # Print the discovery-agent system prompt used by change requirements discovery
 gth get pr-discovery prompt
+
+# Print the discovery-agent system prompt used by gth review's requirements discovery
+gth get review-discovery prompt
 
 # Print the wrapped PR diff that `gth pr 42` would use
 gth get pr content 42
@@ -175,6 +178,37 @@ without piping: `gth review --content-source git` reviews the working tree, and 
 the diff is empty. To review a branch against its merge base with a remote branch, local edits
 included, set
 [`contentSourceConfig.git.mergeBase`](configuration/content-sources.md#git-local-diffs).
+
+### Requirements Discovery
+
+I want `gth review` on my branch `feature/PROJ-123-login-rate-limit` to be graded against Jira
+ticket PROJ-123 without typing `-r PROJ-123` each time. To do that, turn discovery on for
+`review`:
+
+```json
+{
+  "requirementSource": "jira",
+  "commands": {
+    "review": {
+      "discovery": { "enabled": true }
+    }
+  }
+}
+```
+
+then run `gth review --content-source git`. With no `--requirements`, `gth review` reads the
+current branch name (`git rev-parse --abbrev-ref HEAD`) and, when the branch has one, its pull
+request (`gh pr view`, the same call `gth pr` makes). A single Jira key in that evidence is fetched
+through the configured Jira requirement source and the discovery agent does not run. When there is
+no key, when the branch and its PR name different keys, or when the Jira source cannot fetch the
+key (for example, Jira is reachable only through an MCP server), a discovery agent runs with your
+configured tools and records what it finds as the review's requirements. If it finds nothing, the
+review runs without requirements. A detached `HEAD`, a missing `gh` and a branch with no pull
+request are not errors; they only leave less evidence.
+
+Discovery is off by default, and an explicit `-r/--requirements` always skips it. Its settings,
+its prompt override and how to give the agent more evidence are under
+[Review Requirements Discovery Configuration](configuration/content-sources.md#review-requirements-discovery-configuration).
 
 ### Examples
 ```bash

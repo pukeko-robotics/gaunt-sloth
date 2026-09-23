@@ -16,8 +16,10 @@ import {
   readSystemPrompt,
 } from '@gaunt-sloth/core/utils/llmUtils.js';
 import { readPrDiscoveryPrompt } from '#src/commands/prDiscovery.js';
+import { readReviewDiscoveryPrompt } from '#src/commands/reviewDiscovery.js';
 
-export type PromptCommandType = 'ask' | 'review' | 'pr' | 'pr-discovery' | 'chat' | 'code' | 'exec';
+export type PromptCommandType =
+  'ask' | 'review' | 'pr' | 'pr-discovery' | 'review-discovery' | 'chat' | 'code' | 'exec';
 export type SourceCommandType = 'review' | 'pr';
 export type SourceInputType = 'content' | 'requirements';
 
@@ -67,9 +69,11 @@ export function getCommandSystemPrompt(command: PromptCommandType, config: GthCo
   const modePrompt =
     command === 'pr-discovery'
       ? readPrDiscoveryPrompt(config)
-      : command === 'chat'
-        ? readChatPrompt(config)
-        : readCodePrompt(config);
+      : command === 'review-discovery'
+        ? readReviewDiscoveryPrompt(config)
+        : command === 'chat'
+          ? readChatPrompt(config)
+          : readCodePrompt(config);
   return flattenSystemMessageContent(config, modePrompt);
 }
 

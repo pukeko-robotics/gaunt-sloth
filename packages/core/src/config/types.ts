@@ -490,11 +490,7 @@ export interface GthConfig {
   };
   commands?: {
     pr?: PrCommandConfig;
-    review?: CommandToolingConfig & {
-      contentSource?: string;
-      requirementSource?: string;
-      rating?: RatingConfig;
-    };
+    review?: ReviewCommandConfig;
     ask?: CommandToolingConfig;
     chat?: CommandToolingConfig;
     /**
@@ -769,6 +765,19 @@ export interface PrCommandConfig extends CommandToolingConfig {
   contentSource?: string;
   requirementSource?: string;
   logWorkForReviewInSeconds?: number;
+  rating?: RatingConfig;
+}
+
+/**
+ * `gth review` command configuration.
+ *
+ * A named interface for the same reason as {@link PrCommandConfig}: the assistant package merges
+ * its review requirements discovery config (`discovery`) into it via module augmentation, which a
+ * type alias or an inline intersection cannot take.
+ */
+export interface ReviewCommandConfig extends CommandToolingConfig {
+  contentSource?: string;
+  requirementSource?: string;
   rating?: RatingConfig;
 }
 

@@ -300,7 +300,7 @@ function getSourceConfig(config: unknown): ProviderConfig | null {
   return config && typeof config === 'object' ? (config as ProviderConfig) : null;
 }
 
-function getGithubContentSourceConfig(config: GthConfig): ProviderConfig | null {
+export function getGithubContentSourceConfig(config: GthConfig): ProviderConfig | null {
   return getSourceConfig(config.contentSourceConfig?.github);
 }
 
@@ -316,6 +316,13 @@ function getJiraRequirementSourceConfig(config: GthConfig): ProviderConfig | nul
   return getSourceConfig(config.builtInToolsConfig?.jira ?? config.requirementSourceConfig?.jira);
 }
 
+/** Whether a requirement source is one of the Jira sources the deterministic fast path serves. */
+export function isJiraRequirementSource(
+  requirementSource: string | undefined
+): requirementSource is 'jira' | 'jira-legacy' {
+  return requirementSource === 'jira' || requirementSource === 'jira-legacy';
+}
+
 /**
  * Deterministically resolve requirements from PR metadata, using a fast path that matches
  * the configured requirement source. Falls back to '' when nothing is found, leaving the
@@ -327,35 +334,66 @@ async function discoverRequirementsFromPrMetadata(
 ): Promise<string> {
   const requirementSource = config.commands?.pr?.requirementSource ?? config.requirementSource;
 
-  if (requirementSource === 'jira' || requirementSource === 'jira-legacy') {
+  if (isJiraRequirementSource(requirementSource)) {
     const issueKey = extractJiraIssueKey(prMetadata);
     if (!issueKey) {
       return '';
     }
-    const jiraConfig = getJiraRequirementSourceConfig(config);
-    try {
-      const requirements =
-        (requirementSource === 'jira-legacy'
-          ? await getJiraIssueLegacy(jiraConfig, issueKey)
-          : await getJiraIssue(jiraConfig, issueKey)) ?? '';
-      if (requirements) {
-        displayInfo(
-          `Discovered requirements from Jira issue ${issueKey} linked in the PR description.`
-        );
-      }
-      return requirements;
-    } catch (error) {
-      // The deterministic Jira fast path uses the Jira REST API, which needs its own
-      // credentials (PAT / base64 token) that are independent of any Jira MCP OAuth. When
-      // those aren't configured - e.g. an MCP-only setup - skip quietly and let the discovery
-      // agent resolve requirements via its tools (e.g. the Jira MCP server).
-      debugLog(
-        `Skipped the deterministic Jira REST lookup for ${issueKey}: ${error instanceof Error ? error.message : String(error)}`
-      );
-      return '';
-    }
+    return fetchJiraRequirements(
+      config,
+      requirementSource,
+      issueKey,
+      'linked in the PR description'
+    );
   }
 
+  return discoverGithubIssueRequirementsFromPrMetadata(config, prMetadata);
+}
+
+/**
+ * The Jira half of the deterministic fast path: fetch one issue through the configured Jira
+ * requirement source. Returns '' when the issue has no content or the lookup fails, so the caller
+ * falls through to the discovery agent.
+ *
+ * @param foundIn how the key was found, completing "Discovered requirements from Jira issue
+ *   <key> ..." in the message shown on success.
+ */
+export async function fetchJiraRequirements(
+  config: GthConfig,
+  requirementSource: 'jira' | 'jira-legacy',
+  issueKey: string,
+  foundIn: string
+): Promise<string> {
+  const jiraConfig = getJiraRequirementSourceConfig(config);
+  try {
+    const requirements =
+      (requirementSource === 'jira-legacy'
+        ? await getJiraIssueLegacy(jiraConfig, issueKey)
+        : await getJiraIssue(jiraConfig, issueKey)) ?? '';
+    if (requirements) {
+      displayInfo(`Discovered requirements from Jira issue ${issueKey} ${foundIn}.`);
+    }
+    return requirements;
+  } catch (error) {
+    // The deterministic Jira fast path uses the Jira REST API, which needs its own
+    // credentials (PAT / base64 token) that are independent of any Jira MCP OAuth. When
+    // those aren't configured - e.g. an MCP-only setup - skip quietly and let the discovery
+    // agent resolve requirements via its tools (e.g. the Jira MCP server).
+    debugLog(
+      `Skipped the deterministic Jira REST lookup for ${issueKey}: ${error instanceof Error ? error.message : String(error)}`
+    );
+    return '';
+  }
+}
+
+/**
+ * The GitHub half of the deterministic fast path: a GitHub issue the PR description designates
+ * as requirements, fetched with `gh issue view`. Returns '' when the description points at none.
+ */
+export async function discoverGithubIssueRequirementsFromPrMetadata(
+  config: GthConfig,
+  prMetadata: string
+): Promise<string> {
   const requirementsIssueRef = extractRequirementsGithubIssueRef(prMetadata);
   if (!requirementsIssueRef) {
     return '';
@@ -466,7 +504,7 @@ function formatGithubIssueRef(ref: string): string {
   return /^\d+$/.test(ref) ? `#${ref}` : ref;
 }
 
-function extractGithubPrNumber(prMetadata: string): string | undefined {
+export function extractGithubPrNumber(prMetadata: string): string | undefined {
   // formatPrView emits "GitHub PR: #<number>" as the first line when the number is known. Anchor
   // to that first line so a PR body that merely contains the literal "GitHub PR: #123" cannot
   // spoof the number shown in the info message.
@@ -476,13 +514,13 @@ function extractGithubPrNumber(prMetadata: string): string | undefined {
 // Jira project keys are at least two letters followed by letters/digits (e.g. ABC-123,
 // never A-1). Kept case-sensitive for bare keys: lowercase look-alikes in branch names or
 // prose ("fix-123") are too ambiguous for the deterministic path.
-const JIRA_ISSUE_KEY_PATTERN = /\b([A-Z]{2}[A-Z0-9]*-\d+)\b/;
+export const JIRA_ISSUE_KEY_PATTERN = /\b([A-Z]{2}[A-Z0-9]*-\d+)\b/;
 // Atlassian browse URL, e.g. https://company.atlassian.net/browse/ABC-123. Unlike bare keys,
 // URL-extracted keys are matched case-insensitively and normalized because the structured
 // /browse/<key> path makes the intent clear while copied URLs can vary in casing.
 const ATLASSIAN_BROWSE_URL_PATTERN = /atlassian\.net\/browse\/([A-Z]{2}[A-Z0-9]*-\d+)/i;
 
-function extractJiraIssueKey(prMetadata: string): string | undefined {
+export function extractJiraIssueKey(prMetadata: string): string | undefined {
   const requirementsLine = getPrDescriptionBody(prMetadata)
     .split('\n')
     .find((line) => REQUIREMENTS_LABEL_PATTERN.test(line));

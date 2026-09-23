@@ -1,6 +1,7 @@
 import { Command, Option } from 'commander';
-import { displayError } from '@gaunt-sloth/core/utils/consoleUtils.js';
-import { getStringFromStdin, setExitCode } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { displayError, displayInfo } from '@gaunt-sloth/core/utils/consoleUtils.js';
+import { getStringFromStdin, setExitCode, stdout } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { ApprovalStopError, approvalStopRows } from '@gaunt-sloth/core/core/shell/approvalStop.js';
 import {
   getCommandSourceInput,
   getEffectiveContentSource,
@@ -95,15 +96,25 @@ export function reviewCommand(
       // the diff actually came from.
       const config = withReviewContentSource(initialConfig, contentSource);
 
-      const requirements = await getCommandSourceInput(
-        'review',
-        'requirements',
-        requirementsId,
-        config,
-        requirementSource
-      );
-      if (requirements) {
-        content.push(requirements);
+      // CFG-80 — discovery runs only when enabled and no `--requirements` was given; an explicit
+      // `--requirements` always wins.
+      const discoverRequirements =
+        !requirementsId && config.commands?.review?.discovery?.enabled === true;
+
+      // With discovery on and no id, the requirement source is not asked for an id-less lookup:
+      // discovery is what finds the id, and the id-less call only warns (the Jira source prints
+      // "No issue ID provided") — the same reason `gth pr` skips it in discovery mode.
+      if (!discoverRequirements) {
+        const requirements = await getCommandSourceInput(
+          'review',
+          'requirements',
+          requirementsId,
+          config,
+          requirementSource
+        );
+        if (requirements) {
+          content.push(requirements);
+        }
       }
 
       // Fail loudly on a content-source error (e.g. the git source outside a repository or with
@@ -139,6 +150,38 @@ export function reviewCommand(
       if (providedContent) {
         changedPaths = extractChangedPathsFromDiff(providedContent);
         content.push(providedContent);
+      }
+
+      // CFG-80 — requirements discovery. After the content fetch, so a review that cannot get its
+      // diff never spends a discovery agent run; the discovered requirements still go FIRST in the
+      // content, where `--requirements` puts them. With discovery off (the default) nothing here
+      // runs: no git, no gh, no agent, so the review runs and prints exactly what it did before.
+      if (discoverRequirements) {
+        const { runReviewDiscovery } = await import('#src/commands/reviewDiscovery.js');
+        try {
+          const discovered = await runReviewDiscovery(config, requirementSource);
+          if (discovered) {
+            content.unshift(wrapContent(discovered, 'discovered-requirements', 'requirements'));
+          } else {
+            displayInfo('Requirements discovery found no requirements; reviewing without them.');
+          }
+        } catch (error) {
+          // Same handling as `gth pr`'s discovery: the agent runs inside a try/finally with no
+          // catch of its own, so an approvals stop or a provider error from it lands here. It fails
+          // the run rather than silently reviewing without the requirements the user asked for.
+          if (error instanceof ApprovalStopError) {
+            for (const row of approvalStopRows(error.parts, { columns: stdout.columns })) {
+              displayError(row);
+            }
+            writeReviewFailureReport(config, REVIEW_SOURCE, 'review', error.message);
+          } else {
+            const message = error instanceof Error ? error.message : String(error);
+            displayError(message);
+            writeReviewFailureReport(config, REVIEW_SOURCE, 'review', message);
+          }
+          setExitCode(1);
+          return;
+        }
       }
 
       if (options.file) {
