@@ -48,10 +48,11 @@ readonly
 # tui-test (Stage D PTY e2e) transpiled cache
 packages/*/tui-e2e/.tui-test/
 
-# Scratch dir the core barrel type-surface spec type-checks its probe in. It lives inside the
-# package because the probe imports @gaunt-sloth/core by name, which only resolves from here; the
-# spec removes it, so a surviving one means a run was killed.
-/packages/core/.type-probe-*/
+# Scratch dirs the type-checking specs (core's barrel type surface, the app's discovery config
+# agreement) write their probes in. They live inside the package because a probe resolves that
+# package's imports, which only works from there; the specs remove them, so a surviving one means a
+# run was killed.
+/packages/*/.type-probe-*/
 
 # Scratch dir the weakening-table totality spec type-checks its copy of src/ in. Inside the package
 # for the same reason — the copied sources resolve their imports by walking up into

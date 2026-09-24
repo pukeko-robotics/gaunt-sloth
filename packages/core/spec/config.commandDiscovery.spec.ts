@@ -4,13 +4,12 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 
 /**
- * CFG-80 — `commands.review.discovery` (like `commands.pr.discovery`) is not declared in the zod
- * schema: its type is merged into the command config by module augmentation from the app package.
- * The per-command schema objects STRIP unknown keys, so the key survives a load only because the
- * loader validates each layer and then keeps the RAW layer, discarding the parsed copy. Nothing
- * else pinned that for either command, and if the loader ever started returning the parsed copy
- * both discovery settings would silently vanish — `gth pr` discovery would fall back to its
- * default, and `gth review` discovery could never be turned on.
+ * CFG-80 — `commands.review.discovery` and `commands.pr.discovery` reach the loaded config. Their
+ * runtime shape is declared in the zod schema, which checks them; their TypeScript type is merged
+ * into the command config by module augmentation from the app package. The loader validates each
+ * layer and then keeps the RAW layer, so this pins the end result a user depends on rather than
+ * either mechanism: if the settings were lost on the way, `gth pr` discovery would silently fall
+ * back to its default and `gth review` discovery could never be turned on.
  *
  * Real fs, real loader; the seams mocked are the ones config.jsonc.spec.ts mocks, for the same
  * reasons (a temp global dir, no real LLM, no process exit).

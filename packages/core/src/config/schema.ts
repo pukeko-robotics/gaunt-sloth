@@ -968,6 +968,39 @@ const promptsSchema = z.object({
   paths: z.array(scopedPromptsEntrySchema).optional(),
 });
 
+/**
+ * CFG-82 — `commands.review.discovery` and, with `deterministicDiff` on top,
+ * `commands.pr.discovery`: change requirements discovery for the two commands that run it.
+ *
+ * The runtime shape is declared here, in core, because this schema is the only thing that checks a
+ * config: without these entries the per-command objects stripped the block before checking it, so
+ * `gth config validate` passed a wrong-typed value and the published JSON Schema gave editors no
+ * completion for it. The TypeScript types stay in the app package (`RequirementsDiscoveryConfig`,
+ * `PrDiscoveryConfig`, `ReviewDiscoveryConfig`), merged into `PrCommandConfig` /
+ * `ReviewCommandConfig` by module augmentation, because `tools` is typed there with LangChain tool
+ * types that core's config types do not name. `discoveryConfigSchemaAgreement.ts` in the app
+ * package holds the two sides together at build time: a field added to or removed from either one
+ * alone fails the build (and its spec).
+ *
+ * No `.default()`s: the defaults (`pr` on, `review` off) belong to the readers that apply them.
+ */
+const requirementsDiscoveryShape = {
+  enabled: z.boolean().optional(),
+  filesystem: filesystemSchema.optional(),
+  builtInTools: builtInToolsSchema.optional(),
+  customTools: customToolsOrFalseSchema.optional(),
+  // Live tool instances / toolkits in JS configs — kept permissive, as the root `tools` is.
+  tools: z.array(z.unknown()).optional(),
+  allowedTools: z.array(z.string()).optional(),
+};
+
+const reviewDiscoverySchema = z.object(requirementsDiscoveryShape);
+
+const prDiscoverySchema = z.object({
+  ...requirementsDiscoveryShape,
+  deterministicDiff: z.boolean().optional(),
+});
+
 const prCommandSchema = z.object({
   contentSource: z.string().optional(),
   requirementSource: z.string().optional(),
@@ -982,6 +1015,7 @@ const prCommandSchema = z.object({
   logWorkForReviewInSeconds: z.number().optional(),
   rating: ratingConfigSchema.optional(),
   binaryFormats: binaryFormatsSchema.optional(),
+  discovery: prDiscoverySchema.optional(),
 });
 
 const reviewCommandSchema = z.object({
@@ -997,6 +1031,7 @@ const reviewCommandSchema = z.object({
   allowedTools: z.array(z.string()).optional(),
   rating: ratingConfigSchema.optional(),
   binaryFormats: binaryFormatsSchema.optional(),
+  discovery: reviewDiscoverySchema.optional(),
 });
 
 const askCommandSchema = z.object({

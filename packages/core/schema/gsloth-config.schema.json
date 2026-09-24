@@ -1073,6 +1073,162 @@
                   }
                 }
               ]
+            },
+            "discovery": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "filesystem": {
+                  "anyOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    {
+                      "type": "string",
+                      "enum": [
+                        "all",
+                        "read",
+                        "none"
+                      ]
+                    }
+                  ]
+                },
+                "builtInTools": {
+                  "anyOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              },
+                              "command": {
+                                "type": "string"
+                              },
+                              "timeout": {
+                                "type": "number"
+                              },
+                              "maxTimeout": {
+                                "type": "number"
+                              },
+                              "maxOutputBytes": {
+                                "type": "number"
+                              },
+                              "maxBytes": {
+                                "type": "number"
+                              },
+                              "previewLines": {
+                                "type": "number"
+                              },
+                              "fileSet": {
+                                "type": "string",
+                                "enum": [
+                                  "gitignore",
+                                  "all"
+                                ]
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                "customTools": {
+                  "anyOf": [
+                    {
+                      "type": "boolean",
+                      "const": false
+                    },
+                    {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "command": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "parameters": {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "additionalProperties": {
+                              "type": "object",
+                              "properties": {
+                                "description": {
+                                  "type": "string"
+                                },
+                                "allow": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "enum": [
+                                      "absolute-paths",
+                                      "directory-traversal",
+                                      "shell-injection",
+                                      "null-bytes"
+                                    ]
+                                  }
+                                }
+                              },
+                              "required": [
+                                "description"
+                              ]
+                            }
+                          },
+                          "timeout": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "command",
+                          "description"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                "tools": {
+                  "type": "array",
+                  "items": {}
+                },
+                "allowedTools": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "deterministicDiff": {
+                  "type": "boolean"
+                }
+              }
             }
           }
         },
@@ -1403,6 +1559,159 @@
                   }
                 }
               ]
+            },
+            "discovery": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "filesystem": {
+                  "anyOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    {
+                      "type": "string",
+                      "enum": [
+                        "all",
+                        "read",
+                        "none"
+                      ]
+                    }
+                  ]
+                },
+                "builtInTools": {
+                  "anyOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              },
+                              "command": {
+                                "type": "string"
+                              },
+                              "timeout": {
+                                "type": "number"
+                              },
+                              "maxTimeout": {
+                                "type": "number"
+                              },
+                              "maxOutputBytes": {
+                                "type": "number"
+                              },
+                              "maxBytes": {
+                                "type": "number"
+                              },
+                              "previewLines": {
+                                "type": "number"
+                              },
+                              "fileSet": {
+                                "type": "string",
+                                "enum": [
+                                  "gitignore",
+                                  "all"
+                                ]
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                "customTools": {
+                  "anyOf": [
+                    {
+                      "type": "boolean",
+                      "const": false
+                    },
+                    {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "command": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "parameters": {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "additionalProperties": {
+                              "type": "object",
+                              "properties": {
+                                "description": {
+                                  "type": "string"
+                                },
+                                "allow": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "enum": [
+                                      "absolute-paths",
+                                      "directory-traversal",
+                                      "shell-injection",
+                                      "null-bytes"
+                                    ]
+                                  }
+                                }
+                              },
+                              "required": [
+                                "description"
+                              ]
+                            }
+                          },
+                          "timeout": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "command",
+                          "description"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                "tools": {
+                  "type": "array",
+                  "items": {}
+                },
+                "allowedTools": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
             }
           }
         },
