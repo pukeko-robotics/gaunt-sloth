@@ -118,10 +118,8 @@ Requires Node.js 24+ (see the `engines` field in `package.json`).
 npm install -g gaunt-sloth
 ```
 
-`latest` follows the 2.0 line. Every release is published to its channel tag first (`@beta` while
-2.0 is in beta), and a version that has proven itself is then promoted to `latest` — so the bare
-name gives you the newest release we have blessed, and `gaunt-sloth@beta` the newest one we have
-built. Upgrading from the old `gaunt-sloth-assistant` package? See
+Every release is published to `latest`, so the bare name gives you the newest one. Upgrading from
+the old `gaunt-sloth-assistant` package? See
 [Upgrading from `gaunt-sloth-assistant` (1.x)?](docs/MIGRATION.md#upgrading-from-gaunt-sloth-assistant-1x)
 first.
 
