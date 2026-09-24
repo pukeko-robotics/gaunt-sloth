@@ -1,6 +1,6 @@
 {
   "name": "@gaunt-sloth/agent",
-  "version": "2.0.0-beta.18",
+  "version": "2.0.0",
   "description": "Agent runtime for Gaunt Sloth: tools, middleware, MCP/A2A clients and the AG-UI server",
   "license": "MIT",
   "author": "Andrew Kondratev",
@@ -64,6 +64,6 @@
     "value-surface:generate": "node scripts/generate-value-surface.mjs"
   },
   "publishConfig": {
-    "tag": "beta"
+    "tag": "latest"
   }
 }

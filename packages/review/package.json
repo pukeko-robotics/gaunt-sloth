@@ -1,6 +1,6 @@
 {
   "name": "@gaunt-sloth/review",
-  "version": "2.0.0-beta.18",
+  "version": "2.0.0",
   "description": "Review functionality for Gaunt Sloth",
   "license": "MIT",
   "author": "Andrew Kondratev",
@@ -49,6 +49,6 @@
     "value-surface:generate": "node scripts/generate-value-surface.mjs"
   },
   "publishConfig": {
-    "tag": "beta"
+    "tag": "latest"
   }
 }
