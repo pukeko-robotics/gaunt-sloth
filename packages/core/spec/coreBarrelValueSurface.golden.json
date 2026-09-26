@@ -154,6 +154,10 @@
       "kind": "class"
     },
     {
+      "name": "INTERACTIVE_CONVERSATION_COMMANDS",
+      "kind": "set"
+    },
+    {
       "name": "INTERACTIVE_MODEL_FETCH_TIMEOUT_MS",
       "kind": "number"
     },
@@ -164,6 +168,10 @@
     {
       "name": "MissingProviderKeyError",
       "kind": "class"
+    },
+    {
+      "name": "NO_RUN_ID_PLACEHOLDER",
+      "kind": "string"
     },
     {
       "name": "PROFILE_NAME_RE",
@@ -347,6 +355,10 @@
     },
     {
       "name": "formatConversationList",
+      "kind": "function"
+    },
+    {
+      "name": "formatConversationRef",
       "kind": "function"
     },
     {
@@ -542,6 +554,10 @@
       "kind": "function"
     },
     {
+      "name": "parseConversationRef",
+      "kind": "function"
+    },
+    {
       "name": "parseTokenBudget",
       "kind": "function"
     },
@@ -551,6 +567,10 @@
     },
     {
       "name": "recordSessionSafe",
+      "kind": "function"
+    },
+    {
+      "name": "recordSessionTurnSafe",
       "kind": "function"
     },
     {
@@ -567,6 +587,10 @@
     },
     {
       "name": "resolveConfigExtends",
+      "kind": "function"
+    },
+    {
+      "name": "resolveConversationRefSafe",
       "kind": "function"
     },
     {
@@ -611,6 +635,10 @@
     },
     {
       "name": "stripRungToolDescriptionSuffix",
+      "kind": "function"
+    },
+    {
+      "name": "toConversationRef",
       "kind": "function"
     },
     {

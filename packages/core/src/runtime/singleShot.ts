@@ -10,11 +10,14 @@ import {
 } from '#src/utils/consoleUtils.js';
 import { getCommandOutputFilePath } from '#src/utils/fileUtils.js';
 import { GthAgentRunner } from '#src/core/GthAgentRunner.js';
-import { MemorySaver } from '@langchain/langgraph';
 import { HumanMessage } from '@langchain/core/messages';
 import { ProgressIndicator } from '#src/utils/ProgressIndicator.js';
 import type { AgentResolvers, GthAgentFactory, GthCommand } from '#src/core/types.js';
-import { recordSessionSafe } from '#src/history/recordSession.js';
+import { recordSessionTurnSafe } from '#src/history/recordSession.js';
+import {
+  openSessionCheckpointerSafe,
+  type SessionCheckpointer,
+} from '#src/history/sessionCheckpointer.js';
 import type { GthAdvertisedTools, GthRunStats } from '#src/core/types.js';
 import { getProjectDir, stdout } from '#src/utils/systemUtils.js';
 import { ApprovalStopError, approvalStopRows } from '#src/core/shell/approvalStop.js';
@@ -66,6 +69,12 @@ export interface SingleShotResult extends GthRunStats {
    * failures are a maintainer's question and not a user's.
    */
   recap: GthRunRecap | null;
+  /**
+   * GS2-106 — the conversation this run was recorded under, with its stable run id; absent when the
+   * run was not recorded (history off, or the store could not be written). What a caller needs to
+   * tell a person how to come back to this run. Nothing prints it yet.
+   */
+  conversation?: { conversationId: number; runId: string | null };
 }
 
 /** Options that qualify a {@link runSingleShot} run without changing how it behaves. */
@@ -188,6 +197,9 @@ export async function runSingleShot(
   options?: SingleShotOptions
 ): Promise<SingleShotResult> {
   const progressIndicator = config.streamOutput ? undefined : new ProgressIndicator('Thinking.');
+  // Opened in the outer `try` and closed in its `finally`, AFTER the run is recorded: the close is
+  // what runs retention, and it has to see the conversation row that names this run's thread.
+  let checkpointer: SessionCheckpointer | undefined;
   try {
     // Only the human turn: the agent supplies the system prompt via `createAgent({ systemPrompt })`.
     const messages = [new HumanMessage(content)];
@@ -198,18 +210,44 @@ export async function runSingleShot(
       initSessionLogging(filePath, config.streamSessionInferenceLog);
     }
 
+    // GS2-106 — a single-shot run checkpoints DURABLY whenever it will be recorded, through the
+    // same saver, the same thread-per-conversation link and the same degrade policy as an
+    // interactive session. Andrew's ruling of 2026-09-26 on GS2-106, replacing GS2-20's decision to
+    // keep this path in memory.
+    //
+    // **Why.** Resuming a non-interactive run must go through ONE mechanism, the one interactive
+    // resume already uses: re-entering the graph from its checkpoint. The alternative — replaying
+    // the recorded prompt and answer into a fresh agent — restores a transcript, and a transcript is
+    // not what the next turn builds on. What an `ask`/`exec` run actually produced is mostly TOOL
+    // RESULTS: files it read, commands it ran, what an MCP server returned. None of that is in the
+    // recorded answer, so a replayed run would continue with the evidence gone and the conclusions
+    // kept. Only the checkpoint has it.
+    //
+    // **What does not change.** With `history.enabled: false` this is a `MemorySaver` exactly as
+    // before, silently, and nothing is written. A store that will not open falls back to a
+    // `MemorySaver` with a notice on stderr, and the conversation is recorded with no thread; a
+    // checkpoint write that fails mid-run drops the write, lets the run finish, and cuts the link
+    // once the row exists (`bindConversation` below applies a failure that came first). None of it
+    // can change what the run prints on stdout or the answer returned from here.
+    //
+    // **Retention.** GS2-107's automatic pass deletes only threads NO conversation row names, so a
+    // linked single-shot thread is kept exactly as long as an interactive one, and only
+    // `gth history prune` removes it. The thread is unnamed for the length of the run, until the
+    // row below is written; the saver's own write set and the grace window cover that gap, as they
+    // do for an interactive session after `/clear`.
+    checkpointer = openSessionCheckpointerSafe(config);
+
     // Run via Agent Runner (consistent with interactive session)
     const runner = new GthAgentRunner(defaultStatusCallback, resolvers, agentFactory);
     let succeeded = true;
     let responseText = '';
     const startedAt = Date.now();
     try {
-      // GS2-20 — considered for the durable saver and deliberately kept in memory. A single-shot run
-      // is one prompt and one answer, both already recorded as a 1-turn conversation; there is no
-      // second turn for a checkpoint to serve. Resuming one is really "start a session seeded from
-      // it", which is a different feature from re-entering a graph.
-      await runner.init(command, config, new MemorySaver(), {
+      await runner.init(command, config, checkpointer.saver, {
         displayCommand: options?.displayCommand,
+        // Only a durable saver has a thread worth naming: in memory the runner mints its own, as
+        // it always has.
+        ...(checkpointer.durable ? { threadId: checkpointer.threadId } : {}),
       });
       responseText = await runner.processMessages(messages);
     } catch (err) {
@@ -303,10 +341,13 @@ export async function runSingleShot(
     }
 
     // GS2-7 (B20): local, fail-soft session history. A no-op when `history.enabled` is false; never
-    // throws
-    // (recordSessionSafe is fully guarded) so a DB problem can't abort or alter this run.
+    // throws (recordSessionTurnSafe is fully guarded) so a DB problem can't abort or alter this run.
     // GS2-16 threads token/tool analytics; costUsd is intentionally left unset (no reliable price).
-    recordSessionSafe(config, {
+    //
+    // GS2-106: the row this opens carries the run's thread, so the checkpointed state is reachable
+    // from the conversation id and its run id.
+    const recorded = recordSessionTurnSafe(config, {
+      threadId: checkpointer.durable ? checkpointer.threadId : undefined,
       command,
       // The run's PROJECT ROOT, not the directory this run is in: `getProjectDir()` is the
       // discovered config root whenever one was found above us. Nothing may render it as where
@@ -320,6 +361,10 @@ export async function runSingleShot(
       tools: runStats.tools.length > 0 ? runStats.tools : undefined,
       durationMs: Date.now() - startedAt,
     });
+    // GS2-20's degrade half, now for this path too: name the row a failed checkpoint write must mark
+    // unresumable. A failure that happened during the run is applied here, cutting the link that
+    // was just written.
+    checkpointer.bindConversation?.(recorded?.conversationId);
 
     progressIndicator?.stop();
 
@@ -344,8 +389,14 @@ export async function runSingleShot(
       recap,
       ...runStats,
       ...(advertisedTools ? { advertisedTools } : {}),
+      ...(recorded
+        ? { conversation: { conversationId: recorded.conversationId, runId: recorded.runId } }
+        : {}),
     };
   } finally {
+    // GS2-106 — release the checkpoint connection. After the record on the normal path, so the
+    // retention pass the close runs sees this run's thread named; on a throw it simply closes.
+    checkpointer?.close();
     // EXT-53: the indicator owns a 1s setInterval — an active libuv handle that keeps Node's event
     // loop from ever draining, so leaking it hangs the CLI forever after the work is done. The
     // `stop()` above sits where it does for output ordering (before the trailing newline / the

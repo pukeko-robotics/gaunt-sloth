@@ -47,6 +47,7 @@ import {
   recordSessionSafe,
 } from '@gaunt-sloth/core/history/recordSession.js';
 import { openSessionCheckpointerSafe } from '@gaunt-sloth/core/history/sessionCheckpointer.js';
+import type { ConversationRef } from '@gaunt-sloth/core/history/conversationRef.js';
 import {
   buildHistorySlashProps,
   type HistorySlashProps,
@@ -300,8 +301,11 @@ export interface InteractiveSessionOptions {
    * Re-enter this conversation (the id `gth history list` prints) instead of opening a new one.
    * Refused, with a notice and exit status 1, when it cannot be: history off, the store unopenable,
    * no such conversation, one with no state to re-enter, or one recorded in another directory.
+   *
+   * GS2-106 — a parsed reference (the integer or the run id) or a bare integer; the resume seam
+   * resolves either to a row, after the checks that do not need one.
    */
-  resumeConversationId?: number;
+  resumeConversationId?: ConversationRef | number;
 }
 
 export async function createInteractiveSession(
@@ -987,11 +991,11 @@ export async function createInteractiveSession(
               printNotice(
                 resumableConversationsNotice(listResumeCandidates(config, conversationId))
               );
-            } else if (id === conversationId) {
-              printNotice(resumeSameConversationNotice(id));
+            } else if (id.kind === 'id' && id.id === conversationId) {
+              printNotice(resumeSameConversationNotice(id.id));
             } else {
               const resolution = await resolveResumeTarget(
-                { config, checkpointer, workspace: getProjectDir() },
+                { config, checkpointer, workspace: getProjectDir(), current: conversationId },
                 id
               );
               if (!resolution.ok) {

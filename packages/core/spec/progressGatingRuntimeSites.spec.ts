@@ -65,7 +65,24 @@ vi.mock('#src/utils/fileUtils.js', () => ({
 // the run if a spec writes to it).
 vi.mock('#src/history/recordSession.js', () => ({
   recordSessionSafe: vi.fn(),
+  recordSessionTurnSafe: vi.fn(),
 }));
+
+// GS2-106 — the single-shot runtime opens the durable checkpointer whenever history is on. Stubbed
+// in memory, the way the interactive-session specs stub it, so this spec never reaches the
+// developer's real history database.
+vi.mock('#src/history/sessionCheckpointer.js', async () => {
+  const { MemorySaver } = await import('@langchain/langgraph');
+  return {
+    openSessionCheckpointerSafe: () => ({
+      saver: new MemorySaver(),
+      durable: false,
+      threadId: 'stub-thread',
+      bindConversation: () => {},
+      close: () => {},
+    }),
+  };
+});
 
 const gthAgentRunnerInstanceMock = vi.hoisted(() => ({
   init: vi.fn(),

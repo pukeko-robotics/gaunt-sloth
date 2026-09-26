@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import type { ConversationRef } from '@gaunt-sloth/core/history/conversationRef.js';
 import { startSession } from '#src/modules/startSession.js';
 import { CODE_SESSION_CONFIG } from '#src/modules/sessionConfigs.js';
 import { resumeOption, sessionOptionsFor } from '#src/commands/resumeOption.js';
@@ -36,7 +37,7 @@ export function codeCommand(
         '  $ gth code "Help me refactor the authentication module"\n' +
         '  $ gth code --resume 42\n'
     )
-    .action(async (message: string, options: { resume?: number }) => {
+    .action(async (message: string, options: { resume?: ConversationRef }) => {
       await startSession(
         CODE_SESSION_CONFIG,
         commandLineConfigOverrides,

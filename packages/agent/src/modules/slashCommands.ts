@@ -47,7 +47,10 @@ import type { HistoryAvailability } from '@gaunt-sloth/core/history/historySlash
 import { deferExitOutput } from '@gaunt-sloth/core/core/exitOutputChannel.js';
 import { modelProviderLabel } from '@gaunt-sloth/core/core/modelLabel.js';
 import { MOUSE_SELECTION_HINT } from '@gaunt-sloth/core/config/mouse.js';
-import { parseResumeId } from '#src/modules/sessionResume.js';
+import {
+  parseConversationRef,
+  type ConversationRef,
+} from '@gaunt-sloth/core/history/conversationRef.js';
 
 /**
  * TUI-C63 — one advertised key binding: the keys as the user's keyboard spells them, and what
@@ -555,8 +558,11 @@ export interface SlashCommandResult {
    * callback — fulfilling it is the surface's, and a surface with no user at a keyboard has a third
    * answer again. The command itself stays pure: it cannot reach the store or the runner, so it
    * states the request.
+   *
+   * `id` is the parsed reference — the integer `gth history list` prints or a conversation's run id
+   * (GS2-106) — and is resolved to a row by the resume seam, not here.
    */
-  resume?: { id?: number };
+  resume?: { id?: ConversationRef };
   /** When true, the component quits the app (runs `onExit`). */
   exit?: boolean;
 }
@@ -1917,14 +1923,14 @@ export function createCommandRegistry(): SlashCommand[] {
       // named before anything is looked up.
       run: (_ctx, args) => {
         if (args.length === 0) return { resume: {} };
-        const id = parseResumeId(args[0]);
+        const id = parseConversationRef(args[0]);
         if (id === null || args.length > 1) {
           return {
             notice: {
               title: `Not a conversation id: ${args.join(' ')}`,
               lines: [
-                'Usage: /resume [<id>] — the id is the number `gth history list` prints; with no ' +
-                  'id it offers the conversations that can be resumed.',
+                'Usage: /resume [<id>] — the id is the number or the run id `gth history list` ' +
+                  'prints; with no id it offers the conversations that can be resumed.',
               ],
               tone: 'warn',
             },

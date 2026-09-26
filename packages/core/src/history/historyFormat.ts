@@ -53,11 +53,25 @@ export function formatSearchResults(results: SessionSearchResult[]): string[] {
 }
 
 /**
+ * The placeholder `gth history list` prints where a conversation has no run id — a row written
+ * before run ids existed. Same width as a run id, so the columns after it stay aligned.
+ */
+export const NO_RUN_ID_PLACEHOLDER = '-'.repeat(36);
+
+/**
  * GS2-19 — render a conversation-grained listing: one header + last-turn preview per conversation.
  * The header carries the count / timespan / last message that make the conversation the top-level
  * unit (`gth history list`), replacing the old flat per-turn list.
+ *
+ * GS2-106 — `showRunId` puts the conversation's run id straight after its integer id, so it can be
+ * copied; a row without one shows {@link NO_RUN_ID_PLACEHOLDER} and stays addressable by its
+ * integer. Off by default: the in-session lists (`/resume`, `/history`) are read at a prompt where
+ * the integer is what gets typed, and a 36-character column there costs every row a line.
  */
-export function formatConversationList(conversations: ConversationSummary[]): string[] {
+export function formatConversationList(
+  conversations: ConversationSummary[],
+  options: { showRunId?: boolean } = {}
+): string[] {
   if (conversations.length === 0) {
     return [
       'No conversations recorded yet. Recording is on by default; `history.enabled: false` in ' +
@@ -67,6 +81,7 @@ export function formatConversationList(conversations: ConversationSummary[]): st
   const lines: string[] = [];
   for (const c of conversations) {
     const parts = [`#${c.id}`];
+    if (options.showRunId) parts.push(c.runId ?? NO_RUN_ID_PLACEHOLDER);
     // Timespan across the conversation's turns; a 1-turn (or not-yet-started) conversation collapses
     // to a single instant, so show one timestamp rather than an `a → a` range.
     if (c.firstTs && c.lastTs && c.firstTs !== c.lastTs) {
@@ -178,8 +193,8 @@ export function formatCheckpointStoreStats(stats: CheckpointStoreStats): string[
   // screen exists to make honest is not zero. Both have to be empty before there is nothing to say.
   if (stats.checkpointCount === 0 && stats.writeOnlyThreadCount === 0) {
     return [
-      'Conversation store: no checkpoints recorded. Interactive `chat` and `code` sessions ' +
-        'write the state a resume needs; other commands do not.',
+      'Conversation store: no checkpoints recorded. Interactive `chat` and `code` sessions and ' +
+        'single-shot runs such as `ask` and `exec` write the state a resume needs.',
     ];
   }
   const lines: string[] = [];

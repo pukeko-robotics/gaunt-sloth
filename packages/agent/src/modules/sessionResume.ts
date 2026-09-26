@@ -22,9 +22,9 @@
  *
  * 1. history is off — the one switch that governs recording, checkpointing and resuming alike;
  * 2. the store did not open — asked for and not available, which is a different fact from off;
- * 3. no such conversation;
- * 4. the conversation exists and is not resumable — never had a thread, lost it, or its thread was
- *    never checkpointed — with the reason class where it is known;
+ * 3. no such conversation — the id, integer or run id, names no row in THIS store;
+ * 4. the conversation exists and is not resumable — recorded by a single-shot command, never had a
+ *    thread, lost it, or its thread was never checkpointed — with the reason class where it is known;
  * 5. it was recorded in another directory — the same comparison ACP's `session/new` makes.
  */
 import { resolve } from 'node:path';
@@ -34,9 +34,16 @@ import {
   type HistoryConfigView,
 } from '@gaunt-sloth/core/history/historyEnabled.js';
 import {
+  INTERACTIVE_CONVERSATION_COMMANDS,
   listResumableConversationsSafe,
   lookupConversationSafe,
+  resolveConversationRefSafe,
 } from '@gaunt-sloth/core/history/recordSession.js';
+import {
+  formatConversationRef,
+  toConversationRef,
+  type ConversationRef,
+} from '@gaunt-sloth/core/history/conversationRef.js';
 import type { ConversationSummary, SessionRecord } from '@gaunt-sloth/core/history/historyStore.js';
 import { formatConversationList } from '@gaunt-sloth/core/history/historyFormat.js';
 import {
@@ -62,13 +69,22 @@ export interface ResumeTarget {
 export type ResumeRefusal =
   | { kind: 'history-off' }
   | { kind: 'store-unavailable' }
-  | { kind: 'unknown'; id: number }
+  | {
+      kind: 'unknown';
+      /**
+       * What the person typed, parsed — an integer or a run id. Kept as the reference rather than
+       * an integer because a run id that names nothing has no integer to report.
+       */
+      ref: ConversationRef;
+    }
   | {
       kind: 'not-resumable';
       id: number;
       /**
        * The reason class, where it is known:
-       * - `single-shot` — recorded by a command that keeps no conversation state (`ask`, `exec`, …);
+       * - `single-shot` — recorded by a single-shot command (`ask`, `exec`, …). Such a run keeps its
+       *   state since GS2-106, but resuming it into an interactive session is not supported: the
+       *   non-interactive resume GS2-106 adds is its own surface;
        * - `no-thread` — an interactive conversation whose thread link is null: a checkpoint write
        *   failed while it ran and it was marked unresumable, or it predates conversation state;
        * - `no-checkpoint` — the thread is on record but nothing was ever checkpointed under it;
@@ -77,7 +93,9 @@ export type ResumeRefusal =
       reason: 'single-shot' | 'no-thread' | 'no-checkpoint' | 'unreadable';
       command?: string;
     }
-  | { kind: 'workspace-mismatch'; id: number; stored: string; current: string };
+  | { kind: 'workspace-mismatch'; id: number; stored: string; current: string }
+  /** The id resolved to the conversation the session is already in — only for a run id; see below. */
+  | { kind: 'same-conversation'; id: number };
 
 export type ResumeResolution =
   { ok: true; target: ResumeTarget } | { ok: false; refusal: ResumeRefusal };
@@ -98,31 +116,51 @@ export interface ResumeSessionContext {
    * resume reopens.
    */
   workspace: string;
+  /**
+   * The conversation this session is recording under, when it has one. A run id cannot be compared
+   * with it before it is resolved, so the seam makes that comparison itself; the surfaces keep their
+   * own integer check for the form they can compare up-front.
+   */
+  current?: number;
 }
 
-/** The commands whose sessions checkpoint a thread; every other command's rows are single-shot. */
-const INTERACTIVE_COMMANDS = new Set(['chat', 'code']);
-
 /**
- * Decide whether conversation `id` can be resumed by this session, and gather what the resume
- * needs. Never throws: a failure to read is a refusal with a reason, never a crash.
+ * Decide whether the conversation `ref` names can be resumed by this session, and gather what the
+ * resume needs. Never throws: a failure to read is a refusal with a reason, never a crash.
+ *
+ * `ref` is a parsed conversation id — `parseConversationRef` in core — or a bare integer id. It is
+ * resolved to a row HERE, after the history and store checks, by exact match: this is the one place
+ * a resume turns what a person typed into a conversation, whichever surface they typed it on.
  */
 export async function resolveResumeTarget(
   session: ResumeSessionContext,
-  id: number
+  ref: ConversationRef | number
 ): Promise<ResumeResolution> {
   if (!isHistoryEnabled(session.config)) return refuse({ kind: 'history-off' });
   // Asked for and not available: the store did not open, so nothing below could be read anyway,
   // and calling the id "unknown" would blame the person for the disk.
   if (!session.checkpointer.durable) return refuse({ kind: 'store-unavailable' });
 
+  const parsed = toConversationRef(ref);
+  const id = resolveConversationRefSafe(session.config, parsed);
+  if (id === null) return refuse({ kind: 'unknown', ref: parsed });
   const stored = lookupConversationSafe(session.config, id);
-  if (!stored) return refuse({ kind: 'unknown', id });
+  if (!stored) return refuse({ kind: 'unknown', ref: parsed });
   const { summary, turns } = stored;
+  if (session.current !== undefined && id === session.current) {
+    return refuse({ kind: 'same-conversation', id });
+  }
 
+  // GS2-106 — decided by the COMMAND, before the thread: a single-shot run now carries a thread and
+  // a checkpoint exactly as an interactive session does, so the thread no longer tells the two
+  // apart. Re-entering one as a chat or code session would change its mode prompt and tools under
+  // it; the non-interactive resume is its own surface.
+  const interactive = INTERACTIVE_CONVERSATION_COMMANDS.has(summary.command ?? '');
+  if (!interactive) {
+    return refuse({ kind: 'not-resumable', id, reason: 'single-shot', command: summary.command });
+  }
   if (!summary.threadId) {
-    const reason = INTERACTIVE_COMMANDS.has(summary.command ?? '') ? 'no-thread' : 'single-shot';
-    return refuse({ kind: 'not-resumable', id, reason, command: summary.command });
+    return refuse({ kind: 'not-resumable', id, reason: 'no-thread', command: summary.command });
   }
   // A thread with no checkpoint is refused exactly like a null thread: there is no state to
   // re-enter, and driving the graph on it would silently start a fresh conversation under an old
@@ -206,19 +244,6 @@ export function listResumeCandidates(
   return listResumableConversationsSafe(config, { limit, exclude: currentConversationId });
 }
 
-/**
- * Parse the id a person typed after `--resume`, `/resume` or `history resume`. A positive integer
- * in decimal, or `null` — the ids `gth history list` prints are exactly that, and anything else is
- * a typo worth naming rather than a lookup worth making.
- */
-export function parseResumeId(raw: string | undefined): number | null {
-  if (raw === undefined) return null;
-  const trimmed = raw.trim().replace(/^#/, '');
-  if (!/^\d+$/.test(trimmed)) return null;
-  const id = Number.parseInt(trimmed, 10);
-  return Number.isSafeInteger(id) && id > 0 ? id : null;
-}
-
 // ── Notices — shared by both surfaces so one refusal has one sentence. ────────────────────────────
 
 const plural = (n: number, noun: string): string => `${n} ${noun}${n === 1 ? '' : 's'}`;
@@ -291,7 +316,7 @@ export function resumeRefusalNotice(
       };
     case 'unknown':
       return {
-        title: `No conversation #${refusal.id}`,
+        title: `No conversation ${formatConversationRef(refusal.ref)}`,
         lines: [
           'There is no conversation with that id in the history store.',
           `Run ${list} to see the ones that can be resumed.`,
@@ -301,8 +326,8 @@ export function resumeRefusalNotice(
     case 'not-resumable': {
       const why =
         refusal.reason === 'single-shot'
-          ? `It was recorded by \`gth ${refusal.command ?? 'ask'}\`, a single-shot run, which keeps ` +
-            'no conversation state to pick up.'
+          ? `It was recorded by \`gth ${refusal.command ?? 'ask'}\`, a single-shot run, and ` +
+            'resuming a single-shot run is not supported yet.'
           : refusal.reason === 'no-thread'
             ? 'Its conversation state is not on record: either a checkpoint write failed while it ' +
               'was running and it was marked unresumable, or it was recorded before conversation ' +
@@ -337,6 +362,8 @@ export function resumeRefusalNotice(
         ],
         tone: 'warn',
       };
+    case 'same-conversation':
+      return resumeSameConversationNotice(refusal.id);
   }
 }
 

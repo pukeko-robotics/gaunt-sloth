@@ -23,10 +23,10 @@ import {
   setProjectDir,
 } from '@gaunt-sloth/core/utils/systemUtils.js';
 import type { ApprovalGrant } from '@gaunt-sloth/core/core/approvals/grants.js';
+import { parseConversationRef } from '@gaunt-sloth/core/history/conversationRef.js';
 import {
   applyResumeTarget,
   listResumeCandidates,
-  parseResumeId,
   resolveResumeTarget,
   resumableConversationsNotice,
   resumedConversationNotice,
@@ -140,13 +140,16 @@ describe('sessionResume — resolveResumeTarget, the checks in order', () => {
       { config, checkpointer: ckpt, workspace: '/work/here' },
       4242
     );
-    expect(result).toEqual({ ok: false, refusal: { kind: 'unknown', id: 4242 } });
-    const notice = resumeRefusalNotice({ kind: 'unknown', id: 4242 });
+    expect(result).toEqual({ ok: false, refusal: { kind: 'unknown', ref: { kind: 'id', id: 4242 } } });
+    const notice = resumeRefusalNotice({ kind: 'unknown', ref: { kind: 'id', id: 4242 } });
     expect(notice.title).toBe('No conversation #4242');
     expect(notice.lines.join(' ')).toContain('`gth history list`');
     // Inside a session the pointer is the slash command, not the shell command.
     expect(
-      resumeRefusalNotice({ kind: 'unknown', id: 4242 }, { inSession: true }).lines.join(' ')
+      resumeRefusalNotice(
+        { kind: 'unknown', ref: { kind: 'id', id: 4242 } },
+        { inSession: true }
+      ).lines.join(' ')
     ).toContain('/resume with no id');
   });
 
@@ -396,18 +399,41 @@ describe('sessionResume — resolveResumeTarget, the checks in order', () => {
   });
 });
 
-describe('sessionResume — parseResumeId', () => {
-  it('accepts the ids history list prints and nothing else', () => {
-    expect(parseResumeId('12')).toBe(12);
-    expect(parseResumeId(' 12 ')).toBe(12);
-    expect(parseResumeId('#12')).toBe(12);
-    expect(parseResumeId('0')).toBeNull();
-    expect(parseResumeId('-3')).toBeNull();
-    expect(parseResumeId('12abc')).toBeNull();
-    expect(parseResumeId('1.5')).toBeNull();
-    expect(parseResumeId('')).toBeNull();
-    expect(parseResumeId(undefined)).toBeNull();
-    expect(parseResumeId('99999999999999999999')).toBeNull();
+describe('sessionResume — parseConversationRef, the one id parser (GS2-106)', () => {
+  it('accepts the integer ids history list prints', () => {
+    expect(parseConversationRef('12')).toEqual({ kind: 'id', id: 12 });
+    expect(parseConversationRef(' 12 ')).toEqual({ kind: 'id', id: 12 });
+    expect(parseConversationRef('#12')).toEqual({ kind: 'id', id: 12 });
+  });
+
+  it('accepts a canonical run id, normalised to lower case', () => {
+    expect(parseConversationRef('0f8fad5b-d9cb-469f-a165-70867728950e')).toEqual({
+      kind: 'run',
+      runId: '0f8fad5b-d9cb-469f-a165-70867728950e',
+    });
+    expect(parseConversationRef(' 0F8FAD5B-D9CB-469F-A165-70867728950E ')).toEqual({
+      kind: 'run',
+      runId: '0f8fad5b-d9cb-469f-a165-70867728950e',
+    });
+  });
+
+  it('refuses everything else, including a token that is only partly an id', () => {
+    for (const raw of [
+      '0',
+      '-3',
+      '12abc',
+      '1.5',
+      '',
+      '99999999999999999999',
+      '#0f8fad5b-d9cb-469f-a165-70867728950e',
+      '0f8fad5b-d9cb-469f-a165-70867728950',
+      '0f8fad5bd9cb469fa16570867728950e',
+      '0f8fad5b-d9cb-469f-a165-70867728950e-1',
+      'g f8fad5b-d9cb-469f-a165-70867728950e',
+    ]) {
+      expect(parseConversationRef(raw), raw).toBeNull();
+    }
+    expect(parseConversationRef(undefined)).toBeNull();
   });
 });
 

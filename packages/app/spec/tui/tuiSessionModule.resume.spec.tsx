@@ -322,7 +322,10 @@ describe('createTuiSession — resume (GS2-20 finding 2)', () => {
     const own = (await conversationsIn())[0];
 
     const resolution = await props.agent.resumeConversation!(4242);
-    expect(resolution).toEqual({ ok: false, refusal: { kind: 'unknown', id: 4242 } });
+    expect(resolution).toEqual({
+      ok: false,
+      refusal: { kind: 'unknown', ref: { kind: 'id', id: 4242 } },
+    });
     expect(runnerMock.resumeConversation).not.toHaveBeenCalled();
 
     props.onTurnComplete('second', 'answer');

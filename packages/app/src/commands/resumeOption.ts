@@ -1,5 +1,9 @@
 import { InvalidArgumentError, Option, type Command } from 'commander';
-import { parseResumeId } from '@gaunt-sloth/agent/modules/sessionResume.js';
+import {
+  formatConversationRef,
+  parseConversationRef,
+  type ConversationRef,
+} from '@gaunt-sloth/core/history/conversationRef.js';
 import type { InteractiveSessionOptions } from '@gaunt-sloth/agent/modules/interactiveSessionModule.js';
 
 /**
@@ -7,19 +11,24 @@ import type { InteractiveSessionOptions } from '@gaunt-sloth/agent/modules/inter
  * and on the root program for the bare `gth` that starts a code session. The value is validated
  * here, where commander reports a bad one in its own voice and exits before any config is loaded,
  * so a typo never reaches the session.
+ *
+ * GS2-106 — it parses to a reference, not an integer: the run id cannot be resolved to a row here,
+ * because the store's path comes from the config and this runs before it is loaded. The session
+ * resolves the reference through the resume seam, exactly as it resolves an integer.
  */
 export function resumeOption(): Option {
   return new Option(
     '--resume <id>',
     'Pick up a saved conversation where it left off (the id from `gth history list`)'
-  ).argParser((raw: string): number => {
-    const id = parseResumeId(raw);
-    if (id === null) {
+  ).argParser((raw: string): ConversationRef => {
+    const ref = parseConversationRef(raw);
+    if (ref === null) {
       throw new InvalidArgumentError(
-        'Expected a conversation id — a positive whole number, as printed by `gth history list`.'
+        'Expected a conversation id — a positive whole number or a run id, as printed by ' +
+          '`gth history list`.'
       );
     }
-    return id;
+    return ref;
   });
 }
 
@@ -33,11 +42,14 @@ export const RESUMABLE_COMMANDS: ReadonlySet<string> = new Set(['chat', 'code'])
  * would run as if nothing had been asked. Same register as the ordered checks: what applies, what
  * does not yet, and that nothing ran.
  */
-export function rootResumeRefusalMessage(subcommand: string, id: number): string {
+export function rootResumeRefusalMessage(
+  subcommand: string,
+  ref: ConversationRef | number
+): string {
   return (
     `Cannot resume into \`gth ${subcommand}\`: \`--resume\` applies to \`gth chat\`, \`gth code\` ` +
     'and the bare `gth` command. Resuming a conversation into `ask` or `exec` is not available ' +
-    `yet (GS2-106). Nothing was run, and conversation #${id} was not touched.`
+    `yet (GS2-106). Nothing was run, and conversation ${formatConversationRef(ref)} was not touched.`
   );
 }
 
@@ -49,9 +61,9 @@ export function rootResumeRefusalMessage(subcommand: string, id: number): string
  */
 export function sessionOptionsFor(
   program: Command,
-  own: { resume?: number }
+  own: { resume?: ConversationRef }
 ): InteractiveSessionOptions | undefined {
   const resumeConversationId =
-    own.resume ?? (program.getOptionValue('resume') as number | undefined);
+    own.resume ?? (program.getOptionValue('resume') as ConversationRef | undefined);
   return resumeConversationId === undefined ? undefined : { resumeConversationId };
 }

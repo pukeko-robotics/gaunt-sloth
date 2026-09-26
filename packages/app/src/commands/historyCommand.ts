@@ -2,7 +2,14 @@ import { Command } from 'commander';
 import { initConfig, type CommandLineConfigOverrides } from '@gaunt-sloth/core/config.js';
 import { openHistoryStore, resolveHistoryDbPath } from '@gaunt-sloth/core/history/historyStore.js';
 import { isHistoryEnabled } from '@gaunt-sloth/core/history/historyEnabled.js';
-import { lookupConversationSafe } from '@gaunt-sloth/core/history/recordSession.js';
+import {
+  lookupConversationSafe,
+  resolveConversationRefSafe,
+} from '@gaunt-sloth/core/history/recordSession.js';
+import {
+  formatConversationRef,
+  parseConversationRef,
+} from '@gaunt-sloth/core/history/conversationRef.js';
 import {
   formatConversationList,
   formatConversationThread,
@@ -22,7 +29,6 @@ import {
   displayWarning,
 } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { statSync } from 'node:fs';
-import { parseResumeId } from '@gaunt-sloth/agent/modules/sessionResume.js';
 
 /**
  * The one sentence for "there is no store": `list`, `search`, `show` and `resume` all say it, so a
@@ -113,7 +119,12 @@ export function historyCommand(
         const limit = clampLimit(options.limit);
         const conversations = store.listConversations(limit);
         displayInfo('Recent conversations:');
-        for (const line of formatConversationList(conversations)) display(line);
+        // GS2-106 — with the run id beside each integer, so a person can copy the id that stays
+        // correct after the database is recreated. Only here: the in-session lists keep the short
+        // form, where the integer is what `/resume` is typed with.
+        for (const line of formatConversationList(conversations, { showRunId: true })) {
+          display(line);
+        }
       } finally {
         store.close();
       }
@@ -139,18 +150,28 @@ export function historyCommand(
   history
     .command('show')
     .description('Print a whole conversation thread (all turns in order)')
-    .argument('<id>', 'conversation id (from `history list` / `history search`)')
+    .argument('<id>', 'conversation id or run id (from `history list` / `history search`)')
     .option('--db <path>', 'path to the history DB (defaults to ~/.gsloth/history.db)')
     .action((idArg: string, options: { db?: string }) => {
+      // GS2-106 — the shared parser, so `12abc` is refused rather than read as 12, and a run id is
+      // accepted here exactly as `history resume` accepts it.
+      const ref = parseConversationRef(idArg);
+      if (ref === null) {
+        displayWarning(`Invalid conversation id "${idArg}".`);
+        return;
+      }
       const store = openHistoryStore(resolveHistoryDbPath(options.db), { create: false });
       if (!store) {
         displayWarning(NO_HISTORY_MESSAGE);
         return;
       }
       try {
-        const id = Number.parseInt(idArg, 10);
-        if (!Number.isFinite(id) || id <= 0) {
-          displayWarning(`Invalid conversation id "${idArg}".`);
+        const id = store.resolveConversationRef(ref);
+        if (id === null) {
+          displayWarning(
+            `No conversation ${formatConversationRef(ref)} in the history store. Run ` +
+              '`gth history list` to see the ids.'
+          );
           return;
         }
         const turns = store.getConversationThread(id);
@@ -267,10 +288,10 @@ export function historyCommand(
     .description(
       'Pick up a recorded conversation where it left off, in the mode it was recorded under'
     )
-    .argument('<id>', 'conversation id (from `history list`)')
+    .argument('<id>', 'conversation id or run id (from `history list`)')
     .action(async (idArg: string) => {
-      const id = parseResumeId(idArg);
-      if (id === null) {
+      const ref = parseConversationRef(idArg);
+      if (ref === null) {
         displayWarning(`Invalid conversation id "${idArg}".`);
         return;
       }
@@ -292,10 +313,14 @@ export function historyCommand(
         return;
       }
       store.close();
-      const stored = lookupConversationSafe(config, id);
-      if (!stored) {
+      // GS2-106 — resolved to the integer HERE, through the same exact-match lookup the resume seam
+      // uses, because the row's command has to be read before a session can be started for it.
+      const id = resolveConversationRefSafe(config, ref);
+      const stored = id === null ? null : lookupConversationSafe(config, id);
+      if (id === null || !stored) {
         displayWarning(
-          `No conversation #${id} in the history store. Run \`gth history list\` to see the ids.`
+          `No conversation ${formatConversationRef(ref)} in the history store. Run ` +
+            '`gth history list` to see the ids.'
         );
         return;
       }
@@ -303,8 +328,8 @@ export function historyCommand(
       const sessionConfig = sessionConfigFor(command);
       if (!sessionConfig) {
         displayWarning(
-          `Conversation #${id} was recorded by \`gth ${command ?? 'ask'}\`, a single-shot run ` +
-            'that keeps no conversation state, so there is nothing to resume it into. ' +
+          `Conversation #${id} was recorded by \`gth ${command ?? 'ask'}\`, a single-shot run. ` +
+            'Resuming a single-shot run is not supported yet. ' +
             `\`gth history show ${id}\` prints it.`
         );
         return;

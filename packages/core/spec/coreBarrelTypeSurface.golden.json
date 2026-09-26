@@ -232,6 +232,11 @@
       "arity": 0
     },
     {
+      "name": "ConversationRef",
+      "file": "history/conversationRef.d.ts",
+      "arity": 0
+    },
+    {
       "name": "ConversationSize",
       "file": "core/compaction.d.ts",
       "arity": 0
@@ -649,6 +654,11 @@
     {
       "name": "ReclaimSummary",
       "file": "history/checkpointRetention.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "RecordedTurn",
+      "file": "history/historyStore.d.ts",
       "arity": 0
     },
     {

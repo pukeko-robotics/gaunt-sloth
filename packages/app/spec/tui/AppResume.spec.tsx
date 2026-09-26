@@ -124,7 +124,7 @@ describe('tui <App> — /resume (GS2-20)', () => {
 
     await vi.waitFor(() => expect(lastFrame()).toContain('Resumed conversation #12'));
     expect(resume).toHaveBeenCalledTimes(1);
-    expect(resume).toHaveBeenCalledWith(12);
+    expect(resume).toHaveBeenCalledWith({ kind: 'id', id: 12 });
     const frame = lastFrame() ?? '';
     expect(frame).toContain('2 turns recorded under gth chat, with gemma4:12b');
     expect(frame).toContain('You › first old prompt');
@@ -152,7 +152,7 @@ describe('tui <App> — /resume (GS2-20)', () => {
   it('a refused /resume is a notice with the reason, and the transcript stays', async () => {
     const resume = vi.fn(async (): Promise<ResumeResolution> => ({
       ok: false,
-      refusal: { kind: 'unknown', id: 12 },
+      refusal: { kind: 'unknown', ref: { kind: 'id', id: 12 } },
     }));
     const { agent } = resumingAgent(resume);
     const { stdin, lastFrame, unmount } = render(

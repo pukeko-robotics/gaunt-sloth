@@ -20,6 +20,7 @@ import type {
 } from '@gaunt-sloth/core/config.js';
 import type { ApprovalGrant } from '@gaunt-sloth/core/core/approvals/grants.js';
 import type { ConversationCompaction } from '@gaunt-sloth/core/core/compaction.js';
+import type { ConversationRef } from '@gaunt-sloth/core/history/conversationRef.js';
 import type { AutocompactStatus } from '@gaunt-sloth/core/core/compactionThreshold.js';
 import type { TokenBudget } from '@gaunt-sloth/core/config.js';
 import type { ApprovalStopPart } from '@gaunt-sloth/core/core/shell/approvalStop.js';
@@ -228,7 +229,7 @@ export interface TuiAgent {
    * Optional so an agent with no conversation store behind it may omit it, in which case the App
    * says resume is unavailable rather than pretending.
    */
-  resumeConversation?(id: number): Promise<ResumeResolution>;
+  resumeConversation?(id: ConversationRef | number): Promise<ResumeResolution>;
 }
 
 /**

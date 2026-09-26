@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import type { ConversationRef } from '@gaunt-sloth/core/history/conversationRef.js';
 import { startSession } from '#src/modules/startSession.js';
 import { CHAT_SESSION_CONFIG } from '#src/modules/sessionConfigs.js';
 import { resumeOption, sessionOptionsFor } from '#src/commands/resumeOption.js';
@@ -23,7 +24,7 @@ export function chatCommand(
         '  $ gth chat "Let\'s discuss the architecture of this project"\n' +
         '  $ gth chat --resume 42\n'
     )
-    .action(async (message: string, options: { resume?: number }) => {
+    .action(async (message: string, options: { resume?: ConversationRef }) => {
       await startSession(
         CHAT_SESSION_CONFIG,
         commandLineConfigOverrides,

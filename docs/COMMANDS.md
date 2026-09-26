@@ -322,7 +322,7 @@ It is possible to press Escape during inference to interrupt it.
 - `[message]` - Initial message to start the chat
 
 ### Options
-- `--resume <id>` - Pick up a recorded conversation where it left off, instead of starting a new one. The id is the number `gth history list` prints. See [Resuming a conversation](#resuming-a-conversation).
+- `--resume <id>` - Pick up a recorded conversation where it left off, instead of starting a new one. The id is the number or the run id `gth history list` prints. See [Resuming a conversation](#resuming-a-conversation).
 
 ### Description
 Opens an interactive chat session where you can have a conversation with the AI. The session maintains context throughout the conversation. (Running `gth` with no subcommand starts a [`code`](#code) session, not chat.) Writing the session to disk is off by default; enable it with `writeOutputToFile` (or `-w`) to save the history as `gth_<timestamp>_CHAT.md` (in `.gsloth/` when present, otherwise the project root).
@@ -366,7 +366,7 @@ It is possible to press Escape during inference to interrupt it.
 - `[message]` - Initial message to start the code session
 
 ### Options
-- `--resume <id>` - Pick up a recorded conversation where it left off, instead of starting a new one. The id is the number `gth history list` prints. Bare `gth --resume <id>` does the same. See [Resuming a conversation](#resuming-a-conversation).
+- `--resume <id>` - Pick up a recorded conversation where it left off, instead of starting a new one. The id is the number or the run id `gth history list` prints. Bare `gth --resume <id>` does the same. See [Resuming a conversation](#resuming-a-conversation).
 
 ### Description
 Opens an interactive coding session where the AI has full read access to your project files. This command is specifically designed for code writing tasks with enhanced context awareness. Running `gth` with no subcommand starts this code session automatically. Writing the session to disk is off by default; enable it with `writeOutputToFile` (or `-w`) to save the history to `gth_<timestamp>_CODE.md`.
@@ -401,7 +401,9 @@ gth code --resume 42
 
 Every interactive `chat` / `code` session is recorded in the local history store (see
 [`history`](#history)) together with the model's conversation state, so it can be picked up later
-from where it stopped. Three spellings do the same thing:
+from where it stopped. A conversation is named by either of the two ids `gth history list` prints:
+its number, or its run id. The run id stays correct if the history database is deleted and
+recreated, where the numbers start again from 1. Three spellings do the same thing:
 
 - `gth chat --resume <id>` / `gth code --resume <id>` / `gth --resume <id>` — start a session inside
   that conversation, in the mode you name;
@@ -421,8 +423,9 @@ deny-list is affected either way.
 
 A resume is refused, with a message saying which of these it was, when: history is off
 (`history.enabled: false`); the store could not be opened; there is no such conversation; the
-conversation has no state to re-enter (a single-shot `ask` / `exec` run, or one whose checkpoint
-could not be written); or it was recorded in a different directory — a conversation is resumed
+conversation was recorded by a single-shot `ask` / `exec` run, which cannot be resumed into a
+session yet; the conversation has no state to re-enter (its checkpoint could not be written, or
+was pruned); or it was recorded in a different directory — a conversation is resumed
 from the project it was recorded in. A `--resume` typed in front of any other subcommand
 (`gth --resume 12 ask "…"`) is refused as well: resuming into `ask` or `exec` is not available yet,
 and nothing runs in its place.
@@ -1481,18 +1484,18 @@ gth history resume <id>
 gth history prune [--older-than <days>] [--keep-last <n>] [--yes] [--db <path>]
 ```
 
-Recording is **on by default and local only** — nothing here touches the network. Set `history.enabled: false` in your config to turn it off; with no store present these commands report that there is no history yet rather than creating one. The store defaults to `~/.gsloth/history.db` (overridable via the `history.dbPath` config key or the `--db` flag), and interactive `chat`/`code` sessions keep their conversation state in the same file, which is what `history resume` picks up — see [Resuming a conversation](#resuming-a-conversation).
+Recording is **on by default and local only** — nothing here touches the network. Set `history.enabled: false` in your config to turn it off; with no store present these commands report that there is no history yet rather than creating one. The store defaults to `~/.gsloth/history.db` (overridable via the `history.dbPath` config key or the `--db` flag), and interactive `chat`/`code` sessions and single-shot runs (`ask`, `exec`, and the cells of `batch`, `eval` and `workflow`) keep their conversation state in the same file, which is what `history resume` picks up — see [Resuming a conversation](#resuming-a-conversation).
 
 ### Subcommands
-- `history list` - List the most recent conversations, grouped with a turn count and timespan.
+- `history list` - List the most recent conversations, grouped with a turn count and timespan. Each shows its number and its run id; a conversation recorded before run ids existed shows a dashed placeholder and is named by its number.
 - `history search` - Full-text search across past turns (SQLite FTS5); each hit shows the conversation it belongs to.
-- `history show` - Print a whole conversation thread, all turns in order.
-- `history resume` - Start an interactive session inside a recorded conversation, in the mode (`chat` or `code`) it was recorded under, with its approvals in force again. A conversation recorded by a single-shot command (`ask`, `exec`, …) has nothing to resume and is reported as such. Takes no `--db`: the session reads the store its own config names.
+- `history show` - Print a whole conversation thread, all turns in order. Takes the number or the run id; anything else, or an id no conversation has, is refused by name.
+- `history resume` - Start an interactive session inside a recorded conversation, in the mode (`chat` or `code`) it was recorded under, with its approvals in force again. Takes the number or the run id. A conversation recorded by a single-shot command (`ask`, `exec`, …) cannot be resumed yet and is reported as such; `history show` still prints it. Takes no `--db`: the session reads the store its own config names.
 - `history prune` - Remove stored conversation state and give the disk space back. See [What the store keeps, and what reclaims it](#what-the-store-keeps-and-what-reclaims-it).
 
 ### What the store keeps, and what reclaims it
 
-A checkpoint is not a transcript. A recorded turn is a prompt and a response; the conversation state behind `history resume` is everything the agent was working with — tool results verbatim, file contents that were read, command output, whatever an MCP server returned — written once per step of every interactive session. It grows faster than the turn count suggests, so `gth history list` prints the store's size under the listing and `gth insights` breaks it down by thread.
+A checkpoint is not a transcript. A recorded turn is a prompt and a response; the conversation state behind `history resume` is everything the agent was working with — tool results verbatim, file contents that were read, command output, whatever an MCP server returned — written once per step of every interactive session and every recorded single-shot run. It grows faster than the turn count suggests, so `gth history list` prints the store's size under the listing and `gth insights` breaks it down by thread.
 
 **A resume is never taken away without being asked for.** Two things reclaim space, and only one of them runs on its own:
 

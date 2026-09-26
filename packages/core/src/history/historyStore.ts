@@ -24,9 +24,11 @@
  * `fts5` virtual table). No fallback path is needed on this runtime.
  */
 import { DatabaseSync } from 'node:sqlite';
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { getGlobalGslothDir, ensureGlobalGslothDir } from '#src/utils/globalConfigUtils.js';
+import type { ConversationRef } from '#src/history/conversationRef.js';
 
 /** Filename of the global history DB inside `~/.gsloth`. */
 export const HISTORY_DB_FILENAME = 'history.db';
@@ -46,6 +48,14 @@ export interface SessionRecord {
    * up-front and pass its id here on every turn, grouping the whole chat under one conversation.
    */
   conversationId?: number;
+  /**
+   * GS2-106 — the LangGraph thread a single-shot run checkpointed under. Used ONLY when this record
+   * opens its own fresh conversation (no {@link conversationId}), and written onto that new row, so
+   * the run's durable state is linked to the conversation it belongs to in the same transaction
+   * that creates the row. Ignored when `conversationId` is given: an existing conversation already
+   * carries its own link, and a turn must never move it.
+   */
+  threadId?: string;
   /** ISO-8601 timestamp; defaults to now when omitted. */
   ts?: string;
   /**
@@ -112,10 +122,28 @@ export interface ConversationMeta {
   /**
    * GS2-20 — the LangGraph thread whose durable checkpoint holds this conversation's graph state.
    * It is the link a resume travels: `gth history list` prints conversation ids, and this is what
-   * turns one of those back into the thread to re-enter. Omitted by callers that do not checkpoint
-   * (a single-shot run), leaving the conversation listable but not resumable.
+   * turns one of those back into the thread to re-enter. Omitted by callers that do not checkpoint,
+   * leaving the conversation listable but not resumable. A single-shot run does not come through
+   * here: {@link HistoryStore.record} opens its row and links its thread (see
+   * {@link SessionRecord.threadId}).
    */
   threadId?: string;
+}
+
+/**
+ * GS2-106 — what {@link HistoryStore.recordTurn} wrote: the turn's own row, and the conversation it
+ * was recorded under with that conversation's run id.
+ */
+export interface RecordedTurn {
+  /** The `sessions` row id — what {@link HistoryStore.record} has always returned. */
+  sessionId: number;
+  /** The conversation the turn was recorded under: supplied by the caller, or opened for it. */
+  conversationId: number;
+  /**
+   * That conversation's run id, or `null` when it has none — a conversation that existed before
+   * run ids did, and was passed in by the caller.
+   */
+  runId: string | null;
 }
 
 /**
@@ -145,10 +173,16 @@ export interface ConversationSummary {
   lastResponse?: string;
   /**
    * GS2-20 — the LangGraph thread this conversation's checkpoint lives under, when it has one.
-   * Absent for a conversation recorded without a checkpointer (any pre-GS2-20 row, and every
-   * single-shot run), which is exactly the set that cannot be resumed.
+   * Absent for a conversation recorded without a checkpointer — any pre-GS2-20 row, a single-shot
+   * run recorded before GS2-106 or whose store would not open — and for one whose link was cut
+   * after a checkpoint write failed.
    */
   threadId?: string;
+  /**
+   * GS2-106 — the conversation's stable run id, minted when the row was created. Absent for a row
+   * written before run ids existed; those stay addressable by {@link id}.
+   */
+  runId?: string;
 }
 
 /** Aggregate analytics over the whole store (local only). */
@@ -258,6 +292,10 @@ export class HistoryStore {
     // session-scoped approval grants a resume restores, as one opaque JSON document owned by the
     // approvals layer (`core/approvals/conversationGrants.ts`); this store never reads inside it.
     //
+    // GS2-106 adds `conversations.run_id` on the same terms, with its UNIQUE index created in
+    // {@link migrate} after the ALTER; the reason it is a column of its own and not `thread_id` is
+    // at that ALTER.
+    //
     // Both tables carry a `project` column, and both hold the PROJECT ROOT the row was written
     // under — not the working directory the session was in. See {@link SessionRecord.project} and
     // {@link ConversationMeta.project}; the distinction is load-bearing because a resume's
@@ -270,7 +308,8 @@ export class HistoryStore {
         command TEXT,
         model TEXT,
         thread_id TEXT,
-        grants TEXT
+        grants TEXT,
+        run_id TEXT
       );
       CREATE TABLE IF NOT EXISTS sessions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -343,6 +382,28 @@ export class HistoryStore {
       this.db.exec(
         `CREATE INDEX IF NOT EXISTS idx_conversations_thread_id ON conversations(thread_id)`
       );
+      // GS2-106 — the conversation's STABLE id: a UUID minted when the row is created, which a
+      // continue hint prints and a person may paste days later. `conversations.id` cannot be that
+      // id, because it is an autoincrement integer and a database that was deleted and recreated
+      // hands the same integers out again — so a stale integer silently names a DIFFERENT
+      // conversation. A run id from another database names nothing here, and is refused as unknown.
+      //
+      // **Not `thread_id`, and the two must never be collapsed.** `thread_id` is a link that is
+      // allowed to break: `clearConversationThread` sets it to NULL on a live row when a checkpoint
+      // write fails, which is how a truncated conversation is made unresumable. A pasted id built
+      // on it would then stop resolving at all while `gth history show` still has the transcript,
+      // and the person would be told the conversation does not exist. The run id names the
+      // conversation; the thread id names its state; only the second may be cut.
+      //
+      // Rows that exist before this column is added keep `run_id = NULL` — no backfill — and stay
+      // addressable by their integer. UNIQUE permits any number of NULLs, which is what they need.
+      // The index follows the ALTER for the reason the GS2-107 index above gives.
+      if (!conversationCols.some((c) => c.name === 'run_id')) {
+        this.db.exec(`ALTER TABLE conversations ADD COLUMN run_id TEXT`);
+      }
+      this.db.exec(
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_run_id ON conversations(run_id)`
+      );
       const orphans = this.db
         .prepare(
           `SELECT id, ts, project, command, model
@@ -354,8 +415,12 @@ export class HistoryStore {
       if (orphans.length === 0) return;
       this.db.exec('BEGIN');
       try {
+        // GS2-106 — these conversation rows are CREATED here, so they are minted a run id like
+        // every other new row. That is not a backfill: the turns existed, their conversations did
+        // not.
         const insertConversation = this.db.prepare(
-          `INSERT INTO conversations (started_ts, project, command, model) VALUES (?, ?, ?, ?)`
+          `INSERT INTO conversations (started_ts, project, command, model, run_id)
+           VALUES (?, ?, ?, ?, ?)`
         );
         const stampTurn = this.db.prepare(`UPDATE sessions SET conversation_id = ? WHERE id = ?`);
         for (const row of orphans) {
@@ -363,7 +428,8 @@ export class HistoryStore {
             row.ts != null ? String(row.ts) : new Date().toISOString(),
             row.project != null ? String(row.project) : null,
             row.command != null ? String(row.command) : null,
-            row.model != null ? String(row.model) : null
+            row.model != null ? String(row.model) : null,
+            randomUUID()
           );
           stampTurn.run(Number(info.lastInsertRowid), Number(row.id));
         }
@@ -388,17 +454,41 @@ export class HistoryStore {
       const ts = meta.ts ?? new Date().toISOString();
       const info = this.db
         .prepare(
-          `INSERT INTO conversations (started_ts, project, command, model, thread_id)
-           VALUES (?, ?, ?, ?, ?)`
+          `INSERT INTO conversations (started_ts, project, command, model, thread_id, run_id)
+           VALUES (?, ?, ?, ?, ?, ?)`
         )
         .run(
           ts,
           meta.project ?? null,
           meta.command ?? null,
           meta.model ?? null,
-          meta.threadId ?? null
+          meta.threadId ?? null,
+          randomUUID()
         );
       return Number(info.lastInsertRowid);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * GS2-106 — the conversation a parsed id names, as its integer row id, or `null` when it names
+   * none. Every surface that takes a conversation id resolves it here.
+   *
+   * **Exact match, never a fallback and never a neighbour**, on the same terms as
+   * {@link getConversationThreadId}: an integer must be a row that exists, and a run id must be
+   * exactly the one minted for a row in THIS database. A run id from a database that was since
+   * deleted and recreated therefore names nothing, which is the whole reason run ids exist.
+   */
+  resolveConversationRef(ref: ConversationRef): number | null {
+    try {
+      const row =
+        ref.kind === 'id'
+          ? (this.db.prepare(`SELECT id FROM conversations WHERE id = ?`).get(ref.id) as
+              Record<string, unknown> | undefined)
+          : (this.db.prepare(`SELECT id FROM conversations WHERE run_id = ?`).get(ref.runId) as
+              Record<string, unknown> | undefined);
+      return row?.id != null ? Number(row.id) : null;
     } catch {
       return null;
     }
@@ -466,6 +556,7 @@ export class HistoryStore {
         .prepare(
           `SELECT c.id AS id, c.started_ts AS started_ts, c.project AS project,
                   c.command AS command, c.model AS model, c.thread_id AS thread_id,
+                  c.run_id AS run_id,
                   COUNT(s.id) AS turn_count, MIN(s.ts) AS first_ts, MAX(s.ts) AS last_ts
              FROM conversations c
              LEFT JOIN sessions s ON s.conversation_id = c.id
@@ -493,6 +584,7 @@ export class HistoryStore {
         lastResponse: last?.response != null ? String(last.response) : undefined,
         threadId:
           r.thread_id != null && String(r.thread_id).length > 0 ? String(r.thread_id) : undefined,
+        runId: r.run_id != null ? String(r.run_id) : undefined,
       };
     } catch {
       return null;
@@ -532,11 +624,24 @@ export class HistoryStore {
   }
 
   /**
-   * Persist one session and its full-text index entry. Returns the new row id, or `null` on any
-   * error (the run continues regardless). The two inserts run in a transaction so a failure can't
-   * leave the FTS index out of sync with the base table.
+   * Persist one session and its full-text index entry. Returns the new `sessions` row id, or `null`
+   * on any error (the run continues regardless). The two inserts run in a transaction so a failure
+   * can't leave the FTS index out of sync with the base table.
+   *
+   * Returns the TURN's row id, which is not a conversation id; a caller that needs the conversation
+   * the turn landed in uses {@link recordTurn}.
    */
   record(rec: SessionRecord): number | null {
+    return this.recordTurn(rec)?.sessionId ?? null;
+  }
+
+  /**
+   * GS2-106 — {@link record}, returning what was written: the turn's row id, and the conversation
+   * the turn was recorded under together with that conversation's run id. A single-shot run needs
+   * the conversation, which only exists from inside this transaction when it is opened here.
+   * `null` on any error, like {@link record}.
+   */
+  recordTurn(rec: SessionRecord): RecordedTurn | null {
     try {
       const ts = rec.ts ?? new Date().toISOString();
       const tools = rec.tools && rec.tools.length > 0 ? JSON.stringify(rec.tools) : null;
@@ -545,14 +650,33 @@ export class HistoryStore {
         // GS2-19: every turn belongs to a conversation. When the caller opened one up-front
         // (interactive sessions), stamp it; otherwise open a fresh 1-turn conversation for this row
         // (single-shot runs / bare record() calls) so the turn is never left ungrouped.
+        //
+        // GS2-106: a fresh conversation is minted its run id here, and carries the single-shot
+        // run's thread when one was checkpointed — written in the same transaction as the turn, so
+        // there is no moment at which the row exists without its link.
         let conversationId = rec.conversationId ?? null;
+        let runId: string | null;
         if (conversationId == null) {
+          runId = randomUUID();
           const cinfo = this.db
             .prepare(
-              `INSERT INTO conversations (started_ts, project, command, model) VALUES (?, ?, ?, ?)`
+              `INSERT INTO conversations (started_ts, project, command, model, thread_id, run_id)
+               VALUES (?, ?, ?, ?, ?, ?)`
             )
-            .run(ts, rec.project ?? null, rec.command ?? null, rec.model ?? null);
+            .run(
+              ts,
+              rec.project ?? null,
+              rec.command ?? null,
+              rec.model ?? null,
+              rec.threadId ?? null,
+              runId
+            );
           conversationId = Number(cinfo.lastInsertRowid);
+        } else {
+          const existing = this.db
+            .prepare(`SELECT run_id FROM conversations WHERE id = ?`)
+            .get(conversationId) as Record<string, unknown> | undefined;
+          runId = existing?.run_id != null ? String(existing.run_id) : null;
         }
         const insert = this.db.prepare(
           `INSERT INTO sessions
@@ -582,7 +706,7 @@ export class HistoryStore {
           )
           .run(id, rec.prompt ?? '', rec.response ?? '', rec.command ?? '', rec.project ?? '');
         this.db.exec('COMMIT');
-        return id;
+        return { sessionId: id, conversationId, runId };
       } catch (e) {
         this.db.exec('ROLLBACK');
         throw e;
@@ -666,6 +790,7 @@ export class HistoryStore {
         .prepare(
           `SELECT c.id AS id, c.started_ts AS started_ts, c.project AS project,
                   c.command AS command, c.model AS model, c.thread_id AS thread_id,
+                  c.run_id AS run_id,
                   COUNT(s.id) AS turn_count, MIN(s.ts) AS first_ts, MAX(s.ts) AS last_ts
              FROM conversations c
              LEFT JOIN sessions s ON s.conversation_id = c.id
@@ -693,6 +818,7 @@ export class HistoryStore {
           lastPrompt: last?.prompt != null ? String(last.prompt) : undefined,
           lastResponse: last?.response != null ? String(last.response) : undefined,
           threadId: r.thread_id != null ? String(r.thread_id) : undefined,
+          runId: r.run_id != null ? String(r.run_id) : undefined,
         };
       });
     } catch {

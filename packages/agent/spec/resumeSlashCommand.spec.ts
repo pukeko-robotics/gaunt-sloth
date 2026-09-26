@@ -44,8 +44,13 @@ describe('GS2-20 /resume — registry', () => {
 
   it('bare /resume asks the surface to list; /resume <id> asks it to resume that id', () => {
     expect(run('/resume')).toEqual({ resume: {} });
-    expect(run('/resume 12')).toEqual({ resume: { id: 12 } });
-    expect(run('/resume #12')).toEqual({ resume: { id: 12 } });
+    expect(run('/resume 12')).toEqual({ resume: { id: { kind: 'id', id: 12 } } });
+    expect(run('/resume #12')).toEqual({ resume: { id: { kind: 'id', id: 12 } } });
+    // GS2-106 — the run id `gth history list` prints is the other form, through the same parser.
+    expect(run('/resume 0F8FAD5B-D9CB-469F-A165-70867728950E')).toEqual({
+      resume: { id: { kind: 'run', runId: '0f8fad5b-d9cb-469f-a165-70867728950e' } },
+    });
+    expect(run('/resume 12abc').resume).toBeUndefined();
     expect(run('/resume 12').notice).toBeUndefined();
     expect(run('/resume 12').clearTranscript).toBeUndefined();
   });

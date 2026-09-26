@@ -1,4 +1,5 @@
 import { Command, Option } from 'commander';
+import type { ConversationRef } from '@gaunt-sloth/core/history/conversationRef.js';
 import { askCommand } from '#src/commands/askCommand.js';
 import { execCommand } from '#src/commands/execCommand.js';
 import { batchCommand } from '#src/commands/batchCommand.js';
@@ -187,7 +188,7 @@ if (commandSkipsStdin(invokedCommand)) {
 // `chat`/`code`; in front of any other subcommand it would be accepted and silently dropped, and a
 // fresh `ask`/`exec` would run as though nothing had been asked. Refused here, once, before the
 // subcommand's action can run: a typed intent is never answered with a different command.
-const rootResume = program.getOptionValue('resume') as number | undefined;
+const rootResume = program.getOptionValue('resume') as ConversationRef | undefined;
 if (
   rootResume !== undefined &&
   invokedCommand !== undefined &&

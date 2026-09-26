@@ -853,7 +853,7 @@ async function runTuiSession(
       // conversation. The App gets back exactly what was decided.
       async resumeConversation(id) {
         const resolution = await resolveResumeTarget(
-          { config, checkpointer, workspace: getProjectDir() },
+          { config, checkpointer, workspace: getProjectDir(), current: conversationId },
           id
         );
         if (!resolution.ok) return resolution;

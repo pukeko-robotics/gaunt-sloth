@@ -12,8 +12,10 @@
 import type {
   ConversationMeta,
   ConversationSummary,
+  RecordedTurn,
   SessionRecord,
 } from '#src/history/historyStore.js';
+import type { ConversationRef } from '#src/history/conversationRef.js';
 import { openHistoryStore, resolveHistoryDbPath } from '#src/history/historyStore.js';
 import { isHistoryEnabled } from '#src/history/historyEnabled.js';
 
@@ -29,13 +31,49 @@ import type { HistoryConfigView } from '#src/history/historyEnabled.js';
  * (or after a run) without a try/catch of their own.
  */
 export function recordSessionSafe(config: HistoryConfigView, record: SessionRecord): number | null {
+  return recordSessionTurnSafe(config, record)?.sessionId ?? null;
+}
+
+/**
+ * GS2-106 — {@link recordSessionSafe}, returning what was written: the turn's row id plus the
+ * conversation it was recorded under and that conversation's run id. `null` when history is off or
+ * anything went wrong. Same guarantees: fully guarded, never throws.
+ */
+export function recordSessionTurnSafe(
+  config: HistoryConfigView,
+  record: SessionRecord
+): RecordedTurn | null {
   try {
     if (!isHistoryEnabled(config)) return null;
     const dbPath = resolveHistoryDbPath(config.history?.dbPath, /* ensureDir */ true);
     const store = openHistoryStore(dbPath, { create: true });
     if (!store) return null;
     try {
-      return store.record(record);
+      return store.recordTurn(record);
+    } finally {
+      store.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * GS2-106 — the conversation a parsed id names, as its integer row id; `null` when history is off,
+ * the store cannot be opened, or the id names no conversation. Exact match only — see
+ * `HistoryStore.resolveConversationRef`. Fail-soft, never throws.
+ */
+export function resolveConversationRefSafe(
+  config: HistoryConfigView,
+  ref: ConversationRef
+): number | null {
+  try {
+    if (!isHistoryEnabled(config)) return null;
+    const dbPath = resolveHistoryDbPath(config.history?.dbPath);
+    const store = openHistoryStore(dbPath, { create: false });
+    if (!store) return null;
+    try {
+      return store.resolveConversationRef(ref);
     } finally {
       store.close();
     }
@@ -173,8 +211,17 @@ export function lookupConversationSafe(
 }
 
 /**
- * GS2-20 — the conversations a `/resume` picker may offer: the most recent ones that carry a thread
- * (so a resume could actually re-enter them), minus the one the session is already in. `[]` when
+ * The commands whose conversations an interactive session can resume into. A conversation recorded
+ * by any other command is a single-shot run: since GS2-106 it carries a thread and a checkpoint like
+ * an interactive one, and resuming it is the non-interactive resume that ticket adds on its own
+ * surfaces. Until then it is not offered, and not accepted, by the interactive resume.
+ */
+export const INTERACTIVE_CONVERSATION_COMMANDS: ReadonlySet<string> = new Set(['chat', 'code']);
+
+/**
+ * GS2-20 — the conversations a `/resume` picker may offer: the most recent interactive ones that
+ * carry a thread (so a resume could actually re-enter them), minus the one the session is already
+ * in. `[]` when
  * history is off or the store cannot be opened, which the caller renders as "nothing to resume".
  * Fail-soft, never throws.
  */
@@ -189,11 +236,16 @@ export function listResumableConversationsSafe(
     if (!store) return [];
     try {
       // Over-fetch so the filter below still yields up to `limit` rows when recent conversations
-      // are single-shot runs (no thread) or the excluded one.
+      // are single-shot runs, have no thread, or are the excluded one.
       const limit = options.limit ?? 20;
       return store
         .listConversations(limit * 3)
-        .filter((c) => c.threadId !== undefined && c.id !== options.exclude)
+        .filter(
+          (c) =>
+            c.threadId !== undefined &&
+            INTERACTIVE_CONVERSATION_COMMANDS.has(c.command ?? '') &&
+            c.id !== options.exclude
+        )
         .slice(0, limit);
     } finally {
       store.close();

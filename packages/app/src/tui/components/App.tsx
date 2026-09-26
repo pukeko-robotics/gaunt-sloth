@@ -91,6 +91,10 @@ import {
   resumeUnavailableNotice,
   type ResumeTarget,
 } from '@gaunt-sloth/agent/modules/sessionResume.js';
+import {
+  toConversationRef,
+  type ConversationRef,
+} from '@gaunt-sloth/core/history/conversationRef.js';
 import { ApprovalsPicker } from '#src/tui/components/ApprovalsPicker.js';
 import { ResumePicker, resumeCancelledNotice } from '#src/tui/components/ResumePicker.js';
 import type { CommandNoticeTone } from '#src/tui/components/CommandNotice.js';
@@ -1005,7 +1009,7 @@ export function App(props: TuiAppProps): React.ReactElement {
   // remain the only way in on that surface — so `resumableConversationsNotice` stays its list
   // builder, and no picker wording is allowed to leak into it (pinned by a spec).
   const applyResume = useCallback(
-    async (id?: number): Promise<void> => {
+    async (id?: ConversationRef | number): Promise<void> => {
       const commit = (notice: { title: string; lines: string[]; tone?: CommandNoticeTone }) =>
         push({
           kind: 'notice',
@@ -1037,8 +1041,11 @@ export function App(props: TuiAppProps): React.ReactElement {
         commit(resumeUnavailableNotice());
         return;
       }
-      if (id === conversationIdRef.current) {
-        commit(resumeSameConversationNotice(id));
+      // The integer form can be compared before anything is looked up; a run id is resolved first,
+      // and the seam refuses one that names this conversation with the same notice.
+      const ref = toConversationRef(id);
+      if (ref.kind === 'id' && ref.id === conversationIdRef.current) {
+        commit(resumeSameConversationNotice(ref.id));
         return;
       }
       resumingRef.current = true;
