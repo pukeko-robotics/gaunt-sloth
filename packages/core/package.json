@@ -37,10 +37,10 @@
   },
   "dependencies": {
     "@langchain/core": "^1.2.12",
-    "@langchain/langgraph": "^1.4.16",
+    "@langchain/langgraph": "^1.4.17",
     "jiti": "^2.7.0",
     "jsonc-parser": "^3.3.1",
-    "langchain": "^1.5.11",
+    "langchain": "^1.5.12",
     "string-width": "^8.2.2",
     "zod": "^4.6.5"
   },
