@@ -378,7 +378,9 @@ describe('GS2-107 — retention at the policy boundary, on a real runner', () =>
         db2.prepare(`DELETE FROM checkpoints WHERE thread_id = ?`).run(thread);
         db2.prepare(`DELETE FROM checkpoint_writes WHERE thread_id = ?`).run(thread);
         db2.close();
-        const third = await makeRunner(second);
+        // A fresh saver, as a new process would open: `second` holds the thread it resumed in
+        // memory (GS2-117), so rows deleted behind its back do not reach its reads.
+        const third = await makeRunner(openSaver());
         await third.resumeConversation({ threadId: thread, grants: NO_CONVERSATION_GRANTS });
         expect(await say(third, 'what was the code')).toContain(NOTHING);
       },

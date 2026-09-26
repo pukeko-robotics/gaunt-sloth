@@ -265,6 +265,11 @@ describe('GS2-20: a checkpoint write that fails mid-session', () => {
     // The turn still completes. This is the whole claim: the user keeps their work.
     expect(await turn(checkpointer, 'again')).toBe('saw 3');
 
+    // …and so does the context. The third turn must see the second one, which exists only in
+    // memory now: a saver that dropped the write would restart turn 3 from turn 1's landed state
+    // and answer `saw 3` again.
+    expect(await turn(checkpointer, 'once more')).toBe('saw 5');
+
     // Told once, in terms of what it costs them — not once per failed super-step.
     expect(notify).toHaveBeenCalledTimes(1);
     expect(notify.mock.calls[0][0]).toContain('resumable');

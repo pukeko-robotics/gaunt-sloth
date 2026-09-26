@@ -144,9 +144,10 @@ export function openSessionCheckpointerSafe(
     close: () => {},
   });
 
-  // GS2-20 — the degrade path. A checkpoint write that fails mid-session drops the write and lets
-  // the turn continue; these two closures are the "loudly" half. They are declared before the saver
-  // because the saver is handed `degrade` at construction.
+  // GS2-20 — the degrade path. A checkpoint write that fails mid-session is lost to the disk only:
+  // the saver keeps the session's state in memory and stops writing to the database, so the run
+  // carries on unchanged. These two closures are the "loudly" half. They are declared before the
+  // saver because the saver is handed `degrade` at construction.
   //
   // The two facts are tracked separately on purpose. `degraded` is what happened; `conversationId`
   // is where to write it down, and it is not known yet — the conversation row is opened by the
@@ -159,8 +160,8 @@ export function openSessionCheckpointerSafe(
     markConversationUnresumableSafe(config, conversationId);
   };
   const degrade = (): void => {
-    // Once per session, not once per write: a full disk fails every super-step, and a notice per
-    // write would bury the turn the user is still having under its own error report.
+    // Once per session. The saver reports only its first failure, and this guard keeps the rule
+    // here, the layer that knows what a session is, rather than relying on that.
     if (degraded) return;
     degraded = true;
     notify(

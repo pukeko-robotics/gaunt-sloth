@@ -403,3 +403,166 @@ describe('GS2-20: checkpoint write slots', () => {
     expect(stored.map(([, value]) => value).sort()).toEqual(['from-a', 'from-b']);
   });
 });
+
+/**
+ * GS2-117 — the saver's in-memory copy of each thread's latest checkpoint, asserted through the
+ * saver's own interface. Most cases break durable writes first (`PRAGMA query_only`, which fails
+ * writes and leaves reads working), so the in-memory copy is the ONLY place the state exists and a
+ * read that answers correctly can only have been answered from it.
+ */
+describe('GS2-117: the in-memory copy behind a degrade-safe saver', () => {
+  let dir: string;
+  let dbPath: string;
+  const savers: GthSqliteSaver[] = [];
+  const meta = { source: 'loop' as const, step: 0, parents: {} };
+  const checkpoint = (id: string) => ({
+    v: 4,
+    id,
+    ts: new Date().toISOString(),
+    channel_values: { marker: id },
+    channel_versions: {},
+    versions_seen: {},
+  });
+  const at = (thread: string, checkpointId?: string) => ({
+    configurable: {
+      thread_id: thread,
+      checkpoint_ns: '',
+      ...(checkpointId ? { checkpoint_id: checkpointId } : {}),
+    },
+  });
+
+  beforeEach(() => {
+    dir = mkdtempSync(resolve(tmpdir(), 'gsloth-mirror-'));
+    dbPath = resolve(dir, 'history.db');
+    savers.length = 0;
+  });
+
+  afterEach(() => {
+    for (const saver of savers) saver.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const open = (): GthSqliteSaver => {
+    const saver = openCheckpointSaver(dbPath)!;
+    expect(saver).not.toBeNull();
+    savers.push(saver);
+    return saver;
+  };
+  /** A saver whose durable writes all fail, so its memory is the only copy of what it is handed. */
+  const openCut = (): GthSqliteSaver => {
+    const saver = open();
+    (saver as unknown as { db: DatabaseSync }).db.exec('PRAGMA query_only = 1');
+    return saver;
+  };
+  const writesOf = async (saver: GthSqliteSaver, thread: string) =>
+    ((await saver.getTuple(at(thread)))?.pendingWrites ?? []).map(([, channel, value]) => [
+      channel,
+      value,
+    ]);
+
+  it('a pending write that arrives BEFORE its checkpoint survives a prune and is served once that checkpoint is latest', async () => {
+    const saver = openCut();
+    await saver.put(at('t'), checkpoint('cp-0'), meta, {});
+    // LangGraph dispatches `putWrites` immediately and chains `put` behind the previous one, so the
+    // writes for cp-2 can reach the saver first.
+    await saver.putWrites(at('t', 'cp-2'), [['__interrupt__', 'early']], 'task-1');
+    await saver.put(at('t', 'cp-0'), checkpoint('cp-1'), meta, {});
+    expect((await saver.getTuple(at('t')))?.checkpoint.id).toBe('cp-1');
+    await saver.put(at('t', 'cp-1'), checkpoint('cp-2'), meta, {});
+    const latest = await saver.getTuple(at('t'));
+    expect(latest?.checkpoint.id).toBe('cp-2');
+    expect(latest?.parentConfig?.configurable?.checkpoint_id).toBe('cp-1');
+    expect(await writesOf(saver, 't')).toEqual([['__interrupt__', 'early']]);
+  });
+
+  it('a put for a checkpoint OLDER than the latest does not displace it', async () => {
+    const saver = openCut();
+    await saver.put(at('t'), checkpoint('cp-2'), meta, {});
+    await saver.put(at('t'), checkpoint('cp-1'), meta, {});
+    expect((await saver.getTuple(at('t')))?.checkpoint.id).toBe('cp-2');
+  });
+
+  it('keeps the write-slot contract in memory: insert-once, reserved replace, prototype names positional, SQLite order', async () => {
+    const saver = openCut();
+    await saver.put(at('t'), checkpoint('cp-1'), meta, {});
+    const cfg = at('t', 'cp-1');
+    await saver.putWrites(cfg, [['messages', 'first']], 'task-b');
+    await saver.putWrites(cfg, [['messages', 'second']], 'task-b');
+    await saver.putWrites(cfg, [['__interrupt__', 'stale']], 'task-b');
+    await saver.putWrites(cfg, [['__interrupt__', 'live']], 'task-b');
+    await saver.putWrites(
+      cfg,
+      [
+        ['constructor', 'first'],
+        ['toString', 'first'],
+      ],
+      'task-a'
+    );
+    await saver.putWrites(
+      cfg,
+      [
+        ['constructor', 'second'],
+        ['toString', 'second'],
+      ],
+      'task-a'
+    );
+    // `ORDER BY task_id ASC, idx ASC`, the order SQLite answers in — reserved slots are negative.
+    expect(await writesOf(saver, 't')).toEqual([
+      ['constructor', 'first'],
+      ['toString', 'first'],
+      ['__interrupt__', 'live'],
+      ['messages', 'first'],
+    ]);
+  });
+
+  it('seeds memory from SQLite on a LATEST read only — a named read of an older checkpoint does not become the latest', async () => {
+    const writer = open();
+    await writer.put(at('t'), checkpoint('cp-1'), meta, {});
+    await writer.put(at('t', 'cp-1'), checkpoint('cp-2'), meta, {});
+    await writer.putWrites(at('t', 'cp-2'), [['__interrupt__', 'suspended']], 'task-1');
+    writer.close();
+
+    const reader = open();
+    expect((await reader.getTuple(at('t', 'cp-1')))?.checkpoint.id).toBe('cp-1');
+    expect((await reader.getTuple(at('t')))?.checkpoint.id).toBe('cp-2');
+    // A named read of anything but memory's checkpoint still goes to SQLite.
+    expect((await reader.getTuple(at('t', 'cp-1')))?.checkpoint.id).toBe('cp-1');
+
+    // The latest read seeded memory, pending writes included: with the rows gone from the file and
+    // every write failing, the thread still answers.
+    const audit = new DatabaseSync(dbPath);
+    audit.exec(`DELETE FROM checkpoints; DELETE FROM checkpoint_writes;`);
+    audit.close();
+    (reader as unknown as { db: DatabaseSync }).db.exec('PRAGMA query_only = 1');
+    const seeded = await reader.getTuple(at('t'));
+    expect(seeded?.checkpoint.id).toBe('cp-2');
+    expect(seeded?.parentConfig?.configurable?.checkpoint_id).toBe('cp-1');
+    expect(await writesOf(reader, 't')).toEqual([['__interrupt__', 'suspended']]);
+  });
+
+  it('holds bytes, not the caller`s object — a value mutated after it was written reads back as written', async () => {
+    const saver = openCut();
+    await saver.put(at('t'), checkpoint('cp-1'), meta, {});
+    // A `Uint8Array` value is the one the serializer hands back as itself (type `bytes`).
+    const value = new Uint8Array([1, 2, 3]);
+    await saver.putWrites(at('t', 'cp-1'), [['blob', value]], 'task-1');
+    value[0] = 99;
+    expect(await writesOf(saver, 't')).toEqual([['blob', new Uint8Array([1, 2, 3])]]);
+  });
+
+  it('deleteThread clears memory as well as SQLite', async () => {
+    const healthy = open();
+    await healthy.put(at('kept'), checkpoint('cp-1'), meta, {});
+    await healthy.put(at('gone'), checkpoint('cp-1'), meta, {});
+    await healthy.deleteThread('gone');
+    expect(await healthy.getTuple(at('gone'))).toBeUndefined();
+    expect(await healthy.getTuple(at('kept'))).toBeDefined();
+
+    // With durable writes cut, the thread exists only in memory, so this reads memory alone.
+    const cut = openCut();
+    await cut.put(at('memory-only'), checkpoint('cp-1'), meta, {});
+    expect(await cut.getTuple(at('memory-only'))).toBeDefined();
+    await cut.deleteThread('memory-only');
+    expect(await cut.getTuple(at('memory-only'))).toBeUndefined();
+  });
+});
