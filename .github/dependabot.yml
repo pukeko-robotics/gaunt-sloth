@@ -12,6 +12,10 @@ updates:
       interval: 'weekly'
     ignore:
       - dependency-name: '@types/node'
+      - dependency-name: 'react' # 19.3.x tips the Ink render specs over 10 s on Windows, see OPS-122
+        versions: ['>=19.3.0']
+      - dependency-name: '@types/react' # held with react, see OPS-122
+        versions: ['>=19.3.0']
     groups:
       dev-dependencies:
         patterns:
