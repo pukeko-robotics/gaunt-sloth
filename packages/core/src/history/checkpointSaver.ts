@@ -39,7 +39,7 @@
  * truncated conversation, and it is why this differs from the history RECORDER, which merely
  * swallows. A missing turn in a listing is a gap; a half-restored graph presented as whole is a lie.
  *
- * **What keeps the RUN whole is the in-memory copy** (see {@link CheckpointMirror}). The graph reads
+ * **What keeps the RUN whole is the in-memory copy** (see `CheckpointMirror`). The graph reads
  * the saver back inside a turn, at every approval-gated tool call: `getState` finds the pending
  * interrupt and a new `Command({ resume })` invocation starts from `getTuple`. A write that reached
  * neither the disk nor anything else would hand those reads a stale step, and the gated tool would
