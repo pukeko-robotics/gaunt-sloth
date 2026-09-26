@@ -140,7 +140,10 @@ describe('sessionResume — resolveResumeTarget, the checks in order', () => {
       { config, checkpointer: ckpt, workspace: '/work/here' },
       4242
     );
-    expect(result).toEqual({ ok: false, refusal: { kind: 'unknown', ref: { kind: 'id', id: 4242 } } });
+    expect(result).toEqual({
+      ok: false,
+      refusal: { kind: 'unknown', ref: { kind: 'id', id: 4242 } },
+    });
     const notice = resumeRefusalNotice({ kind: 'unknown', ref: { kind: 'id', id: 4242 } });
     expect(notice.title).toBe('No conversation #4242');
     expect(notice.lines.join(' ')).toContain('`gth history list`');

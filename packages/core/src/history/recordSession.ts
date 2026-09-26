@@ -221,9 +221,8 @@ export const INTERACTIVE_CONVERSATION_COMMANDS: ReadonlySet<string> = new Set(['
 /**
  * GS2-20 — the conversations a `/resume` picker may offer: the most recent interactive ones that
  * carry a thread (so a resume could actually re-enter them), minus the one the session is already
- * in. `[]` when
- * history is off or the store cannot be opened, which the caller renders as "nothing to resume".
- * Fail-soft, never throws.
+ * in. `[]` when history is off or the store cannot be opened, which the caller renders as "nothing
+ * to resume". Fail-soft, never throws.
  */
 export function listResumableConversationsSafe(
   config: HistoryConfigView,

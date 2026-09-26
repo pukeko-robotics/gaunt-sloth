@@ -139,18 +139,19 @@ describe('GS2-106 — a recorded single-shot run checkpoints durably', () => {
 
   afterAll(() => rmSync(projectDir, { recursive: true, force: true }));
 
-  const resolvers = (): AgentResolvers => ({
-    resolveTools: vi.fn().mockResolvedValue([
-      tool(
-        async () => {
-          toolCalls++;
-          return SECRET;
-        },
-        { name: 'lookup_code', description: 'Look up the code.', schema: z.object({}) }
-      ),
-    ]),
-    resolveMiddleware: async (m: unknown[] | undefined) => m ?? [],
-  } as unknown as AgentResolvers);
+  const resolvers = (): AgentResolvers =>
+    ({
+      resolveTools: vi.fn().mockResolvedValue([
+        tool(
+          async () => {
+            toolCalls++;
+            return SECRET;
+          },
+          { name: 'lookup_code', description: 'Look up the code.', schema: z.object({}) }
+        ),
+      ]),
+      resolveMiddleware: async (m: unknown[] | undefined) => m ?? [],
+    }) as unknown as AgentResolvers;
 
   const configFor = (history: Record<string, unknown> = { dbPath }): GthConfig =>
     ({
@@ -173,9 +174,24 @@ describe('GS2-106 — a recorded single-shot run checkpoints durably', () => {
       history,
     }) as unknown as GthConfig;
 
-  const run = async (config: GthConfig = configFor()) => {
+  const run = async (config: GthConfig = configFor(), prompt = 'look up the code') => {
     const { runSingleShot } = await import('#src/runtime/singleShot.js');
-    return runSingleShot('SINGLE-SHOT', '', 'look up the code', config, resolvers(), 'ask');
+    return runSingleShot('SINGLE-SHOT', '', prompt, config, resolvers(), 'ask');
+  };
+
+  /** Row counts of every table a recorded run writes to, read straight off the file. */
+  const tableCounts = (): Record<string, number> => {
+    const db = new DatabaseSync(dbPath);
+    try {
+      const out: Record<string, number> = {};
+      for (const table of ['conversations', 'sessions', 'checkpoints', 'checkpoint_writes']) {
+        const r = db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as Record<string, unknown>;
+        out[table] = Number(r.n);
+      }
+      return out;
+    } finally {
+      db.close();
+    }
   };
 
   const row = (conversationId: number): Record<string, unknown> | undefined => {
@@ -361,6 +377,80 @@ describe('GS2-106 — a recorded single-shot run checkpoints durably', () => {
       expect(countWhere('checkpoints', keptThread)).toBeGreaterThan(0);
       expect(countWhere('checkpoints', cutThread)).toBe(0);
       expect((await latestMessages(keptThread)).some((m) => ToolMessage.isInstance(m))).toBe(true);
+    },
+    REAL_AGENT_TIMEOUT_MS
+  );
+
+  it(
+    'ACCEPTANCE: with history.enabled false, a run writes no checkpoint rows and no conversation row',
+    async () => {
+      // The control, in the same file: a recorded run creates the store and writes every table, so
+      // the counts below are read off a real database that a run with history on DOES write to.
+      const control = await run();
+      expect(control.conversation).toBeDefined();
+      const before = tableCounts();
+      expect(before.conversations).toBe(1);
+      expect(before.checkpoints).toBeGreaterThan(0);
+      vi.clearAllMocks();
+
+      const result = await run(configFor({ dbPath, enabled: false }));
+
+      expect(result.ok).toBe(true);
+      expect(result.answer).toBe(ANSWER);
+      expect(toolCalls).toBe(2);
+      expect(result.conversation).toBeUndefined();
+      expect(tableCounts()).toEqual(before);
+      // Silent: history off is a choice, not a fault to be warned about.
+      expect(consoleUtils.displayWarning).not.toHaveBeenCalled();
+    },
+    REAL_AGENT_TIMEOUT_MS
+  );
+
+  it(
+    'two runs at once on one database, as batch -j runs them, each keep their own conversation, thread and state',
+    async () => {
+      // `batch -j` runs its cells in one process, concurrently, through `runSingleShot` — which is
+      // what Promise.all does here. Each run has its own prompt so its state can be told apart.
+      const [a, b] = await Promise.all([
+        run(configFor(), 'first concurrent prompt'),
+        run(configFor(), 'second concurrent prompt'),
+      ]);
+
+      expect(a.ok).toBe(true);
+      expect(b.ok).toBe(true);
+      expect(toolCalls).toBe(2);
+      expect(a.conversation!.conversationId).not.toBe(b.conversation!.conversationId);
+      expect(a.conversation!.runId).not.toBe(b.conversation!.runId);
+      const threadA = String(row(a.conversation!.conversationId)!.thread_id);
+      const threadB = String(row(b.conversation!.conversationId)!.thread_id);
+      expect(threadA).not.toBe(threadB);
+
+      // Neither run's state landed under the other's thread: each newest checkpoint holds its OWN
+      // prompt, its own tool result and its own answer, and only its own.
+      for (const [thread, own, other] of [
+        [threadA, 'first concurrent prompt', 'second concurrent prompt'],
+        [threadB, 'second concurrent prompt', 'first concurrent prompt'],
+      ] as const) {
+        const messages = await latestMessages(thread);
+        const humans = messages.filter((m) => HumanMessage.isInstance(m)).map((m) => m.content);
+        expect(humans).toEqual([own]);
+        expect(humans).not.toContain(other);
+        expect(messages.filter((m) => ToolMessage.isInstance(m))).toHaveLength(1);
+        expect(messages[messages.length - 1].content).toBe(ANSWER);
+      }
+      // And no checkpoint was written under a thread that no conversation names.
+      const db = new DatabaseSync(dbPath);
+      try {
+        const threads = (
+          db.prepare(`SELECT DISTINCT thread_id FROM checkpoints`).all() as Record<
+            string,
+            unknown
+          >[]
+        ).map((r) => String(r.thread_id));
+        expect(threads.sort()).toEqual([threadA, threadB].sort());
+      } finally {
+        db.close();
+      }
     },
     REAL_AGENT_TIMEOUT_MS
   );

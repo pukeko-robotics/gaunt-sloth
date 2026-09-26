@@ -11,7 +11,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import type { SessionConfig } from '#src/modules/interactiveSessionModule.js';
+import type {
+  InteractiveSessionOptions,
+  SessionConfig,
+} from '#src/modules/interactiveSessionModule.js';
 import type { ConversationGrants } from '@gaunt-sloth/core/core/approvals/conversationGrants.js';
 
 // readline / stdin — the `>` prompt returns each scripted user turn in order, then 'exit'.
@@ -192,7 +195,9 @@ describe('interactiveSessionModule — resume (GS2-20)', () => {
     return id;
   };
 
-  const startSession = async (options?: { resumeConversationId?: number }) => {
+  const startSession = async (options?: {
+    resumeConversationId?: InteractiveSessionOptions['resumeConversationId'];
+  }) => {
     const { createInteractiveSession } = await import('#src/modules/interactiveSessionModule.js');
     await createInteractiveSession(sessionConfig, {}, undefined, options);
   };
@@ -524,5 +529,199 @@ describe('interactiveSessionModule — resume (GS2-20)', () => {
     store.close();
     expect(resumedGrants).toContain('npm test');
     expect(ownGrants).toBeNull();
+  });
+
+  // GS2-106 — an `ask` row now carries a thread and a checkpoint exactly as a chat row does, so the
+  // thread no longer tells them apart. The COMMAND check is what keeps an ask row out of every
+  // interactive resume; each cell below has a chat row seeded identically as its control, so a
+  // refusal for some other reason (workspace, no checkpoint) cannot pass for it.
+  describe('GS2-106 — an ask row with a real thread and checkpoint is still refused', () => {
+    /** A single-shot row as `runSingleShot` now leaves one: opened by the record, thread linked. */
+    const seedAsk = async (threadId: string) => {
+      const c = await core();
+      const recorded = c.recordSessionTurnSafe(config, {
+        command: 'ask',
+        project: '/proj',
+        prompt: 'an ask prompt',
+        response: 'an ask answer',
+        threadId,
+      })!;
+      const saver = c.openCheckpointSaver(dbPath)!;
+      await saver.put(
+        { configurable: { thread_id: threadId, checkpoint_ns: '' } },
+        {
+          v: 4,
+          id: `cp-${threadId}`,
+          ts: new Date().toISOString(),
+          channel_values: {},
+          channel_versions: {},
+          versions_seen: {},
+        },
+        { source: 'loop', step: 0, parents: {} },
+        {}
+      );
+      saver.close();
+      expect(c.lookupConversationThreadSafe(config, recorded.conversationId)).toBe(threadId);
+      return recorded;
+    };
+
+    it('by gth chat --resume <id>, by integer and by run id; the chat control resumes', async () => {
+      const ask = await seedAsk('thread-ask');
+      const refused = async (ref: number | string) => {
+        vi.clearAllMocks();
+        runnerInstanceMock.init.mockResolvedValue(undefined);
+        turnsAsked = 0;
+        await startSession({
+          resumeConversationId: typeof ref === 'number' ? ref : { kind: 'run', runId: ref },
+        });
+        expect(runnerInstanceMock.resumeConversation).not.toHaveBeenCalled();
+        expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+        const [notice] = notices();
+        expect(notice.title).toBe(`Conversation #${ask.conversationId} cannot be resumed`);
+        expect(notice.lines[0]).toContain('`gth ask`');
+        expect(notice.lines[0]).toContain('resuming a single-shot run is not supported yet');
+      };
+      await refused(ask.conversationId);
+      await refused(ask.runId!);
+
+      // CONTROL — a chat row with the same shape of thread and checkpoint does resume.
+      const chat = await seed({ command: 'chat', threadId: 'thread-chat-control' });
+      vi.clearAllMocks();
+      runnerInstanceMock.init.mockResolvedValue(undefined);
+      turnsAsked = 0;
+      await startSession({ resumeConversationId: chat });
+      expect(runnerInstanceMock.resumeConversation).toHaveBeenCalledTimes(1);
+      expect(runnerInstanceMock.resumeConversation.mock.calls[0][0].threadId).toBe(
+        'thread-chat-control'
+      );
+    });
+
+    it('by /resume <id> mid-session; the chat control resumes through the same seam', async () => {
+      const ask = await seedAsk('thread-ask');
+      const chat = await seed({ command: 'chat', threadId: 'thread-chat-control' });
+      scriptedTurns = ['first', `/resume ${ask.conversationId}`, `/resume ${ask.runId}`];
+      await startSession();
+      const refusals = notices().filter(
+        (n) => n.title === `Conversation #${ask.conversationId} cannot be resumed`
+      );
+      expect(refusals).toHaveLength(2);
+      for (const r of refusals) expect(r.lines[0]).toContain('`gth ask`');
+      expect(runnerInstanceMock.resumeConversation).not.toHaveBeenCalled();
+
+      vi.clearAllMocks();
+      runnerInstanceMock.init.mockResolvedValue(undefined);
+      runnerInstanceMock.processMessages.mockResolvedValue('the answer');
+      turnsAsked = 0;
+      scriptedTurns = ['first', `/resume ${chat}`];
+      await startSession();
+      expect(runnerInstanceMock.resumeConversation).toHaveBeenCalledTimes(1);
+    });
+
+    it('by the /resume picker, which offers the chat control and not the ask row', async () => {
+      const ask = await seedAsk('thread-ask');
+      const chat = await seed({ command: 'chat', threadId: 'thread-chat-control' });
+      scriptedTurns = ['a first turn', '/resume'];
+      await startSession();
+      const picker = notices().find((n) => n.title === 'Conversations you can resume');
+      expect(picker).toBeDefined();
+      const body = picker!.lines.join('\n');
+      expect(body).toContain(`#${chat}`);
+      expect(body).not.toContain(`#${ask.conversationId}`);
+    });
+  });
+
+  describe('GS2-106 — --resume takes a run id, and fails loudly on one that names nothing here', () => {
+    it('a run id resumes the conversation it was minted for', async () => {
+      const id = await seed({});
+      const c = await core();
+      const store = c.openHistoryStore(dbPath, { create: false })!;
+      const runId = store.listConversations(50).find((r) => r.id === id)!.runId!;
+      store.close();
+      await startSession({ resumeConversationId: { kind: 'run', runId } });
+      expect(runnerInstanceMock.resumeConversation).toHaveBeenCalledTimes(1);
+      expect(notices().some((n) => n.title === `Resumed conversation #${id}`)).toBe(true);
+    });
+
+    it('an unknown run id, and one minted by a DIFFERENT database, are refused by name', async () => {
+      const id = await seed({});
+      // Another database, whose conversation sits at the SAME integer as the one seeded here.
+      const c = await core();
+      const other = c.recordSessionTurnSafe(
+        { history: { dbPath: resolve(dir, 'other.db') } },
+        { command: 'code', project: '/proj', prompt: 'p', response: 'r' }
+      )!;
+      expect(other.conversationId).toBe(id);
+      for (const runId of ['0f8fad5b-d9cb-469f-a165-70867728950e', other.runId!]) {
+        vi.clearAllMocks();
+        runnerInstanceMock.init.mockResolvedValue(undefined);
+        await startSession({ resumeConversationId: { kind: 'run', runId } });
+        expect(runnerInstanceMock.resumeConversation).not.toHaveBeenCalled();
+        expect(systemUtilsMock.exit).toHaveBeenCalledWith(1);
+        expect(notices().map((n) => n.title)).toEqual([`No conversation ${runId}`]);
+      }
+    });
+
+    it('a conversation written before run ids existed resumes by its integer', async () => {
+      // The pre-GS2-106 conversations table, with a chat row that has a thread; the checkpoint
+      // tables are added by the saver, as they would have been on that DB.
+      const { DatabaseSync } = await import('node:sqlite');
+      const legacy = new DatabaseSync(dbPath);
+      legacy.exec(`
+        CREATE TABLE conversations (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          started_ts TEXT NOT NULL,
+          project TEXT,
+          command TEXT,
+          model TEXT,
+          thread_id TEXT,
+          grants TEXT
+        );
+        CREATE TABLE sessions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ts TEXT NOT NULL,
+          project TEXT,
+          command TEXT,
+          model TEXT,
+          prompt TEXT,
+          response TEXT,
+          tokens_input INTEGER,
+          tokens_output INTEGER,
+          cost_usd REAL,
+          tools TEXT,
+          duration_ms INTEGER,
+          conversation_id INTEGER
+        );
+        CREATE VIRTUAL TABLE sessions_fts USING fts5(prompt, response, command, project);
+        INSERT INTO conversations (id, started_ts, project, command, thread_id)
+          VALUES (3, '2026-08-01T00:00:00.000Z', '/proj', 'chat', 'thread-legacy');
+        INSERT INTO sessions (ts, command, prompt, response, conversation_id)
+          VALUES ('2026-08-01T00:00:00.000Z', 'chat', 'legacy prompt', 'legacy answer', 3);
+      `);
+      legacy.close();
+      const c = await core();
+      const saver = c.openCheckpointSaver(dbPath)!;
+      await saver.put(
+        { configurable: { thread_id: 'thread-legacy', checkpoint_ns: '' } },
+        {
+          v: 4,
+          id: 'cp-legacy',
+          ts: new Date().toISOString(),
+          channel_values: {},
+          channel_versions: {},
+          versions_seen: {},
+        },
+        { source: 'loop', step: 0, parents: {} },
+        {}
+      );
+      saver.close();
+
+      await startSession({ resumeConversationId: 3 });
+      expect(runnerInstanceMock.resumeConversation).toHaveBeenCalledTimes(1);
+      expect(runnerInstanceMock.resumeConversation.mock.calls[0][0].threadId).toBe('thread-legacy');
+      const { openHistoryStore } = await core();
+      const store = openHistoryStore(dbPath, { create: false })!;
+      expect(store.listConversations(50).find((r) => r.id === 3)!.runId).toBeUndefined();
+      store.close();
+    });
   });
 });

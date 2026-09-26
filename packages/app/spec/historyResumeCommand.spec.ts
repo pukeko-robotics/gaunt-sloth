@@ -112,6 +112,75 @@ describe('gth history resume <id> (GS2-20)', () => {
     expect(warning).toContain(`gth history show ${askId}`);
   });
 
+  // GS2-106 — the sentence is pinned WHOLE: an ask row now keeps its state, so the old "keeps no
+  // conversation state" was false, and a spec matching only "single-shot" could not see it return.
+  it('the single-shot refusal says resuming one is not supported yet, for an ask row that carries a thread', async () => {
+    await seed();
+    const { recordSessionTurnSafe } = await import('@gaunt-sloth/core/history/recordSession.js');
+    const ask = recordSessionTurnSafe(
+      { history: { dbPath } },
+      { command: 'ask', prompt: 'p', response: 'r', threadId: 'thread-ask' }
+    )!;
+    await run(String(ask.conversationId));
+    expect(startSessionMock).not.toHaveBeenCalled();
+    const id = ask.conversationId;
+    expect(consoleMock.displayWarning.mock.calls).toEqual([
+      [
+        `Conversation #${id} was recorded by \`gth ask\`, a single-shot run. Resuming a ` +
+          `single-shot run is not supported yet. \`gth history show ${id}\` prints it.`,
+      ],
+    ]);
+    // The same refusal when the row is named by its run id.
+    consoleMock.displayWarning.mockClear();
+    await run(ask.runId!);
+    expect(startSessionMock).not.toHaveBeenCalled();
+    expect(consoleMock.displayWarning).toHaveBeenCalledWith(
+      expect.stringContaining(`Conversation #${id} was recorded by \`gth ask\``)
+    );
+  });
+
+  it('resolves a run id to its conversation and starts the session with that integer', async () => {
+    const { chatId } = await seed();
+    const { openHistoryStore } = await import('@gaunt-sloth/core/history/historyStore.js');
+    const store = openHistoryStore(dbPath, { create: false })!;
+    const runId = store.listConversations(50).find((c) => c.id === chatId)!.runId!;
+    store.close();
+    await run(runId.toUpperCase());
+    expect(startSessionMock).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: 'chat' }),
+      { global: true },
+      undefined,
+      { resumeConversationId: chatId }
+    );
+  });
+
+  it('refuses, naming the token, an unknown run id, a run id from a different database, and 12abc', async () => {
+    const { codeId } = await seed();
+    const unknown = '0f8fad5b-d9cb-469f-a165-70867728950e';
+    await run(unknown);
+    expect(consoleMock.displayWarning).toHaveBeenLastCalledWith(
+      expect.stringContaining(`No conversation ${unknown}`)
+    );
+
+    // A run id minted by ANOTHER database, whose row sits at the same integer as one here.
+    const { recordSessionTurnSafe } = await import('@gaunt-sloth/core/history/recordSession.js');
+    const elsewhere = recordSessionTurnSafe(
+      { history: { dbPath: resolve(dir, 'other.db') } },
+      { command: 'code', prompt: 'p', response: 'r' }
+    )!;
+    expect(elsewhere.conversationId).toBe(codeId);
+    await run(elsewhere.runId!);
+    expect(consoleMock.displayWarning).toHaveBeenLastCalledWith(
+      expect.stringContaining(`No conversation ${elsewhere.runId}`)
+    );
+
+    // Conversations 1..3 exist, so a parser that read `1abc` as 1 would start a session.
+    expect(codeId).toBe(1);
+    await run('1abc');
+    expect(consoleMock.displayWarning).toHaveBeenLastCalledWith('Invalid conversation id "1abc".');
+    expect(startSessionMock).not.toHaveBeenCalled();
+  });
+
   it('fails soft for an unknown id and for an id that is not one', async () => {
     await seed();
     await run('9999');
