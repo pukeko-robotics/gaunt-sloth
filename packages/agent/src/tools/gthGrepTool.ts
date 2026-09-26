@@ -39,7 +39,7 @@ export type GrepFileSet = 'gitignore' | 'all';
 
 /**
  * Resolve the effective {@link GrepFileSet} from config. Reads the `gth_grep` entry of the SAME
- * `builtInTools` registry that {@link @gaunt-sloth/agent!"builtInToolsConfig.js" | ../builtInToolsConfig.ts} uses to decide enablement, so
+ * `builtInTools` registry that {@link @gaunt-sloth/agent!"builtInToolsConfig.js".getDefaultTools | getDefaultTools} uses to decide enablement, so
  * the corpus selection and the tool's presence resolve from one source. Defaults to `gitignore`
  * (the coordinator-set default, and already rg's native default — so rg-present machines see no
  * behaviour change; only the selection becomes explicit).

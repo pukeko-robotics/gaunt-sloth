@@ -33,7 +33,7 @@ export const DEFAULT_CONFIG = {
    * It needs GitHub CLI (gh).
    *
    * `github` content source uses `gh pr diff NN` internally.
-   * {@link @gaunt-sloth/review!sources/ghPrDiffSource | src/sources/ghPrDiffSource.ts}
+   * {@link @gaunt-sloth/review!sources/ghPrDiffSource.get | ghPrDiffSource.get}
    *
    *
    * `github` requirement source uses `gh issue view NN` internally
