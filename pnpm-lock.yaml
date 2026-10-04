@@ -85,11 +85,11 @@ importers:
         specifier: ^1.2.1
         version: 1.2.1(@bufbuild/protobuf@2.15.0)(express@5.2.1)
       '@ag-ui/core':
-        specifier: ^1.0.0
-        version: 1.0.0(zod@4.6.5)
+        specifier: ^1.0.1
+        version: 1.0.1(zod@4.6.5)
       '@ag-ui/encoder':
-        specifier: ^1.0.0
-        version: 1.0.0(zod@4.6.5)
+        specifier: ^1.0.1
+        version: 1.0.1(zod@4.6.5)
       '@agentclientprotocol/sdk':
         specifier: 1.4.0
         version: 1.4.0(zod@4.6.5)
@@ -130,8 +130,8 @@ importers:
   packages/app:
     dependencies:
       '@ag-ui/core':
-        specifier: ^1.0.0
-        version: 1.0.0(zod@4.6.5)
+        specifier: ^1.0.1
+        version: 1.0.1(zod@4.6.5)
       '@gaunt-sloth/agent':
         specifier: workspace:*
         version: link:../agent
@@ -330,19 +330,19 @@ packages:
       express:
         optional: true
 
-  '@ag-ui/core@1.0.0':
-    resolution: {integrity: sha512-yCRhsQvb4+lmGMrDsi4TOJxqKpm/kb3H64wwL+Z90jNVrkhy17RErfzsNgybfbjNKLM0nenEDYDVJsZHJJSigQ==}
+  '@ag-ui/core@1.0.1':
+    resolution: {integrity: sha512-Q6pxgI7gcey/0pHfM37S7GNrsYqTrrjjFLpi1dckHNGX2l9VTL0CjnyNc44lwPfHIzFmmEvQfbrAeEPINGGg/Q==}
     peerDependencies:
       zod: ^3.25.18 || ^4.0.0
     peerDependenciesMeta:
       zod:
         optional: true
 
-  '@ag-ui/encoder@1.0.0':
-    resolution: {integrity: sha512-8w+SHIjsatOcHHe5UBqdlqOiZaQWa3rMv1cUdNFXtHmfcIOLbMd1PG3SRWHD9AMUzApDl4964BV9xs3QPZogrw==}
+  '@ag-ui/encoder@1.0.1':
+    resolution: {integrity: sha512-or0xYLdzGOuJg5avAtUxS1zNiMqO7MxUso+7z90Wl4jpl94QzfmfybXWopvPipVm/dh8IqkB/Zn+LHy4MI2e+g==}
 
-  '@ag-ui/proto@1.0.0':
-    resolution: {integrity: sha512-RXEdjD3RfZ/8fUEX+ZqN5SrZAxrOZ9oQt0FlEhN4Ie/YEOKDVv0u1g83fOhGxWJTTVAmYSM/xf+ijwixsmz2RA==}
+  '@ag-ui/proto@1.0.1':
+    resolution: {integrity: sha512-w7R2gLeXv04Mss0B29thkF+nLitSx6aLeqhUpvmeJZNjBPbwZ6zkXdK3/KEqavCMtHvot7AGj6RaHG1DvbJwww==}
 
   '@agentclientprotocol/sdk@1.4.0':
     resolution: {integrity: sha512-/eufudw+aFY1LKLolT6yFE6UMmYRl7fMJ/DEONSIyR6wI3slHWITBsANRGqXEY8FRzqUxwh7QEaGiZHcJPVThg==}
@@ -2514,8 +2514,8 @@ packages:
     resolution: {integrity: sha512-aBY19bn/XA+hKOKX0qL7Z0UfdBsbQvc9hn993U8ALUjzxCvDcuZqLoRXjGJrUARWAlwMnsRVD9sw2AFNOYvalA==}
     engines: {node: '>=22'}
 
-  source-map-js@1.2.1:
-    resolution: {integrity: sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==}
+  source-map-js@1.2.2:
+    resolution: {integrity: sha512-KGj/8Y43x35aZVDtt+J4mK1hoLGHULMYfSkODJNQjNDC3oW1PqPoxMwo0pLUsWM/UEGzON/NxeHywEfNXNP3Vw==}
     engines: {node: '>=0.10.0'}
 
   stack-utils@2.0.6:
@@ -2856,24 +2856,24 @@ snapshots:
       '@bufbuild/protobuf': 2.15.0
       express: 5.2.1
 
-  '@ag-ui/core@1.0.0(zod@3.25.76)':
+  '@ag-ui/core@1.0.1(zod@3.25.76)':
     optionalDependencies:
       zod: 3.25.76
 
-  '@ag-ui/core@1.0.0(zod@4.6.5)':
+  '@ag-ui/core@1.0.1(zod@4.6.5)':
     optionalDependencies:
       zod: 4.6.5
 
-  '@ag-ui/encoder@1.0.0(zod@4.6.5)':
+  '@ag-ui/encoder@1.0.1(zod@4.6.5)':
     dependencies:
-      '@ag-ui/core': 1.0.0(zod@4.6.5)
-      '@ag-ui/proto': 1.0.0
+      '@ag-ui/core': 1.0.1(zod@4.6.5)
+      '@ag-ui/proto': 1.0.1
     transitivePeerDependencies:
       - zod
 
-  '@ag-ui/proto@1.0.0':
+  '@ag-ui/proto@1.0.1':
     dependencies:
-      '@ag-ui/core': 1.0.0(zod@3.25.76)
+      '@ag-ui/core': 1.0.1(zod@3.25.76)
       '@bufbuild/protobuf': 2.15.0
       '@protobuf-ts/protoc': 2.11.1
       zod: 3.25.76
@@ -3066,8 +3066,8 @@ snapshots:
   '@gaunt-sloth/agent@2.1.0(f4cae8072969c0e08bd382490f562d71)':
     dependencies:
       '@a2a-js/sdk': 1.2.1(@bufbuild/protobuf@2.15.0)(express@5.2.1)
-      '@ag-ui/core': 1.0.0(zod@4.6.5)
-      '@ag-ui/encoder': 1.0.0(zod@4.6.5)
+      '@ag-ui/core': 1.0.1(zod@4.6.5)
+      '@ag-ui/encoder': 1.0.1(zod@4.6.5)
       '@agentclientprotocol/sdk': 1.4.0(zod@4.6.5)
       '@gaunt-sloth/core': 2.1.0(0513933d39db331e8e52b3a5b564fe69)
       '@langchain/core': 1.2.13(openai@7.20.0(undici@8.11.2)(ws@8.21.3)(zod@4.6.5))(ws@8.21.3)
@@ -4898,7 +4898,7 @@ snapshots:
     dependencies:
       nanoid: 3.3.19
       picocolors: 1.1.1
-      source-map-js: 1.2.1
+      source-map-js: 1.2.2
 
   prelude-ls@1.2.1: {}
 
@@ -5087,7 +5087,7 @@ snapshots:
       is-fullwidth-code-point: 5.1.0
     optional: true
 
-  source-map-js@1.2.1: {}
+  source-map-js@1.2.2: {}
 
   stack-utils@2.0.6:
     dependencies:
