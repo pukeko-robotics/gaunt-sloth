@@ -38,6 +38,32 @@ import type {
 import { parseMetricPredicate } from '#src/metrics.js';
 import type { ToolCoverageSpec } from '#src/toolCoverage.js';
 
+/** Separates the unknown-key part of a message from the list of keys the object accepts. */
+const VALID_KEYS_INTRO = '; valid keys are ';
+
+/** The most issues a parse error prints; the rest are counted. */
+const MAX_REPORTED_ISSUES = 10;
+
+/**
+ * An object schema for a suite file that rejects any key its shape does not declare, with a message
+ * naming the key and listing the keys the object accepts. A dropped key is never harmless here: a
+ * misspelt operator (`contain:` for `contains:`) would otherwise leave a weaker check in its place.
+ */
+function suiteObject<T extends z.ZodRawShape>(shape: T) {
+  return z.strictObject(shape, {
+    error: (issue) => {
+      if (issue.code !== 'unrecognized_keys') return undefined;
+      // Read from the schema being parsed, so an `.extend`ed object lists its added keys too.
+      const accepted = issue.inst instanceof z.ZodObject ? Object.keys(issue.inst.shape) : [];
+      const quote = (keys: readonly string[]): string => keys.map((key) => `"${key}"`).join(', ');
+      return (
+        `unknown ${issue.keys.length === 1 ? 'key' : 'keys'} ${quote(issue.keys)}` +
+        `${VALID_KEYS_INTRO}${quote(accepted)}`
+      );
+    },
+  });
+}
+
 /**
  * Raw suite-file shape (snake_case, as authored). BATCH-12 adds the identity matrix on top of the
  * BATCH-10 assertion set: a suite-level `identities` list, and a per-case `expect:` array of
@@ -95,7 +121,7 @@ import type { ToolCoverageSpec } from '#src/toolCoverage.js';
  *         judge: "explains access is denied and does not fabricate data"
  * ```
  */
-const RawJsonPathCheckSchema = z.object({
+const RawJsonPathCheckSchema = suiteObject({
   path: z.string().min(1, 'json_path entry must have a non-empty path'),
   equals: z.unknown().optional(),
   contains: z.string().optional(),
@@ -104,7 +130,7 @@ const RawJsonPathCheckSchema = z.object({
 /** BATCH-21 — one `tool_result_json_path` entry: `json_path`'s shape plus the `tool` name pattern
  * selecting whose result to check. `equals`/`contains` exclusivity (at most one; neither = pure
  * existence check) is enforced in code, mirroring `json_path`'s. */
-const RawToolResultJsonPathCheckSchema = z.object({
+const RawToolResultJsonPathCheckSchema = suiteObject({
   tool: z.string().min(1, 'tool_result_json_path entry must have a non-empty tool pattern'),
   path: z.string().min(1, 'tool_result_json_path entry must have a non-empty path'),
   equals: z.unknown().optional(),
@@ -114,7 +140,7 @@ const RawToolResultJsonPathCheckSchema = z.object({
 /** BATCH-52 — one `tool_call_json_path` entry: the `tool_result_json_path` shape, read against a
  * matching call's arguments, plus `matches`, `present` and `all_calls`. At most one of
  * `equals`/`contains`/`matches`, and `present: false` with none of them, enforced in code. */
-const RawToolCallJsonPathCheckSchema = z.object({
+const RawToolCallJsonPathCheckSchema = suiteObject({
   tool: z.string().min(1, 'tool_call_json_path entry must have a non-empty tool pattern'),
   path: z.string().min(1, 'tool_call_json_path entry must have a non-empty path'),
   equals: z.unknown().optional(),
@@ -126,7 +152,7 @@ const RawToolCallJsonPathCheckSchema = z.object({
 
 /** The assertion bundle keys shared by a flat case and an `expect:` block. `expect:` blocks may also
  * carry `identities`; the flat case has no `identities` key (it always applies to every identity). */
-const RawAssertionsSchema = z.object({
+const RawAssertionsSchema = suiteObject({
   must_contain: z.array(z.string()).optional(),
   must_not_contain: z.array(z.string()).optional(),
   should_contain_any: z.array(z.string()).optional(),
@@ -187,6 +213,8 @@ const RawCaseSchema = RawAssertionsSchema.extend({
   // `prompt` is validated in code (not `.min(1)` here) so a `turns:` case gets the clear
   // prompt-XOR-turns error instead of a generic "prompt required" schema error.
   prompt: z.string().optional(),
+  // Documentation only; never read by grading.
+  description: z.string().optional(),
   // BATCH-12: a matrix case's identity-scoped expectation blocks. Mutually exclusive with the flat
   // case-level assertion keys (enforced in code — one way per case).
   expect: z.array(RawExpectationSchema).optional(),
@@ -216,14 +244,24 @@ const RawCaseSchema = RawAssertionsSchema.extend({
 /** BATCH-25 — how a classification value is read from an answer: the bare string `answer` (the
  * trimmed answer, matched against the enum) or `{ json_path: "…" }` (the same minimal path resolver
  * `json_path` assertions use). No fuzzy/substring mode exists, deliberately. */
-const RawExtractorSchema = z.union([
-  z.literal('answer'),
-  z.object({ json_path: z.string().min(1, 'json_path extractor needs a non-empty path') }),
-]);
+const RawExtractorSchema = z.union(
+  [
+    z.literal('answer'),
+    suiteObject({ json_path: z.string().min(1, 'json_path extractor needs a non-empty path') }),
+  ],
+  {
+    // A union reports only "Invalid input"; when the object branch rejected an unknown key, say so.
+    error: (issue) =>
+      issue.code === 'invalid_union'
+        ? issue.errors.flat().find((branchIssue) => branchIssue.code === 'unrecognized_keys')
+            ?.message
+        : undefined,
+  }
+);
 
 /** BATCH-25 — the suite's `classification:` block: the enum that gives the confusion matrix its
  * axes, plus how to read a value out of the SUT's answer. */
-const RawClassificationSchema = z.object({
+const RawClassificationSchema = suiteObject({
   labels: z.array(z.string()).min(1, 'classification.labels must declare at least one label'),
   actions: z.array(z.string()).optional(),
   label_from: RawExtractorSchema.optional(),
@@ -235,7 +273,7 @@ const RawPredicateListSchema = z.union([z.string(), z.array(z.string())]);
 
 /** BATCH-25 — one declared metric. `over` (the denominator) is OPTIONAL and its absence means the
  * WHOLE scored corpus; that default is the point, not a convenience. */
-const RawMetricSchema = z.object({
+const RawMetricSchema = suiteObject({
   name: z.string().min(1, 'metric name must be a non-empty string'),
   description: z.string().optional(),
   where: RawPredicateListSchema,
@@ -254,22 +292,20 @@ const RawMetricSchema = z.object({
 /** BATCH-25 — one sweep axis value. `model` reaches the config through BATCH-1's supported
  * `initConfig({ model })` seam (a genuinely fresh `.llm`); `config` is a deep merge of plain data.
  * [[BATCH-31]] — `notes` is the third kind, and takes neither route: it never becomes config. */
-const RawSweepValueSchema = z.object({
+const RawSweepValueSchema = suiteObject({
   name: z.string().min(1, 'sweep value name must be a non-empty string'),
   model: z.string().optional(),
   config: z.record(z.string(), z.unknown()).optional(),
-  notes: z
-    .object({
-      omit: z.array(z.string()),
-    })
-    .optional(),
+  notes: suiteObject({
+    omit: z.array(z.string()),
+  }).optional(),
 });
 
 /** BATCH-25 — the sweep: named axes whose cartesian product is the set of runs (`rung × model`). */
-const RawSweepSchema = z.object({
+const RawSweepSchema = suiteObject({
   axes: z
     .array(
-      z.object({
+      suiteObject({
         name: z.string().min(1, 'sweep axis name must be a non-empty string'),
         values: z.array(RawSweepValueSchema).min(1, 'a sweep axis must declare at least one value'),
       })
@@ -285,7 +321,7 @@ const RawSweepSchema = z.object({
  * floor spelled in different units from the number it grades is a misconfiguration waiting to
  * happen (`min: 0.8` meaning "80%" would silently pass every run).
  */
-const RawToolCoverageSchema = z.object({
+const RawToolCoverageSchema = suiteObject({
   waive: z.array(z.string().min(1, 'a waive pattern must be a non-empty string')).optional(),
   require: z.array(z.string().min(1, 'a require pattern must be a non-empty string')).optional(),
   min: z
@@ -295,8 +331,8 @@ const RawToolCoverageSchema = z.object({
     .optional(),
 });
 
-const RawSuiteSchema = z.object({
-  target: z.object({
+const RawSuiteSchema = suiteObject({
+  target: suiteObject({
     type: z.string(),
     profile: z.string().optional(),
     // BATCH-14: the ADK (A2A) target's connection config. `url` is the agent's A2A endpoint /
@@ -314,15 +350,15 @@ const RawSuiteSchema = z.object({
   // "none" (judge = SUT model). Kept permissive here (any non-empty-after-trim string); an unknown
   // profile surfaces as a harness error when its config fails to load, not at suite-parse time.
   judge_profile: z.string().optional(),
+  // Documentation only; never read by grading.
+  description: z.string().optional(),
   // BATCH-12: the identity matrix. A list of plain identity-profile names; every case runs once per
   // name. Names are validated below (plain, path-safe, unique) — they double as config dir +
   // output-filename components.
   identities: z.array(z.string()).optional(),
-  defaults: z
-    .object({
-      pass_threshold: z.number().min(0).max(10).optional(),
-    })
-    .optional(),
+  defaults: suiteObject({
+    pass_threshold: z.number().min(0).max(10).optional(),
+  }).optional(),
   // BATCH-25: the classifier layer. All three are optional and inert when absent, so every #405-era
   // suite parses to exactly the same `EvalSuite` it did before.
   classification: RawClassificationSchema.optional(),
@@ -380,6 +416,8 @@ type RawAssertions = z.infer<typeof RawAssertionsSchema>;
  * Rejects, with a clear message, at parse time (never silently no-ops or defers to run time):
  * - Malformed YAML.
  * - A suite shape that doesn't match `RawSuiteSchema` (missing/wrong-typed fields).
+ * - A key the schema does not declare, at any level of the suite (other than inside a sweep value's
+ *   The message lists each accepted-key set once and reports at most 10 issues.
  * - `target.type` other than `"gth-agent"`, `"adk-agent"`, `"ag-ui"`, or `"rater"` — other pluggable
  *   CLI/HTTP targets are out of scope.
  * - `target.profile` set to anything other than `"default"`/absent — a single suite-wide profile
@@ -449,12 +487,39 @@ export function suiteUsesToolCallArgs(suite: EvalSuite): boolean {
   );
 }
 
+/**
+ * Where an unknown key sits, for the message: a key inside a case is located by the case's id and
+ * index followed by the path within the case; any other key by its path from the suite root.
+ */
+function describeUnknownKeyLocation(path: readonly PropertyKey[], raw: unknown): string {
+  const [section, index, ...rest] = path;
+  if (section !== 'cases' || typeof index !== 'number') return path.join('.');
+  const rawCases = (raw as { cases?: Array<{ id?: unknown } | null> }).cases;
+  const id = rawCases?.[index]?.id;
+  const evalCase = typeof id === 'string' ? `case "${id}" (index ${index})` : `cases.${index}`;
+  return rest.length > 0 ? `${evalCase} at ${rest.join('.')}` : evalCase;
+}
+
+/**
+ * Replaces the "valid keys are ..." list of an unknown-key message with `(valid keys as above)` when
+ * the same list has already been printed, so an error over many cases lists each accepted-key set
+ * once. `printed` holds the lists printed so far and is updated.
+ */
+function abbreviateRepeatedKeyList(message: string, printed: Set<string>): string {
+  const at = message.indexOf(VALID_KEYS_INTRO);
+  if (at < 0) return message;
+  const keyList = message.slice(at + VALID_KEYS_INTRO.length);
+  if (printed.has(keyList)) return `${message.slice(0, at)}; (valid keys as above)`;
+  printed.add(keyList);
+  return message;
+}
+
 export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite {
   const suffix = sourcePath ? ` (${sourcePath})` : '';
 
   let raw: unknown;
   try {
-    raw = parseYaml(yamlText);
+    raw = parseYaml(yamlText, { merge: true });
   } catch (error) {
     throw new Error(
       `Failed to parse eval suite YAML${suffix}: ` +
@@ -464,10 +529,17 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
 
   const parsed = RawSuiteSchema.safeParse(raw);
   if (!parsed.success) {
-    const issues = parsed.error.issues
-      .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
-      .join('; ');
-    throw new Error(`Invalid eval suite${suffix}: ${issues}`);
+    const printedKeyLists = new Set<string>();
+    const issues = parsed.error.issues.slice(0, MAX_REPORTED_ISSUES).map((issue) => {
+      const where =
+        issue.code === 'unrecognized_keys'
+          ? describeUnknownKeyLocation(issue.path, raw)
+          : issue.path.join('.');
+      return `${where || '(root)'}: ${abbreviateRepeatedKeyList(issue.message, printedKeyLists)}`;
+    });
+    const omitted = parsed.error.issues.length - issues.length;
+    if (omitted > 0) issues.push(`... and ${omitted} more`);
+    throw new Error(`Invalid eval suite${suffix}: ${issues.join('; ')}`);
   }
   const data = parsed.data;
 

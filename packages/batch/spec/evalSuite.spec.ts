@@ -1370,4 +1370,484 @@ cases:
       ).toThrow(/case "searched" uses `tool_call_json_path`.*A2A does not expose them/s);
     });
   });
+
+  describe('unknown keys', () => {
+    const BASE_CASE = '  - id: c1\n    prompt: "p"\n    must_contain: ["x"]\n';
+
+    // Each entry is a suite with one misspelt key, the location the message must name and the key.
+    const MISSPELT: Array<[string, string, RegExp, string]> = [
+      [
+        'the top level',
+        'target: { type: gth-agent }\njudge_profil: x\ncases:\n' + BASE_CASE,
+        /^\(root\): /,
+        'judge_profil',
+      ],
+      ['target', 'target: { type: gth-agent, urll: x }\ncases:\n' + BASE_CASE, /^target: /, 'urll'],
+      [
+        'defaults',
+        'target: { type: gth-agent }\ndefaults: { pass_threshhold: 6 }\ncases:\n' + BASE_CASE,
+        /^defaults: /,
+        'pass_threshhold',
+      ],
+      [
+        'a flat case',
+        'target: { type: gth-agent }\ncases:\n' + BASE_CASE + '    prompts: "q"\n',
+        /^case "c1" \(index 0\): /,
+        'prompts',
+      ],
+      [
+        'a flat case assertion',
+        'target: { type: gth-agent }\ncases:\n' + BASE_CASE + '    must_contian: ["y"]\n',
+        /^case "c1" \(index 0\): /,
+        'must_contian',
+      ],
+      [
+        'an expect block',
+        'target: { type: gth-agent }\ncases:\n  - id: c1\n    prompt: "p"\n    expect:\n      - must_contian: ["x"]\n',
+        /^case "c1" \(index 0\) at expect\.0: /,
+        'must_contian',
+      ],
+      [
+        'a turn',
+        'target: { type: gth-agent }\ncases:\n  - id: c1\n    turns:\n      - usr: "p"\n        must_contain: ["x"]\n',
+        /^case "c1" \(index 0\) at turns\.0: /,
+        'usr',
+      ],
+      [
+        'an expect block inside a turn',
+        'target: { type: gth-agent }\ncases:\n  - id: c1\n    turns:\n      - user: "p"\n        expect:\n          - must_contian: ["x"]\n',
+        /^case "c1" \(index 0\) at turns\.0\.expect\.0: /,
+        'must_contian',
+      ],
+      [
+        'a json_path entry',
+        'target: { type: gth-agent }\ncases:\n  - id: c1\n    prompt: "p"\n    json_path:\n      - { path: "a", contain: "x" }\n',
+        /^case "c1" \(index 0\) at json_path\.0: /,
+        'contain',
+      ],
+      [
+        'a tool_result_json_path entry',
+        'target: { type: gth-agent }\ncases:\n  - id: c1\n    prompt: "p"\n    tool_result_json_path:\n      - { tool: "t", path: "a", presnt: true }\n',
+        /^case "c1" \(index 0\) at tool_result_json_path\.0: /,
+        'presnt',
+      ],
+      [
+        'a tool_call_json_path entry',
+        'target: { type: gth-agent }\ncases:\n  - id: c1\n    prompt: "p"\n    tool_call_json_path:\n      - { tool: "t", path: "a", presnt: false }\n',
+        /^case "c1" \(index 0\) at tool_call_json_path\.0: /,
+        'presnt',
+      ],
+      [
+        'a tool_call_json_path entry inside an expect block',
+        'target: { type: gth-agent }\ncases:\n  - id: c1\n    prompt: "p"\n    expect:\n      - tool_call_json_path:\n          - { tool: "t", path: "a", all_call: true }\n',
+        /^case "c1" \(index 0\) at expect\.0\.tool_call_json_path\.0: /,
+        'all_call',
+      ],
+      [
+        'classification',
+        'target: { type: gth-agent }\nclassification: { labels: [a], action_form: answer }\ncases:\n' +
+          BASE_CASE,
+        /^classification: /,
+        'action_form',
+      ],
+      [
+        'a classification extractor that also has a valid key',
+        'target: { type: gth-agent }\nclassification: { labels: [a], action_from: { json_path: "$.x", path: "y" } }\ncases:\n' +
+          BASE_CASE,
+        /^classification\.action_from: /,
+        'path',
+      ],
+      [
+        'a classification extractor',
+        'target: { type: gth-agent }\nclassification: { labels: [a], label_from: { jsonpath: "$.x" } }\ncases:\n' +
+          BASE_CASE,
+        /^classification\.label_from: /,
+        'jsonpath',
+      ],
+      [
+        'a metric',
+        'target: { type: gth-agent }\nclassification: { labels: [a] }\nmetrics:\n  - { name: m, where: "x", maxx: 0.1 }\ncases:\n' +
+          BASE_CASE,
+        /^metrics\.0: /,
+        'maxx',
+      ],
+      [
+        'a sweep',
+        'target: { type: gth-agent }\nsweep:\n  axis: []\n  axes:\n    - { name: a, values: [{ name: v, model: m }] }\ncases:\n' +
+          BASE_CASE,
+        /^sweep: /,
+        'axis',
+      ],
+      [
+        'a sweep axis',
+        'target: { type: gth-agent }\nsweep:\n  axes:\n    - { name: a, value: [{ name: v, model: m }], values: [{ name: v, model: m }] }\ncases:\n' +
+          BASE_CASE,
+        /^sweep\.axes\.0: /,
+        'value',
+      ],
+      [
+        'a sweep value',
+        'target: { type: gth-agent }\nsweep:\n  axes:\n    - { name: a, values: [{ name: v, modell: m }] }\ncases:\n' +
+          BASE_CASE,
+        /^sweep\.axes\.0\.values\.0: /,
+        'modell',
+      ],
+      [
+        'a sweep value notes block',
+        'target: { type: gth-agent }\nsweep:\n  axes:\n    - { name: a, values: [{ name: v, notes: { omit: [], ommit: [] } }] }\ncases:\n' +
+          BASE_CASE,
+        /^sweep\.axes\.0\.values\.0\.notes: /,
+        'ommit',
+      ],
+      [
+        'tool_coverage',
+        'target: { type: gth-agent }\ntool_coverage: { waives: ["x"] }\ncases:\n' + BASE_CASE,
+        /^tool_coverage: /,
+        'waives',
+      ],
+    ];
+
+    it.each(MISSPELT)(
+      'rejects an unknown key on %s, naming the key and where it is',
+      async (_where, yaml, location, key) => {
+        const { parseEvalSuite } = await import('#src/evalSuite.js');
+        let message = '';
+        try {
+          parseEvalSuite(yaml, 'suite.yaml');
+        } catch (error) {
+          message = (error as Error).message;
+        }
+        const prefix = 'Invalid eval suite (suite.yaml): ';
+        expect(message.startsWith(prefix)).toBe(true);
+        const detail = message.slice(prefix.length);
+        expect(detail).toMatch(location);
+        expect(detail).toContain(`unknown key "${key}"; valid keys are "`);
+      }
+    );
+
+    it('lists every valid key of the object, and only those', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    prompt: "p"
+    json_path:
+      - { path: "a", contain: "x" }
+`)
+      ).toThrow(
+        'Invalid eval suite: case "c1" (index 0) at json_path.0: unknown key "contain"; valid keys ' +
+          'are "path", "equals", "contains"'
+      );
+    });
+
+    it('lists the keys an expect block adds to the shared assertion keys', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      let message = '';
+      try {
+        parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    prompt: "p"
+    expect:
+      - identity: [a]
+        must_contain: ["x"]
+`);
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message).toContain('unknown key "identity"');
+      expect(message).toContain('"identities"');
+      expect(message).toContain('"must_contain"');
+    });
+
+    it('does not offer a case-level key that only an expect block takes', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      let message = '';
+      try {
+        parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    prompt: "p"
+    identities: [a]
+    must_contain: ["x"]
+`);
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message).toContain('unknown key "identities"');
+      expect(message).not.toMatch(/valid keys are .*"identities"/);
+    });
+
+    it('names every unknown key on one object, and every object that has one', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      let message = '';
+      try {
+        parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: first
+    prompt: "p"
+    must_contian: ["x"]
+    must_not_contian: ["y"]
+  - id: second
+    prompt: "p"
+    must_contain: ["x"]
+    judje: "z"
+`);
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message).toContain(
+        'case "first" (index 0): unknown keys "must_contian", "must_not_contian"; valid keys are '
+      );
+      expect(message).toContain(
+        'case "second" (index 1): unknown key "judje"; (valid keys as above)'
+      );
+    });
+
+    it('still accepts any key inside a sweep value config, which is free-form data', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: gth-agent }
+sweep:
+  axes:
+    - name: a
+      values:
+        - { name: v, config: { anything: { goes: [1, 2] } } }
+cases:
+  - id: c1
+    prompt: "p"
+    must_contain: ["x"]
+`);
+      expect(suite.sweep?.axes[0].values[0].name).toBe('v');
+    });
+
+    it('still accepts every key of every object together', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: gth-agent, profile: default }
+judge_profile: judge
+identities: [admin]
+defaults: { pass_threshold: 5 }
+classification:
+  labels: [a, b]
+  actions: [x]
+  label_from: { json_path: "$.label" }
+  action_from: answer
+metrics:
+  - { name: m, description: d, where: "expected.label == a", over: "expected.label != b", max: 0.5, min: 0.1, gate: report }
+tool_coverage: { waive: ["a"], require: ["b"], min: 50 }
+cases:
+  - id: c1
+    tags: [t]
+    pass_threshold: 4
+    prompt: "p"
+    expect:
+      - identities: [admin]
+        must_contain: ["x"]
+        must_not_contain: ["y"]
+        should_contain_any: ["z"]
+        must_call: ["t"]
+        must_not_call: ["u"]
+        must_match: ["a"]
+        must_not_match: ["b"]
+        json_path: [{ path: "a", equals: 1 }, { path: "b", contains: "c" }]
+        must_error: ["t"]
+        tool_result_json_path: [{ tool: "t", path: "a", equals: 1 }]
+        tool_call_json_path:
+          - { tool: "t", path: "a", matches: "x", present: true, all_calls: true }
+        expect_label: a
+        expect_action: x
+        judge: "j"
+`);
+      expect(suite.cases[0].turns[0].expectations[0].identities).toEqual(['admin']);
+    });
+  });
+
+  describe('description', () => {
+    it('accepts a description on the suite and on a case without changing the parsed result', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const plain = `
+target: { type: gth-agent }
+cases:
+  - id: c1
+    prompt: "p"
+    must_contain: ["x"]
+`;
+      const described = `
+description: Checks the greeting flow
+target: { type: gth-agent }
+cases:
+  - id: c1
+    description: Greets by name
+    prompt: "p"
+    must_contain: ["x"]
+`;
+      expect(parseEvalSuite(described)).toEqual(parseEvalSuite(plain));
+    });
+
+    it('rejects a description that is not a string', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(
+          'target: { type: gth-agent }\ndescription: [a]\ncases:\n  - id: c1\n    prompt: p\n    must_contain: [x]\n'
+        )
+      ).toThrow(/^Invalid eval suite: description: /);
+      expect(() =>
+        parseEvalSuite(
+          'target: { type: gth-agent }\ncases:\n  - id: c1\n    description: 3\n    prompt: p\n    must_contain: [x]\n'
+        )
+      ).toThrow(/^Invalid eval suite: cases\.0\.description: /);
+    });
+
+    it('does not accept a description on a turn or an expect block', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(
+          'target: { type: gth-agent }\ncases:\n  - id: c1\n    turns:\n      - user: p\n        description: d\n        must_contain: [x]\n'
+        )
+      ).toThrow('case "c1" (index 0) at turns.0: unknown key "description"');
+      expect(() =>
+        parseEvalSuite(
+          'target: { type: gth-agent }\ncases:\n  - id: c1\n    prompt: p\n    expect:\n      - description: d\n        must_contain: [x]\n'
+        )
+      ).toThrow('case "c1" (index 0) at expect.0: unknown key "description"');
+    });
+  });
+
+  describe('YAML merge keys', () => {
+    const SHARED = `
+target: { type: gth-agent }
+cases:
+  - id: a
+    prompt: "pa"
+    <<: &bundle
+      must_contain: ["x"]
+      must_not_call: ["delete"]
+  - id: b
+    prompt: "pb"
+    <<: *bundle
+  - id: c
+    prompt: "pc"
+    <<: *bundle
+    must_contain: ["y"]
+`;
+
+    it('expands a merge key before validation, matching the written-out suite', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const expanded = `
+target: { type: gth-agent }
+cases:
+  - { id: a, prompt: "pa", must_contain: ["x"], must_not_call: ["delete"] }
+  - { id: b, prompt: "pb", must_contain: ["x"], must_not_call: ["delete"] }
+  - { id: c, prompt: "pc", must_contain: ["y"], must_not_call: ["delete"] }
+`;
+      expect(parseEvalSuite(SHARED)).toEqual(parseEvalSuite(expanded));
+    });
+
+    it('still rejects an unknown key that arrives through a merged anchor', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const yaml = SHARED.replace('must_not_call: ["delete"]', 'must_not_cal: ["delete"]');
+      expect(() => parseEvalSuite(yaml, 'suite.yaml')).toThrow(
+        /Invalid eval suite \(suite\.yaml\): case "a" \(index 0\): unknown key "must_not_cal"/
+      );
+      expect(() => parseEvalSuite(yaml, 'suite.yaml')).toThrow(
+        /case "b" \(index 1\): unknown key "must_not_cal"/
+      );
+    });
+
+    it('rejects a top-level key that only holds an anchor', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const yaml = `
+x-common: &common
+  must_contain: ["x"]
+target: { type: gth-agent }
+cases:
+  - id: a
+    prompt: "pa"
+    <<: *common
+`;
+      expect(() => parseEvalSuite(yaml)).toThrow(
+        /^Invalid eval suite: \(root\): unknown key "x-common"; valid keys are /
+      );
+    });
+  });
+
+  describe('unknown key error size', () => {
+    const MANY = 40;
+    const manyCases = (): string =>
+      'target: { type: gth-agent }\ncases:\n' +
+      Array.from(
+        { length: MANY },
+        (_, i) =>
+          `  - id: c${i}\n    prompt: "p"\n    must_contain: ["x"]\n    must_contian: ["y"]\n`
+      ).join('');
+
+    const messageOf = async (yaml: string): Promise<string> => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      try {
+        parseEvalSuite(yaml);
+      } catch (error) {
+        return (error as Error).message;
+      }
+      return '';
+    };
+
+    it('prints at most 10 issues and counts the rest', async () => {
+      const message = await messageOf(manyCases());
+      expect(message).toContain('case "c0" (index 0): unknown key "must_contian"');
+      expect(message).toContain('case "c9" (index 9): unknown key "must_contian"');
+      expect(message).not.toContain('case "c10" ');
+      expect(message.endsWith('; ... and 30 more')).toBe(true);
+      expect(message.match(/unknown key "must_contian"/g)).toHaveLength(10);
+    });
+
+    it('lists the valid keys once when later issues have the same accepted keys', async () => {
+      const message = await messageOf(manyCases());
+      expect(message.match(/valid keys are /g)).toHaveLength(1);
+      expect(message.match(/\(valid keys as above\)/g)).toHaveLength(9);
+      expect(message.length).toBeLessThan(2000);
+    });
+
+    it('lists the valid keys again for an object that accepts a different set', async () => {
+      const message = await messageOf(`
+target: { type: gth-agent, urll: x }
+cases:
+  - id: c1
+    prompt: "p"
+    must_contain: ["x"]
+    must_contian: ["y"]
+  - id: c2
+    prompt: "p"
+    must_contain: ["x"]
+    must_contian: ["y"]
+    json_path:
+      - { path: "a", contain: "x" }
+`);
+      expect(message.match(/valid keys are /g)).toHaveLength(3);
+      expect(message.match(/\(valid keys as above\)/g)).toHaveLength(1);
+    });
+
+    it('does not truncate when there are 10 issues or fewer', async () => {
+      const message = await messageOf(manyCases().split('  - id: c10')[0]);
+      expect(message).not.toContain('more');
+      expect(message.match(/unknown key/g)).toHaveLength(10);
+    });
+
+    it('counts issues that are not unknown keys toward the cap and keeps their format', async () => {
+      const yaml =
+        'target: { type: gth-agent }\ncases:\n' +
+        Array.from(
+          { length: 12 },
+          (_, i) => `  - id: c${i}\n    prompt: 5\n    must_contain: ["x"]\n`
+        ).join('');
+      const message = await messageOf(yaml);
+      expect(message).toMatch(/^Invalid eval suite: cases\.0\.prompt: [^;]+; cases\.1\.prompt: /);
+      expect(message.endsWith('; ... and 2 more')).toBe(true);
+    });
+  });
 });

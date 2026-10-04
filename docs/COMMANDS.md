@@ -530,6 +530,7 @@ A suite is a single YAML document with these top-level keys:
 | `target` | yes | The system under test. `type` is `gth-agent` (the in-process agent, the default choice; `profile` is optional and, if set, must be `default`), `adk-agent` (an external Google ADK agent over A2A; requires `url`), `ag-ui` (an external agent over the AG-UI protocol; requires `url` and `agent_id`), or `rater` (gth's own approvals rater, graded as a classifier; requires `rung` — see [The rater target](#the-rater-target)). |
 | `cases` | yes | A non-empty list of cases (below). |
 | `defaults` | no | Suite-wide defaults. `defaults.pass_threshold` (0–10) is the judge score gate applied to any case that doesn't set its own; the built-in default is `6`. |
+| `description` | no | Free text describing the suite. Documentation only; it does not affect grading. |
 | `judge_profile` | no | Identity profile whose model grades `judge:` rubrics. See [Judging](#judging) below. |
 | `identities` | no | The identity matrix — run every case once per listed profile. See [Identity matrix](#identity-matrix) below. |
 | `classification` | no | Turns the suite into a **classifier eval**: declares the label (and optionally action) enum and how to read a value out of an answer. See [Classifier suites](#classifier-suites) below. |
@@ -543,6 +544,27 @@ Each entry in `cases` has an `id` (unique; letters, digits, `-`, `_`, `.` only �
 - **Multi-turn** — a `turns:` array instead of a `prompt:`. See [Multi-turn cases](#multi-turn-cases) below.
 
 A per-case `pass_threshold:` (0–10) overrides `defaults.pass_threshold` for that case.
+
+A case may also carry a `description:` (free text, documentation only; it does not affect grading). Turns and `expect:` blocks do not take one.
+
+A key the suite format does not define is rejected wherever it appears (exit `2`): at the top level, in `target`, in a case, a turn or an `expect:` block, in any assertion entry, and in `classification`, `metrics`, `sweep` and `tool_coverage`. The error names the key, says where it is (a key inside a case is located by the case id) and lists the keys that object accepts, so a misspelt `contain:` fails the load instead of weakening a check. A sweep value's `config` is free-form and takes any key.
+
+The error stays short on a large suite: each distinct list of accepted keys is printed once and later issues with the same list say `(valid keys as above)`, and at most 10 issues are printed, followed by `... and N more`.
+
+YAML anchors and merge keys are supported. A `<<: *anchor` entry is expanded before the suite is checked, so a bundle of assertions can be shared across cases, and an unknown key inside the anchored mapping is rejected in each case that merges it. The anchor must be defined inside the suite's own structure, for example on the first case's `<<:` entry; a top-level helper key such as `x-common:` is itself an unknown key and is rejected.
+
+```yaml
+target: { type: gth-agent }
+cases:
+  - id: list-orders
+    prompt: "List my orders"
+    <<: &read-only
+      must_not_call: [delete_order, refund_order]
+      must_not_contain: ["error"]
+  - id: show-order
+    prompt: "Show order 42"
+    <<: *read-only
+```
 
 ### Assertion keys
 
@@ -1069,9 +1091,11 @@ If that is what you are seeing, raise the budget rather than reading the column.
 ```yaml
 target: { type: rater, rung: auto }
 sweep:
-  rater:
-    - { config: { approvals: { mode: auto, rater: haiku } } }
-    - { config: { approvals: { mode: auto, rater: local, raterTimeoutMs: 120000 } } }
+  axes:
+    - name: rater
+      values:
+        - { name: haiku, config: { approvals: { mode: auto, rater: haiku } } }
+        - { name: local, config: { approvals: { mode: auto, rater: local, raterTimeoutMs: 120000 } } }
 ```
 
 **Sweeping `model:` moves the judge too.** By default `judge:` rubrics are graded by the SUT's own model, so a model axis changes the grader along with the thing graded and the comparison's `pass rate` row is no longer comparable across cells. Set `judge_profile:` (or `--judge`) to pin the grader to one model whenever you sweep `model:` on a suite that uses rubrics.
