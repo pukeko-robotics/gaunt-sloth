@@ -25,6 +25,7 @@ import { prepareMcpTools } from '#src/utils/mcpUtils.js';
 import { formatMcpConnectFailureMessage } from '#src/utils/mcpAuthError.js';
 import { createAuthProviderAndAuthenticate } from '#src/mcp/OAuthClientProviderImpl.js';
 import { installMcpTlsTrust } from '#src/mcp/tlsTrust.js';
+import { captureFetchErrors, type FetchErrorCapture } from '#src/mcp/fetchErrorCapture.js';
 import { MultiServerMCPClient, type StreamableHTTPConnection } from '@langchain/mcp-adapters';
 import type { StatusLevel, StatusUpdateCallback } from '@gaunt-sloth/core/core/types.js';
 import { MCP_TOOL_NAME_PREFIX } from '@gaunt-sloth/core/constants.js';
@@ -75,8 +76,9 @@ export function createResolvers(): AgentResolvers {
     }
 
     // 2. Get MCP tools
+    const fetchErrors = captureFetchErrors();
     try {
-      mcpClientInstance = await getMcpClient(config, recordMcpFailure);
+      mcpClientInstance = await getMcpClient(config, recordMcpFailure, fetchErrors);
       if (mcpClientInstance) {
         const rawMcpTools = await mcpClientInstance.getTools();
         // Use a simple status callback for prepareMcpTools
@@ -107,6 +109,8 @@ export function createResolvers(): AgentResolvers {
           recordMcpFailure(serverName, error);
         }
       }
+    } finally {
+      fetchErrors.stop();
     }
 
     // 2b. EXT-32: capture each connected MCP server's discovery `instructions` string (from its MCP
@@ -207,7 +211,8 @@ export function createResolvers(): AgentResolvers {
 
 async function getMcpClient(
   config: GthConfig,
-  recordFailure: (server: string, error: unknown) => void
+  recordFailure: (server: string, error: unknown) => void,
+  fetchErrors: FetchErrorCapture
 ): Promise<MultiServerMCPClient | null> {
   debugLog('Setting up MCP client...');
 
@@ -262,7 +267,9 @@ async function getMcpClient(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const oauth = (rawMcpServers[serverName]?.authProvider as any) === 'OAuth';
         recordFailure(serverName, error);
-        displayWarning(formatMcpConnectFailureMessage(serverName, error, { oauth }));
+        // The adapter's error keeps only the text of the original; the capture holds its cause.
+        const cause = fetchErrors.errorFor(rawMcpServers[serverName]?.url);
+        displayWarning(formatMcpConnectFailureMessage(serverName, error, { oauth, cause }));
       },
     });
   } else {

@@ -90,13 +90,16 @@ export function buildDispatcherOptions(
   };
 }
 
-// Install-once guard: the trust is process-global and set-once, so re-running resolveTools (re-init)
-// must not re-replace the dispatcher nor re-emit the security warning every time.
-let installed = false;
+// The install, in flight or finished. The trust is process-global and set-once, so re-running
+// resolveTools (re-init) must not re-replace the dispatcher nor re-emit the security warning. Callers
+// await the promise rather than a flag: agents in one process (gth eval -j) connect concurrently, and
+// one that returned while the install was still in flight would connect without the CA.
+let installation: Promise<void> | null = null;
 
 /**
  * Install the process-global undici dispatcher from `config.tls`, if any. Idempotent (installs at
- * most once per process). Fail-soft: an unreadable cert is warned about and skipped, never fatal.
+ * most once per process); a call made while the install is in flight resolves only once the
+ * dispatcher is set. Fail-soft: an unreadable cert is warned about and skipped, never fatal.
  * Emits a loud security warning when verification is disabled.
  *
  * Wired into `getMcpClient` before the MCP client is created; because it is global it also covers
@@ -106,9 +109,9 @@ let installed = false;
  * global dispatcher as a side effect, which Node's built-in `fetch` then uses for every request.
  */
 export async function installMcpTlsTrust(config: GthConfig): Promise<void> {
-  if (installed) {
+  if (installation) {
     debugLog('MCP TLS trust already installed this process; skipping.');
-    return;
+    return installation;
   }
 
   const built = buildDispatcherOptions(config.tls, resolveAndReadCert);
@@ -126,8 +129,12 @@ export async function installMcpTlsTrust(config: GthConfig): Promise<void> {
   // (Failures were already surfaced above.) Leave Node's default dispatcher untouched.
   if (built.loadedCount === 0 && built.rejectUnauthorized) return;
 
-  installed = true;
+  installation = installDispatcher(built);
+  return installation;
+}
 
+/** Replace the global dispatcher with one built from `built`; the caller makes this happen once. */
+async function installDispatcher(built: BuiltDispatcher): Promise<void> {
   if (!built.rejectUnauthorized) {
     displayWarning(
       'TLS: certificate verification is DISABLED (tls.rejectUnauthorized: false). This is INSECURE ' +
@@ -153,5 +160,5 @@ function resolveAndReadCert(path: string): string {
 
 /** Test-only: reset the install-once guard between cases. */
 export function resetMcpTlsTrustForTests(): void {
-  installed = false;
+  installation = null;
 }
