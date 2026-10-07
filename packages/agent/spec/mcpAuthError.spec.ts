@@ -116,3 +116,57 @@ describe('formatMcpConnectFailureMessage (EXT-31)', () => {
     expect(msg).not.toMatch(/ - /);
   });
 });
+
+describe('formatMcpConnectFailureMessage causes', () => {
+  const tlsError = Object.assign(new Error('self-signed certificate in certificate chain'), {
+    code: 'SELF_SIGNED_CERT_IN_CHAIN',
+  });
+
+  it('names each cause in the error chain, with its code', () => {
+    const fetchFailed = new TypeError('fetch failed', { cause: tlsError });
+    const msg = formatMcpConnectFailureMessage('unimarket', fetchFailed);
+    expect(msg).toContain(
+      'Underlying error: fetch failed. Caused by: SELF_SIGNED_CERT_IN_CHAIN ' +
+        '(self-signed certificate in certificate chain)'
+    );
+  });
+
+  it('does not repeat a code the message already names', () => {
+    const refused = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:4000'), {
+      code: 'ECONNREFUSED',
+    });
+    const msg = formatMcpConnectFailureMessage('unimarket', new TypeError('fetch failed'), {
+      cause: refused,
+    });
+    expect(msg).toContain('Caused by: connect ECONNREFUSED 127.0.0.1:4000');
+    expect(msg).not.toContain('ECONNREFUSED (');
+  });
+
+  it('uses the given cause when the error carries none', () => {
+    const adapterError = new Error(
+      'Failed to connect to streamable HTTP server: TypeError: fetch failed'
+    );
+    const msg = formatMcpConnectFailureMessage('unimarket', adapterError, { cause: tlsError });
+    expect(msg).toContain('Caused by: SELF_SIGNED_CERT_IN_CHAIN');
+  });
+
+  it("prefers the error's own cause over the given one", () => {
+    const own = new Error('fetch failed', { cause: new Error('socket hang up') });
+    const msg = formatMcpConnectFailureMessage('unimarket', own, { cause: tlsError });
+    expect(msg).toContain('Caused by: socket hang up');
+    expect(msg).not.toContain('SELF_SIGNED_CERT_IN_CHAIN');
+  });
+
+  it('stops at a cycle in the cause chain', () => {
+    const a = new Error('a');
+    const b = new Error('b', { cause: a });
+    (a as { cause?: unknown }).cause = b;
+    expect(formatMcpConnectFailureMessage('unimarket', a)).toContain('Caused by: b');
+  });
+
+  it('adds nothing when there is no cause', () => {
+    expect(formatMcpConnectFailureMessage('unimarket', new Error('boom'))).not.toContain(
+      'Caused by'
+    );
+  });
+});

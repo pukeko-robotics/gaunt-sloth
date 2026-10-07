@@ -20,6 +20,11 @@ export type McpConnectErrorKind =
 export interface McpConnectFailureOptions {
   /** The server uses OAuth (`authProvider: 'OAuth'`) — suggest re-running the OAuth login. */
   oauth?: boolean;
+  /**
+   * The error behind `error`, for when `error` does not carry it as its `cause` (the MCP adapter
+   * rebuilds connect errors from their text). Ignored when `error` has a cause of its own.
+   */
+  cause?: unknown;
 }
 
 /** Extract a readable message from an unknown thrown value. */
@@ -31,6 +36,43 @@ function errorMessage(error: unknown): string {
   } catch {
     return String(error);
   }
+}
+
+const MAX_CAUSE_DEPTH = 5;
+
+/** The `cause` chain below `error`, nearest first, stopping at a cycle or after a few levels. */
+function causeChain(error: unknown): unknown[] {
+  const chain: unknown[] = [];
+  const seen = new Set<unknown>([error]);
+  let current = (error as { cause?: unknown } | null | undefined)?.cause;
+  while (current !== undefined && current !== null && !seen.has(current)) {
+    if (chain.length === MAX_CAUSE_DEPTH) break;
+    chain.push(current);
+    seen.add(current);
+    current = (current as { cause?: unknown }).cause;
+  }
+  return chain;
+}
+
+/** One cause as `CODE (message)`, or just the message when it already names the code. */
+function describeCause(cause: unknown): string {
+  const message = errorMessage(cause);
+  const code = (cause as { code?: unknown })?.code;
+  if (typeof code !== 'string' || code === '' || message.includes(code)) return message;
+  return message ? `${code} (${message})` : code;
+}
+
+/**
+ * The causes behind `error` as one line, such as `SELF_SIGNED_CERT_IN_CHAIN (self-signed certificate
+ * in certificate chain)`, or an empty string when there are none. `fallbackCause` is used only when
+ * `error` has no cause chain of its own.
+ */
+export function describeCauses(error: unknown, fallbackCause?: unknown): string {
+  let chain = causeChain(error);
+  if (chain.length === 0 && fallbackCause !== undefined && fallbackCause !== null) {
+    chain = [fallbackCause, ...causeChain(fallbackCause)].slice(0, MAX_CAUSE_DEPTH);
+  }
+  return chain.map(describeCause).join('; ');
 }
 
 /** Read a numeric HTTP status from an error object or a `(HTTP NNN)` / `HTTP NNN` / `status NNN` message. */
@@ -101,8 +143,10 @@ export function formatMcpConnectFailureMessage(
     );
   }
 
+  const causes = describeCauses(error, options.cause);
   return (
     `Integration ${name} could not connect to its MCP server (this is not an authentication ` +
-    `error). Its tools are unavailable for this session. Underlying error: ${errorMessage(error)}`
+    `error). Its tools are unavailable for this session. Underlying error: ${errorMessage(error)}` +
+    (causes ? `. Caused by: ${causes}` : '')
   );
 }
