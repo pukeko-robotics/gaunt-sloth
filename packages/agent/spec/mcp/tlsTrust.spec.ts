@@ -192,4 +192,27 @@ describe('installMcpTlsTrust', () => {
     expect(setGlobalDispatcherMock).toHaveBeenCalledTimes(1);
     expect(consoleUtilsMock.displayWarning).toHaveBeenCalledTimes(1);
   });
+
+  // gth eval -j runs several agents in one process; each connects right after this resolves.
+  it('resolves a concurrent call only after the dispatcher is installed', async () => {
+    readFileSyncMock.mockReturnValue('USER_PEM');
+    const config = cfg({ extraCaCerts: ['support/ca.crt'] });
+    let installedWhenSecondResolved: boolean | undefined;
+
+    const first = installMcpTlsTrust(config);
+    const second = installMcpTlsTrust(config).then(() => {
+      installedWhenSecondResolved = setGlobalDispatcherMock.mock.calls.length > 0;
+    });
+    await Promise.all([first, second]);
+
+    expect(installedWhenSecondResolved).toBe(true);
+    expect(setGlobalDispatcherMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('still installs for a CA config after a call that had no tls block', async () => {
+    await installMcpTlsTrust(cfg(undefined));
+    readFileSyncMock.mockReturnValue('USER_PEM');
+    await installMcpTlsTrust(cfg({ extraCaCerts: ['support/ca.crt'] }));
+    expect(setGlobalDispatcherMock).toHaveBeenCalledTimes(1);
+  });
 });
