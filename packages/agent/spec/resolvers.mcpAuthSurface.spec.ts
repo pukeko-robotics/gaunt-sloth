@@ -1,5 +1,8 @@
+import { channel } from 'node:diagnostics_channel';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GthConfig } from '#src/config.js';
+
+const requestErrorChannel = channel('undici:request:error');
 
 /**
  * EXT-31 — resolveTools must SURFACE an integration's expired/invalid auth (naming it + suggesting
@@ -40,9 +43,14 @@ vi.mock('#src/mcp/OAuthClientProviderImpl.js', () => ({
  * Per-server behaviour for the fake client, keyed by server name:
  *  - `fail`: invoke onConnectionError({ serverName, error }) and contribute no tools (adapter's
  *    function-form onConnectionError semantics: surface + skip, do not throw).
+ *  - `requestError`: first publish it on undici's request-error channel for `origin`, as undici
+ *    does before `fetch` rejects with only `fetch failed`.
  *  - otherwise: contribute the given tools (default one synthetic tool).
  */
-let serverBehaviors: Record<string, { fail?: Error; tools?: unknown[] }> = {};
+let serverBehaviors: Record<
+  string,
+  { fail?: Error; requestError?: { origin: string; error: Error }; tools?: unknown[] }
+> = {};
 
 class MultiServerMCPClientStub {
   constructor(
@@ -52,6 +60,10 @@ class MultiServerMCPClientStub {
     const tools: unknown[] = [];
     for (const name of Object.keys(this._config.mcpServers)) {
       const behavior = serverBehaviors[name];
+      if (behavior?.requestError) {
+        const { origin, error } = behavior.requestError;
+        requestErrorChannel.publish({ request: { origin }, error });
+      }
       if (behavior?.fail) {
         const cb = this._config.onConnectionError as
           ((_a: { serverName: string; error: unknown }) => void) | undefined;
@@ -130,6 +142,45 @@ describe('resolveTools MCP auth surfacing (EXT-31)', () => {
     resolvers = createResolvers();
     await resolvers.resolveTools!(makeConfig({}));
     expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+  });
+
+  // EXT-207: the adapter rebuilds the connect error from its text, so the TLS cause reaches the
+  // warning only through the request errors captured while the tools load.
+  it('names the network error captured for the failed server, and only for its origin', async () => {
+    const tlsError = Object.assign(new Error('self-signed certificate in certificate chain'), {
+      code: 'SELF_SIGNED_CERT_IN_CHAIN',
+    });
+    const otherError = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+    serverBehaviors = {
+      other: { requestError: { origin: 'https://other.example', error: otherError } },
+      internal: {
+        requestError: { origin: 'https://internal.example', error: tlsError },
+        fail: new Error('Failed to connect to streamable HTTP server "internal": fetch failed'),
+      },
+      unrelated: {
+        fail: new Error('Failed to connect to streamable HTTP server "unrelated": fetch failed'),
+      },
+    };
+
+    const { createResolvers } = await import('#src/resolvers.js');
+    await createResolvers().resolveTools!(
+      makeConfig({
+        other: { url: 'https://other.example/mcp' },
+        internal: { url: 'https://internal.example/mcp' },
+        unrelated: { url: 'https://unrelated.example/mcp' },
+      })
+    );
+
+    const warnings = consoleUtilsMock.displayWarning.mock.calls.map((c) => c[0] as string);
+    const internal = warnings.find((w) => w.includes('"internal"'));
+    const unrelated = warnings.find((w) => w.includes('"unrelated"'));
+    expect(internal).toContain(
+      'Caused by: SELF_SIGNED_CERT_IN_CHAIN (self-signed certificate in certificate chain)'
+    );
+    expect(unrelated).toBeDefined();
+    expect(unrelated).not.toContain('Caused by');
+    // The capture is released once the tools have loaded.
+    expect(requestErrorChannel.hasSubscribers).toBe(false);
   });
 
   it('surfaces an AUTH message for a keyword-less OAuth handshake failure (not "not an auth error")', async () => {
