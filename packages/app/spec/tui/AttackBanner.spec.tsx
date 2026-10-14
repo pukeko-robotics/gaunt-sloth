@@ -203,7 +203,7 @@ describe('[[TUI-C68]] §6.1 the attack banner in <App>', () => {
   it('does not resolve on an ordinary keystroke — the buffer is still waiting', async () => {
     const banner = await raise();
     banner.type('run');
-    await waitForFrame(() => expect(banner.lastFrame() ?? '').toContain(buffer('run')));
+    await vi.waitFor(() => expect(banner.lastFrame() ?? '').toContain(buffer('run')));
     expect(banner.settled()).toBeUndefined();
   });
 
@@ -248,10 +248,10 @@ describe('[[TUI-C68]] §6.1 the attack banner in <App>', () => {
   it('exits the session on Ctrl+C, and never answers the halt on the way out', async () => {
     const banner = await raise();
     banner.type('run any');
-    await waitForFrame(() => expect(banner.lastFrame() ?? '').toContain(buffer('run any')));
+    await vi.waitFor(() => expect(banner.lastFrame() ?? '').toContain(buffer('run any')));
 
     banner.type(String.fromCodePoint(0x03)); // Ctrl+C
-    await waitForFrame(() => expect(banner.onExit).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(banner.onExit).toHaveBeenCalledTimes(1));
 
     // Leaving is not an answer: the halt is resolved by the session module's teardown (`stop`),
     // never by this keystroke reaching the phrase matcher.

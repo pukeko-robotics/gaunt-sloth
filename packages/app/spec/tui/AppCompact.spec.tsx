@@ -80,7 +80,7 @@ describe('tui <App> — /compact (GS2-23)', () => {
 
     await submit(stdin, lastFrame, '/compact the migration plan');
 
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       const all = frames.join('\n');
       expect(all).toContain('Compacting the conversation');
       expect(all).toContain('Conversation compacted');

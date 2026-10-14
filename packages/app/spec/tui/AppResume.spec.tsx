@@ -123,7 +123,7 @@ describe('tui <App> — /resume (GS2-20)', () => {
 
     await submit(stdin, lastFrame, '/resume 12');
 
-    await waitForFrame(() => expect(lastFrame()).toContain('Resumed conversation #12'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('Resumed conversation #12'));
     expect(resume).toHaveBeenCalledTimes(1);
     expect(resume).toHaveBeenCalledWith({ kind: 'id', id: 12 });
     const frame = lastFrame() ?? '';
@@ -181,7 +181,7 @@ describe('tui <App> — /resume (GS2-20)', () => {
       <App {...baseProps} agent={agent} conversationId={12} />
     );
     await submit(stdin, lastFrame, '/resume 12');
-    await waitForFrame(() => expect(lastFrame()).toContain('Already in conversation #12'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('Already in conversation #12'));
     expect(resume).not.toHaveBeenCalled();
     unmount();
   });
@@ -218,7 +218,7 @@ describe('tui <App> — /resume (GS2-20)', () => {
     await waitForFrame(() => expect(lastFrame()).toContain('the answer'));
 
     await submit(stdin, lastFrame, '/resume');
-    await waitForFrame(() => expect(lastFrame()).toContain(RESUME_PICKER_TITLE));
+    await vi.waitFor(() => expect(lastFrame()).toContain(RESUME_PICKER_TITLE));
     expect(listResumeCandidates).toHaveBeenCalledTimes(1);
     // Opening it resumes nothing. (The command's own echo is gone because submitting cleared the
     // buffer, not because the prompt stood down — that the prompt is suspended under a picker is
@@ -278,7 +278,7 @@ describe('tui <App> — /resume (GS2-20)', () => {
     await waitForFrame(() => expect(lastFrame()).toContain('❯ #34'));
     stdin.write('\x1b');
 
-    await waitForFrame(() => expect(lastFrame()).toContain('Resume cancelled'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('Resume cancelled'));
     expect(resume).not.toHaveBeenCalled();
     const frame = lastFrame() ?? '';
     expect(frame).not.toContain(RESUME_PICKER_TITLE);
@@ -361,10 +361,10 @@ describe('tui <App> — /resume (GS2-20)', () => {
       />
     );
     await submit(stdin, lastFrame, '/resume');
-    await waitForFrame(() => expect(lastFrame()).toContain(RESUME_PICKER_TITLE));
+    await vi.waitFor(() => expect(lastFrame()).toContain(RESUME_PICKER_TITLE));
 
     stdin.write('\x03');
-    await waitForFrame(() => expect(onExit).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(onExit).toHaveBeenCalledTimes(1));
     expect(resume).not.toHaveBeenCalled();
     unmount();
   });
@@ -388,7 +388,7 @@ describe('tui <App> — /resume (GS2-20)', () => {
     const { agent } = resumingAgent(resume);
     const { stdin, lastFrame, unmount } = render(<App {...baseProps} agent={agent} />);
     await submit(stdin, lastFrame, '/resume abc');
-    await waitForFrame(() => expect(lastFrame()).toContain('Not a conversation id: abc'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('Not a conversation id: abc'));
     expect(resume).not.toHaveBeenCalled();
     unmount();
   });

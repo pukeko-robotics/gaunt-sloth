@@ -11,9 +11,14 @@
  * `AppFullScreen.spec.tsx` 4.7 s → 1.8 s. Where a case is bound by rendering instead, it helps
  * far less: `App.spec.tsx` went 37.8 s → 31.8 s there, against 12.7 s → 3.4 s on Linux.
  *
- * WHAT IT DOES NOT CHANGE. The callback, the timeout, and therefore every assertion are the
- * caller's own; only how soon a frame that has already landed is noticed moves. A number argument
- * is a timeout, exactly as in `vi.waitFor`, and an explicit `interval` still wins.
+ * WHAT IT CHANGES. The callback, the timeout and the matchers are the caller's own, and a number
+ * argument is a timeout exactly as in `vi.waitFor`. What moves is how much time passes between the
+ * frame landing and the caller's NEXT statement: up to 50 ms with `vi.waitFor`, up to 5 ms here. So
+ * a wait followed by a "nothing else happened" assertion — `not.toHaveBeenCalled()`,
+ * `toHaveBeenCalledTimes(1)`, `toBe(false)` on an abort flag — stays on `vi.waitFor`: the longer
+ * window is what lets a wrongly deferred side effect land before it is asserted absent. Measured:
+ * a scrap that also aborted, or quit, 20 ms later, and a `/compact` that called the agent again
+ * 20 ms later, each passed 5 of 5 runs behind this helper and failed 5 of 5 behind `vi.waitFor`.
  *
  * NOT UNDER FAKE TIMERS. With fake timers `vi.waitFor` advances the fake clock by the interval on
  * every poll, so a shorter interval would change how much time a case lets pass. No caller of this
@@ -35,5 +40,5 @@ export const FRAME_POLL_MS = 5;
  */
 export function waitForFrame(callback, options) {
   const given = typeof options === 'number' ? { timeout: options } : (options ?? {});
-  return vi.waitFor(callback, { interval: FRAME_POLL_MS, ...given });
+  return vi.waitFor(callback, { ...given, interval: given.interval ?? FRAME_POLL_MS });
 }
