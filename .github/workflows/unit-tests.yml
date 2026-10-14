@@ -112,5 +112,24 @@ jobs:
         if: runner.os == 'Windows'
         run: node -e "console.log('tmpdir after:', require('node:os').tmpdir())"
 
+      # OPS-122: GTH_TEST_TIMINGS_FILE turns on scripts/vitest-test-timings.mjs, which writes every
+      # test's duration and its own timeout to a JSON file, uploaded below. Kept permanently, by
+      # choice: the console log prints only tests over 300 ms and a suite total, and the Ink render
+      # specs' headroom against their per-test ceiling is a per-test distribution on THIS cell —
+      # the number to re-read before a dependency bump, not after a red. The reporter is added
+      # beside vitest's own reporters (see vitest.config.ts), prints nothing, and cannot change the
+      # exit code, so the cell passes and fails exactly as it did without it.
       - name: Run Tests
         run: pnpm test
+        env:
+          GTH_TEST_TIMINGS_FILE: ${{ runner.temp }}/test-timings.json
+
+      # `!cancelled()` so a red cell, the sample worth most, is uploaded too; `warn` so a missing
+      # file can never turn the cell red. One name per cell, since artifact names must be unique.
+      - name: Upload per-test timings
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-timings-${{ matrix.os }}-node-${{ matrix.node-version }}
+          path: ${{ runner.temp }}/test-timings.json
+          if-no-files-found: warn

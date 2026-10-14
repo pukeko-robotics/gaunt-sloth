@@ -1,7 +1,8 @@
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 import { existsSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import TestTimingsReporter from './scripts/vitest-test-timings.mjs';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
@@ -135,6 +136,19 @@ export default defineConfig({
   test: {
     include: ['packages/*/spec/**/*.{ts,tsx}'],
     environment: 'node',
+    // OPS-122 — the per-test timing instrument. Only when GTH_TEST_TIMINGS_FILE names an output
+    // file, and then ALONGSIDE vitest's own reporters, never instead of them: a `reporters` list
+    // replaces the default one, so it is spread from `configDefaults` — the console reporter, plus
+    // the `github-actions` annotations reporter vitest adds on CI. Naming only 'default' here would
+    // silently drop the annotations. Without the variable the key is absent and nothing changes.
+    ...(process.env.GTH_TEST_TIMINGS_FILE
+      ? {
+          reporters: [
+            ...configDefaults.reporters,
+            new TestTimingsReporter({ outputFile: process.env.GTH_TEST_TIMINGS_FILE }),
+          ],
+        }
+      : {}),
     // OPS-33 — clamp chalk to level 0 before any spec loads, so no test depends on ambient
     // terminal capability. Six Ink-rendering specs compare frames to un-escaped strings and go
     // red for anyone who exports FORCE_COLOR (the one thing that overrides chalk's non-TTY early
