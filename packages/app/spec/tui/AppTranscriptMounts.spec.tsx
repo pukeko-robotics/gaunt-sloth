@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { waitForFrame } from './waitForFrame.mjs';
 import React from 'react';
 import { EventEmitter } from 'node:events';
 import { render as inkRender } from 'ink';
@@ -133,21 +134,23 @@ async function conversationRun(
   pageUps = 0
 ): Promise<{ mounted: number; turns: number[] }> {
   const { stdout, stdin, unmount } = renderAt(columns, rows, <App {...baseProps} />);
-  await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
+  await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
   for (let i = 0; i < TURNS; i++) {
     stdin.write(turnText(i));
-    await vi.waitFor(() => expect(stdout.lastFrame()).toContain(`t${i}-xxx`), {
+    await waitForFrame(() => expect(stdout.lastFrame()).toContain(`t${i}-xxx`), {
       timeout: TURN_TIMEOUT_MS,
     });
     stdin.write('\r');
-    await vi.waitFor(() => expect(stdout.lastFrame()).toContain(`turns: ${i + 1}`), {
+    await waitForFrame(() => expect(stdout.lastFrame()).toContain(`turns: ${i + 1}`), {
       timeout: TURN_TIMEOUT_MS,
     });
   }
   for (let page = 0; page < pageUps; page++) {
     const frames = stdout.frames.length;
     stdin.write(PAGE_UP);
-    await vi.waitFor(() => expect(stdout.frames.length).toBeGreaterThan(frames), { timeout: 2000 });
+    await waitForFrame(() => expect(stdout.frames.length).toBeGreaterThan(frames), {
+      timeout: 2000,
+    });
   }
   // The session is idle here, so the streaming turn is unmounted and what is left is exactly the
   // committed turns the viewport chose to keep.

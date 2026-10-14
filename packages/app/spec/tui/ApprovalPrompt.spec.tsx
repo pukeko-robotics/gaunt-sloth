@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { waitForFrame } from './waitForFrame.mjs';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import { render as inkRender } from 'ink';
@@ -498,10 +499,10 @@ describe('tui approval flow through <App>', () => {
       <App {...baseProps} agent={agent} subscribeApproval={harness.subscribeApproval} />
     );
 
-    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    await waitForFrame(() => expect(lastFrame()).toContain('>'));
     void harness.request({ name: 'run_shell_command', args: { command: 'rm -rf build' } });
 
-    await vi.waitFor(() => {
+    await waitForFrame(() => {
       const f = lastFrame() ?? '';
       expect(f).toContain('run_shell_command');
       expect(f).toContain('rm -rf build');
@@ -536,7 +537,7 @@ describe('tui approval flow through <App>', () => {
       <App {...baseProps} agent={agent} subscribeApproval={harness.subscribeApproval} />
     );
 
-    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    await waitForFrame(() => expect(lastFrame()).toContain('>'));
     const decisionP = harness.request(
       {
         name: 'run_shell_command',
@@ -552,7 +553,7 @@ describe('tui approval flow through <App>', () => {
       // test below.
       scope
     );
-    await vi.waitFor(() => expect(lastFrame()).toContain('echo hi'));
+    await waitForFrame(() => expect(lastFrame()).toContain('echo hi'));
 
     stdin.write(keyChar);
     const decision = await decisionP;
@@ -564,7 +565,7 @@ describe('tui approval flow through <App>', () => {
     // in the CONVERSATION now and stays there after the answer, so "the command is gone" would be
     // asserting the opposite of the design. What must go is the block that owns the keyboard — its
     // ask line and its menu.
-    await vi.waitFor(() => {
+    await waitForFrame(() => {
       expect(frames.join('\n')).toContain(`Command approved (${scope})`);
       expect(lastFrame()).not.toContain('Approve?');
       expect(lastFrame()).not.toContain('⚠ Gaunt Sloth is asking you to approve a call.');
@@ -600,7 +601,7 @@ describe('tui approval flow through <App>', () => {
         <App {...baseProps} agent={agent} subscribeApproval={harness.subscribeApproval} />
       );
 
-      await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+      await waitForFrame(() => expect(lastFrame()).toContain('>'));
       const decisionP = harness.request({
         name: 'run_shell_command',
         args: { command: 'terraform destroy -auto-approve' },
@@ -609,7 +610,7 @@ describe('tui approval flow through <App>', () => {
           reason: 'destroys every managed resource; cannot be undone from inside the session',
         },
       });
-      await vi.waitFor(() => expect(lastFrame()).toContain('terraform destroy'));
+      await waitForFrame(() => expect(lastFrame()).toContain('terraform destroy'));
 
       stdin.write(keyChar);
       const decision = await decisionP;
@@ -621,7 +622,7 @@ describe('tui approval flow through <App>', () => {
       // Frames wrap mid-sentence and re-open the style run at the break, so compare on text with
       // ANSI stripped and whitespace collapsed.
       const flat = () => plain(frames);
-      await vi.waitFor(() => expect(flat()).toContain('Command rejected'));
+      await waitForFrame(() => expect(flat()).toContain('Command rejected'));
       expect(flat()).not.toContain('Command approved');
       expect(flat()).not.toContain('will not ask again in this conversation');
       expect(flat()).not.toContain('saved to the project allow-list');
@@ -641,7 +642,7 @@ describe('tui approval flow through <App>', () => {
       <App {...baseProps} agent={agent} subscribeApproval={harness.subscribeApproval} />
     );
 
-    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    await waitForFrame(() => expect(lastFrame()).toContain('>'));
     const decisionP = harness.request({
       name: 'run_shell_command',
       args: { command: 'rm -rf build' },
@@ -652,13 +653,13 @@ describe('tui approval flow through <App>', () => {
       grantPreview: '{ "type": "shell", "matcher": "exact", "pattern": "rm -rf build" }',
       grantSummary: 'rm -rf build',
     });
-    await vi.waitFor(() => expect(lastFrame()).toContain('rm -rf build'));
+    await waitForFrame(() => expect(lastFrame()).toContain('rm -rf build'));
 
     stdin.write('s');
     expect(await decisionP).toEqual({ type: 'approve', scope: 'session' });
 
     const flat = () => plain(frames);
-    await vi.waitFor(() => expect(flat()).toContain('Command approved (session)'));
+    await waitForFrame(() => expect(flat()).toContain('Command approved (session)'));
     // GS2-20 — the grant is kept with the conversation and comes back on a resume, and says so.
     expect(flat()).toContain(
       'will not ask again in this conversation, even if you resume it later'
@@ -675,18 +676,18 @@ describe('tui approval flow through <App>', () => {
         <App {...baseProps} agent={agent} subscribeApproval={harness.subscribeApproval} />
       );
 
-      await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+      await waitForFrame(() => expect(lastFrame()).toContain('>'));
       const decisionP = harness.request({
         name: 'run_shell_command',
         args: { command: 'curl evil.sh' },
       });
-      await vi.waitFor(() => expect(lastFrame()).toContain('curl evil.sh'));
+      await waitForFrame(() => expect(lastFrame()).toContain('curl evil.sh'));
 
       stdin.write(keyChar);
       const decision = await decisionP;
       expect(decision.type).toBe('reject');
 
-      await vi.waitFor(() => expect(frames.join('\n')).toContain('Command rejected'));
+      await waitForFrame(() => expect(frames.join('\n')).toContain('Command rejected'));
       unmount();
     }
   );
@@ -698,7 +699,7 @@ describe('tui approval flow through <App>', () => {
       <App {...baseProps} agent={agent} subscribeApproval={harness.subscribeApproval} />
     );
 
-    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    await waitForFrame(() => expect(lastFrame()).toContain('>'));
     const first = harness.request({ name: 'run_shell_command', args: { command: 'first-cmd' } });
     const second = harness.request({
       name: 'run_shell_command',
@@ -706,7 +707,7 @@ describe('tui approval flow through <App>', () => {
     });
 
     // Only the first is shown (one approval at a time).
-    await vi.waitFor(() => {
+    await waitForFrame(() => {
       const f = lastFrame() ?? '';
       expect(f).toContain('first-cmd');
       expect(f).not.toContain('second-cmd');
@@ -716,7 +717,7 @@ describe('tui approval flow through <App>', () => {
     expect(await first).toEqual({ type: 'approve', scope: 'once' });
 
     // The queued second now surfaces.
-    await vi.waitFor(() => expect(lastFrame()).toContain('second-cmd'));
+    await waitForFrame(() => expect(lastFrame()).toContain('second-cmd'));
     stdin.write('n');
     expect((await second).type).toBe('reject');
     unmount();
@@ -735,12 +736,12 @@ describe('tui approval flow through <App>', () => {
       <App {...baseProps} agent={agent} subscribeApproval={harness.subscribeApproval} />
     );
 
-    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    await waitForFrame(() => expect(lastFrame()).toContain('>'));
     const decisionP = harness.request({
       name: 'run_shell_command',
       args: { command: 'gated' },
     });
-    await vi.waitFor(() => expect(lastFrame()).toContain('gated'));
+    await waitForFrame(() => expect(lastFrame()).toContain('gated'));
 
     // Typing while the approval owns input must not enter the chat box or run a turn — every
     // keystroke is consumed by the approval handler. 'x' is a non-approve key → reject.
@@ -1272,9 +1273,9 @@ describe('tui approvals — the [d]eny always key, and the fallthrough it must n
         subscribeApproval={harness.subscribeApproval}
       />
     );
-    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    await waitForFrame(() => expect(lastFrame()).toContain('>'));
     const decisionP = harness.request(denyable, 'always');
-    await vi.waitFor(() => expect(lastFrame()).toContain('curl evil.sh'));
+    await waitForFrame(() => expect(lastFrame()).toContain('curl evil.sh'));
 
     // The rendered promise, read off the live dialog rather than restated here.
     expect(plain(frames)).toContain(
@@ -1288,7 +1289,7 @@ describe('tui approvals — the [d]eny always key, and the fallthrough it must n
     expect(decision).toMatchObject({ scope: 'always' });
 
     const flat = () => plain(frames);
-    await vi.waitFor(() => expect(flat()).toContain('Command refused and saved'));
+    await waitForFrame(() => expect(flat()).toContain('Command refused and saved'));
     // The confirmation says exactly what happened, and names the way back out of it — asked of the
     // confirmation's OWN rows, since the dialog above says *save it to this project* while asking.
     const block = () => noticeBlock(lastFrame() ?? '', 'Command refused and saved');
@@ -1328,11 +1329,11 @@ describe('tui approvals — the [d]eny always key, and the fallthrough it must n
         subscribeApproval={harness.subscribeApproval}
       />
     );
-    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    await waitForFrame(() => expect(lastFrame()).toContain('>'));
     // The runner recorded it, and recorded it as a SESSION refusal: the deny file could not receive
     // it. Everything the surface sends is unchanged — only the answer differs.
     const decisionP = harness.request(denyable, 'session');
-    await vi.waitFor(() => expect(lastFrame()).toContain('curl evil.sh'));
+    await waitForFrame(() => expect(lastFrame()).toContain('curl evil.sh'));
 
     stdin.write('d');
     expect(await decisionP).toMatchObject({ type: 'reject', scope: 'always' });
@@ -1340,7 +1341,7 @@ describe('tui approvals — the [d]eny always key, and the fallthrough it must n
     // The notice IS committed — half of the pair, and the half that makes the negative below mean
     // something rather than pass on an empty screen.
     // GS2-20 — the lifetime named is the conversation's, and a resume keeps the refusal.
-    await vi.waitFor(() =>
+    await waitForFrame(() =>
       expect(noticeBlock(lastFrame() ?? '', 'Command refused for this conversation')).not.toBe('')
     );
     const block = () => noticeBlock(lastFrame() ?? '', 'Command refused for this conversation');
@@ -1386,15 +1387,15 @@ describe('tui approvals — the [d]eny always key, and the fallthrough it must n
           subscribeApproval={harness.subscribeApproval}
         />
       );
-      await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+      await waitForFrame(() => expect(lastFrame()).toContain('>'));
       const decisionP = harness.request(denyable);
-      await vi.waitFor(() => expect(lastFrame()).toContain('curl evil.sh'));
+      await waitForFrame(() => expect(lastFrame()).toContain('curl evil.sh'));
 
       stdin.write(keyChar);
       const decision = await decisionP;
       expect(decision.type).toBe('reject');
       expect((decision as { scope?: string }).scope).toBeUndefined();
-      await vi.waitFor(() => expect(plain(frames)).toContain('Command rejected'));
+      await waitForFrame(() => expect(plain(frames)).toContain('Command rejected'));
       expect(plain(frames)).not.toContain('Command refused and saved');
       unmount();
     }
@@ -1414,15 +1415,15 @@ describe('tui approvals — the [d]eny always key, and the fallthrough it must n
         subscribeApproval={harness.subscribeApproval}
       />
     );
-    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    await waitForFrame(() => expect(lastFrame()).toContain('>'));
     const decisionP = harness.request({ name: 'gth_web_fetch', args: { input: 'https://x/y' } });
-    await vi.waitFor(() => expect(lastFrame()).toContain('gth_web_fetch'));
+    await waitForFrame(() => expect(lastFrame()).toContain('gth_web_fetch'));
 
     stdin.write('d');
     const decision = await decisionP;
     expect(decision.type).toBe('reject');
     expect((decision as { scope?: string }).scope).toBeUndefined();
-    await vi.waitFor(() => expect(plain(frames)).toContain('Command rejected'));
+    await waitForFrame(() => expect(plain(frames)).toContain('Command rejected'));
     unmount();
   });
 
@@ -1478,15 +1479,15 @@ describe('tui approvals — the [d]eny always key, and the fallthrough it must n
           subscribeApproval={harness.subscribeApproval}
         />
       );
-      await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+      await waitForFrame(() => expect(lastFrame()).toContain('>'));
       const decisionP = harness.request(bothControls);
-      await vi.waitFor(() => expect(lastFrame()).toContain('rm -rf build'));
+      await waitForFrame(() => expect(lastFrame()).toContain('rm -rf build'));
 
       stdin.write(keyChar);
       const decision = await decisionP;
       expect(decision.type).toBe('reject');
       expect((decision as { scope?: string }).scope).toBeUndefined();
-      await vi.waitFor(() => expect(plain(frames)).toContain('Command rejected'));
+      await waitForFrame(() => expect(plain(frames)).toContain('Command rejected'));
       expect(plain(frames)).not.toContain('Command approved');
       expect(plain(frames)).not.toContain('Command refused and saved');
       unmount();
@@ -1508,9 +1509,9 @@ describe('tui approvals — the [d]eny always key, and the fallthrough it must n
         subscribeApproval={harness.subscribeApproval}
       />
     );
-    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    await waitForFrame(() => expect(lastFrame()).toContain('>'));
     const decisionP = harness.request(bothControls);
-    await vi.waitFor(() => expect(lastFrame()).toContain('rm -rf build'));
+    await waitForFrame(() => expect(lastFrame()).toContain('rm -rf build'));
 
     stdin.write(keyChar);
     expect(await decisionP).toMatchObject(expected);
@@ -1536,19 +1537,19 @@ describe('tui approvals — the confirmation names what was actually stored (§6
       const { stdin, lastFrame, frames, unmount } = render(
         <App {...baseProps} agent={baseAgent()} subscribeApproval={harness.subscribeApproval} />
       );
-      await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+      await waitForFrame(() => expect(lastFrame()).toContain('>'));
       const decisionP = harness.request({
         name: 'run_shell_command',
         args: { command: 'ls && rm -rf build' },
       });
-      await vi.waitFor(() => expect(lastFrame()).toContain('rm -rf build'));
+      await waitForFrame(() => expect(lastFrame()).toContain('rm -rf build'));
 
       stdin.write(keyChar);
       const decision = await decisionP;
       expect(decision.type).toBe('reject');
       expect((decision as { scope?: string }).scope).toBeUndefined();
       const flat = () => plain(frames);
-      await vi.waitFor(() => expect(flat()).toContain('Command rejected'));
+      await waitForFrame(() => expect(flat()).toContain('Command rejected'));
       expect(flat()).not.toContain('Command approved');
       unmount();
     }
@@ -1559,19 +1560,19 @@ describe('tui approvals — the confirmation names what was actually stored (§6
     const { stdin, lastFrame, frames, unmount } = render(
       <App {...baseProps} agent={baseAgent()} subscribeApproval={harness.subscribeApproval} />
     );
-    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    await waitForFrame(() => expect(lastFrame()).toContain('>'));
     const decisionP = harness.request({
       name: 'run_shell_command',
       args: { command: 'ls -la' },
       grantPreview: '{ "type": "shell", "matcher": "exact", "pattern": "ls -la" }',
       grantSummary: 'ls -la',
     });
-    await vi.waitFor(() => expect(lastFrame()).toContain('ls -la'));
+    await waitForFrame(() => expect(lastFrame()).toContain('ls -la'));
 
     stdin.write('s');
     expect(await decisionP).toEqual({ type: 'approve', scope: 'session' });
     const flat = () => plain(frames);
-    await vi.waitFor(() => expect(flat()).toContain('Command approved (session)'));
+    await waitForFrame(() => expect(flat()).toContain('Command approved (session)'));
     // GS2-20 — the grant is kept with the conversation and comes back on a resume, and says so.
     expect(flat()).toContain(
       'will not ask again in this conversation, even if you resume it later'
@@ -1597,7 +1598,7 @@ describe('tui approvals — the confirmation names what was actually stored (§6
     const { stdin, lastFrame, frames, unmount } = render(
       <App {...baseProps} agent={baseAgent()} subscribeApproval={harness.subscribeApproval} />
     );
-    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    await waitForFrame(() => expect(lastFrame()).toContain('>'));
     const decisionP = harness.request(
       {
         name: 'run_shell_command',
@@ -1607,7 +1608,7 @@ describe('tui approvals — the confirmation names what was actually stored (§6
       },
       'session'
     );
-    await vi.waitFor(() => expect(lastFrame()).toContain('ls -la'));
+    await waitForFrame(() => expect(lastFrame()).toContain('ls -la'));
 
     stdin.write('a');
     // The surface still ASKS for `always` — that half is unchanged, and a fix that quietly stopped
@@ -1615,7 +1616,7 @@ describe('tui approvals — the confirmation names what was actually stored (§6
     expect(await decisionP).toEqual({ type: 'approve', scope: 'always' });
 
     // Present, then read: the notice exists, and then its own rows are asked what they claim.
-    await vi.waitFor(() =>
+    await waitForFrame(() =>
       expect(noticeBlock(lastFrame() ?? '', 'Command approved (session)')).not.toBe('')
     );
     const block = () => noticeBlock(lastFrame() ?? '', 'Command approved (session)');
@@ -1663,9 +1664,9 @@ describe('tui /approvals trust (EXT-70 §4.7.1)', () => {
     line: string
   ): Promise<{ frames: string[]; unmount: () => void }> => {
     const { stdin, lastFrame, frames, unmount } = render(<App {...baseProps} agent={agent} />);
-    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+    await waitForFrame(() => expect(lastFrame()).toContain('>'));
     stdin.write(line);
-    await vi.waitFor(() => expect(lastFrame()).toContain(line));
+    await waitForFrame(() => expect(lastFrame()).toContain(line));
     stdin.write('\r');
     return { frames, unmount };
   };
@@ -1673,7 +1674,7 @@ describe('tui /approvals trust (EXT-70 §4.7.1)', () => {
   it('hands the server and hints to the agent exactly as typed, and reports what landed', async () => {
     const { agent, calls } = trustingAgent({ trusted: ['readOnlyHint'], added: ['readOnlyHint'] });
     const { frames, unmount } = await submit(agent, '/approvals trust jira readOnlyHint');
-    await vi.waitFor(() =>
+    await waitForFrame(() =>
       expect(plain(frames)).toContain('Now believing from jira: readOnlyHint')
     );
     expect(calls).toEqual([['jira', ['readOnlyHint'], true]]);
@@ -1691,7 +1692,7 @@ describe('tui /approvals trust (EXT-70 §4.7.1)', () => {
       invalidates: ['mcpTool jira/search'],
     });
     const { frames, unmount } = await submit(agent, '/approvals untrust jira readOnlyHint');
-    await vi.waitFor(() =>
+    await waitForFrame(() =>
       expect(plain(frames)).toContain('withdrawn the next time that tool is called')
     );
     expect(plain(frames)).toContain('mcpTool jira/search');
@@ -1701,7 +1702,7 @@ describe('tui /approvals trust (EXT-70 §4.7.1)', () => {
   it('CONTROL: granting trust says nothing about approvals being withdrawn', async () => {
     const { agent } = trustingAgent({ trusted: ['readOnlyHint'], added: ['readOnlyHint'] });
     const { frames, unmount } = await submit(agent, '/approvals trust jira readOnlyHint');
-    await vi.waitFor(() => expect(plain(frames)).toContain('Now believing from jira'));
+    await waitForFrame(() => expect(plain(frames)).toContain('Now believing from jira'));
     expect(plain(frames)).not.toContain('withdrawn the next time');
     unmount();
   });
@@ -1709,7 +1710,7 @@ describe('tui /approvals trust (EXT-70 §4.7.1)', () => {
   it('a surface with no runner says so instead of pretending to move trust', async () => {
     const agent = scriptedAgent([{ type: 'text', delta: 'hi' }]);
     const { frames, unmount } = await submit(agent, '/approvals trust jira readOnlyHint');
-    await vi.waitFor(() =>
+    await waitForFrame(() =>
       expect(plain(frames)).toContain('Approvals are unavailable in this session.')
     );
     unmount();

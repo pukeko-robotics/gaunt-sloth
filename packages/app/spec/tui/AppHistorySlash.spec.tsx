@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { waitForFrame } from './waitForFrame.mjs';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import type { AgentStreamEvent } from '@gaunt-sloth/core/core/types.js';
@@ -39,9 +40,9 @@ async function submit(
   lastFrame: () => string | undefined,
   line: string
 ): Promise<void> {
-  await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+  await waitForFrame(() => expect(lastFrame()).toContain('>'));
   stdin.write(line);
-  await vi.waitFor(() => expect(lastFrame()).toContain(line));
+  await waitForFrame(() => expect(lastFrame()).toContain(line));
   stdin.write('\r');
 }
 
@@ -65,7 +66,7 @@ describe('tui <App> — /history /insights /search (GS2-88)', () => {
       />
     );
     await submit(stdin, lastFrame, '/history');
-    await vi.waitFor(() => expect(lastFrame()).toContain('widget factory'));
+    await waitForFrame(() => expect(lastFrame()).toContain('widget factory'));
     expect(lastFrame()).not.toContain('history.enabled');
     unmount();
   });
@@ -75,7 +76,7 @@ describe('tui <App> — /history /insights /search (GS2-88)', () => {
       <App {...baseProps} agent={scriptedAgent([])} historyAvailability="disabled" />
     );
     await submit(stdin, lastFrame, '/history');
-    await vi.waitFor(() => expect(lastFrame()).toContain('history.enabled'));
+    await waitForFrame(() => expect(lastFrame()).toContain('history.enabled'));
     // The other side of the pair: the rows the available cell above sees cannot appear here.
     expect(lastFrame()).not.toContain('widget factory');
     unmount();
@@ -86,9 +87,9 @@ describe('tui <App> — /history /insights /search (GS2-88)', () => {
       <App {...baseProps} agent={scriptedAgent([])} historyAvailability="disabled" />
     );
     await submit(stdin, lastFrame, '/insights');
-    await vi.waitFor(() => expect(lastFrame()).toContain('history.enabled'));
+    await waitForFrame(() => expect(lastFrame()).toContain('history.enabled'));
     await submit(stdin, lastFrame, '/search widget');
-    await vi.waitFor(() => expect(lastFrame()).toContain('history.enabled'));
+    await waitForFrame(() => expect(lastFrame()).toContain('history.enabled'));
     unmount();
   });
 });
@@ -114,9 +115,9 @@ describe('tui <App> — /reasoning keeps its own, true copy (GS2-88)', () => {
     const { stdin, lastFrame, unmount } = render(
       <App {...baseProps} agent={agent} initialMessage="go" />
     );
-    await vi.waitFor(() => expect(lastFrame()).toContain('the answer'));
+    await waitForFrame(() => expect(lastFrame()).toContain('the answer'));
     await submit(stdin, lastFrame, '/reasoning');
-    await vi.waitFor(() => expect(lastFrame()).toContain('weighing the options'));
+    await waitForFrame(() => expect(lastFrame()).toContain('weighing the options'));
     // Never the readline surface's sentence: this one DOES keep the record.
     expect(lastFrame()).not.toContain('keeps no per-turn thinking record');
     unmount();
@@ -125,7 +126,7 @@ describe('tui <App> — /reasoning keeps its own, true copy (GS2-88)', () => {
   it('still says the session has no committed turns when it truly has none', async () => {
     const { stdin, lastFrame, unmount } = render(<App {...baseProps} agent={scriptedAgent([])} />);
     await submit(stdin, lastFrame, '/reasoning 1');
-    await vi.waitFor(() => expect(lastFrame()).toContain('no committed turns'));
+    await waitForFrame(() => expect(lastFrame()).toContain('no committed turns'));
     expect(lastFrame()).not.toContain('keeps no per-turn thinking record');
     unmount();
   });

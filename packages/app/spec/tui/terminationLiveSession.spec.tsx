@@ -16,7 +16,8 @@
  * from the same shared renderer the component paints with, so a cell fails if the App commits a
  * DIFFERENT reason — which a hand-written expected sentence could not tell.
  */
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { waitForFrame } from './waitForFrame.mjs';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import type { AgentStreamEvent } from '@gaunt-sloth/core/core/types.js';
@@ -69,7 +70,7 @@ describe('[[EXT-159]] SURFACE — the Ink TUI says why the turn ended', () => {
     const agent = agentEnding([{ type: 'text', delta: 'partial' }], () => cancelled);
     const { frames, unmount } = render(<App {...baseProps} agent={agent} initialMessage="go" />);
 
-    await vi.waitFor(() => {
+    await waitForFrame(() => {
       const all = frames.join('\n');
       // Derived in the test from the reason, so a DIFFERENT reason committed by the App fails here.
       expect(all).toContain(terminationNotice(cancelled).title);
@@ -90,7 +91,7 @@ describe('[[EXT-159]] SURFACE — the Ink TUI says why the turn ended', () => {
     const agent = agentEnding([], () => empty);
     const { frames, unmount } = render(<App {...baseProps} agent={agent} initialMessage="go" />);
 
-    await vi.waitFor(() => {
+    await waitForFrame(() => {
       expect(frames.join('\n')).toContain(terminationCode(empty));
     });
 
@@ -104,7 +105,7 @@ describe('[[EXT-159]] SURFACE — the Ink TUI says why the turn ended', () => {
       <App {...baseProps} agent={agent} initialMessage="go" />
     );
 
-    await vi.waitFor(() => {
+    await waitForFrame(() => {
       expect(frames.join('\n')).toContain('all done');
     });
     expect(lastFrame()).not.toContain(TERMINATION_NOTICE_TITLE_PREFIX);
@@ -120,7 +121,7 @@ describe('[[EXT-159]] SURFACE — the Ink TUI says why the turn ended', () => {
       <App {...baseProps} agent={agent} initialMessage="go" />
     );
 
-    await vi.waitFor(() => {
+    await waitForFrame(() => {
       expect(frames.join('\n')).toContain('thinking');
     });
     expect(lastFrame()).not.toContain(TERMINATION_NOTICE_TITLE_PREFIX);
@@ -138,7 +139,7 @@ describe('[[EXT-159]] SURFACE — the Ink TUI says why the turn ended', () => {
       <App {...baseProps} agent={agent} initialMessage="go" />
     );
 
-    await vi.waitFor(() => {
+    await waitForFrame(() => {
       expect(frames.join('\n')).toContain('hm');
     });
     expect(lastFrame()).not.toContain(TERMINATION_NOTICE_TITLE_PREFIX);
@@ -152,7 +153,7 @@ describe('[[EXT-159]] SURFACE — the Ink TUI says why the turn ended', () => {
     });
     const { frames, unmount } = render(<App {...baseProps} agent={agent} initialMessage="go" />);
 
-    await vi.waitFor(() => {
+    await waitForFrame(() => {
       expect(frames.join('\n')).toContain('fine');
     });
 
@@ -170,7 +171,7 @@ describe('[[EXT-159]] SURFACE — the Ink TUI says why the turn ended', () => {
       <App {...baseProps} agent={agent} initialMessage="go" />
     );
 
-    await vi.waitFor(() => {
+    await waitForFrame(() => {
       expect(frames.join('\n')).toContain('legacy');
     });
     expect(lastFrame()).not.toContain(TERMINATION_NOTICE_TITLE_PREFIX);

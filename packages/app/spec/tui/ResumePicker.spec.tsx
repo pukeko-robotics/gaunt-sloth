@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { waitForFrame } from './waitForFrame.mjs';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import {
@@ -80,7 +81,7 @@ describe('tui <ResumePicker> (GS2-112)', () => {
     stdin.write(DOWN);
     // Wait for the highlight to be ON the intended row — not merely for a `❯` to exist, which was
     // already true before the keystroke and would make this wait pass without it having landed.
-    await vi.waitFor(() => expect(lastFrame()).toContain('❯ #34'));
+    await waitForFrame(() => expect(lastFrame()).toContain('❯ #34'));
     stdin.write(ENTER);
     await tick();
     expect(onSelect.mock.calls).toEqual([[34]]);
@@ -93,7 +94,7 @@ describe('tui <ResumePicker> (GS2-112)', () => {
     );
     await tick();
     stdin.write(UP);
-    await vi.waitFor(() => expect(lastFrame()).toContain('❯ #56'));
+    await waitForFrame(() => expect(lastFrame()).toContain('❯ #56'));
     stdin.write(ENTER);
     await tick();
     expect(onSelect.mock.calls).toEqual([[56]]);

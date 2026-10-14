@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { waitForFrame } from './waitForFrame.mjs';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import stripAnsi from 'strip-ansi';
@@ -357,7 +358,7 @@ async function frameWhere(
   check: (frame: string) => boolean
 ): Promise<string> {
   let out = '';
-  await vi.waitFor(() => {
+  await waitForFrame(() => {
     out = stripAnsi(lastFrame() ?? '');
     expect(check(out)).toBe(true);
   });
@@ -507,7 +508,7 @@ describe('[[TUI-C99]] the committed record reads in the order it happened', () =
     stdin.write('o');
     // The second call is asked about in its own right rather than the first block being redrawn:
     // two records reach the surface, and the second prompt is up before the key is sent.
-    await vi.waitFor(() => expect(bridge.asked).toHaveLength(2));
+    await waitForFrame(() => expect(bridge.asked).toHaveLength(2));
     await frameWhere(lastFrame, (f) => f.includes('[N]o'));
     stdin.write('n');
     const frame = await frameWhere(lastFrame, (f) => f.includes('All done.'));
@@ -540,7 +541,7 @@ describe('[[TUI-C99]] the committed record reads in the order it happened', () =
     const before = await frameWhere(rendered.lastFrame, (f) => f.includes('[o]nce'));
     rendered.stdout.emit('resize');
     rendered.stdout.emit('resize');
-    await vi.waitFor(() => {
+    await waitForFrame(() => {
       const now = stripAnsi(rendered.lastFrame() ?? '');
       expect(now.split('Gaunt Sloth is asking about this call').length).toBe(
         before.split('Gaunt Sloth is asking about this call').length
@@ -570,7 +571,7 @@ describe('[[TUI-C99]] the committed record reads in the order it happened', () =
 
     await frameWhere(lastFrame, (f) => f.includes('[o]nce'));
     stdin.write('o');
-    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    await waitForFrame(() => expect(seen).toHaveLength(1));
     expect(seen[0]).toBe('Listing the directory first.All done.');
     expect(seen[0]).not.toContain('approved by you');
     unmount();

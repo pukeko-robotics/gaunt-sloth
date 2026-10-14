@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { waitForFrame } from './waitForFrame.mjs';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import stripAnsi from 'strip-ansi';
@@ -82,7 +83,7 @@ describe('REL-18 — the pinned checklist panel neutralises the model’s item t
     const agent = scriptedAgent(checklistEvents);
     const { lastFrame, unmount } = render(<App {...baseProps} agent={agent} initialMessage="go" />);
 
-    await vi.waitFor(() => expect(stripAnsi(lastFrame() ?? '')).toContain('Checklist'));
+    await waitForFrame(() => expect(stripAnsi(lastFrame() ?? '')).toContain('Checklist'));
 
     const raw = lastFrame() ?? '';
     const visible = stripAnsi(raw);

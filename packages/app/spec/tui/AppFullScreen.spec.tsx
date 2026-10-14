@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { waitForFrame } from './waitForFrame.mjs';
 import React from 'react';
 import { EventEmitter } from 'node:events';
 import { render as inkRender } from 'ink';
@@ -215,11 +216,11 @@ const TURN_TIMEOUT_MS = 10_000;
 async function converse(stdout: SizedStdout, stdin: FakeStdin, turns: number): Promise<void> {
   for (let i = 0; i < turns; i++) {
     stdin.write(turnText(i));
-    await vi.waitFor(() => expect(stdout.lastFrame()).toContain(`t${i}-xxx`), {
+    await waitForFrame(() => expect(stdout.lastFrame()).toContain(`t${i}-xxx`), {
       timeout: TURN_TIMEOUT_MS,
     });
     stdin.write('\r');
-    await vi.waitFor(() => expect(stdout.lastFrame()).toContain(`turns: ${i + 1}`), {
+    await waitForFrame(() => expect(stdout.lastFrame()).toContain(`turns: ${i + 1}`), {
       timeout: TURN_TIMEOUT_MS,
     });
   }
@@ -245,7 +246,7 @@ describe('<App> full-screen frame', () => {
     [100, 60],
   ])('is exactly the terminal height at %ix%i', async (columns, rows) => {
     const { stdout, unmount } = renderAt(columns, rows, <App {...baseProps} />);
-    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
+    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
 
     expect(frameRows(stdout)).toHaveLength(rows);
 
@@ -266,7 +267,7 @@ describe('<App> full-screen frame', () => {
       rows,
       <App {...baseProps} agent={replyingAgent} advisories={['bad key']} />
     );
-    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
+    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
 
     await converse(stdout, stdin, 6);
 
@@ -277,7 +278,7 @@ describe('<App> full-screen frame', () => {
 
   it('pins the dock to the terminal floor', async () => {
     const { stdout, unmount } = renderAt(80, 30, <App {...baseProps} />);
-    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
+    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
 
     const lines = frameRows(stdout);
     // The dock's closing rule is the LAST row of the terminal, and the status bar is a handful of
@@ -295,7 +296,7 @@ describe('<App> full-screen frame', () => {
 
   it('TUI-C90 — gives the prompt a row of air above and below it', async () => {
     const { stdout, unmount } = renderAt(80, 30, <App {...baseProps} />);
-    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
+    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
 
     const lines = frameRows(stdout);
     const promptRow = lines.findIndex((l) => l.trimStart().startsWith('>'));
@@ -315,15 +316,15 @@ describe('<App> full-screen frame', () => {
     // two rows of nothing between the status bar and the hint in every one of those states, which
     // on a short terminal is conversation the reader paid for and cannot see.
     const { stdout, stdin, unmount } = renderAt(80, 30, <App {...baseProps} debug />);
-    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
+    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
 
     // `/debug` opens the docked pane, Tab gives it the keyboard, and the prompt stands down.
     stdin.write('/debug');
-    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('> /debug'));
+    await waitForFrame(() => expect(stdout.lastFrame()).toContain('> /debug'));
     stdin.write('\r');
-    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('Subagents'));
+    await waitForFrame(() => expect(stdout.lastFrame()).toContain('Subagents'));
     stdin.write('\t');
-    await vi.waitFor(() => {
+    await waitForFrame(() => {
       const rows = frameRows(stdout);
       expect(rows.some((l) => l.trimStart().startsWith('> '))).toBe(false);
     });
@@ -366,38 +367,38 @@ describe('<App> full-screen frame', () => {
       30,
       <App {...baseProps} agent={stream.agent} />
     );
-    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
+    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
 
     // Idle.
     expect(frameRows(stdout)[dockOpening(stdout) - 1].trim()).toBe('');
 
     // Streaming: a turn is in flight and its text is on screen above the dock.
     stdin.write('ask');
-    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('> ask'));
+    await waitForFrame(() => expect(stdout.lastFrame()).toContain('> ask'));
     stdin.write('\r');
     stream.emit('half an answer');
-    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('half an answer'));
+    await waitForFrame(() => expect(stdout.lastFrame()).toContain('half an answer'));
     const streamingRule = dockOpening(stdout);
     expect(frameRows(stdout)[streamingRule - 1].trim()).toBe('');
     // …and it really is the dock's row, not the conversation's: the row above it is the newest
     // line of the answer, so nothing has floated the streaming turn off the region's own floor.
     expect(frameRows(stdout)[streamingRule - 2]).toContain('half an answer');
     stream.finish();
-    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('turns: 1'));
+    await waitForFrame(() => expect(stdout.lastFrame()).toContain('turns: 1'));
 
     unmount();
   }, 30_000);
 
   it('TUI-C91 — the dock opens on a blank row with the prompt stood down', async () => {
     const { stdout, stdin, unmount } = renderAt(80, 30, <App {...baseProps} debug />);
-    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
+    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
 
     stdin.write('/debug');
-    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('> /debug'));
+    await waitForFrame(() => expect(stdout.lastFrame()).toContain('> /debug'));
     stdin.write('\r');
-    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('Subagents'));
+    await waitForFrame(() => expect(stdout.lastFrame()).toContain('Subagents'));
     stdin.write('\t');
-    await vi.waitFor(() => {
+    await waitForFrame(() => {
       const rows = frameRows(stdout);
       expect(rows.some((l) => l.trimStart().startsWith('> '))).toBe(false);
     });
@@ -429,12 +430,12 @@ describe('<App> full-screen frame', () => {
         mcpFailures={[{ server: 'some-server', error: 'connect ECONNREFUSED' }]}
       />
     );
-    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
+    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
 
     stdin.write('go');
-    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('> go'));
+    await waitForFrame(() => expect(stdout.lastFrame()).toContain('> go'));
     stdin.write('\r');
-    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('Verify output'));
+    await waitForFrame(() => expect(stdout.lastFrame()).toContain('Verify output'));
 
     const lines = frameRows(stdout);
     expect(lines).toHaveLength(24);
@@ -466,15 +467,15 @@ describe('<App> full-screen frame', () => {
     // would leave the frame at its old size: short of the floor after a grow, overflowing the
     // screen after a shrink. Both halves are asserted because they fail in opposite directions.
     const { stdout, unmount } = renderAt(80, 30, <App {...baseProps} />);
-    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
+    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
     expect(frameRows(stdout)).toHaveLength(30);
 
     stdout.resizeTo(80, 18);
-    await vi.waitFor(() => expect(frameRows(stdout)).toHaveLength(18));
+    await waitForFrame(() => expect(frameRows(stdout)).toHaveLength(18));
     expect(frameRows(stdout)[17]).toMatch(/^─+$/);
 
     stdout.resizeTo(80, 44);
-    await vi.waitFor(() => expect(frameRows(stdout)).toHaveLength(44));
+    await waitForFrame(() => expect(frameRows(stdout)).toHaveLength(44));
     expect(frameRows(stdout)[43]).toMatch(/^─+$/);
 
     unmount();
@@ -494,14 +495,14 @@ describe('<App> full-screen frame', () => {
       30,
       <App {...baseProps} agent={replyingAgent} />
     );
-    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
+    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
 
     // Four short exchanges: three separator rules between them, plus the dock's two.
     for (let i = 0; i < 4; i++) {
       stdin.write(`q${i}`);
-      await vi.waitFor(() => expect(stdout.lastFrame()).toContain(`q${i}`), { timeout: 10_000 });
+      await waitForFrame(() => expect(stdout.lastFrame()).toContain(`q${i}`), { timeout: 10_000 });
       stdin.write('\r');
-      await vi.waitFor(() => expect(stdout.lastFrame()).toContain(`turns: ${i + 1}`), {
+      await waitForFrame(() => expect(stdout.lastFrame()).toContain(`turns: ${i + 1}`), {
         timeout: 10_000,
       });
     }
@@ -515,7 +516,7 @@ describe('<App> full-screen frame', () => {
 
     for (const columns of [60, 160, 80]) {
       stdout.resizeTo(columns, 30);
-      await vi.waitFor(() => expect(ruleWidths()).toEqual(Array(5).fill(columns)));
+      await waitForFrame(() => expect(ruleWidths()).toEqual(Array(5).fill(columns)));
     }
 
     unmount();
@@ -550,7 +551,7 @@ describe('<App> fills the conversation region it hands the viewport', () => {
       24,
       <App {...baseProps} agent={replyingAgent} />
     );
-    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
+    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
 
     await converse(stdout, stdin, 10);
 
@@ -572,7 +573,7 @@ describe('<App> fills the conversation region it hands the viewport', () => {
       56,
       <App {...baseProps} agent={replyingAgent} />
     );
-    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
+    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
 
     await converse(stdout, stdin, 12);
 

@@ -5,6 +5,7 @@
  * has no conversation state behind it or the compaction fails.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { waitForFrame } from './waitForFrame.mjs';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import type { ConversationCompaction } from '@gaunt-sloth/core/core/compaction.js';
@@ -56,9 +57,9 @@ async function submit(
   lastFrame: () => string | undefined,
   line: string
 ): Promise<void> {
-  await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+  await waitForFrame(() => expect(lastFrame()).toContain('>'));
   stdin.write(line);
-  await vi.waitFor(() => expect(lastFrame()).toContain(line));
+  await waitForFrame(() => expect(lastFrame()).toContain(line));
   stdin.write('\r');
 }
 
@@ -74,12 +75,12 @@ describe('tui <App> — /compact (GS2-23)', () => {
       <App {...baseProps} agent={agent} initialMessage="Hi sloth" />
     );
     // A committed turn first, so there is a transcript to leave alone.
-    await vi.waitFor(() => expect(lastFrame()).toContain('the answer'));
-    await vi.waitFor(() => expect(lastFrame()).toContain('ready'));
+    await waitForFrame(() => expect(lastFrame()).toContain('the answer'));
+    await waitForFrame(() => expect(lastFrame()).toContain('ready'));
 
     await submit(stdin, lastFrame, '/compact the migration plan');
 
-    await vi.waitFor(() => {
+    await waitForFrame(() => {
       const all = frames.join('\n');
       expect(all).toContain('Compacting the conversation');
       expect(all).toContain('Conversation compacted');
@@ -118,7 +119,7 @@ describe('tui <App> — /compact (GS2-23)', () => {
 
     await submit(stdin, lastFrame, '/compact');
 
-    await vi.waitFor(() => {
+    await waitForFrame(() => {
       const all = frames.join('\n');
       expect(all).toContain('Nothing to compact');
       expect(all).toContain('Nothing was changed.');
@@ -135,7 +136,7 @@ describe('tui <App> — /compact (GS2-23)', () => {
 
     await submit(stdin, lastFrame, '/compact');
 
-    await vi.waitFor(() => {
+    await waitForFrame(() => {
       const all = frames.join('\n');
       expect(all).toContain('Compaction unavailable');
       expect(all).toContain('Nothing was changed.');
@@ -154,7 +155,7 @@ describe('tui <App> — /compact (GS2-23)', () => {
 
     await submit(stdin, lastFrame, '/compact');
 
-    await vi.waitFor(() => {
+    await waitForFrame(() => {
       const all = frames.join('\n');
       expect(all).toContain('Compaction did not happen');
       expect(all).toContain('The conversation was left unchanged: provider down');
@@ -166,7 +167,7 @@ describe('tui <App> — /compact (GS2-23)', () => {
     // is dispatched as a turn, not refused as "the agent is working". A release that happens only
     // on success leaves this session wedged after any failed /compact.
     await submit(stdin, lastFrame, 'hello afterwards');
-    await vi.waitFor(() => expect(turnsRun()).toBe(1));
+    await waitForFrame(() => expect(turnsRun()).toBe(1));
     expect(frames.join('\n')).not.toContain('The agent is working — only slash commands');
 
     unmount();
@@ -182,20 +183,20 @@ describe('tui <App> — /compact (GS2-23)', () => {
     const { stdin, frames, lastFrame, unmount } = render(<App {...baseProps} agent={agent} />);
 
     await submit(stdin, lastFrame, '/compact');
-    await vi.waitFor(() => expect(frames.join('\n')).toContain('Compacting the conversation'));
+    await waitForFrame(() => expect(frames.join('\n')).toContain('Compacting the conversation'));
 
     await submit(stdin, lastFrame, 'hello while compacting');
-    await vi.waitFor(() =>
+    await waitForFrame(() =>
       expect(frames.join('\n')).toContain('The agent is working — only slash commands')
     );
     expect(turnsRun()).toBe(0);
 
     release(outcome());
-    await vi.waitFor(() => expect(frames.join('\n')).toContain('Conversation compacted'));
+    await waitForFrame(() => expect(frames.join('\n')).toContain('Conversation compacted'));
 
     // Released: the next message is a turn again.
     await submit(stdin, lastFrame, 'hello afterwards');
-    await vi.waitFor(() => expect(turnsRun()).toBe(1));
+    await waitForFrame(() => expect(turnsRun()).toBe(1));
 
     unmount();
   });
@@ -233,8 +234,8 @@ describe('tui <App> — a compaction applied mid-turn (EXT-167)', () => {
     const { lastFrame, unmount } = render(
       <App {...baseProps} agent={agent} initialMessage="Hi sloth" onTurnComplete={onTurnComplete} />
     );
-    await vi.waitFor(() => expect(lastFrame()).toContain('the answer'));
-    await vi.waitFor(() => expect(lastFrame()).toContain('turns: 1'));
+    await waitForFrame(() => expect(lastFrame()).toContain('the answer'));
+    await waitForFrame(() => expect(lastFrame()).toContain('turns: 1'));
 
     const rows = (lastFrame() ?? '').split('\n');
     const rowOf = (needle: string): number => rows.findIndex((row) => row.includes(needle));
@@ -293,13 +294,13 @@ describe('tui <App> — /autocompact (EXT-161)', () => {
     const { stdin, frames, lastFrame, unmount } = render(<App {...baseProps} agent={wired} />);
 
     await submit(stdin, lastFrame, '/autocompact 300K');
-    await vi.waitFor(() =>
+    await waitForFrame(() =>
       expect(frames.join('\n')).toContain('Automatic compaction threshold set')
     );
     expect(set).toHaveBeenCalledWith({ kind: 'tokens', tokens: 300_000 });
 
     await submit(stdin, lastFrame, '/status');
-    await vi.waitFor(() => expect(lastFrame()).toContain('Session status'));
+    await waitForFrame(() => expect(lastFrame()).toContain('Session status'));
     // Only the /status block is read. The /autocompact notice above it already says "session", so
     // an assertion over the whole screen would stay green with the snapshot never refreshed.
     const frame = lastFrame() ?? '';
@@ -318,7 +319,7 @@ describe('tui <App> — /autocompact (EXT-161)', () => {
 
     await submit(stdin, lastFrame, '/autocompact 300K');
 
-    await vi.waitFor(() => {
+    await waitForFrame(() => {
       const all = frames.join('\n');
       expect(all).toContain('Automatic compaction unavailable');
       expect(all).toContain('Nothing was changed.');

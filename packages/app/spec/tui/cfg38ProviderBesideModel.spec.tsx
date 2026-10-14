@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { waitForFrame } from './waitForFrame.mjs';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import stripAnsi from 'strip-ansi';
@@ -73,11 +74,11 @@ async function runCommand(
   const { stdin, frames, lastFrame, unmount } = render(
     <App {...baseProps} agent={inertAgent()} {...props} />
   );
-  await vi.waitFor(() => expect(lastFrame()).toContain('>'));
+  await waitForFrame(() => expect(lastFrame()).toContain('>'));
   stdin.write(command);
-  await vi.waitFor(() => expect(lastFrame()).toContain(command));
+  await waitForFrame(() => expect(lastFrame()).toContain(command));
   stdin.write('\r');
-  await vi.waitFor(() => expect(stripAnsi(frames.join('\n'))).toContain('Model:'));
+  await waitForFrame(() => expect(stripAnsi(frames.join('\n'))).toContain('Model:'));
   const all = stripAnsi(frames.join('\n'));
   unmount();
   return all;
