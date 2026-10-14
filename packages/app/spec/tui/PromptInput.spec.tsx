@@ -171,31 +171,19 @@ function highlightedIn(frame: string): string | null {
 }
 
 /**
- * Let one keystroke's render land before the next key: a macrotask turn, not a 20 ms timer.
+ * Type each character as its own input event, the way a person produces them.
  *
- * OPS-122 — the per-test cost of this file on the Windows unit cell was mostly sleeping. A
- * TUI-C51/TUI-C95 case types a 22-character draft and then a query, one `tick()` per character, and
- * `setTimeout(20)` sleeps about 31 ms on that runner (its timer granularity is 15.6 ms). That was
- * roughly a second of every such case, and those cases are the ones that sat nearest the 10 s
- * ceiling. Ink renders this component on a legacy root, so a keystroke's whole update — render,
- * commit, the passive effects of a sync commit, and any re-render they cause — runs in microtasks,
- * all of which drain before a `setImmediate` callback. So this yield lands exactly one frame per
- * keystroke (measured: one per write over a draft, Ctrl+G, a query and a Backspace), on any runner
- * load, which is the "each key on a settled screen" the helper below promises — the cases comparing
- * typed against one-event input still compare two different paths.
- *
- * A lone ESC is the exception, and why `tick()` stays 20 ms: Ink holds a bare `\x1b` for 20 ms to
- * tell it from the start of a sequence, so anything written sooner merges with it into a Meta chord.
+ * OPS-122 — the TUI-C95 and TUI-C51 cases below hold the Windows unit cell's slowest 10 s-ceiling
+ * tests (about 1–3 s each, one reaching 5.8 s, against 0.5–1.1 s on a Linux desktop), and the cost there is RENDERS, not this
+ * 20 ms wait: replacing it with a `setImmediate` yield halved this file on Linux and left it
+ * unchanged on Windows (73.3 s and 74.3 s summed per cell, before and after, over four cells), so
+ * it was reverted. Each typed character is one Ink render; the draft alone is 22. The lever left is
+ * fewer renders per case, not shorter waits between them.
  */
-const keystrokeSettled = () => new Promise((resolve) => setImmediate(resolve));
-
-/** Type each character as its own input event, the way a person produces them. */
 const typeSlowly = async (stdin: { write: (data: string) => void }, text: string) => {
-  // Never a lone ESC through here — see `keystrokeSettled`.
-  if (text.includes(ESC)) throw new Error('typeSlowly cannot type ESC; write it and await tick()');
   for (const character of text) {
     stdin.write(character);
-    await keystrokeSettled();
+    await tick();
   }
 };
 

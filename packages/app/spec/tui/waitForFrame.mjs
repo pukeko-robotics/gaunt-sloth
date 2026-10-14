@@ -2,14 +2,14 @@
  * `vi.waitFor` for the Ink render specs, polling every {@link FRAME_POLL_MS} ms instead of
  * vitest's 50 ms. OPS-122.
  *
- * WHY. Most of what these specs cost on the Windows unit cell was not rendering, it was waiting
- * between polls. An Ink frame lands a few milliseconds after the keystroke or agent event that
- * causes it, so a `vi.waitFor` whose first check runs before that frame then sleeps a whole
- * interval — 50 ms asked, closer to 62 ms on that runner, whose timers tick at 15.6 ms — before it
- * looks again. A case that waits on twenty or thirty frames spends one to two seconds asleep, and
- * those cases sat nearest the 10 s per-test ceiling. Measured locally over
- * `packages/app/spec/tui/`: `App.spec.tsx` went from 12.7 s to 3.4 s summed over its 78 cases,
- * the same 78 passing.
+ * WHY. An Ink frame lands a few milliseconds after the keystroke or agent event that causes it, so
+ * a `vi.waitFor` whose first check runs before that frame then sleeps a whole 50 ms interval before
+ * it looks again. In the specs that drive a whole conversation through `<App>`, that idle polling
+ * was most of the cost. Measured on the Windows unit cell, summed per cell and averaged over four
+ * cells before (runs 38648732784, 38648754702) and four after (38650003396, 38650007168):
+ * `AppTranscriptScroll.spec.tsx` 28.0 s → 6.3 s, `AppTranscriptMounts.spec.tsx` 9.9 s → 2.5 s,
+ * `AppFullScreen.spec.tsx` 4.7 s → 1.8 s. Where a case is bound by rendering instead, it helps
+ * far less: `App.spec.tsx` went 37.8 s → 31.8 s there, against 12.7 s → 3.4 s on Linux.
  *
  * WHAT IT DOES NOT CHANGE. The callback, the timeout, and therefore every assertion are the
  * caller's own; only how soon a frame that has already landed is noticed moves. A number argument
