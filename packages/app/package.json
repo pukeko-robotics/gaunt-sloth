@@ -56,12 +56,12 @@
   },
   "optionalDependencies": {
     "chalk": "^6.0.1",
-    "ink": "^7.1.1",
+    "ink": "^8.0.0",
     "ink-spinner": "^5.0.0",
     "react": "19.2.8"
   },
   "devDependencies": {
-    "@microsoft/tui-test": "^0.0.4",
+    "@microsoft/tui-test": "^0.1.0",
     "@types/react": "19.2.18",
     "ink-testing-library": "^4.0.0"
   },
