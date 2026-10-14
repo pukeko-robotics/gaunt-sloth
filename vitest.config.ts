@@ -196,16 +196,20 @@ export default defineConfig({
       reporter: ['text', 'json', 'html'],
     },
     globals: true,
-    // OPS-122 — the Ink render specs (`packages/app/spec/tui/*.spec.tsx`) rely on this default and
-    // were measured against it rather than given their own: 1512 of their 1546 tests run under it.
-    // Per-test timings on the Windows unit cells (the GTH_TEST_TIMINGS_FILE artifact), worst cell
-    // of the four in runs 38652046772 and 38652050678 at 58447b5c, react 19.2.8: p99 1623 ms,
-    // max 3149 ms — headroom 10000/p99 = 6.2 and 10000/max = 3.2. The max is a TUI-C95 case in
-    // PromptInput.spec.tsx, bound by its renders (see its `typeSlowly`). Before the waitForFrame
-    // change the worst cell was p99 1682 / max 5756 ms (5.9 / 1.7). With react 19.3.0 (probe runs
-    // 38650088817, 38650092203) the worst cell was p99 1744 / max 4474 ms (5.7 / 2.2). The cell has
-    // swung about 1.6x between runs on identical bytes, so a max factor near 2 is the one to watch;
-    // re-read the artifact before a dependency bump that touches react or ink.
+    // OPS-122 — the headroom of the Ink render specs (`packages/app/spec/tui/*.spec.tsx`, 1546
+    // tests) on the Windows unit cells, from the GTH_TEST_TIMINGS_FILE artifact. 1478 of them run
+    // under this default. The 34 PromptInput cases that type a draft carry 15 s
+    // (`DRAFT_CASE_TIMEOUT_MS`, where the arithmetic is), and 34 others set their own.
+    // Factor = ceiling / duration, each test against its own ceiling. Over every Windows cell
+    // sampled on react 19.2.8 — 14 cells, runs 38648732784, 38648754702, 38650003396, 38650007168,
+    // 38652046772, 38652050678, 38653032692 — taking the worst value per metric, not one cell:
+    //   1478 tests under this 10 s default: p99 1613 ms → 6.2, max 3646 ms → 2.7;
+    //   all 1546 against their own ceilings: p99 factor 6.2, max factor 2.6 (5756 ms of 15 s).
+    // The 5756 ms is a TUI-C95 case bound by renders; waitForFrame did not lower it. With react
+    // 19.3.0 (probe runs 38650088817, 38650092203, against their like-for-like control
+    // 38650003396, 38650007168 at the same parent) the worst values were 5.9 on p99 and 3.4 on
+    // max. The cell swings about 1.6x between runs on identical bytes; re-read the artifact before
+    // a dependency bump that touches react or ink.
     testTimeout: 10000,
   },
 });
