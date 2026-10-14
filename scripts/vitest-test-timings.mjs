@@ -9,8 +9,10 @@
  * specs do not share one ceiling: some set their own, and a headroom factor is the ratio of a
  * test's duration to ITS ceiling, not to the repo default.
  *
- * It ADDS to the configured reporters; it never replaces the console reporter, prints nothing, and
- * cannot change the run's exit code — a write failure is reported on stderr and swallowed, because
+ * It ADDS to the configured reporters; it never replaces the console reporter, and it cannot change
+ * the run's exit code: vitest turns an exception thrown from any reporter hook into an "Unhandled
+ * Reporter Error" and a failed run, so every hook catches its own. A fault — a vitest API shape
+ * that moved, an unwritable output file — is reported once on stderr and the run goes on, because
  * an instrument that can fail the gate it measures is a second gate nobody chose.
  *
  * Wired in `vitest.config.ts` only when `GTH_TEST_TIMINGS_FILE` names the output file, so a local
@@ -28,26 +30,44 @@ export default class TestTimingsReporter {
     this.rows = [];
     this.root = process.cwd();
     this.defaultTimeout = undefined;
+    this.faulted = false;
+  }
+
+  /** Report the first fault on stderr and swallow every one: see the docblock. */
+  fault(hook, error) {
+    if (this.faulted) return;
+    this.faulted = true;
+    process.stderr.write(
+      `test timings: ${hook} failed, timings are incomplete: ${String(error)}\n`
+    );
   }
 
   onInit(vitest) {
-    this.root = vitest.config.root;
-    this.defaultTimeout = vitest.config.testTimeout;
+    try {
+      this.root = vitest.config.root;
+      this.defaultTimeout = vitest.config.testTimeout;
+    } catch (error) {
+      this.fault('onInit', error);
+    }
   }
 
   onTestCaseResult(testCase) {
-    const result = testCase.result();
-    const diagnostic = testCase.diagnostic();
-    this.rows.push({
-      file: relative(this.root, testCase.module.moduleId).split(sep).join('/'),
-      name: testCase.fullName,
-      state: result.state,
-      durationMs: diagnostic ? Math.round(diagnostic.duration) : null,
-      // Wall-clock start, so an outlier can be lined up against what else was running at the time.
-      startTime: diagnostic ? Math.round(diagnostic.startTime) : null,
-      timeoutMs: testCase.options.timeout ?? this.defaultTimeout ?? null,
-      retryCount: diagnostic ? diagnostic.retryCount : 0,
-    });
+    try {
+      const result = testCase.result();
+      const diagnostic = testCase.diagnostic();
+      this.rows.push({
+        file: relative(this.root, testCase.module.moduleId).split(sep).join('/'),
+        name: testCase.fullName,
+        state: result.state,
+        durationMs: diagnostic ? Math.round(diagnostic.duration) : null,
+        // Wall-clock start, so an outlier can be lined up against what else was running then.
+        startTime: diagnostic ? Math.round(diagnostic.startTime) : null,
+        timeoutMs: testCase.options.timeout ?? this.defaultTimeout ?? null,
+        retryCount: diagnostic ? diagnostic.retryCount : 0,
+      });
+    } catch (error) {
+      this.fault('onTestCaseResult', error);
+    }
   }
 
   onTestRunEnd() {

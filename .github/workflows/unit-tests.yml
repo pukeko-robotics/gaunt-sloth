@@ -117,17 +117,20 @@ jobs:
       # choice: the console log prints only tests over 300 ms and a suite total, and the Ink render
       # specs' headroom against their per-test ceiling is a per-test distribution on THIS cell —
       # the number to re-read before a dependency bump, not after a red. The reporter is added
-      # beside vitest's own reporters (see vitest.config.ts), prints nothing, and cannot change the
-      # exit code, so the cell passes and fails exactly as it did without it.
+      # beside vitest's own reporters (see vitest.config.ts), and every hook swallows its own fault,
+      # so the run's exit code is the tests' alone.
       - name: Run Tests
         run: pnpm test
         env:
           GTH_TEST_TIMINGS_FILE: ${{ runner.temp }}/test-timings.json
 
-      # `!cancelled()` so a red cell, the sample worth most, is uploaded too; `warn` so a missing
-      # file can never turn the cell red. One name per cell, since artifact names must be unique.
+      # `!cancelled()` so a red cell, the sample worth most, is uploaded too. `continue-on-error`
+      # because this workflow is also release.yml's gate: an artifact-service error must not turn a
+      # cell, or a release, red over a measurement. `warn` so a missing file is not an error either.
+      # One name per cell, since artifact names must be unique.
       - name: Upload per-test timings
         if: ${{ !cancelled() }}
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: test-timings-${{ matrix.os }}-node-${{ matrix.node-version }}

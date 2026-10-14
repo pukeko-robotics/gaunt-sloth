@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,8 +10,10 @@ import { configDefaults } from 'vitest/config';
  *
  * It is how the Ink render specs' headroom on the Windows unit cell is measured, so the two things
  * worth pinning are that it records each test against the timeout THAT test ran under, and that it
- * cannot change the run it measures: it adds to vitest's reporters rather than replacing them, and
- * a failure to write its file is reported and swallowed rather than thrown.
+ * cannot change the run it measures: it adds to vitest's reporters rather than replacing them, a
+ * fault in any of its hooks is reported and swallowed rather than thrown, and its artifact upload
+ * cannot fail the cell. The reporter-list case discriminates on CI, where `GITHUB_ACTIONS` puts
+ * `github-actions` among the defaults; in a plain shell the defaults are `['default']` alone.
  */
 
 const ROOT = join(import.meta.dirname, '..', '..', '..');
@@ -19,7 +22,13 @@ const ROOT = join(import.meta.dirname, '..', '..', '..');
 function testCase(
   file: string,
   fullName: string,
-  options: { duration: number; startTime: number; timeout?: number; state?: string }
+  options: {
+    duration: number;
+    startTime: number;
+    timeout?: number;
+    state?: string;
+    retryCount?: number;
+  }
 ) {
   return {
     module: { moduleId: join(ROOT, file) },
@@ -29,7 +38,7 @@ function testCase(
     diagnostic: () => ({
       duration: options.duration,
       startTime: options.startTime,
-      retryCount: 0,
+      retryCount: options.retryCount ?? 0,
     }),
   };
 }
@@ -62,6 +71,7 @@ describe('OPS-122 the per-test timings reporter', () => {
         duration: 56,
         startTime: 2000,
         state: 'failed',
+        retryCount: 2,
       })
     );
     reporter.onTestRunEnd();
@@ -85,10 +95,47 @@ describe('OPS-122 the per-test timings reporter', () => {
         durationMs: 56,
         startTime: 2000,
         timeoutMs: 10_000,
-        retryCount: 0,
+        retryCount: 2,
       },
     ]);
   });
+
+  it('swallows a fault in onInit and onTestCaseResult, saying so once on stderr', async () => {
+    const { default: TestTimingsReporter } =
+      await import('../../../scripts/vitest-test-timings.mjs');
+    const reporter = new TestTimingsReporter({ outputFile: join(tmpdir(), 'unused.json') });
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+    // Inputs whose shape moved: no `config`, and a test case with none of its methods.
+    expect(() => reporter.onInit({})).not.toThrow();
+    expect(() => reporter.onTestCaseResult({})).not.toThrow();
+    expect(() => reporter.onTestCaseResult({})).not.toThrow();
+
+    expect(stderr).toHaveBeenCalledTimes(1);
+    expect(stderr).toHaveBeenCalledWith(expect.stringContaining('test timings: onInit failed'));
+  });
+
+  it('leaves a real run that passes exiting 0 when both of those hooks fault', () => {
+    // The fixture subclasses the reporter and feeds both hooks a moved shape; see its config.
+    const fixture = join(ROOT, 'packages', 'app', 'spec', 'fixtures', 'timingsReporterFault');
+    dir = mkdtempSync(join(tmpdir(), 'gth-timings-'));
+    const run = spawnSync(
+      process.execPath,
+      [join(ROOT, 'node_modules', 'vitest', 'vitest.mjs'), 'run', '--config', 'vitest.config.mjs'],
+      {
+        cwd: fixture,
+        encoding: 'utf8',
+        env: { ...process.env, GTH_TEST_TIMINGS_FILE: join(dir, 'timings.json') },
+        timeout: 60_000,
+      }
+    );
+    const output = `${run.stdout}\n${run.stderr}`;
+    // Proves the fixture ran its test, and that both guards were reached.
+    expect(output).toMatch(/Tests\s+1 passed/);
+    expect(output).toContain('test timings: onInit failed');
+    expect(output).not.toContain('Unhandled Reporter Error');
+    expect(run.status).toBe(0);
+  }, 60_000);
 
   it('reports a write failure on stderr and does not throw it into the run', async () => {
     const { default: TestTimingsReporter } =
@@ -134,6 +181,11 @@ describe('OPS-122 the timings reporter is wired beside vitest’s own reporters'
     const platforms = workflow.slice(workflow.indexOf('  test-platforms:'));
     expect(platforms).toContain('GTH_TEST_TIMINGS_FILE: ${{ runner.temp }}/test-timings.json');
     expect(platforms).toContain('path: ${{ runner.temp }}/test-timings.json');
-    expect(platforms).toContain('if-no-files-found: warn');
+    const upload = platforms.slice(platforms.indexOf('- name: Upload per-test timings'));
+    expect(upload).toContain('if-no-files-found: warn');
+    // Uploaded from a red cell too, and an artifact-service error is the step's failure, not the
+    // cell's — this workflow is also the release gate.
+    expect(upload).toContain('if: ${{ !cancelled() }}');
+    expect(upload).toContain('continue-on-error: true');
   });
 });
