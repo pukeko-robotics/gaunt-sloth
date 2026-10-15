@@ -20,6 +20,8 @@ class FaultingInputs extends TestTimingsReporter {
 }
 
 export default defineConfig({
+  // The spec points the cache outside the repo, so a run leaves nothing in the fixture.
+  cacheDir: process.env.GTH_FIXTURE_CACHE_DIR,
   test: {
     root: dirname(fileURLToPath(import.meta.url)),
     include: ['passes.check.mjs'],

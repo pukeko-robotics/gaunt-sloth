@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { stripVTControlCharacters } from 'node:util';
 import { configDefaults } from 'vitest/config';
 
 /**
@@ -28,12 +29,16 @@ function testCase(
     timeout?: number;
     state?: string;
     retryCount?: number;
+    projectTimeout?: number;
   }
 ) {
   return {
     module: { moduleId: join(ROOT, file) },
     fullName,
     options: { timeout: options.timeout },
+    ...(options.projectTimeout === undefined
+      ? {}
+      : { project: { config: { testTimeout: options.projectTimeout } } }),
     result: () => ({ state: options.state ?? 'passed' }),
     diagnostic: () => ({
       duration: options.duration,
@@ -74,6 +79,13 @@ describe('OPS-122 the per-test timings reporter', () => {
         retryCount: 2,
       })
     );
+    reporter.onTestCaseResult(
+      testCase('packages/app/spec/tui/C.spec.tsx', 'suite > project ceiling', {
+        duration: 78,
+        startTime: 3000,
+        projectTimeout: 20_000,
+      })
+    );
     reporter.onTestRunEnd();
 
     const written = JSON.parse(readFileSync(outputFile, 'utf8'));
@@ -96,6 +108,15 @@ describe('OPS-122 the per-test timings reporter', () => {
         startTime: 2000,
         timeoutMs: 10_000,
         retryCount: 2,
+      },
+      {
+        file: 'packages/app/spec/tui/C.spec.tsx',
+        name: 'suite > project ceiling',
+        state: 'passed',
+        durationMs: 78,
+        startTime: 3000,
+        timeoutMs: 20_000,
+        retryCount: 0,
       },
     ]);
   });
@@ -125,16 +146,23 @@ describe('OPS-122 the per-test timings reporter', () => {
       {
         cwd: fixture,
         encoding: 'utf8',
-        env: { ...process.env, GTH_TEST_TIMINGS_FILE: join(dir, 'timings.json') },
+        env: {
+          ...process.env,
+          GTH_TEST_TIMINGS_FILE: join(dir, 'timings.json'),
+          GTH_FIXTURE_CACHE_DIR: join(dir, 'cache'),
+        },
         timeout: 60_000,
       }
     );
-    const output = `${run.stdout}\n${run.stderr}`;
+    // Uncoloured, because a CI runner forces colour on and the counts are then split by escapes.
+    const output = stripVTControlCharacters(`${run.stdout}\n${run.stderr}`);
     // Proves the fixture ran its test, and that both guards were reached.
     expect(output).toMatch(/Tests\s+1 passed/);
     expect(output).toContain('test timings: onInit failed');
     expect(output).not.toContain('Unhandled Reporter Error');
     expect(run.status).toBe(0);
+    // Its cache went to the temp dir, not into the repo.
+    expect(existsSync(join(fixture, 'node_modules'))).toBe(false);
   }, 60_000);
 
   it('reports a write failure on stderr and does not throw it into the run', async () => {
