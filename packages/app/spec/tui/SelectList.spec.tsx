@@ -247,9 +247,9 @@ describe('CFG-20 type-to-filter interaction', () => {
 
   it('keeps a bare control byte out of the filter while an ordinary character still lands', async () => {
     // TUI-C51 — the third of the TUI's text buffers, on the shared `isTypedText` predicate now that
-    // `Ctrl+/` is a chord this app accepts. `0x1f` reaches every `useInput` subscriber with no
-    // modifier flag set, so nothing here can recognise it as a chord — and an accepted one would be
-    // invisible in `filter: gro`, which is why the assertion is that the filter still MATCHES.
+    // `Ctrl+/` is a chord this app accepts. `0x1f` reaches every `useInput` subscriber — Ink
+    // decodes it as `ctrl` + `_` — and the filter must take nothing from it. A typed byte or `_`
+    // would leave the filter matching nothing, which is why the assertion is that it still MATCHES.
     const { lastFrame, stdin } = render(
       <SelectList title="Pick a model" items={models} initialIndex={0} onSelect={vi.fn()} />
     );

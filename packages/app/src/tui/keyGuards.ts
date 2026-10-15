@@ -8,14 +8,13 @@
  * rendered. A buffer that decides "is this text?" differently from its neighbour therefore does not
  * merely differ in style: it types the byte its neighbour refused.
  *
- * **A modifier flag is not enough to recognise a control byte, and that is the whole point.** Ink's
- * ctrl+letter branch is bounded at `\x1a`, so every control byte above it — `Ctrl+/` is `0x1f`,
- * `Ctrl+\` is `0x1c` — decodes with `ctrl: false` and an `input` holding the byte itself. The same
- * shape appears without any chord at all: a `Ctrl+C` released together with a held-back Escape
- * reaches Ink merged as `ESC ^C`, and `use-input` strips the escape prefix to leave `input` as
- * `'\x03'` with no modifier set (`mouseStdin.ts`, `spec/tui/escapeHoldBack.spec.tsx`). A guard that
- * tests only the modifiers passes all of those through as if they were typed, and the symptom is an
- * invisible byte in whatever has focus — which a user reads as a broken prompt.
+ * **A modifier flag is not enough to recognise a control byte, and that is the whole point.** Ink
+ * decodes a control byte that arrives ALONE as a ctrl chord — `Ctrl+/` (`0x1f`) as `ctrl` + `_`,
+ * `Ctrl+\` (`0x1c`) as `ctrl` + `\` — and one that arrives behind an escape as a ctrl+meta chord.
+ * But a control byte inside a longer chunk is delivered as text: `input` holds the byte itself and
+ * no modifier is set. A guard that tests only the modifiers passes that through as if it were
+ * typed, and the symptom is an invisible byte in whatever has focus — which a user reads as a
+ * broken prompt.
  *
  * **One event is not one character, so the refusal is per CHARACTER.** Ink splits a stdin chunk on
  * ESC and on the two backspace bytes and on nothing else — deliberately, because `\r` and `\t`
@@ -55,6 +54,14 @@ export interface ChordModifiers {
  * is why it is an ADDITIONAL spelling and never the only way in.
  */
 const CTRL_SLASH = '\x1f';
+
+/**
+ * `Ctrl+/` as Ink's `useInput` delivers it: Ink decodes every C0 control byte as a ctrl chord on
+ * the character the caret notation names, so `0x1f` arrives as `{input: '_', ctrl: true}` — the
+ * same event `Ctrl+_` produces, since a terminal sends the one byte for both. The bare byte
+ * ({@link CTRL_SLASH}) stays accepted for a caller that hands over the raw input.
+ */
+const CTRL_SLASH_DECODED = '_';
 
 /** Whether a modifier that makes a key a chord is set — anything but `shift`. */
 function isChord(key: ChordModifiers): boolean {
@@ -147,15 +154,15 @@ export function isTypedText(input: string, key: ChordModifiers): boolean {
  * **`Ctrl+G` is the binding; `Ctrl+/` is an additional accepted spelling.** `Ctrl+G` emits `0x07`
  * in every terminal measured and parses cleanly as `{name: 'g', ctrl: true}`, so it needs no
  * raw-byte handler and nothing else on this surface claims it. `Ctrl+/` is the more memorable name
- * and works on Linux, but it emits nothing at all on macOS — so it can only ever be a second door,
- * and it arrives as the bare byte with no modifier flag (see `CTRL_SLASH`).
+ * and works on Linux, but it emits nothing at all on macOS — so it can only ever be a second door.
+ * Ink delivers it as `ctrl` + `_` (see `CTRL_SLASH_DECODED`); the bare byte is accepted too.
  *
  * Two near neighbours are deliberately NOT here. `Alt+/` on macOS emits `0xc3 0xb7`, which is the
  * printable `÷` — ordinary Option composition, indistinguishable from the user typing that
- * character. `Ctrl+\` (`0x1c`) carries `Ctrl+/`'s exact defect and is conventionally `SIGQUIT`.
+ * character. `Ctrl+\` (`0x1c`, delivered as `ctrl` + `\`) is conventionally `SIGQUIT`.
  */
 export function opensCommandMenu(input: string, key: ChordModifiers): boolean {
   if (key.meta || key.super || key.hyper) return false;
-  if (key.ctrl) return input === 'g';
+  if (key.ctrl) return input === 'g' || input === CTRL_SLASH_DECODED;
   return input === CTRL_SLASH;
 }

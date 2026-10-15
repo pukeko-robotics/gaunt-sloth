@@ -15,8 +15,8 @@ import {
  * The cases below are in two halves and the split is the point. The predicates are pure functions
  * of `(input, key)`, so most of them can be stated directly — but a predicate that is right about a
  * key object nothing produces is worth nothing, and every trap this node exists to close is a trap
- * in the DECODE: `Ctrl+/` is a control byte that arrives with `ctrl: false`, and `Ctrl+J` is a
- * control byte that must nonetheless still reach the buffer. So the second half writes the RAW
+ * in the DECODE: `Ctrl+/` is a control byte Ink delivers as a chord on a DIFFERENT character
+ * (`ctrl` + `_`), and `Ctrl+J` is a control byte that must nonetheless still reach the buffer. So the second half writes the RAW
  * BYTES a terminal sends into a real `useInput` subscriber and asserts what the predicates say
  * about what Ink hands it — the production decode, on every platform of the unit matrix.
  */
@@ -182,19 +182,21 @@ describe('the predicates over Ink’s own decode of the raw bytes (TUI-C51)', ()
     expect(isTypedText(event.input, event)).toBe(false);
   });
 
-  it('Ctrl+/ decodes to a bare 0x1f with NO modifier — the case a modifier guard cannot see', async () => {
+  it('Ctrl+/ decodes to ctrl + `_`, NOT to a slash — the shape the menu chord has to name', async () => {
     const event = await deliver('\x1f');
-    // `ctrl: false` is the assertion, not an incidental: Ink's ctrl+letter branch is bounded at
-    // \x1a, so every control byte above it arrives looking like ordinary text.
-    expect(event).toEqual({ input: '\x1f', ctrl: false, meta: false, super: false, hyper: false });
+    // The whole event is the assertion. Ink decodes a lone C0 byte above \x1a by caret notation
+    // (byte + 0x40), so 0x1f arrives as `_` with `ctrl` set: a binding written as ctrl + `/` would
+    // never fire, and one that only looked for the bare byte would miss the chord entirely.
+    expect(event).toEqual({ input: '_', ctrl: true, meta: false, super: false, hyper: false });
     expect(opensCommandMenu(event.input, event)).toBe(true);
     expect(isTypedText(event.input, event)).toBe(false);
   });
 
   it('Ctrl+\\ decodes the same way, is refused as text, and is bound to nothing', async () => {
     const event = await deliver('\x1c');
-    expect(event.input).toBe('\x1c');
-    expect(event.ctrl).toBe(false);
+    // Caret notation again: 0x1c is ctrl + `\`.
+    expect(event.input).toBe('\\');
+    expect(event.ctrl).toBe(true);
     expect(opensCommandMenu(event.input, event)).toBe(false);
     expect(isTypedText(event.input, event)).toBe(false);
   });
