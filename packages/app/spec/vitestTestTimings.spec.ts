@@ -121,6 +121,25 @@ describe('OPS-122 the per-test timings reporter', () => {
     ]);
   });
 
+  it("names each file relative to vitest's root, not to the working directory", async () => {
+    const { default: TestTimingsReporter } =
+      await import('../../../scripts/vitest-test-timings.mjs');
+    dir = mkdtempSync(join(tmpdir(), 'gth-timings-'));
+    const outputFile = join(dir, 'timings.json');
+    const reporter = new TestTimingsReporter({ outputFile });
+    // A root that is not the cwd this spec runs in.
+    reporter.onInit({ config: { root: join(ROOT, 'packages'), testTimeout: 10_000 } });
+    reporter.onTestCaseResult(
+      testCase('packages/app/spec/tui/A.spec.tsx', 'suite > case', { duration: 1, startTime: 1 })
+    );
+    reporter.onTestRunEnd();
+
+    const written = JSON.parse(readFileSync(outputFile, 'utf8'));
+    expect(written.tests.map((row: { file: string }) => row.file)).toEqual([
+      'app/spec/tui/A.spec.tsx',
+    ]);
+  });
+
   it('swallows a fault in onInit and onTestCaseResult, saying so once on stderr', async () => {
     const { default: TestTimingsReporter } =
       await import('../../../scripts/vitest-test-timings.mjs');
@@ -134,6 +153,16 @@ describe('OPS-122 the per-test timings reporter', () => {
 
     expect(stderr).toHaveBeenCalledTimes(1);
     expect(stderr).toHaveBeenCalledWith(expect.stringContaining('test timings: onInit failed'));
+
+    // The second guard on its own: a sound onInit, so the one report is onTestCaseResult's.
+    stderr.mockClear();
+    const second = new TestTimingsReporter({ outputFile: join(tmpdir(), 'unused.json') });
+    second.onInit({ config: { root: ROOT, testTimeout: 10_000 } });
+    expect(() => second.onTestCaseResult({})).not.toThrow();
+    expect(stderr).toHaveBeenCalledTimes(1);
+    expect(stderr).toHaveBeenCalledWith(
+      expect.stringContaining('test timings: onTestCaseResult failed')
+    );
   });
 
   it('leaves a real run that passes exiting 0 when both of those hooks fault', () => {
@@ -156,7 +185,9 @@ describe('OPS-122 the per-test timings reporter', () => {
     );
     // Uncoloured, because a CI runner forces colour on and the counts are then split by escapes.
     const output = stripVTControlCharacters(`${run.stdout}\n${run.stderr}`);
-    // Proves the fixture ran its test, and that both guards were reached.
+    // Proves the fixture ran its test and the onInit guard reported. The onTestCaseResult fault is
+    // not named here, since a reporter reports once; that it was swallowed is what the exit code
+    // and the missing 'Unhandled Reporter Error' show, and the test above names it directly.
     expect(output).toMatch(/Tests\s+1 passed/);
     expect(output).toContain('test timings: onInit failed');
     expect(output).not.toContain('Unhandled Reporter Error');
