@@ -898,10 +898,20 @@ their config has a problem.
   stray character into whatever the user was part-way through writing; and gating a binding on "a
   turn is running" does not avoid it, because the prompt stays mounted while a turn streams.
   - **The predicate refuses a control character whatever the modifiers say, and that half is the one
-    a modifier test cannot do.** Ink's ctrl+letter branch is bounded at `\x1a`, so `Ctrl+/` (`0x1f`)
-    and `Ctrl+\` (`0x1c`) decode with `ctrl: false` and an `input` holding the byte; the `ESC ^C`
-    residual of the hold-back filter (`mouseStdin.ts`) arrives the same way. All of them look like
-    typed text to a four-modifier guard, and the symptom is an invisible byte in whatever has focus.
+    a modifier test cannot do.** Ink decodes a control byte that arrives alone as a ctrl chord, by
+    caret notation — `Ctrl+/` (`0x1f`) as `ctrl` + `_`, `Ctrl+\` (`0x1c`) as `ctrl` + `\` — and it
+    splits `0x03` out of any chunk as its own Ctrl+C. Every other control byte inside a longer chunk
+    (a paste, with bracketed paste off) arrives as text: `input` holds the byte and no modifier is
+    set. That is what looks like typed text to a four-modifier guard, and the symptom is an
+    invisible byte in whatever has focus.
+  - **A control byte behind an escape decodes as `ctrl` + `meta` on its letter.** That is what a
+    legacy terminal sends for `Alt+Ctrl+<key>`, and what the hold-back filter (`mouseStdin.ts`)
+    releases when the key lands inside its window after an Escape. `Escape` then `Ctrl+C` is refused
+    by the meta guard in `isCtrlKey` (`tui/keyGuards.ts`), so it never fires the `Ctrl+C` ladder and
+    never scraps a draft; every ctrl+letter binding asks the same guard. `Escape` or `Alt` followed
+    by `Ctrl+J`, `Tab`, `Ctrl+B`, `Ctrl+F` or `Ctrl+N` is deliberately left as Ink decodes it: no
+    newline for `Ctrl+J`, the Tab binding for `Tab`, word motion for `Ctrl+B`/`Ctrl+F`, and the
+    debug search's next match for `Ctrl+N`.
   - **`shift` is deliberately not refused** — it is how a capital is typed, not a different key.
     `capsLock`/`numLock` sit on the same object and are lock states, not modifiers.
   - **The refusal is per CHARACTER, because one event is not one keystroke.** Ink hands a pasted

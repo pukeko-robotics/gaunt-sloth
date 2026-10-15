@@ -17,9 +17,10 @@ import {
  * of `(input, key)`, so most of them can be stated directly — but a predicate that is right about a
  * key object nothing produces is worth nothing, and every trap this node exists to close is a trap
  * in the DECODE: `Ctrl+/` is a control byte Ink delivers as a chord on a DIFFERENT character
- * (`ctrl` + `_`), and `Ctrl+J` is a control byte that must nonetheless still reach the buffer. So the second half writes the RAW
- * BYTES a terminal sends into a real `useInput` subscriber and asserts what the predicates say
- * about what Ink hands it — the production decode, on every platform of the unit matrix.
+ * (`ctrl` + `_`), and `Ctrl+J` is a control byte that must nonetheless still reach the buffer. So
+ * the second half writes the RAW BYTES a terminal sends into a real `useInput` subscriber and
+ * asserts what the predicates say about what Ink hands it — the production decode, on every
+ * platform of the unit matrix.
  */
 
 /** One decoded keypress, as `useInput` delivers it. */

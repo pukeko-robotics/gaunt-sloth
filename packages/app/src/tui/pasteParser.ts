@@ -3,7 +3,7 @@
  *
  * A terminal in **bracketed paste mode** (`\x1b[?2004h`) wraps pasted content between `\x1b[200~`
  * and `\x1b[201~`, so a multi-line paste is distinguishable from typed keystrokes (its embedded
- * newlines are NOT Enter presses and must not submit the prompt). Ink 7.1.0 already tokenizes that
+ * newlines are NOT Enter presses and must not submit the prompt). Ink already tokenizes that
  * protocol internally and delivers the payload via its `usePaste` hook, which is what the TUI wires
  * up in production (see `PromptInput.tsx`) — so the live tokenizing is Ink's job, not ours.
  *

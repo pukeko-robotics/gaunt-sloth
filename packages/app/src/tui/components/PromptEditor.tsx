@@ -311,8 +311,9 @@ export function PromptEditor({
     // Everything else that carries text. The guard is the point: a chord belongs to whoever bound
     // it, and an editor whose insert branch is the fall-through for unrecognised chords types `t`
     // when the user presses Ctrl+T — or splices a control byte that arrived inside a longer chunk
-    // in as if it were a character, which no modifier flag reports (see `keyGuards.ts`). `shift` is the one modifier deliberately
-    // not refused: it is how a capital is typed, not a different key.
+    // in as if it were a character, which no modifier flag reports (see `keyGuards.ts`). `shift`
+    // is the one modifier deliberately not refused: it is how a capital is typed, not a different
+    // key.
     //
     // What is inserted is the event's TEXT, not the event: one `input` is a whole paste whenever
     // the terminal is not in bracketed-paste mode, so the control characters are dropped out of it

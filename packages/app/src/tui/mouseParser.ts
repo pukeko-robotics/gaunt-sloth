@@ -1,10 +1,10 @@
 /**
  * TUI-C37 — pure, React-free tokenizer for SGR mouse reports.
  *
- * Ink 7.1.1 reads no mouse at all, so unlike bracketed paste (where Ink owns the protocol and
- * `pasteParser.ts` only normalizes the payload) the whole decoding job is ours. The division of
- * labour is the same though: this file is a pure function over strings, so every button, modifier
- * and malformed-input case is unit-testable without a terminal.
+ * Ink reads no mouse at all (it drops the reports), so unlike bracketed paste (where Ink owns the
+ * protocol and `pasteParser.ts` only normalizes the payload) the whole decoding job is ours. The
+ * division of labour is the same though: this file is a pure function over strings, so every
+ * button, modifier and malformed-input case is unit-testable without a terminal.
  *
  * **The wire format.** In SGR mode (`ESC[?1006h`) a report is `ESC[<b;x;yM` for a press and
  * `ESC[<b;x;ym` for a release — the FINAL BYTE, not the button bits, is what distinguishes them,

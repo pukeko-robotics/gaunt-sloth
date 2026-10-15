@@ -11,19 +11,20 @@
  * **A modifier flag is not enough to recognise a control byte, and that is the whole point.** Ink
  * decodes a control byte that arrives ALONE as a ctrl chord — `Ctrl+/` (`0x1f`) as `ctrl` + `_`,
  * `Ctrl+\` (`0x1c`) as `ctrl` + `\` — and one that arrives behind an escape as a ctrl+meta chord.
- * But a control byte inside a longer chunk is delivered as text: `input` holds the byte itself and
- * no modifier is set. A guard that tests only the modifiers passes that through as if it were
- * typed, and the symptom is an invisible byte in whatever has focus — which a user reads as a
- * broken prompt.
+ * Ink also splits `0x03` out of any chunk, as its own Ctrl+C. Every other control byte inside a
+ * longer chunk is delivered as text: `input` holds the byte itself and no modifier is set. A guard
+ * that tests only the modifiers passes that through as if it were typed, and the symptom is an
+ * invisible byte in whatever has focus — which a user reads as a broken prompt.
  *
  * **One event is not one character, so the refusal is per CHARACTER.** Ink splits a stdin chunk on
- * ESC and on the two backspace bytes and on nothing else — deliberately, because `\r` and `\t`
- * legitimately appear inside pasted text — and `useInput`'s own contract is that a paste of more
- * than one character arrives as a single call with the whole string as `input`. A predicate that
- * refused the whole EVENT because one character in it is a control byte would therefore discard an
- * entire paste, silently and with no way to get it back; and a paste is exactly what arrives on
- * this channel whenever bracketed-paste mode is off, which it is in every state where the prompt
- * (the only holder of `usePaste`) is not mounted — the focused debug pane's search, above all.
+ * ESC, on the two backspace bytes and on `0x03`, and on nothing else — deliberately, because `\r`
+ * and `\t` legitimately appear inside pasted text — and `useInput`'s own contract is that a paste
+ * of more than one character arrives as a single call with the whole string as `input`. A
+ * predicate that refused the whole EVENT because one character in it is a control byte would
+ * therefore discard an entire paste, silently and with no way to get it back; and a paste is
+ * exactly what arrives on this channel whenever bracketed-paste mode is off, which it is in every
+ * state where the prompt (the only holder of `usePaste`) is not mounted — the focused debug pane's
+ * search, above all.
  * {@link typedText} keeps the characters and drops the control bytes, so what a buffer receives is
  * what a user could have typed into it, and every bare control byte still reaches nothing.
  */
