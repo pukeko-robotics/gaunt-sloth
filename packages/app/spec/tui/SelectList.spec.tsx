@@ -412,8 +412,15 @@ describe('CFG-20 runInkSelect abort wire (real Ink render, fake streams)', () =>
       return 100;
     }
     frames: string[] = [];
-    write = (frame: string): void => {
+    // A Writable calls a write's callback once the chunk is flushed, asynchronously, and Ink
+    // settles `waitUntilExit()` on exactly that: unmount ends with an empty write whose callback
+    // resolves the exit promise. A stand-in that dropped the callback would leave `runInkSelect`
+    // waiting forever, which is a fake failing to be a stream, not the wire under test failing.
+    write = (frame: string, ...rest: unknown[]): boolean => {
       this.frames.push(frame);
+      const callback = rest.at(-1);
+      if (typeof callback === 'function') setImmediate(() => (callback as () => void)());
+      return true;
     };
     lastFrame = (): string | undefined => this.frames.at(-1);
   }
