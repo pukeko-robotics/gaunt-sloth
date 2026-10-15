@@ -3,6 +3,7 @@ import React from 'react';
 import { Text, useInput } from 'ink';
 import { render } from 'ink-testing-library';
 import {
+  isCtrlKey,
   isTypedText,
   opensCommandMenu,
   typedMultilineText,
@@ -174,6 +175,16 @@ describe('opensCommandMenu (TUI-C51)', () => {
   });
 });
 
+describe('isCtrlKey', () => {
+  it('is ctrl on exactly that letter, and refuses the same letter under meta as well', () => {
+    expect(isCtrlKey('c', { ctrl: true }, 'c')).toBe(true);
+    expect(isCtrlKey('c', { ctrl: true, meta: true }, 'c')).toBe(false);
+    expect(isCtrlKey('c', {}, 'c')).toBe(false);
+    expect(isCtrlKey('c', { meta: true }, 'c')).toBe(false);
+    expect(isCtrlKey('t', { ctrl: true }, 'c')).toBe(false);
+  });
+});
+
 describe('the predicates over Ink’s own decode of the raw bytes (TUI-C51)', () => {
   it('Ctrl+G decodes to a ctrl-modified letter, which opens the menu and is never typed', async () => {
     const event = await deliver('\x07');
@@ -199,6 +210,19 @@ describe('the predicates over Ink’s own decode of the raw bytes (TUI-C51)', ()
     expect(event.ctrl).toBe(true);
     expect(opensCommandMenu(event.input, event)).toBe(false);
     expect(isTypedText(event.input, event)).toBe(false);
+  });
+
+  it('Ctrl+C is the ctrl key on `c`; the same byte behind an escape decodes with meta and is not', async () => {
+    const alone = await deliver('\x03');
+    expect(alone).toEqual({ input: 'c', ctrl: true, meta: false, super: false, hyper: false });
+    expect(isCtrlKey(alone.input, alone, 'c')).toBe(true);
+
+    // What the escape hold-back releases when Ctrl+C lands inside its window, and what a legacy
+    // terminal sends for Alt+Ctrl+C: one event, carrying `meta` as well, bound to nothing.
+    const merged = await deliver('\x1b\x03');
+    expect(merged).toEqual({ input: 'c', ctrl: true, meta: true, super: false, hyper: false });
+    expect(isCtrlKey(merged.input, merged, 'c')).toBe(false);
+    expect(isTypedText(merged.input, merged)).toBe(false);
   });
 
   it('Ctrl+J decodes to a bare newline the shared predicate refuses — so it needs its own branch', async () => {

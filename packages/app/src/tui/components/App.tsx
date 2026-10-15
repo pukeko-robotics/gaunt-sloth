@@ -103,7 +103,7 @@ import { findMatches, scrollOffsetForLine, stepMatch } from '#src/tui/debugSearc
 import { useTranscriptScroll } from '#src/tui/useTranscriptScroll.js';
 import { isComposingKeystroke, WHEEL_ROWS_PER_NOTCH } from '#src/tui/transcriptScroll.js';
 import { TUI_HINT_SUFFIX, TUI_KEY_BINDINGS } from '#src/tui/keyBindings.js';
-import { isTypedText, typedText } from '#src/tui/keyGuards.js';
+import { isCtrlKey, isTypedText, typedText } from '#src/tui/keyGuards.js';
 
 /**
  * The empty line list a debug tab that is not on screen hands the panel. A module-level constant so
@@ -1545,10 +1545,10 @@ export function App(props: TuiAppProps): React.ReactElement {
   useInput((input, key) => {
     // [[TUI-C79]] — **Ctrl+C is this app's, not Ink's**, and it is answered here before anything
     // else can claim it. `render()` takes `exitOnCtrlC: false` (`tuiSessionModule.tsx`), which is
-    // what routes the byte to `useInput` at all; the predicate is Ink's own (`use-input.js` skips
-    // subscribers on `input === 'c' && key.ctrl`), so the set of keystrokes this branch claims is
-    // EXACTLY the set Ink used to swallow, and no key that reached a subscriber before reaches a
-    // different one now.
+    // what routes the byte to `useInput` at all. The predicate is Ink's own (`use-input.js` skips
+    // subscribers on a `c` with `ctrl` set) minus one case, `isCtrlKey`'s: a `Ctrl+C` merged with
+    // a held-back Escape decodes with `meta` set as well, and it is not the interrupt key (see
+    // `keyGuards.ts` and `spec/tui/escapeHoldBack.spec.tsx`).
     //
     // **Three meanings, most local first** — the shape `Esc` on this surface already has:
     //
@@ -1573,7 +1573,7 @@ export function App(props: TuiAppProps): React.ReactElement {
     // today: `/resume` is idle-only and the prompt is unmounted while its picker is up, so no turn
     // can be started under it and the ladder would fall to rung 3 and exit anyway. Naming it here
     // is what keeps that answer from depending on which rung happens to catch it.
-    if (key.ctrl && input === 'c') {
+    if (isCtrlKey(input, key, 'c')) {
       if (pendingAttack || pendingApproval || approvalsPicker || resumePicker) {
         quit();
         return;
@@ -1730,7 +1730,7 @@ export function App(props: TuiAppProps): React.ReactElement {
     // declining to bind the key: <PromptEditor>'s insert branch refuses every ctrl and meta chord,
     // so a key bound here cannot also land in the buffer (the prompt is mounted while a turn
     // streams too, so gating on `running` never prevented it).
-    if (key.ctrl && input === 't') {
+    if (isCtrlKey(input, key, 't')) {
       // Share the /verbose helper so the same state-aware notice is committed (TUI-C14).
       toggleTools();
       return;

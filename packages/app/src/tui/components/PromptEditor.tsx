@@ -21,7 +21,7 @@ import {
   type EditorState,
   type KillResult,
 } from '#src/tui/lineEditor.js';
-import { typedMultilineText } from '#src/tui/keyGuards.js';
+import { isCtrlKey, typedMultilineText } from '#src/tui/keyGuards.js';
 import { wrappedRows } from '#src/tui/textRows.js';
 
 /**
@@ -188,11 +188,11 @@ export function PromptEditor({
 
     // Line start / end. `Home`/`End` are claimed only WITHOUT Ctrl: <App> binds Ctrl+Home/Ctrl+End
     // to scrolling the transcript, and leaving those two alone is what keeps both bindings working.
-    if ((key.ctrl && input === 'a') || (key.home && !key.ctrl)) {
+    if (isCtrlKey(input, key, 'a') || (key.home && !key.ctrl)) {
       onChange(moveLineStart);
       return;
     }
-    if ((key.ctrl && input === 'e') || (key.end && !key.ctrl)) {
+    if (isCtrlKey(input, key, 'e') || (key.end && !key.ctrl)) {
       onChange(moveLineEnd);
       return;
     }
@@ -239,7 +239,7 @@ export function PromptEditor({
     // reach. Forward has both spellings, and `{delete, meta}` covers `\x1b[3;3~` and `\x1b\x1b[3~`
     // alike — Ink sets `meta` from the modifier bitmask and, separately, from a doubled leading
     // escape, so the two encodings converge before they get here.
-    if ((key.backspace && key.meta) || (key.ctrl && input === 'w')) {
+    if ((key.backspace && key.meta) || isCtrlKey(input, key, 'w')) {
       onKill(killWordLeft);
       return;
     }
@@ -259,7 +259,7 @@ export function PromptEditor({
       onChange(deleteBackward);
       return;
     }
-    if (key.delete || (key.ctrl && input === 'd')) {
+    if (key.delete || isCtrlKey(input, key, 'd')) {
       onChange(deleteForward);
       return;
     }
@@ -267,17 +267,17 @@ export function PromptEditor({
     // Killing to the edges of the caret's own logical line — the partners of `Ctrl+A`/`Ctrl+E`
     // above, scoped exactly as they are. `Ctrl+U` goes to the line START, not the whole line;
     // killing a whole line is `Ctrl+E` then `Ctrl+U`.
-    if (key.ctrl && input === 'k') {
+    if (isCtrlKey(input, key, 'k')) {
       onKill(killToLineEnd);
       return;
     }
-    if (key.ctrl && input === 'u') {
+    if (isCtrlKey(input, key, 'u')) {
       onKill(killToLineStart);
       return;
     }
     // The other half of the four kills above: without a way back, `Ctrl+U` on a composed message is
     // an unrecoverable keystroke, because this prompt has no undo of any kind.
-    if (key.ctrl && input === 'y') {
+    if (isCtrlKey(input, key, 'y')) {
       onYank();
       return;
     }

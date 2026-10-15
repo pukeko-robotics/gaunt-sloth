@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
 import { SelectCancelledError } from '#src/tui/selectCancelled.js';
 import { useSizedStdout, useTerminalSize } from '#src/tui/useTerminalSize.js';
-import { isTypedText, typedText } from '#src/tui/keyGuards.js';
+import { isCtrlKey, isTypedText, typedText } from '#src/tui/keyGuards.js';
 import { clampWindowStart } from '#src/tui/listWindow.js';
 
 // The windowing arithmetic lives in `listWindow.ts` (TUI-C92), shared with the slash menu; it is
@@ -179,7 +179,7 @@ export function SelectList({
 
   useInput((input, key) => {
     // Ctrl+C is an unconditional abort (SIGINT semantics), regardless of any typed filter.
-    if (key.ctrl && input === 'c') {
+    if (isCtrlKey(input, key, 'c')) {
       onCancel?.();
       return;
     }

@@ -35,7 +35,8 @@
  *
  * The consequence is measured, not hypothetical: `PARTIAL_SEQUENCE` does not match `ESC` + `0x03`,
  * so an interrupt arriving inside the hold is released **together with** the Escape and Ink reads
- * `ESC ^C` rather than a bare interrupt. **Ctrl+C within ~120 ms of an Escape therefore does not
+ * `ESC ^C` rather than a bare interrupt — `ctrl` + `meta` + `c`, which `isCtrlKey` in
+ * `keyGuards.ts` refuses. **Ctrl+C within ~120 ms of an Escape therefore does not
  * exit the TUI** (measured at the seam at 10/50/99 ms, and at `<App>`: alone exits, pre-fix at 50 ms
  * exits, post-fix at 50 ms does not, post-fix at 150 ms does). Escape-then-`a` at 50 ms likewise
  * leaves a running turn un-aborted. Merged knowingly on Andrew's call; [[TUI-C77]] owns the fix, and

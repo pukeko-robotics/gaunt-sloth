@@ -149,6 +149,24 @@ export function isTypedText(input: string, key: ChordModifiers): boolean {
 }
 
 /**
+ * Whether this event is `Ctrl` + `letter` — `Ctrl+C`, `Ctrl+T`, the editor's `Ctrl+A`… — and not
+ * that letter under `Alt` as well. Every ctrl+letter binding on this surface asks it.
+ *
+ * **`meta` is refused because of what a control byte behind an escape is.** Ink decodes `ESC ^C`
+ * as `ctrl` + `meta` + `c`, and that two-byte form is not the chord a user pressed: it is what a
+ * legacy terminal sends for `Alt+Ctrl+C`, and what the escape hold-back releases when `Ctrl+C`
+ * lands inside its window after an `Escape` (`mouseStdin.ts`). Neither is bound here, so neither
+ * fires a binding — the `Ctrl+C` ladder above all, whose first rung would scrap the user's draft
+ * (`spec/tui/escapeHoldBack.spec.tsx`).
+ *
+ * `super`/`hyper` are not refused: they reach `useInput` only through the kitty keyboard
+ * protocol's CSI-u form, which this app does not enable.
+ */
+export function isCtrlKey(input: string, key: ChordModifiers, letter: string): boolean {
+  return Boolean(key.ctrl) && !key.meta && input === letter;
+}
+
+/**
  * TUI-C51 — whether this event is the chord that opens the draft-preserving command menu.
  *
  * **`Ctrl+G` is the binding; `Ctrl+/` is an additional accepted spelling.** `Ctrl+G` emits `0x07`

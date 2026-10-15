@@ -227,24 +227,19 @@ describe('<App> behind the TUI-C62 escape hold-back', () => {
   /**
    * TUI-C77's residual, stated as a test rather than only as a comment.
    *
-   * `<App>` claims Ctrl+C on Ink's OWN predicate — `key.ctrl && input === 'c'` — so the set of
-   * keystrokes the ladder claims is exactly the set Ink used to swallow. A Ctrl+C released together
-   * with a held-back Escape reaches Ink as `ESC ^C`, which parses as `{name: '', ctrl: false}`; the
-   * `input` only becomes `'\x03'` after `use-input` strips the escape prefix, and `key.ctrl` is
-   * false throughout. So it does not match, and `mouseStdin.ts` says so in as many words.
+   * A Ctrl+C released together with a held-back Escape reaches Ink as `ESC ^C`, which Ink decodes
+   * as `c` with `ctrl` AND `meta` set. `<App>` claims Ctrl+C through `isCtrlKey`, which refuses
+   * `meta`, so the merged form does not match, and `mouseStdin.ts` says so in as many words.
    *
-   * **What the difference is observable AS, which is not what it first looks like.** Widening the
-   * predicate to `input === '\x03' || …`, the obvious tidy-up for a future reader, does not change
-   * whether the session exits: it changes whether **rung 1 fires**, and a user who types a message
-   * and presses Escape then Ctrl+C within the hold window loses it. That is why this case is built
-   * around a draft rather than around the exit, and why the assertion below is the draft.
+   * **What the difference is observable AS, which is not what it first looks like.** Dropping the
+   * `meta` refusal, the obvious tidy-up for a future reader, does not change whether the session
+   * exits: it changes whether **rung 1 fires**, and a user who types a message and presses Escape
+   * then Ctrl+C within the hold window loses it. That is why this case is built around a draft
+   * rather than around the exit, and why the assertion below is the draft.
    *
-   * The draft is asserted CHARACTER-EXACT (TUI-C51). The merged event arrives with no modifier set,
-   * so `<PromptEditor>`'s insert branch used to take it and splice `\x03` into the message — an
-   * invisible byte in what the user is writing, which a `toContain` on the visible text could not
-   * see. The shared `isTypedText` guard refuses control characters whatever the modifiers claim, so
-   * the residual now reaches no buffer at all, and the letter typed after it lands flush against
-   * what came before.
+   * The draft is asserted CHARACTER-EXACT (TUI-C51). The merged event is a chord, and
+   * `<PromptEditor>`'s insert branch refuses every chord, so nothing of it reaches the buffer and
+   * the letter typed after it lands flush against what came before.
    */
   it('is not the interrupt key when the Ctrl+C is released with a held-back Escape', async () => {
     const onExit = vi.fn();
