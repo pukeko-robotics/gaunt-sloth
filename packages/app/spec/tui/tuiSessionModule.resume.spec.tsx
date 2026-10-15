@@ -14,7 +14,6 @@
  * `resumeComposed` spec.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { waitForFrame } from './waitForFrame.mjs';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
@@ -225,7 +224,7 @@ describe('createTuiSession — resume (GS2-20 finding 2)', () => {
   }): Promise<{ props: AppProps; end: () => Promise<void> }> => {
     const { createTuiSession } = await import('#src/tui/tuiSessionModule.js');
     const session = createTuiSession(sessionConfig, overrides, undefined, undefined, options);
-    await waitForFrame(() => expect(renderMock).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(renderMock).toHaveBeenCalledTimes(1));
     const element = renderMock.mock.calls[0][0] as { props: AppProps };
     return {
       props: element.props,

@@ -19,7 +19,6 @@
  * such block was drawn at all.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { waitForFrame } from './waitForFrame.mjs';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import type { AgentStreamEvent } from '@gaunt-sloth/core/core/types.js';
@@ -118,7 +117,7 @@ describe('[[EXT-178]] SURFACE — the Ink TUI draws the end-of-run recap', () =>
     );
     const { frames, unmount } = render(<App {...baseProps} agent={agent} initialMessage="go" />);
 
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       // Derived from the recap value, so a DIFFERENT recap committed by the App fails here.
       expect(frames.join('\n')).toContain(runRecapNotice(recap).title);
     });
@@ -212,7 +211,7 @@ describe('[[EXT-178]] SURFACE — the Ink TUI draws the end-of-run recap', () =>
     );
     const { frames, unmount } = render(<App {...baseProps} agent={agent} initialMessage="go" />);
 
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       expect(frames.join('\n')).toContain('fine');
     });
 
@@ -246,12 +245,12 @@ describe('[[EXT-178]] SURFACE — the Ink TUI draws the end-of-run recap', () =>
     );
 
     // The turn is over and the recap is out, but unanswered.
-    await waitForFrame(() => expect(lastFrame()).toContain('turns: 1'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('turns: 1'));
 
     stdin.write('/clear');
-    await waitForFrame(() => expect(lastFrame()).toContain('/clear'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('/clear'));
     stdin.write('\r');
-    await waitForFrame(() => expect(lastFrame()).toContain('turns: 0'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('turns: 0'));
 
     // The clear is the ONLY thing that has happened since — deliberately no second turn, since a
     // new turn invalidates a pending recap by itself and would carry this cell without `/clear`
@@ -293,12 +292,12 @@ describe('[[EXT-178]] SURFACE — the Ink TUI draws the end-of-run recap', () =>
       <App {...baseProps} agent={agent} initialMessage="go" />
     );
 
-    await waitForFrame(() => expect(lastFrame()).toContain('turns: 1'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('turns: 1'));
 
     stdin.write('again');
-    await waitForFrame(() => expect(lastFrame()).toContain('again'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('again'));
     stdin.write('\r');
-    await waitForFrame(() => expect(lastFrame()).toContain('turns: 2'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('turns: 2'));
 
     release(stale);
     await vi.waitFor(() => expect(frames.join('\n')).toContain('GOAL FROM THE CURRENT TURN'));
@@ -324,7 +323,7 @@ describe('[[EXT-178]] SURFACE — the Ink TUI draws the end-of-run recap', () =>
     };
     const { frames, unmount } = render(<App {...baseProps} agent={agent} initialMessage="go" />);
 
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       expect(frames.join('\n')).toContain(OUTSTANDING_WORK_NOTICE_TITLE_PREFIX);
     });
 

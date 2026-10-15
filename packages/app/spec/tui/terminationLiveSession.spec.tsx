@@ -17,7 +17,6 @@
  * DIFFERENT reason — which a hand-written expected sentence could not tell.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { waitForFrame } from './waitForFrame.mjs';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import type { AgentStreamEvent } from '@gaunt-sloth/core/core/types.js';
@@ -70,7 +69,7 @@ describe('[[EXT-159]] SURFACE — the Ink TUI says why the turn ended', () => {
     const agent = agentEnding([{ type: 'text', delta: 'partial' }], () => cancelled);
     const { frames, unmount } = render(<App {...baseProps} agent={agent} initialMessage="go" />);
 
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       const all = frames.join('\n');
       // Derived in the test from the reason, so a DIFFERENT reason committed by the App fails here.
       expect(all).toContain(terminationNotice(cancelled).title);
@@ -91,7 +90,7 @@ describe('[[EXT-159]] SURFACE — the Ink TUI says why the turn ended', () => {
     const agent = agentEnding([], () => empty);
     const { frames, unmount } = render(<App {...baseProps} agent={agent} initialMessage="go" />);
 
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       expect(frames.join('\n')).toContain(terminationCode(empty));
     });
 
@@ -153,7 +152,7 @@ describe('[[EXT-159]] SURFACE — the Ink TUI says why the turn ended', () => {
     });
     const { frames, unmount } = render(<App {...baseProps} agent={agent} initialMessage="go" />);
 
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       expect(frames.join('\n')).toContain('fine');
     });
 

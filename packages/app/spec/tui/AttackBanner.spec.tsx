@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { waitForFrame } from './waitForFrame.mjs';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import {
@@ -126,7 +125,7 @@ describe('[[TUI-C68]] §6.1 the attack banner in <App>', () => {
       answer = a;
       return a;
     });
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       expect(lastFrame() ?? '').toContain(attackBannerCopy().title);
     });
     return {
@@ -149,7 +148,7 @@ describe('[[TUI-C68]] §6.1 the attack banner in <App>', () => {
     const banner = await raise();
     banner.type('run anyway');
     // The buffer is ECHOED — without it the human commits blind.
-    await waitForFrame(() => expect(banner.lastFrame() ?? '').toContain(buffer('run anyway')));
+    await vi.waitFor(() => expect(banner.lastFrame() ?? '').toContain(buffer('run anyway')));
     banner.enter();
     await expect(banner.pending).resolves.toBe('run-anyway');
   });
@@ -195,7 +194,7 @@ describe('[[TUI-C68]] §6.1 the attack banner in <App>', () => {
   ])('aborts on %s after text has been typed', async (_name, abort) => {
     const banner = await raise();
     banner.type('run any');
-    await waitForFrame(() => expect(banner.lastFrame() ?? '').toContain(buffer('run any')));
+    await vi.waitFor(() => expect(banner.lastFrame() ?? '').toContain(buffer('run any')));
     banner.type(abort);
     await expect(banner.pending).resolves.toBe('stop');
   });
@@ -212,7 +211,7 @@ describe('[[TUI-C68]] §6.1 the attack banner in <App>', () => {
     banner.type('run anywayX');
     await vi.waitFor(() => expect(banner.lastFrame() ?? '').toContain('run anywayX'));
     banner.type(BACKSPACE);
-    await waitForFrame(() => expect(banner.lastFrame() ?? '').not.toContain('anywayX'));
+    await vi.waitFor(() => expect(banner.lastFrame() ?? '').not.toContain('anywayX'));
     banner.enter();
     await expect(banner.pending).resolves.toBe('run-anyway');
   });
@@ -226,7 +225,7 @@ describe('[[TUI-C68]] §6.1 the attack banner in <App>', () => {
   it('buffers nothing from a control chord', async () => {
     const banner = await raise();
     banner.type('run anywa');
-    await waitForFrame(() => expect(banner.lastFrame() ?? '').toContain('run anywa'));
+    await vi.waitFor(() => expect(banner.lastFrame() ?? '').toContain('run anywa'));
     banner.type(String.fromCodePoint(0x19)); // Ctrl+Y — reported as `y` with key.ctrl
     banner.enter();
     // Had the chord been buffered the phrase would be complete and this would run the command.
@@ -321,7 +320,7 @@ describe('[[TUI-C68]] §6.1 the attack banner in <App>', () => {
     expect(banner.lastFrame() ?? '').not.toContain(PROMPT_CARET);
     banner.enter();
     await expect(banner.pending).resolves.toBe('stop');
-    await waitForFrame(() => expect(banner.lastFrame() ?? '').toContain(PROMPT_CARET));
+    await vi.waitFor(() => expect(banner.lastFrame() ?? '').toContain(PROMPT_CARET));
   });
 
   /** A grant says what it granted — the scope is the half a user cannot otherwise observe. */
@@ -330,7 +329,7 @@ describe('[[TUI-C68]] §6.1 the attack banner in <App>', () => {
     banner.type('run anyway');
     banner.enter();
     await expect(banner.pending).resolves.toBe('run-anyway');
-    await waitForFrame(() =>
+    await vi.waitFor(() =>
       expect(banner.lastFrame() ?? '').toContain('Running a command the rater called an attack')
     );
   });

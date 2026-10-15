@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { waitForFrame } from './waitForFrame.mjs';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import type { AgentStreamEvent } from '@gaunt-sloth/core/core/types.js';
@@ -40,9 +39,9 @@ async function submit(
   lastFrame: () => string | undefined,
   line: string
 ): Promise<void> {
-  await waitForFrame(() => expect(lastFrame()).toContain('>'));
+  await vi.waitFor(() => expect(lastFrame()).toContain('>'));
   stdin.write(line);
-  await waitForFrame(() => expect(lastFrame()).toContain(line));
+  await vi.waitFor(() => expect(lastFrame()).toContain(line));
   stdin.write('\r');
 }
 
@@ -87,9 +86,9 @@ describe('tui <App> — /history /insights /search (GS2-88)', () => {
       <App {...baseProps} agent={scriptedAgent([])} historyAvailability="disabled" />
     );
     await submit(stdin, lastFrame, '/insights');
-    await waitForFrame(() => expect(lastFrame()).toContain('history.enabled'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('history.enabled'));
     await submit(stdin, lastFrame, '/search widget');
-    await waitForFrame(() => expect(lastFrame()).toContain('history.enabled'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('history.enabled'));
     unmount();
   });
 });

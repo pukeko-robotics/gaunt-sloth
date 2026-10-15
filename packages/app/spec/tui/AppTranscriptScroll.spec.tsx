@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { waitForFrame } from './waitForFrame.mjs';
 import React from 'react';
 import { EventEmitter } from 'node:events';
 import { render as inkRender } from 'ink';
@@ -267,11 +266,11 @@ async function converse(
 ): Promise<void> {
   for (let i = from; i < from + turns; i++) {
     stdin.write(turnText(i));
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain(`t${i}-xxx`), {
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain(`t${i}-xxx`), {
       timeout: TURN_TIMEOUT_MS,
     });
     stdin.write(KEY.enter);
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain(`turns: ${i + 1}`), {
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain(`turns: ${i + 1}`), {
       timeout: TURN_TIMEOUT_MS,
     });
   }
@@ -280,7 +279,7 @@ async function converse(
 /** Wait for the frame to settle, so a comparison is against a committed render rather than a race. */
 async function settle(stdout: SizedStdout): Promise<void> {
   const before = stdout.frames.length;
-  await waitForFrame(() => expect(stdout.frames.length).toBeGreaterThan(before), { timeout: 2000 });
+  await vi.waitFor(() => expect(stdout.frames.length).toBeGreaterThan(before), { timeout: 2000 });
 }
 
 /** Turn numbers drawn in a captured set of region rows. */
@@ -306,7 +305,7 @@ describe('<App> transcript scrolling', () => {
       24,
       <App {...baseProps} agent={replyingAgent} />
     );
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
     await converse(stdout, stdin, 14);
 
     const atBottom = visibleTurns(stdout);
@@ -338,7 +337,7 @@ describe('<App> transcript scrolling', () => {
       24,
       <App {...baseProps} agent={replyingAgent} mouseEnabled subscribeMouse={mouse.subscribe} />
     );
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
     await converse(stdout, stdin, 14);
 
     const before = regionRows(stdout);
@@ -363,7 +362,7 @@ describe('<App> transcript scrolling', () => {
       24,
       <App {...baseProps} agent={replyingAgent} mouseEnabled subscribeMouse={mouse.subscribe} />
     );
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
     await converse(stdout, stdin, 14);
 
     const before = regionRows(stdout);
@@ -392,7 +391,7 @@ describe('<App> transcript scrolling', () => {
         subscribeMouse={mouse.subscribe}
       />
     );
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
     await converse(stdout, stdin, 14);
 
     const before = regionRows(stdout);
@@ -410,15 +409,13 @@ describe('<App> transcript scrolling', () => {
       24,
       <App {...baseProps} agent={replyingAgent} />
     );
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
     await converse(stdout, stdin, 14);
     const atBottom = visibleTurns(stdout);
 
     stdin.write(KEY.ctrlHome);
     await settle(stdout);
-    await vi.waitFor(() => expect(visibleTurns(stdout)).toContain(0), {
-      timeout: TURN_TIMEOUT_MS,
-    });
+    await vi.waitFor(() => expect(visibleTurns(stdout)).toContain(0), { timeout: TURN_TIMEOUT_MS });
 
     // The very first exchange is on screen — and the region is FULL, not one row of conversation
     // floating at the bottom of an empty screen, which is what an unsettled jump would leave.
@@ -455,7 +452,7 @@ describe('<App> transcript scrolling', () => {
         subscribeMouse={mouse.subscribe}
       />
     );
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
     await converse(stdout, stdin, 14);
     const atBottom = visibleTurns(stdout);
 
@@ -479,9 +476,7 @@ describe('<App> transcript scrolling', () => {
     // Ctrl+Home reaches the very first exchange, and the region is full there.
     stdin.write(KEY.ctrlHome);
     await settle(stdout);
-    await vi.waitFor(() => expect(visibleTurns(stdout)).toContain(0), {
-      timeout: TURN_TIMEOUT_MS,
-    });
+    await vi.waitFor(() => expect(visibleTurns(stdout)).toContain(0), { timeout: TURN_TIMEOUT_MS });
     expect(regionRows(stdout)[0].trim()).not.toBe('');
 
     // Esc returns to the newest output — the same view the session started at.
@@ -504,7 +499,7 @@ describe('<App> auto-stick to the newest output', () => {
       24,
       <App {...baseProps} agent={replyingAgent} />
     );
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
     await converse(stdout, stdin, 10);
 
     await converse(stdout, stdin, 1, 10);
@@ -534,17 +529,17 @@ describe('<App> auto-stick to the newest output', () => {
       24,
       <App {...baseProps} agent={pump.agent} mouseEnabled subscribeMouse={mouse.subscribe} />
     );
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
 
     for (let i = 0; i < 12; i++) {
       stdin.write(turnText(i));
-      await waitForFrame(() => expect(stdout.lastFrame()).toContain(`t${i}-xxx`), {
+      await vi.waitFor(() => expect(stdout.lastFrame()).toContain(`t${i}-xxx`), {
         timeout: TURN_TIMEOUT_MS,
       });
       stdin.write(KEY.enter);
       pump.emit('ok');
       pump.finish();
-      await waitForFrame(() => expect(stdout.lastFrame()).toContain(`turns: ${i + 1}`), {
+      await vi.waitFor(() => expect(stdout.lastFrame()).toContain(`turns: ${i + 1}`), {
         timeout: TURN_TIMEOUT_MS,
       });
     }
@@ -552,10 +547,10 @@ describe('<App> auto-stick to the newest output', () => {
     // A thirteenth turn that stays open, so the spec can grow it a chunk at a time — opening with
     // thirty rows, ten times the wheel notch that follows.
     stdin.write('grow');
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('> grow'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('> grow'));
     stdin.write(KEY.enter);
     pump.emit(liveRows(1, 30).join('\n'));
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('live-030'), {
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('live-030'), {
       timeout: TURN_TIMEOUT_MS,
     });
 
@@ -579,7 +574,7 @@ describe('<App> auto-stick to the newest output', () => {
     expect(regionRows(stdout)).toEqual(parked);
 
     pump.finish();
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('turns: 13'), {
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('turns: 13'), {
       timeout: TURN_TIMEOUT_MS,
     });
     // A turn COMPLETING below the edge must not move it either — that is the moment the streaming
@@ -595,7 +590,7 @@ describe('<App> auto-stick to the newest output', () => {
       24,
       <App {...baseProps} agent={replyingAgent} />
     );
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
     await converse(stdout, stdin, 14);
     const atBottom = visibleTurns(stdout);
 
@@ -604,7 +599,7 @@ describe('<App> auto-stick to the newest output', () => {
     expect(visibleTurns(stdout)).not.toContain(13);
 
     stdin.write('h');
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('> h'), {
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('> h'), {
       timeout: TURN_TIMEOUT_MS,
     });
     // Both halves: the view came back AND the keystroke still reached the prompt. A handler that
@@ -621,7 +616,7 @@ describe('<App> auto-stick to the newest output', () => {
       24,
       <App {...baseProps} agent={replyingAgent} />
     );
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
     await converse(stdout, stdin, 14);
     const atBottom = visibleTurns(stdout);
 
@@ -652,17 +647,17 @@ describe('<App> scroll bindings yield to their prior claimants', () => {
     // only ever have said "an abort works somewhere and a page-up works somewhere else".
     const pump = pumpedAgent();
     const { stdout, stdin, unmount } = renderAt(80, 24, <App {...baseProps} agent={pump.agent} />);
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
 
     for (let i = 0; i < 14; i++) {
       stdin.write(turnText(i));
-      await waitForFrame(() => expect(stdout.lastFrame()).toContain(`t${i}-xxx`), {
+      await vi.waitFor(() => expect(stdout.lastFrame()).toContain(`t${i}-xxx`), {
         timeout: TURN_TIMEOUT_MS,
       });
       stdin.write(KEY.enter);
       pump.emit('ok');
       pump.finish();
-      await waitForFrame(() => expect(stdout.lastFrame()).toContain(`turns: ${i + 1}`), {
+      await vi.waitFor(() => expect(stdout.lastFrame()).toContain(`turns: ${i + 1}`), {
         timeout: TURN_TIMEOUT_MS,
       });
     }
@@ -670,10 +665,10 @@ describe('<App> scroll bindings yield to their prior claimants', () => {
 
     // A fifteenth turn that stays open, so Esc has a running turn to abort.
     stdin.write('go');
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('> go'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('> go'));
     stdin.write(KEY.enter);
     pump.emit('streaming');
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('streaming'), {
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('streaming'), {
       timeout: TURN_TIMEOUT_MS,
     });
 
@@ -685,7 +680,7 @@ describe('<App> scroll bindings yield to their prior claimants', () => {
     expect(turnsIn(parked)).not.toEqual(atEnd);
 
     stdin.write(KEY.escape);
-    await waitForFrame(() => expect(pump.wasAborted()).toBe(true), { timeout: TURN_TIMEOUT_MS });
+    await vi.waitFor(() => expect(pump.wasAborted()).toBe(true), { timeout: TURN_TIMEOUT_MS });
     // A fixed wait rather than a frame wait: an Esc that was correctly swallowed by the abort has
     // no reason to draw anything, so "the next frame" is not an event this can wait on.
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -717,13 +712,13 @@ describe('<App> scroll bindings yield to their prior claimants', () => {
         }}
       />
     );
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
     await converse(stdout, stdin, 14);
 
     stdin.write('/debug');
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('> /debug'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('> /debug'));
     stdin.write(KEY.enter);
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('Subagents'), {
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('Subagents'), {
       timeout: TURN_TIMEOUT_MS,
     });
     pushDebug?.({
@@ -745,14 +740,14 @@ describe('<App> scroll bindings yield to their prior claimants', () => {
 
     // Page the pane down first, so PageUp has somewhere to come back from.
     stdin.write(KEY.pageDown);
-    await waitForFrame(() => expect(paneRange(stdout)).not.toMatch(/^1-/), {
+    await vi.waitFor(() => expect(paneRange(stdout)).not.toMatch(/^1-/), {
       timeout: TURN_TIMEOUT_MS,
     });
     const parked = regionRows(stdout);
     const pagedDown = paneRange(stdout);
 
     stdin.write(KEY.pageUp);
-    await waitForFrame(() => expect(paneRange(stdout)).not.toBe(pagedDown), {
+    await vi.waitFor(() => expect(paneRange(stdout)).not.toBe(pagedDown), {
       timeout: TURN_TIMEOUT_MS,
     });
 
@@ -770,16 +765,16 @@ describe('<App> scroll bindings yield to their prior claimants', () => {
       30,
       <App {...baseProps} agent={replyingAgent} />
     );
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
     await converse(stdout, stdin, 14);
 
     // The pane is opened BEFORE the reader parks, because typing is itself defined to return the
     // view to the end — parking first and then typing `/debug` would have thrown the position away
     // before Esc was ever pressed, and left the case comparing the end against the end.
     stdin.write('/debug');
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('> /debug'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('> /debug'));
     stdin.write(KEY.enter);
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('Subagents'), {
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('Subagents'), {
       timeout: TURN_TIMEOUT_MS,
     });
     const atEnd = visibleTurns(stdout);
@@ -798,7 +793,7 @@ describe('<App> scroll bindings yield to their prior claimants', () => {
 
     // The pane took the Esc. The prompt is back (unfocused) and the conversation has NOT jumped to
     // the end — a second Esc is what does that.
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('  >'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('  >'));
     expect(visibleTurns(stdout)).toEqual(parkedTurns);
 
     unmount();
@@ -825,7 +820,7 @@ describe('<App> subscribes to the terminal once, however much is on screen', () 
       40,
       <App {...baseProps} agent={replyingAgent} />
     );
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
     expect(stdout.listenerCount('resize')).toBe(1);
 
     await converse(stdout, stdin, 14);
@@ -863,7 +858,7 @@ describe('<App> keeps the scroll position honest when the layout moves under it'
       24,
       <App {...baseProps} agent={replyingAgent} />
     );
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
     await converse(stdout, stdin, 14);
 
     stdin.write(KEY.pageUp);
@@ -871,7 +866,7 @@ describe('<App> keeps the scroll position honest when the layout moves under it'
     const before = visibleTurns(stdout);
 
     stdout.resizeTo(120, 24);
-    await waitForFrame(() => expect(frameRows(stdout)).toHaveLength(24));
+    await vi.waitFor(() => expect(frameRows(stdout)).toHaveLength(24));
     await settle(stdout);
 
     const after = regionRows(stdout);
@@ -889,11 +884,11 @@ describe('<App> keeps the scroll position honest when the layout moves under it'
     // region can be taller than the new one, which is the shape that renders nothing at all. It
     // has to be back inside the region by the time anyone could look.
     const { stdout, stdin, unmount } = renderAt(120, 40, <App {...baseProps} agent={tallAgent} />);
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
     stdin.write('go');
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('> go'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('> go'));
     stdin.write(KEY.enter);
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('turns: 1'), {
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('turns: 1'), {
       timeout: TURN_TIMEOUT_MS,
     });
 
@@ -908,7 +903,7 @@ describe('<App> keeps the scroll position honest when the layout moves under it'
 
     stdout.resizeTo(120, 20);
     await vi.waitFor(() => expect(frameRows(stdout)).toHaveLength(20), { timeout: 5000 });
-    await waitForFrame(() => expect(regionRows(stdout).join('').trim()).not.toBe(''), {
+    await vi.waitFor(() => expect(regionRows(stdout).join('').trim()).not.toBe(''), {
       timeout: 5000,
     });
     expect(frameRows(stdout)).toHaveLength(20);
@@ -937,11 +932,11 @@ describe('<App> keeps the scroll position honest when the layout moves under it'
       24,
       <App {...baseProps} agent={pump.agent} mouseEnabled subscribeMouse={mouse.subscribe} />
     );
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
 
     for (let i = 0; i < 8; i++) {
       stdin.write(turnText(i));
-      await waitForFrame(() => expect(stdout.lastFrame()).toContain(`t${i}-xxx`), {
+      await vi.waitFor(() => expect(stdout.lastFrame()).toContain(`t${i}-xxx`), {
         timeout: TURN_TIMEOUT_MS,
       });
       stdin.write(KEY.enter);
@@ -956,25 +951,25 @@ describe('<App> keeps the scroll position honest when the layout moves under it'
       // A per-turn last row, so the assertions below can name the row the edge sits on.
       pump.emit(`answer-${i}`);
       pump.finish();
-      await waitForFrame(() => expect(stdout.lastFrame()).toContain(`turns: ${i + 1}`), {
+      await vi.waitFor(() => expect(stdout.lastFrame()).toContain(`turns: ${i + 1}`), {
         timeout: TURN_TIMEOUT_MS,
       });
     }
 
     // Expand every committed panel, so there is height to lose.
     stdin.write('/verbose');
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('> /verbose'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('> /verbose'));
     stdin.write(KEY.enter);
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('result-7-line-'), {
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('result-7-line-'), {
       timeout: TURN_TIMEOUT_MS,
     });
 
     // A ninth turn that stays open, so Ctrl+T is live.
     stdin.write('go');
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('> go'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('> go'));
     stdin.write(KEY.enter);
     pump.emit('streaming');
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('streaming'), {
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('streaming'), {
       timeout: TURN_TIMEOUT_MS,
     });
 
@@ -1045,9 +1040,9 @@ describe('<App> scrolling inside a single answer taller than the screen', () => 
 
   it('shows the middle of a long answer instead of a blank screen', async () => {
     const { stdout, stdin, unmount } = renderAt(120, 40, <App {...baseProps} agent={tallAgent} />);
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
     stdin.write('go');
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('> go'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('> go'));
     stdin.write(KEY.enter);
     await vi.waitFor(() => expect(stdout.lastFrame()).toContain('turns: 1'), {
       timeout: TURN_TIMEOUT_MS,
@@ -1088,17 +1083,17 @@ describe('<App> scrolling inside a single answer taller than the screen', () => 
     // with it — a conversation that is blank for as long as the answer takes to finish.
     const pump = pumpedAgent();
     const { stdout, stdin, unmount } = renderAt(120, 40, <App {...baseProps} agent={pump.agent} />);
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('ready'));
 
     for (let i = 0; i < 3; i++) {
       stdin.write(turnText(i));
-      await waitForFrame(() => expect(stdout.lastFrame()).toContain(`t${i}-xxx`), {
+      await vi.waitFor(() => expect(stdout.lastFrame()).toContain(`t${i}-xxx`), {
         timeout: TURN_TIMEOUT_MS,
       });
       stdin.write(KEY.enter);
       pump.emit('ok');
       pump.finish();
-      await waitForFrame(() => expect(stdout.lastFrame()).toContain(`turns: ${i + 1}`), {
+      await vi.waitFor(() => expect(stdout.lastFrame()).toContain(`turns: ${i + 1}`), {
         timeout: TURN_TIMEOUT_MS,
       });
     }
@@ -1107,14 +1102,14 @@ describe('<App> scrolling inside a single answer taller than the screen', () => 
     expect(regionHeight).toBeGreaterThan(10);
 
     stdin.write('go');
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('> go'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('> go'));
     stdin.write(KEY.enter);
 
     // A first chunk that FITS the region: the positive control. Everything below is about what
     // changes when the same open turn grows past the region, so this states it renders beforehand.
     const fitting = liveRows(1, regionHeight - 5);
     pump.emit(fitting.join('\n'));
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain(fitting[fitting.length - 1]), {
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain(fitting[fitting.length - 1]), {
       timeout: TURN_TIMEOUT_MS,
     });
 
@@ -1124,7 +1119,7 @@ describe('<App> scrolling inside a single answer taller than the screen', () => 
     const lastRow = overflowing[overflowing.length - 1];
     const beforeGrowth = stdout.lastFrame();
     pump.emit(`\n${overflowing.join('\n')}`);
-    await waitForFrame(() => expect(stdout.lastFrame()).not.toBe(beforeGrowth), {
+    await vi.waitFor(() => expect(stdout.lastFrame()).not.toBe(beforeGrowth), {
       timeout: TURN_TIMEOUT_MS,
     });
     await new Promise((resolve) => setTimeout(resolve, 80));
@@ -1139,7 +1134,7 @@ describe('<App> scrolling inside a single answer taller than the screen', () => 
     expect(region.join('\n')).not.toContain('live-001');
 
     pump.finish();
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('turns: 4'), {
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('turns: 4'), {
       timeout: TURN_TIMEOUT_MS,
     });
     // Committing it must not lose it either — that is the state the rest of the file looks at.

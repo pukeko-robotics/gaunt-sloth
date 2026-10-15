@@ -1,6 +1,5 @@
 import { join, resolve, sep } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { waitForFrame } from './waitForFrame.mjs';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import { setProjectDir } from '@gaunt-sloth/core/utils/systemUtils.js';
@@ -92,7 +91,7 @@ describe('tui <LaunchBanner>', () => {
     // banner must re-render as the face alone rather than keep a stale, now-wrapping layout.
     Object.defineProperty(stdout, 'columns', { value: 30, configurable: true });
     stdout.emit('resize');
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       expect(lastFrame()).not.toContain('gemini-3.1-pro');
       expect(lastFrame()).toContain('▀██████████▀');
     });

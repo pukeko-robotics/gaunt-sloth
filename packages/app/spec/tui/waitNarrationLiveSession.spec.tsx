@@ -20,7 +20,6 @@
  * hand-written expectation cannot tell "the App drew something else" from "the App drew nothing".
  */
 import { describe, expect, it, vi } from 'vitest';
-import { waitForFrame } from './waitForFrame.mjs';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import type { AgentStreamEvent } from '@gaunt-sloth/core/core/types.js';
@@ -116,7 +115,7 @@ describe('[[EXT-92]] SURFACE — the Ink TUI', () => {
       );
 
       // The turn is running and the bar is saying what it has always said.
-      await waitForFrame(() => {
+      await vi.waitFor(() => {
         expect(lastFrame()).toContain(RUNNING_LABEL_DEFAULT);
       });
 
@@ -132,7 +131,7 @@ describe('[[EXT-92]] SURFACE — the Ink TUI', () => {
       expect(lastFrame()).not.toContain('[INFO]');
 
       release();
-      await waitForFrame(() => {
+      await vi.waitFor(() => {
         expect(lastFrame()).not.toContain(narration);
       });
 
@@ -156,7 +155,7 @@ describe('[[EXT-92]] SURFACE — the Ink TUI', () => {
         />
       );
 
-      await waitForFrame(() => {
+      await vi.waitFor(() => {
         expect(lastFrame()).toContain(RUNNING_LABEL_DEFAULT);
       });
       emit?.('INFO', 'Loaded tools');
@@ -186,12 +185,12 @@ describe('[[EXT-92]] SURFACE — the Ink TUI', () => {
         />
       );
 
-      await waitForFrame(() => {
+      await vi.waitFor(() => {
         expect(frames.join('\n')).toContain(RUNNING_LABEL_DEFAULT);
       });
       emit?.('WARNING', 'the rater did not answer in time');
 
-      await waitForFrame(() => {
+      await vi.waitFor(() => {
         expect(frames.join('\n')).toContain('the rater did not answer in time');
       });
 
@@ -258,13 +257,13 @@ describe('[[EXT-92]] SURFACE — the Ink TUI', () => {
         />
       );
 
-      await waitForFrame(() => {
+      await vi.waitFor(() => {
         expect(lastFrame()).toContain('Retry shortly, or add your own provider key');
       });
 
-      await waitForFrame(() => expect(lastFrame()).toContain('>'));
+      await vi.waitFor(() => expect(lastFrame()).toContain('>'));
       stdin.write('/debug-dump');
-      await waitForFrame(() => expect(lastFrame()).toContain('/debug-dump'));
+      await vi.waitFor(() => expect(lastFrame()).toContain('/debug-dump'));
       stdin.write('\r');
 
       await vi.waitFor(() => expect(dumpDebugSession).toHaveBeenCalled());
@@ -311,7 +310,7 @@ describe('[[EXT-92]] SURFACE — the Ink TUI', () => {
 
       const { frames, unmount } = render(<App {...baseProps} agent={agent} initialMessage="go" />);
 
-      await waitForFrame(() => {
+      await vi.waitFor(() => {
         expect(frames.join('\n')).toContain('ENOENT: no such file or directory');
       });
 
@@ -331,7 +330,7 @@ describe('[[EXT-92]] SURFACE — the Ink TUI', () => {
 
       const { frames, unmount } = render(<App {...baseProps} agent={agent} initialMessage="go" />);
 
-      await waitForFrame(() => {
+      await vi.waitFor(() => {
         expect(frames.join('\n')).toContain(TURN_ENDED_IN_ERROR_MARK);
       });
       expect(frames.join('\n')).toContain('half the job');
@@ -345,7 +344,7 @@ describe('[[EXT-92]] SURFACE — the Ink TUI', () => {
 
       const { frames, unmount } = render(<App {...baseProps} agent={agent} initialMessage="go" />);
 
-      await waitForFrame(() => {
+      await vi.waitFor(() => {
         expect(frames.join('\n')).toContain(TURN_ENDED_IN_ERROR_MARK);
       });
 

@@ -9,7 +9,6 @@
  * surface's printed list stays in `agent/spec/interactiveSessionModule.resume.spec.ts`.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { waitForFrame } from './waitForFrame.mjs';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import { resumableConversationsNotice } from '@gaunt-sloth/agent/modules/sessionResume.js';
@@ -101,9 +100,9 @@ async function submit(
   lastFrame: () => string | undefined,
   line: string
 ): Promise<void> {
-  await waitForFrame(() => expect(lastFrame()).toContain('>'));
+  await vi.waitFor(() => expect(lastFrame()).toContain('>'));
   stdin.write(line);
-  await waitForFrame(() => expect(lastFrame()).toContain(line));
+  await vi.waitFor(() => expect(lastFrame()).toContain(line));
   stdin.write('\r');
 }
 
@@ -118,8 +117,8 @@ describe('tui <App> — /resume (GS2-20)', () => {
     const { stdin, lastFrame, unmount } = render(
       <App {...baseProps} agent={agent} conversationId={3} initialMessage="Hi sloth" />
     );
-    await waitForFrame(() => expect(lastFrame()).toContain('the answer'));
-    await waitForFrame(() => expect(lastFrame()).toContain('turns: 1'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('the answer'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('turns: 1'));
 
     await submit(stdin, lastFrame, '/resume 12');
 
@@ -139,11 +138,11 @@ describe('tui <App> — /resume (GS2-20)', () => {
     // The counter continues from the record, and /status names the resumed id.
     expect(frame).toContain('turns: 2');
     await submit(stdin, lastFrame, '/status');
-    await waitForFrame(() => expect(lastFrame()).toContain('Conversation: #12'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('Conversation: #12'));
 
     // And the session goes on: the next turn runs under the restored ones.
     await submit(stdin, lastFrame, 'what next');
-    await waitForFrame(() => expect(lastFrame()).toContain('turns: 3'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('turns: 3'));
     expect(turnsRun()).toBe(2);
     const after = lastFrame() ?? '';
     expect(after.indexOf('second old answer')).toBeLessThan(after.indexOf('You › what next'));
@@ -159,18 +158,18 @@ describe('tui <App> — /resume (GS2-20)', () => {
     const { stdin, lastFrame, unmount } = render(
       <App {...baseProps} agent={agent} conversationId={3} initialMessage="Hi sloth" />
     );
-    await waitForFrame(() => expect(lastFrame()).toContain('the answer'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('the answer'));
 
     await submit(stdin, lastFrame, '/resume 12');
 
-    await waitForFrame(() => expect(lastFrame()).toContain('No conversation #12'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('No conversation #12'));
     const frame = lastFrame() ?? '';
     expect(frame).toContain('/resume with no id');
     expect(frame).toContain('Hi sloth');
     expect(frame).toContain('the answer');
     expect(frame).toContain('turns: 1');
     await submit(stdin, lastFrame, '/status');
-    await waitForFrame(() => expect(lastFrame()).toContain('Conversation: #3'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('Conversation: #3'));
     unmount();
   });
 
@@ -215,7 +214,7 @@ describe('tui <App> — /resume (GS2-20)', () => {
         listResumeCandidates={listResumeCandidates}
       />
     );
-    await waitForFrame(() => expect(lastFrame()).toContain('the answer'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('the answer'));
 
     await submit(stdin, lastFrame, '/resume');
     await vi.waitFor(() => expect(lastFrame()).toContain(RESUME_PICKER_TITLE));
@@ -231,7 +230,7 @@ describe('tui <App> — /resume (GS2-20)', () => {
     expect(lastFrame()).toContain('#34');
 
     stdin.write(DOWN);
-    await waitForFrame(() => expect(lastFrame()).toContain('❯ #34'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('❯ #34'));
     stdin.write('\r');
 
     await vi.waitFor(() => expect(lastFrame()).toContain('Resumed conversation #34'));
@@ -244,7 +243,7 @@ describe('tui <App> — /resume (GS2-20)', () => {
     expect(frame).toContain('You › first old prompt');
     expect(frame).not.toContain('Hi sloth');
     await submit(stdin, lastFrame, '/status');
-    await waitForFrame(() => expect(lastFrame()).toContain('Conversation: #34'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('Conversation: #34'));
     unmount();
   });
 
@@ -269,13 +268,13 @@ describe('tui <App> — /resume (GS2-20)', () => {
         listResumeCandidates={listResumeCandidates}
       />
     );
-    await waitForFrame(() => expect(lastFrame()).toContain('the answer'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('the answer'));
 
     await submit(stdin, lastFrame, '/resume');
-    await waitForFrame(() => expect(lastFrame()).toContain(RESUME_PICKER_TITLE));
+    await vi.waitFor(() => expect(lastFrame()).toContain(RESUME_PICKER_TITLE));
     // Move first: cancelling from a moved cursor must not be read as choosing that row.
     stdin.write(DOWN);
-    await waitForFrame(() => expect(lastFrame()).toContain('❯ #34'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('❯ #34'));
     stdin.write('\x1b');
 
     await vi.waitFor(() => expect(lastFrame()).toContain('Resume cancelled'));
@@ -288,7 +287,7 @@ describe('tui <App> — /resume (GS2-20)', () => {
     expect(frame).toContain('the answer');
     expect(frame).toContain('turns: 1');
     await submit(stdin, lastFrame, '/status');
-    await waitForFrame(() => expect(lastFrame()).toContain('Conversation: #3'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('Conversation: #3'));
     unmount();
   });
 
@@ -317,7 +316,7 @@ describe('tui <App> — /resume (GS2-20)', () => {
     expect(resume).not.toHaveBeenCalled();
     // The prompt is back — nothing is owning the keyboard.
     await submit(stdin, lastFrame, '/status');
-    await waitForFrame(() => expect(lastFrame()).toContain('Conversation: #3'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('Conversation: #3'));
     unmount();
   });
 
@@ -373,9 +372,9 @@ describe('tui <App> — /resume (GS2-20)', () => {
     const { agent } = resumingAgent(undefined);
     const b = render(<App {...baseProps} agent={agent} />);
     await submit(b.stdin, b.lastFrame, '/resume');
-    await waitForFrame(() => expect(b.lastFrame()).toContain('Resume unavailable'));
+    await vi.waitFor(() => expect(b.lastFrame()).toContain('Resume unavailable'));
     await submit(b.stdin, b.lastFrame, '/resume 12');
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       const frame = b.lastFrame() ?? '';
       expect(frame.split('Resume unavailable').length - 1).toBe(2);
     });

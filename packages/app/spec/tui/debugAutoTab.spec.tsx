@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-import { waitForFrame } from './waitForFrame.mjs';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import stripAnsi from 'strip-ansi';
@@ -78,15 +77,15 @@ type Stdin = { write: (s: string) => void };
  * TUI-C11 test, which waits on each section between keystrokes.)
  */
 async function openAutoModeTab(stdin: Stdin, lastFrame: () => string | undefined): Promise<void> {
-  await waitForFrame(() => expect(lastFrame()).toContain('>'));
+  await vi.waitFor(() => expect(lastFrame()).toContain('>'));
   stdin.write('/debug');
-  await waitForFrame(() => expect(lastFrame()).toContain('/debug'));
+  await vi.waitFor(() => expect(lastFrame()).toContain('/debug'));
   stdin.write('\r');
-  await waitForFrame(() => expect(stripAnsi(lastFrame() ?? '')).toContain('Subagents'));
+  await vi.waitFor(() => expect(stripAnsi(lastFrame() ?? '')).toContain('Subagents'));
   stdin.write(TAB); // focus the pane
-  await waitForFrame(() => expect(stripAnsi(lastFrame() ?? '')).toContain('Tab: section'));
+  await vi.waitFor(() => expect(stripAnsi(lastFrame() ?? '')).toContain('Tab: section'));
   stdin.write(SHIFT_TAB); // wrap backward from the first section onto the last
-  await waitForFrame(() => expect(stripAnsi(lastFrame() ?? '')).toContain(TAB_DESCRIPTION_HEAD));
+  await vi.waitFor(() => expect(stripAnsi(lastFrame() ?? '')).toContain(TAB_DESCRIPTION_HEAD));
 }
 
 describe('TUI-C27 — the Auto-mode tab in the docked debug pane', () => {
@@ -97,10 +96,10 @@ describe('TUI-C27 — the Auto-mode tab in the docked debug pane', () => {
       expect(stripAnsi(lastFrame() ?? '')).not.toContain('Auto-mode');
 
       stdin.write('/debug');
-      await waitForFrame(() => expect(lastFrame()).toContain('/debug'));
+      await vi.waitFor(() => expect(lastFrame()).toContain('/debug'));
       stdin.write('\r');
 
-      await waitForFrame(() => {
+      await vi.waitFor(() => {
         const f = stripAnsi(lastFrame() ?? '');
         // The tabs TUI-C16/TUI-C20 already gave the pane are untouched and the new one sits with
         // them — a strip that lost one of these would be a regression, not a new tab.
@@ -155,7 +154,7 @@ describe('TUI-C27 — the Auto-mode tab in the docked debug pane', () => {
       // The description is long enough to fill the 8-row viewport on its own, so page to the end
       // of the tab, where the call list is.
       stdin.write(PAGE_DOWN);
-      await waitForFrame(() =>
+      await vi.waitFor(() =>
         expect(stripAnsi(lastFrame() ?? '')).toContain('no tool call has been through the gate yet')
       );
 
@@ -165,7 +164,7 @@ describe('TUI-C27 — the Auto-mode tab in the docked debug pane', () => {
       // that is certain to repaint — and it also grows the viewport enough to hold the record. This
       // IS the design: a pull redrawn with the frame, not a ticker with its own clock.
       stdin.write('m');
-      await waitForFrame(() => {
+      await vi.waitFor(() => {
         const f = stripAnsi(lastFrame() ?? '');
         expect(f).toContain('GATED CALLS (1) — most recent first');
         expect(f).toContain('command: rm -rf /');
@@ -184,7 +183,7 @@ describe('TUI-C27 — the Auto-mode tab in the docked debug pane', () => {
       await openAutoModeTab(stdin, lastFrame);
       expect(stripAnsi(lastFrame() ?? '')).toContain(TAB_DESCRIPTION_HEAD);
       stdin.write(PAGE_DOWN);
-      await waitForFrame(() => {
+      await vi.waitFor(() => {
         const f = stripAnsi(lastFrame() ?? '');
         expect(f).toContain('this session has no approvals surface');
         expect(f).toContain('no tool call has been through the gate yet');

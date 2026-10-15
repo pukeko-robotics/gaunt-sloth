@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { waitForFrame } from './waitForFrame.mjs';
 import React from 'react';
 import { Text } from 'ink';
 import { render } from 'ink-testing-library';
@@ -61,7 +60,7 @@ describe('tui <TerminalSizeProvider>', () => {
     // without the publisher ever having re-rendered, and then it could not fail at all.
     for (let i = 1; i <= 5; i += 1) {
       bump();
-      await waitForFrame(() => expect(hostRenders).toContain(i));
+      await vi.waitFor(() => expect(hostRenders).toContain(i));
     }
     expect(hostRenders).toEqual([0, 1, 2, 3, 4, 5]);
 
@@ -92,7 +91,7 @@ describe('tui <TerminalSizeProvider>', () => {
     // The control for the case above: memoising the published value must not freeze it. Without
     // this, "consumers never re-render" would be satisfied by a provider that never publishes.
     resize(60);
-    await waitForFrame(() => expect(renders).toEqual(['120x40', '60x40']));
+    await vi.waitFor(() => expect(renders).toEqual(['120x40', '60x40']));
 
     unmount();
   });

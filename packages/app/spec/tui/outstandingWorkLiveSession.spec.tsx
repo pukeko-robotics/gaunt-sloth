@@ -17,7 +17,6 @@
  * claim there is that no such notice was drawn at all.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { waitForFrame } from './waitForFrame.mjs';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import type { AgentStreamEvent } from '@gaunt-sloth/core/core/types.js';
@@ -89,7 +88,7 @@ describe('[[EXT-158]] SURFACE — the Ink TUI says the checklist was left unfini
     );
     const { frames, unmount } = render(<App {...baseProps} agent={agent} initialMessage="go" />);
 
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       // Derived from the work value, so DIFFERENT counts committed by the App fail here.
       expect(frames.join('\n')).toContain(outstandingWorkNotice(work).title);
     });
@@ -173,7 +172,7 @@ describe('[[EXT-158]] SURFACE — the Ink TUI says the checklist was left unfini
     );
     const { frames, unmount } = render(<App {...baseProps} agent={agent} initialMessage="go" />);
 
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       expect(frames.join('\n')).toContain('fine');
     });
 

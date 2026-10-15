@@ -1,5 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { waitForFrame } from './waitForFrame.mjs';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import stripAnsi from 'strip-ansi';
@@ -61,7 +60,7 @@ function checklistEvents(content: string): AgentStreamEvent[] {
 async function checklistFrame(content: string): Promise<{ visible: string; unmount: () => void }> {
   const agent = scriptedAgent(checklistEvents(content));
   const { lastFrame, unmount } = render(<App {...baseProps} agent={agent} initialMessage="go" />);
-  await waitForFrame(() => expect(stripAnsi(lastFrame() ?? '')).toContain('Checklist'));
+  await vi.waitFor(() => expect(stripAnsi(lastFrame() ?? '')).toContain('Checklist'));
   return { visible: stripAnsi(lastFrame() ?? ''), unmount };
 }
 

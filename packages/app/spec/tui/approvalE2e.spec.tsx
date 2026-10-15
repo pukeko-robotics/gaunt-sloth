@@ -1,5 +1,4 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { waitForFrame } from './waitForFrame.mjs';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -239,7 +238,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     );
 
     // The approval prompt must render (the bug: it never did on the TUI path).
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       const f = lastFrame() ?? '';
       expect(f).toContain('ls -la'); // the pending command is shown
       expect(f.toLowerCase()).toContain('approve'); // the o/s/a/N chooser
@@ -249,7 +248,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     stdin.write('o');
 
     // The resumed stream executes and its output renders into the transcript.
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       const all = frames.join('\n');
       expect(all).toContain('4 entries'); // executed command output
       expect(all).toContain('The directory has 4 entries.'); // model's answer after execution
@@ -326,7 +325,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     );
 
     // The prompt renders, names the tool, and offers the chooser — no blank frame, no throw.
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       const f = lastFrame() ?? '';
       expect(f).toContain('write_file');
       expect(f.toLowerCase()).toContain('approve');
@@ -334,7 +333,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
 
     stdin.write('o');
 
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       const all = frames.join('\n');
       expect(all).toContain('wrote notes.md');
       expect(all).toContain('Saved your notes.');
@@ -434,7 +433,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
       />
     );
 
-    await waitForFrame(() => expect(lastFrame()).toContain('rm -rf build'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('rm -rf build'));
 
     // Reject (anything that is not o/s/a → reject, fail-closed). Use 'n'.
     stdin.write('n');
@@ -533,7 +532,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
       />
     );
 
-    await waitForFrame(() => expect(lastFrame()).toContain('sed'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('sed'));
     stdin.write('n');
     await vi.waitFor(() => expect(frames.join('\n')).toContain('Understood.'));
 
@@ -613,11 +612,11 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     );
 
     // First command prompts; approve at session scope so the variant is allow-listed.
-    await waitForFrame(() => expect(lastFrame()).toContain('git status'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('git status'));
     stdin.write('s');
 
     // The second call of the granted command must auto-approve with NO prompt.
-    await waitForFrame(() => expect(lastFrame()).toContain('turns: 1'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('turns: 1'));
     expect(promptCount).toBe(1); // only the first command ever reached the human prompt
 
     unmount();
@@ -686,7 +685,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
       />
     );
 
-    await waitForFrame(() => expect(lastFrame()).toContain('turns: 1'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('turns: 1'));
 
     // NEITHER command reached the human — and both were RATED rather than waved through. That
     // negative-plus-positive pair is what separates "rated" from "approved blindly".
@@ -746,7 +745,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     Object.defineProperty(rendered.stdout, 'rows', { value: 60, configurable: true });
     rendered.stdout.emit('resize');
 
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       const f = lastFrame() ?? '';
       expect(f).toContain('cat /etc/passwd'); // escalated command shown
       // The rater's verdict reason is surfaced in the request block (the AI-rater line).
@@ -906,7 +905,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
           initialMessage="publish it"
         />
       );
-      await waitForFrame(() => expect(rendered.lastFrame() ?? '').toContain('npm publish'));
+      await vi.waitFor(() => expect(rendered.lastFrame() ?? '').toContain('npm publish'));
       rendered.stdin.write('d');
       return { ...rendered, runner };
     };
