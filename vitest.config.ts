@@ -129,12 +129,30 @@ export function resolveWorkspaceImports() {
   };
 }
 
+/** The Ink render specs, which take {@link TUI_RENDER_TIMEOUT_MS} instead of the 10 s default. */
+const TUI_RENDER_SPECS = 'packages/app/spec/tui/*.spec.tsx';
+
+/**
+ * OPS-122 — the per-test ceiling of the Ink render specs. A test that sets its own keeps it.
+ *
+ * Rule: these specs run well under it, and a hosted runner that freezes for a second or two must
+ * not fail one of them. A few seconds of slower runs are preferred over re-running the suite after
+ * a runner freeze (Andrew's decision, 2026-10-15). Every other spec keeps the 10 s default.
+ *
+ * Measured on the Windows unit cells, which are the slowest, from the GTH_TEST_TIMINGS_FILE
+ * artifact: 17 cells on react 19.2.8, the worst value per metric over all of them. The family's
+ * p99 duration is 1865 ms, so 20 000 / 1865 = 10.7. The slowest test under this ceiling took
+ * 5756 ms (a PromptInput TUI-C95 case, bound by renders), so 20 000 / 5756 = 3.5. The slowest
+ * of all, 6881 ms, sets its own 90 s. The cell swings about 1.6x between runs on identical bytes;
+ * re-read the artifact before a react or ink bump.
+ */
+const TUI_RENDER_TIMEOUT_MS = 20_000;
+
 export default defineConfig({
   plugins: [resolveWorkspaceImports()],
   // Ink .tsx components/specs compile via vitest's default transformer (oxc), which uses
   // the React 19 automatic JSX runtime out of the box; no extra jsx config needed.
   test: {
-    include: ['packages/*/spec/**/*.{ts,tsx}'],
     environment: 'node',
     // OPS-122 — the per-test timing instrument. Only when GTH_TEST_TIMINGS_FILE names an output
     // file, and then ALONGSIDE vitest's own reporters, never instead of them: a `reporters` list
@@ -196,20 +214,26 @@ export default defineConfig({
       reporter: ['text', 'json', 'html'],
     },
     globals: true,
-    // OPS-122 — the headroom of the Ink render specs (`packages/app/spec/tui/*.spec.tsx`, 1546
-    // tests) on the Windows unit cells, from the GTH_TEST_TIMINGS_FILE artifact. 1478 of them run
-    // under this default. The 34 PromptInput cases that type a draft carry 15 s
-    // (`DRAFT_CASE_TIMEOUT_MS`, where the arithmetic is), and 34 others set their own.
-    // Factor = ceiling / duration, each test against its own ceiling. Over every Windows cell
-    // sampled on react 19.2.8 — 14 cells, runs 38648732784, 38648754702, 38650003396, 38650007168,
-    // 38652046772, 38652050678, 38653032692 — taking the worst value per metric, not one cell:
-    //   1478 tests under this 10 s default: p99 1613 ms → 6.2, max 3646 ms → 2.7;
-    //   all 1546 against their own ceilings: p99 factor 6.2, max factor 2.6 (5756 ms of 15 s).
-    // The 5756 ms is a TUI-C95 case bound by renders; waitForFrame did not lower it. With react
-    // 19.3.0 (probe runs 38650088817, 38650092203, against their like-for-like control
-    // 38650003396, 38650007168 at the same parent) the worst values were 5.9 on p99 and 3.4 on
-    // max. The cell swings about 1.6x between runs on identical bytes; re-read the artifact before
-    // a dependency bump that touches react or ink.
+    // The repo-wide per-test ceiling. The Ink render specs carry their own, in the project below.
     testTimeout: 10000,
+    // Each project inherits everything above. `include` lives in each project, not up here,
+    // because an inherited array is concatenated, not replaced: a root `include` would put every
+    // spec into the tui-render project too, and run it twice.
+    projects: [
+      {
+        test: {
+          name: 'tui-render',
+          include: [TUI_RENDER_SPECS],
+          testTimeout: TUI_RENDER_TIMEOUT_MS,
+        },
+      },
+      {
+        test: {
+          name: 'unit',
+          include: ['packages/*/spec/**/*.{ts,tsx}'],
+          exclude: [...configDefaults.exclude, TUI_RENDER_SPECS],
+        },
+      },
+    ],
   },
 });

@@ -62,7 +62,12 @@ export default class TestTimingsReporter {
         durationMs: diagnostic ? Math.round(diagnostic.duration) : null,
         // Wall-clock start, so an outlier can be lined up against what else was running then.
         startTime: diagnostic ? Math.round(diagnostic.startTime) : null,
-        timeoutMs: testCase.options.timeout ?? this.defaultTimeout ?? null,
+        // A test's own, else its project's (the Ink render specs have one), else the root's.
+        timeoutMs:
+          testCase.options.timeout ??
+          testCase.project?.config?.testTimeout ??
+          this.defaultTimeout ??
+          null,
         retryCount: diagnostic ? diagnostic.retryCount : 0,
       });
     } catch (error) {

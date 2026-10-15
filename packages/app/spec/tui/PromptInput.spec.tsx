@@ -173,12 +173,11 @@ function highlightedIn(frame: string): string | null {
 /**
  * Type each character as its own input event, the way a person produces them.
  *
- * OPS-122 — the TUI-C95 and TUI-C51 cases below hold the Windows unit cell's slowest 10 s-ceiling
- * tests (about 1–3 s each, one reaching 5.8 s, against 0.5–1.1 s on a Linux desktop), and the cost there is RENDERS, not this
- * 20 ms wait: replacing it with a `setImmediate` yield halved this file on Linux and left it
- * unchanged on Windows (73.3 s and 74.3 s summed per cell, before and after, over four cells), so
- * it was reverted. Each typed character is one Ink render; the draft alone is 22. The lever left is
- * fewer renders per case, not shorter waits between them.
+ * Each character is one Ink render, and on the Windows unit cell the renders, not this 20 ms wait,
+ * are what a case costs: a shorter yield here was measured not to help there (OPS-122). A typed
+ * draft is not interchangeable with a one-chunk write either — that arrives on the paste-as-
+ * keystrokes channel as a single edit. The ceiling these cases run under is the Ink render specs'
+ * own, `TUI_RENDER_TIMEOUT_MS` in the root `vitest.config.ts`.
  */
 const typeSlowly = async (stdin: { write: (data: string) => void }, text: string) => {
   for (const character of text) {
