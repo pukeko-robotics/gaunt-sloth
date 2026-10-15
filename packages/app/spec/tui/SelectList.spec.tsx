@@ -245,17 +245,34 @@ describe('CFG-20 type-to-filter interaction', () => {
     expect(frame).toContain('grok-4.3');
   });
 
-  it('keeps a bare control byte out of the filter while an ordinary character still lands', async () => {
+  it('keeps the Ctrl+/ chord out of the filter while an ordinary character still lands', async () => {
     // TUI-C51 — the third of the TUI's text buffers, on the shared `isTypedText` predicate now that
-    // `Ctrl+/` is a chord this app accepts. `0x1f` reaches every `useInput` subscriber — Ink
-    // decodes it as `ctrl` + `_` — and the filter must take nothing from it. A typed byte or `_`
-    // would leave the filter matching nothing, which is why the assertion is that it still MATCHES.
+    // `Ctrl+/` is a chord this app accepts. A lone `0x1f` reaches every `useInput` subscriber as
+    // `ctrl` + `_`, so what refuses it here is the CHORD half of the guard; the control-byte half is
+    // the next case. A typed `_` would leave the filter matching nothing, which is why the
+    // assertion is that it still MATCHES.
     const { lastFrame, stdin } = render(
       <SelectList title="Pick a model" items={models} initialIndex={0} onSelect={vi.fn()} />
     );
     stdin.write('\x1f'); // Ctrl+/ where a terminal sends anything at all
     await tick();
     stdin.write('grok');
+    await tick();
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('filter: grok');
+    expect(frame).toContain('grok-4.3');
+    expect(frame).not.toContain('no matches');
+  });
+
+  it('drops a control byte that arrives inside a chunk, and keeps the text around it', async () => {
+    // TUI-C51 — the control-byte half of the guard. Inside a longer chunk Ink delivers `0x1f` as
+    // text with no modifier set, so only the per-character removal keeps it out of the filter. The
+    // frame cannot show the byte (Ink strips it from what it draws); the list can: a filter holding
+    // `gr\x1fok` matches no row.
+    const { lastFrame, stdin } = render(
+      <SelectList title="Pick a model" items={models} initialIndex={0} onSelect={vi.fn()} />
+    );
+    stdin.write('gr\x1fok'); // one event, the way a paste arrives with bracketed-paste mode off
     await tick();
     const frame = lastFrame() ?? '';
     expect(frame).toContain('filter: grok');

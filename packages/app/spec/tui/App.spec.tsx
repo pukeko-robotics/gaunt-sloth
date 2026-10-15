@@ -2539,10 +2539,11 @@ describe('tui <App> — the slash menu over an unfinished message (TUI-C51)', ()
     unmount();
   });
 
-  it('keeps Ctrl+/’s byte out of the debug pane’s search query', async () => {
+  it('keeps the Ctrl+/ chord out of the debug pane’s search query', async () => {
     // The OTHER text buffer on this surface, and the one the prompt cannot protect: the pane is
-    // focused, so the prompt is unmounted and nothing here opens a menu — but the byte still
-    // arrives, with no modifier flag on it.
+    // focused, so the prompt is unmounted and nothing here opens a menu — but the key still
+    // arrives, as `ctrl` + `_`. What refuses it here is the CHORD half of the guard; the
+    // control-byte half is the next case.
     const longResult = Array.from({ length: 40 }, (_, i) => `line-${i}`).join('\n');
     const agent = scriptedAgent([
       { type: 'tool_start', id: 's1', name: 'task' },
@@ -2562,13 +2563,48 @@ describe('tui <App> — the slash menu over an unfinished message (TUI-C51)', ()
     stdin.write(TAB);
     await vi.waitFor(() => expect(lastFrame()).toContain('Tab: section'));
 
-    // Open the search, then the discriminating pair, one input event at a time: the control byte
-    // first, the digits after it. An invisible byte in the query is unassertable directly — what
-    // says it was refused is that the query still MATCHES, which `\x1f30` could not.
+    // Open the search, then the discriminating pair, one input event at a time: the chord first,
+    // the digits after it. What says it was refused is that the query still MATCHES, which `_30`
+    // could not.
     stdin.write('/');
     stdin.write(CTRL_SLASH);
     stdin.write('3');
     stdin.write('0');
+    await vi.waitFor(() => {
+      const frame = lastFrame() ?? '';
+      expect(frame).toContain('line-30'); // the viewport jumped to the match
+      expect(frame).toContain('1/1'); // …and there is exactly one
+    });
+
+    unmount();
+  });
+
+  it('drops a control byte that arrives inside a chunk out of the debug pane’s search query', async () => {
+    // The control-byte half of the same guard. Inside a longer chunk Ink delivers `0x1f` as text
+    // with no modifier set, so only the per-character removal keeps it out of the query. An
+    // invisible byte in the query is unassertable directly — what says it was removed is that the
+    // query still MATCHES, which `3\x1f0` could not.
+    const longResult = Array.from({ length: 40 }, (_, i) => `line-${i}`).join('\n');
+    const agent = scriptedAgent([
+      { type: 'tool_start', id: 's1', name: 'task' },
+      { type: 'tool_args', id: 's1', delta: '{"subagent_type":"worker","description":"big"}' },
+      { type: 'tool_end', id: 's1' },
+      { type: 'tool_result', id: 's1', content: longResult },
+      { type: 'text', delta: 'ok' },
+    ]);
+    const { stdin, lastFrame, unmount } = render(
+      <App {...baseProps} agent={agent} initialMessage="go" />
+    );
+    await vi.waitFor(() => expect(lastFrame()).toContain('turns: 1'));
+    stdin.write('/debug');
+    await vi.waitFor(() => expect(lastFrame()).toContain('/debug'));
+    stdin.write('\r');
+    await vi.waitFor(() => expect(lastFrame()).toContain('worker'));
+    stdin.write(TAB);
+    await vi.waitFor(() => expect(lastFrame()).toContain('Tab: section'));
+
+    stdin.write('/');
+    stdin.write(`3${CTRL_SLASH}0`); // one event, the way a paste arrives with bracketed paste off
     await vi.waitFor(() => {
       const frame = lastFrame() ?? '';
       expect(frame).toContain('line-30'); // the viewport jumped to the match
