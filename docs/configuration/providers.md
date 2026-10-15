@@ -76,6 +76,24 @@ same native client, so a `configuration` block reaches nothing here either and i
 ignored when the provider starts. Set `customHeaders`, `endpoint`, `apiVersion` or `location` as
 top-level fields of the `llm` block instead, beside `model`.
 
+#### Request labels
+
+`labels` in the `llm` block is sent with every request. Vertex AI copies request labels into the
+Cloud Billing export, so they attribute spend to a team, a command or a pipeline:
+
+```json
+{
+  "llm": {
+    "type": "vertexai",
+    "model": "gemini-3.8-flash",
+    "labels": { "service": "gsloth", "task": "review" }
+  }
+}
+```
+
+Keys and values are lowercase letters, digits, `_` and `-`, at most 63 characters each, and at most
+64 labels per request. Vertex AI rejects a request whose labels break these rules.
+
 #### Application Default Credentials from the environment
 
 `gcloud auth application-default login` is inert for a session whose credentials come from

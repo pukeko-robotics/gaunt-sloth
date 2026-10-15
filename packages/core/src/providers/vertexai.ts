@@ -18,6 +18,7 @@ import { writeConfigFileWithMessages } from '#src/utils/fileUtils.js';
 import { buildInitConfigContent, getCuratedFallbackModel } from '#src/providers/modelDiscovery.js';
 import { applyGeminiToolSchemaSanitizer } from '#src/providers/geminiSchemaSanitizer.js';
 import { applyGeminiThoughtSummaries } from '#src/providers/geminiThinking.js';
+import { applyVertexAiLabels, readVertexAiLabels } from '#src/providers/vertexaiLabels.js';
 import { GTH_MAX_RETRIES } from '#src/core/retryPolicy.js';
 import {
   NATIVE_CLIENT_REASON,
@@ -41,6 +42,7 @@ export async function processJsonConfig(
   llmConfig: ChatGoogleParams & { type?: string; apiKeyEnvironmentVariable?: string }
 ): Promise<BaseChatModel> {
   const { ChatGoogle } = await import('@langchain/google/node');
+  const labels = readVertexAiLabels((llmConfig as { labels?: unknown }).labels);
   const configFields = {
     ...llmConfig,
     model: llmConfig.model || getCuratedFallbackModel('vertexai'),
@@ -71,6 +73,7 @@ export async function processJsonConfig(
   };
   delete configFields.type;
   delete configFields.apiKeyEnvironmentVariable;
+  delete (configFields as { labels?: unknown }).labels;
   // `ChatGoogle` is a native client for the Gemini API, so nothing in a `configuration` block
   // reaches it — say so before dropping it.
   warnUnusedConfiguration({
@@ -87,5 +90,9 @@ export async function processJsonConfig(
   // subset accepts built-in, custom, and MCP tools alike (see geminiSchemaSanitizer).
   // CFG-33: Vertex serves the same Gemini models through the same ChatGoogle class, so it has the
   // same silently-discarded thinking; ask for the summaries here too (see geminiThinking).
-  return applyGeminiThoughtSummaries(applyGeminiToolSchemaSanitizer(new ChatGoogle(configFields)));
+  // `labels` reaches the request body only through this override; see vertexaiLabels.
+  return applyVertexAiLabels(
+    applyGeminiThoughtSummaries(applyGeminiToolSchemaSanitizer(new ChatGoogle(configFields))),
+    labels
+  );
 }
