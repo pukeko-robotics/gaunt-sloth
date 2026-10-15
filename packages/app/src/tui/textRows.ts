@@ -132,8 +132,9 @@ export function wrappedRows(text: string, width: number): number {
   if (text.length === 0) return 0;
   const columns = Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 1;
   const rawLines = text.split('\n');
-  // Ink wraps nothing while the widest line fits: the rows are then simply the lines.
-  if (rawLines.every((line) => displayWidth(line) <= columns)) return rawLines.length;
+  // Ink wraps nothing while the widest line fits: the rows are then simply the lines. The row
+  // budget measures every line with its tabs expanded to their stops, the way Ink draws them.
+  if (rawLines.every((line) => displayWidth(expandTabs(line)) <= columns)) return rawLines.length;
   return text
     .normalize()
     .replaceAll('\r\n', '\n')
