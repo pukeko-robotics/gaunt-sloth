@@ -58,7 +58,8 @@ export default class TestTimingsReporter {
       this.rows.push({
         file: relative(this.root, testCase.module.moduleId).split(sep).join('/'),
         name: testCase.fullName,
-        state: result.state,
+        // No result at all is an aborted test: its row is still written, with no state.
+        state: result?.state ?? null,
         durationMs: diagnostic ? Math.round(diagnostic.duration) : null,
         // Wall-clock start, so an outlier can be lined up against what else was running then.
         startTime: diagnostic ? Math.round(diagnostic.startTime) : null,

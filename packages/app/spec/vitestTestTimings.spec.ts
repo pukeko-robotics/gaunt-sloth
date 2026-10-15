@@ -30,6 +30,7 @@ function testCase(
     state?: string;
     retryCount?: number;
     projectTimeout?: number;
+    noResult?: boolean;
   }
 ) {
   return {
@@ -39,7 +40,7 @@ function testCase(
     ...(options.projectTimeout === undefined
       ? {}
       : { project: { config: { testTimeout: options.projectTimeout } } }),
-    result: () => ({ state: options.state ?? 'passed' }),
+    result: () => (options.noResult ? undefined : { state: options.state ?? 'passed' }),
     diagnostic: () => ({
       duration: options.duration,
       startTime: options.startTime,
@@ -138,6 +139,38 @@ describe('OPS-122 the per-test timings reporter', () => {
     expect(written.tests.map((row: { file: string }) => row.file)).toEqual([
       'app/spec/tui/A.spec.tsx',
     ]);
+  });
+
+  it('still writes the row of an aborted test that has no result', async () => {
+    const { default: TestTimingsReporter } =
+      await import('../../../scripts/vitest-test-timings.mjs');
+    dir = mkdtempSync(join(tmpdir(), 'gth-timings-'));
+    const outputFile = join(dir, 'timings.json');
+    const reporter = new TestTimingsReporter({ outputFile });
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    reporter.onInit({ config: { root: ROOT, testTimeout: 10_000 } });
+    reporter.onTestCaseResult(
+      testCase('packages/app/spec/tui/A.spec.tsx', 'suite > aborted', {
+        duration: 5,
+        startTime: 7,
+        noResult: true,
+      })
+    );
+    reporter.onTestRunEnd();
+
+    const written = JSON.parse(readFileSync(outputFile, 'utf8'));
+    expect(written.tests).toEqual([
+      {
+        file: 'packages/app/spec/tui/A.spec.tsx',
+        name: 'suite > aborted',
+        state: null,
+        durationMs: 5,
+        startTime: 7,
+        timeoutMs: 10_000,
+        retryCount: 0,
+      },
+    ]);
+    expect(stderr).not.toHaveBeenCalled();
   });
 
   it('swallows a fault in onInit and onTestCaseResult, saying so once on stderr', async () => {
