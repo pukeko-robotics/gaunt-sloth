@@ -1,5 +1,6 @@
 import React from 'react';
-import { Box, Text, useStdout } from 'ink';
+import { Box, Text } from 'ink';
+import { useSizedStdout } from '#src/tui/useTerminalSize.js';
 import { Rule } from '#src/tui/components/Rule.js';
 import { FramedLines } from '#src/tui/components/FramedLines.js';
 import {
@@ -51,7 +52,7 @@ export function AttackBanner({
   // terminal's own wrap starts the continuation at column 0, which is the flush-left forgery the
   // gutter exists to prevent. Core resolves the width for both surfaces so they cannot disagree
   // about how much of a command a human was shown.
-  const { stdout } = useStdout();
+  const stdout = useSizedStdout();
   const width = frameWidthFor(stdout?.columns);
   const tooNarrow = narrowTerminalNotice(stdout?.columns);
   return (

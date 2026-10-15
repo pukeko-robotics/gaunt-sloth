@@ -11,11 +11,10 @@ import { applyTuiColour, clampedChalkLevel } from '#src/tui/colour.js';
  *
  * The plain readline surface decides via `resolveUseColour` (the CFG-30 ladder). The Ink TUI
  * renders through Ink and `packages/app/src/tui/markdown.ts`, and both call the same `chalk`
- * singleton — Ink's `chalk` resolves to the very same physical module as the app's. That is no
- * longer an accident of the dependency tree: `packages/app` is on `chalk@^6.0.0` while ink 7.1.1
- * still declares chalk 5, so the scoped `ink>chalk` override in `pnpm-workspace.yaml` is what
- * holds the module single. Lose it and Ink gets its own instance that the TUI's colour hook cannot
- * reach.
+ * singleton — Ink's `chalk` resolves to the very same physical module as the app's. That holds
+ * because Ink declares the same chalk major as `packages/app` (`^6`), so the lockfile resolves a
+ * single copy. Split it — a chalk bump here that Ink's range does not admit — and Ink gets its own
+ * instance that the TUI's colour hook cannot reach.
  *
  * **What changed in TUI-C35, and the trap in testing it.** Chalk does not implement `NO_COLOR` —
  * not in 5.6.2 and not in 6.0.0; its vendored `supports-color` handles `FORCE_COLOR` and the
@@ -188,9 +187,10 @@ describe('TUI-C35 — clampedChalkLevel clamps down only', () => {
    * `applyTuiColour(useColour)` with no second argument, so that default parameter is what
    * reaches Ink, and without this case it would be asserted nowhere.
    *
-   * The identity assertion is the load-bearing half: it fails if `tui/colour.ts` is ever changed
-   * to construct its own `new Chalk()` (which would clamp nothing anybody renders through), and
-   * it fails if the scoped `ink>chalk` overrides are dropped and the module splits.
+   * The identity assertions are the load-bearing half. The first fails if `tui/colour.ts` is ever
+   * changed to construct its own `new Chalk()` (which would clamp nothing anybody renders
+   * through). The second resolves `chalk` from Ink's own location, so it fails if Ink and this
+   * package ever resolve different physical chalk modules.
    *
    * Restores the level in a `finally` — this mutates a module-global shared with every other
    * consumer in this worker.
@@ -201,6 +201,8 @@ describe('TUI-C35 — clampedChalkLevel clamps down only', () => {
     )) as { default: typeof chalk };
     // Same physical module object the hook mutates, not merely an equal-looking one.
     expect(chalkSeenByHook).toBe(chalk);
+    // And the chalk Ink itself resolves is that same file.
+    expect(createRequire(require_.resolve('ink')).resolve('chalk')).toBe(require_.resolve('chalk'));
 
     const before = chalk.level;
     try {

@@ -14,6 +14,26 @@ export interface TerminalSize {
 }
 
 /**
+ * The stream Ink renders into, typed with the size a terminal reports on it.
+ *
+ * Ink types `useStdout().stdout` as a bare `NodeJS.WritableStream`, which carries no size. The
+ * stream it hands back is the one passed to `render()` — `process.stdout` in a session — and a TTY
+ * stream reports `rows` and `columns` on itself; a pipe or a test stream reports neither. This is
+ * the same shape Ink reads its own width from, so both fields stay optional and every caller keeps
+ * its fallback for a stream with no size.
+ */
+export type SizedOutputStream = NodeJS.WritableStream & {
+  readonly rows?: number;
+  readonly columns?: number;
+};
+
+/** `useStdout().stdout`, typed with the size a terminal reports. See {@link SizedOutputStream}. */
+export function useSizedStdout(): SizedOutputStream | undefined {
+  const { stdout } = useStdout();
+  return stdout as SizedOutputStream | undefined;
+}
+
+/**
  * The published terminal size, or null where no component above has published one.
  *
  * **One subscription per tree, and that is a hard requirement rather than a tidiness.** A resize
@@ -84,7 +104,7 @@ export function useTerminalSize(): TerminalSize {
 
 /** The subscribing half. Inert unless it is the one doing the measuring. */
 function useMeasuredTerminalSize(active: boolean): TerminalSize {
-  const { stdout } = useStdout();
+  const stdout = useSizedStdout();
   const [size, setSize] = useState<TerminalSize>(() => ({
     rows: stdout?.rows || FALLBACK_TERMINAL_ROWS,
     columns: stdout?.columns || FALLBACK_TERMINAL_COLUMNS,

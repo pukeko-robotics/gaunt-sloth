@@ -1,5 +1,6 @@
 import React from 'react';
-import { Box, Text, useStdout } from 'ink';
+import { Box, Text } from 'ink';
+import { useSizedStdout } from '#src/tui/useTerminalSize.js';
 import {
   renderLiveNegotiationRows,
   type LiveNegotiationRound,
@@ -68,7 +69,7 @@ export function NegotiationPanel({
 }): React.ReactElement | null {
   // Before the early return, deliberately: a hook must not sit behind a condition, or Ink's hook
   // order changes on the render where the exchange starts.
-  const { stdout } = useStdout();
+  const stdout = useSizedStdout();
   const width = frameWidthFor(stdout?.columns);
   if (rounds.length === 0) return null;
   return (

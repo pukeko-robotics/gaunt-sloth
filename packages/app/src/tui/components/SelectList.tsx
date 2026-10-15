@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import { Box, Text, useApp, useInput, useStdout } from 'ink';
+import { Box, Text, useApp, useInput } from 'ink';
 import { SelectCancelledError } from '#src/tui/selectCancelled.js';
-import { useTerminalSize } from '#src/tui/useTerminalSize.js';
+import { useSizedStdout, useTerminalSize } from '#src/tui/useTerminalSize.js';
 import { isTypedText, typedText } from '#src/tui/keyGuards.js';
 import { clampWindowStart } from '#src/tui/listWindow.js';
 
@@ -161,7 +161,7 @@ export function SelectList({
   // friendlier answer for a pathological terminal — a single visible option with the filter and
   // both affordance lines around it is not a usable list — and it is the one place this read is
   // not byte-for-byte what a raw `stdout.rows` would have given.
-  const { stdout } = useStdout();
+  const stdout = useSizedStdout();
   const { rows: liveRows } = useTerminalSize();
   const rows = stdout?.rows ? liveRows : undefined;
 

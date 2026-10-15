@@ -463,8 +463,9 @@ the ready message.
   first render; agreement is pinned by `packages/app/spec/colourCrossSurface.e2e.spec.ts`.
 - **A new TUI colour path must go through that hook, never around it.** Do not add a second read of
   `NO_COLOR`/`FORCE_COLOR` anywhere under `tui/`, and do not give Ink its own chalk: the hook works
-  only because Ink and our markdown renderer share one physical chalk module, which the scoped
-  `ink>chalk` override in `pnpm-workspace.yaml` exists to guarantee. The
+  only because Ink and our markdown renderer share one physical chalk module. Ink declares the
+  same chalk major the app does, so the lockfile holds one copy; a bump that splits them breaks
+  the clamp. The
   clamp is **downward only** — colour off means level 0, colour on keeps whatever depth chalk
   detected (floored at basic 16-colour when it detected none), and never promotes a terminal to a
   depth it did not report.
