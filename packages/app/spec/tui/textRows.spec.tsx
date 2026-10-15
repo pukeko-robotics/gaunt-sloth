@@ -70,6 +70,21 @@ const BATTERY: Array<[string, string]> = [
   ['a zero-width space ending an over-wide word', 'wwww​'],
   ['a zero-width joiner on its own', 'ab‍'],
   ['a tab-separated line', 'col\tcol\tcol\tcol\tcol'],
+  // Ink lays a tab out to the next 8-column stop, counted from the start of its own line, and
+  // wraps on that width. These place the tab at every kind of column: the start of the line, just
+  // before and exactly on a stop, after wide clusters, and on a line that is not the first.
+  ['a tab at column 0', '\tindented'],
+  ['two leading tabs', '\t\tx'],
+  ['a tab after exactly 8 cells', 'abcdefgh\tz'],
+  ['a tab after 7 cells', 'abcdefg\tz'],
+  ['a tab after CJK', '漢字漢\tz'],
+  ['tabs on the second line', 'first\nab\tcd\tef\tgh'],
+  ['a tab on a second line after a longer first', 'abcde\nx\ty'],
+  ['tabs inside a long wrapping line', 'aaaa bbbb cccc dddd\teeee ffff gggg\thhhh'],
+  ['a tab then words', 'k\tthe quick brown fox jumps'],
+  ['only a tab', '\t'],
+  ['a tab after an emoji', '🔥\tz'],
+  ['many tabs', 'a\tb\tc\td\te\tf\tg\th\ti'],
   ['two lines', 'first line\nsecond line'],
   ['a trailing newline', 'a\n'],
   ['a newline only', '\n'],
