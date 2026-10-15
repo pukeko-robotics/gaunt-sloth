@@ -16,7 +16,7 @@
  * from the same shared renderer the component paints with, so a cell fails if the App commits a
  * DIFFERENT reason — which a hand-written expected sentence could not tell.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { waitForFrame } from './waitForFrame.mjs';
 import React from 'react';
 import { render } from 'ink-testing-library';
@@ -105,7 +105,7 @@ describe('[[EXT-159]] SURFACE — the Ink TUI says why the turn ended', () => {
       <App {...baseProps} agent={agent} initialMessage="go" />
     );
 
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       expect(frames.join('\n')).toContain('all done');
     });
     expect(lastFrame()).not.toContain(TERMINATION_NOTICE_TITLE_PREFIX);
@@ -121,7 +121,7 @@ describe('[[EXT-159]] SURFACE — the Ink TUI says why the turn ended', () => {
       <App {...baseProps} agent={agent} initialMessage="go" />
     );
 
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       expect(frames.join('\n')).toContain('thinking');
     });
     expect(lastFrame()).not.toContain(TERMINATION_NOTICE_TITLE_PREFIX);
@@ -139,7 +139,7 @@ describe('[[EXT-159]] SURFACE — the Ink TUI says why the turn ended', () => {
       <App {...baseProps} agent={agent} initialMessage="go" />
     );
 
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       expect(frames.join('\n')).toContain('hm');
     });
     expect(lastFrame()).not.toContain(TERMINATION_NOTICE_TITLE_PREFIX);
@@ -171,7 +171,7 @@ describe('[[EXT-159]] SURFACE — the Ink TUI says why the turn ended', () => {
       <App {...baseProps} agent={agent} initialMessage="go" />
     );
 
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       expect(frames.join('\n')).toContain('legacy');
     });
     expect(lastFrame()).not.toContain(TERMINATION_NOTICE_TITLE_PREFIX);

@@ -167,7 +167,7 @@ describe('tui <App> — /compact (GS2-23)', () => {
     // is dispatched as a turn, not refused as "the agent is working". A release that happens only
     // on success leaves this session wedged after any failed /compact.
     await submit(stdin, lastFrame, 'hello afterwards');
-    await waitForFrame(() => expect(turnsRun()).toBe(1));
+    await vi.waitFor(() => expect(turnsRun()).toBe(1));
     expect(frames.join('\n')).not.toContain('The agent is working — only slash commands');
 
     unmount();
@@ -300,7 +300,7 @@ describe('tui <App> — /autocompact (EXT-161)', () => {
     expect(set).toHaveBeenCalledWith({ kind: 'tokens', tokens: 300_000 });
 
     await submit(stdin, lastFrame, '/status');
-    await waitForFrame(() => expect(lastFrame()).toContain('Session status'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('Session status'));
     // Only the /status block is read. The /autocompact notice above it already says "session", so
     // an assertion over the whole screen would stay green with the snapshot never refreshed.
     const frame = lastFrame() ?? '';
@@ -319,7 +319,7 @@ describe('tui <App> — /autocompact (EXT-161)', () => {
 
     await submit(stdin, lastFrame, '/autocompact 300K');
 
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       const all = frames.join('\n');
       expect(all).toContain('Automatic compaction unavailable');
       expect(all).toContain('Nothing was changed.');

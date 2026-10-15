@@ -18,7 +18,7 @@
  * not. The silence cells use the title PREFIXES instead, because the whole claim there is that no
  * such block was drawn at all.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { waitForFrame } from './waitForFrame.mjs';
 import React from 'react';
 import { render } from 'ink-testing-library';
@@ -144,7 +144,7 @@ describe('[[EXT-178]] SURFACE — the Ink TUI draws the end-of-run recap', () =>
     );
     const { frames, unmount } = render(<App {...baseProps} agent={agent} initialMessage="go" />);
 
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       expect(frames.join('\n')).toContain(RUN_RECAP_TITLE_PREFIX);
     });
     expect(frames.join('\n')).not.toContain(OUTSTANDING_WORK_NOTICE_TITLE_PREFIX);
@@ -167,7 +167,7 @@ describe('[[EXT-178]] SURFACE — the Ink TUI draws the end-of-run recap', () =>
     );
     const { frames, unmount } = render(<App {...baseProps} agent={agent} initialMessage="go" />);
 
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       expect(frames.join('\n')).toContain(OUTSTANDING_WORK_NOTICE_TITLE_PREFIX);
     });
     expect(frames.join('\n')).not.toContain(RUN_RECAP_TITLE_PREFIX);
@@ -193,7 +193,7 @@ describe('[[EXT-178]] SURFACE — the Ink TUI draws the end-of-run recap', () =>
       <App {...baseProps} agent={agent} initialMessage="go" />
     );
 
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       expect(frames.join('\n')).toContain('thinking');
     });
     expect(lastFrame()).not.toContain(RUN_RECAP_TITLE_PREFIX);
@@ -301,7 +301,7 @@ describe('[[EXT-178]] SURFACE — the Ink TUI draws the end-of-run recap', () =>
     await waitForFrame(() => expect(lastFrame()).toContain('turns: 2'));
 
     release(stale);
-    await waitForFrame(() => expect(frames.join('\n')).toContain('GOAL FROM THE CURRENT TURN'));
+    await vi.waitFor(() => expect(frames.join('\n')).toContain('GOAL FROM THE CURRENT TURN'));
 
     expect(frames.join('\n')).not.toContain('GOAL FROM THE SUPERSEDED TURN');
 

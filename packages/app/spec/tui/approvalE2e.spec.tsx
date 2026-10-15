@@ -439,7 +439,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
     // Reject (anything that is not o/s/a → reject, fail-closed). Use 'n'.
     stdin.write('n');
 
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       const all = frames.join('\n');
       expect(all).toContain('Understood — I did not run the command.'); // graceful continue
     });
@@ -535,7 +535,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
 
     await waitForFrame(() => expect(lastFrame()).toContain('sed'));
     stdin.write('n');
-    await waitForFrame(() => expect(frames.join('\n')).toContain('Understood.'));
+    await vi.waitFor(() => expect(frames.join('\n')).toContain('Understood.'));
 
     const decision = decisions[0];
     expect(decision?.type).toBe('reject');
@@ -814,7 +814,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
       />
     );
 
-    await waitForFrame(() => expect(lastFrame() ?? '').toContain(APPROVAL_ASK_LINE));
+    await vi.waitFor(() => expect(lastFrame() ?? '').toContain(APPROVAL_ASK_LINE));
     const frame = lastFrame() ?? '';
     const lines = frame.split('\n');
     const at = (needle: string): number => lines.findIndex((line) => line.includes(needle));
@@ -929,7 +929,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
       // "does not claim persistence" test passes just as happily when nothing rendered at all.
       // GS2-20 — the lifetime named is the conversation's: the refusal is kept with it and comes
       // back on a resume, and no other conversation has it.
-      await waitForFrame(() =>
+      await vi.waitFor(() =>
         expect(noticeBlock(lastFrame() ?? '', 'Command refused for this conversation')).not.toBe('')
       );
       const block = noticeBlock(lastFrame() ?? '', 'Command refused for this conversation');
@@ -951,7 +951,7 @@ describe('EXT-11 TUI approval e2e (event-stream path)', () => {
       setProjectDir(projectDir);
       const { lastFrame, runner, unmount } = await refuseAlways();
 
-      await waitForFrame(() =>
+      await vi.waitFor(() =>
         expect(noticeBlock(lastFrame() ?? '', 'Command refused and saved')).not.toBe('')
       );
       const block = noticeBlock(lastFrame() ?? '', 'Command refused and saved');

@@ -571,7 +571,7 @@ describe('[[TUI-C99]] the committed record reads in the order it happened', () =
 
     await frameWhere(lastFrame, (f) => f.includes('[o]nce'));
     stdin.write('o');
-    await waitForFrame(() => expect(seen).toHaveLength(1));
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
     expect(seen[0]).toBe('Listing the directory first.All done.');
     expect(seen[0]).not.toContain('approved by you');
     unmount();

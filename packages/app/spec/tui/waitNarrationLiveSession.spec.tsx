@@ -124,7 +124,7 @@ describe('[[EXT-92]] SURFACE — the Ink TUI', () => {
       // wiring: routed before the INFO filter, to the bar rather than to the transcript.
       emit?.('INFO', narration);
 
-      await waitForFrame(() => {
+      await vi.waitFor(() => {
         expect(lastFrame()).toContain(narration);
       });
       expect(lastFrame()).not.toContain(RUNNING_LABEL_DEFAULT);
@@ -208,7 +208,7 @@ describe('[[EXT-92]] SURFACE — the Ink TUI', () => {
 
       const { frames, unmount } = render(<App {...baseProps} agent={agent} initialMessage="go" />);
 
-      await waitForFrame(() => {
+      await vi.waitFor(() => {
         expect(frames.join('\n')).toContain('Retry shortly, or add your own provider key');
       });
       const screen = frames.join('\n');
@@ -267,7 +267,7 @@ describe('[[EXT-92]] SURFACE — the Ink TUI', () => {
       await waitForFrame(() => expect(lastFrame()).toContain('/debug-dump'));
       stdin.write('\r');
 
-      await waitForFrame(() => expect(dumpDebugSession).toHaveBeenCalled());
+      await vi.waitFor(() => expect(dumpDebugSession).toHaveBeenCalled());
 
       const input = dumpDebugSession.mock.calls[0][0] as { transcript: TranscriptItem[] };
 
@@ -364,7 +364,7 @@ describe('[[EXT-92]] SURFACE — the Ink TUI', () => {
         <App {...baseProps} agent={agent} initialMessage="go" />
       );
 
-      await waitForFrame(() => {
+      await vi.waitFor(() => {
         expect(frames.join('\n')).toContain('all done');
       });
       expect(lastFrame()).not.toContain(TURN_ENDED_IN_ERROR_MARK);

@@ -186,7 +186,7 @@ describe('<App> bounds the slash menu to the terminal (TUI-C92)', () => {
       await waitForFrame(() => expect(stdout.lastFrame()).toContain('ready'));
 
       stdin.write('/');
-      await waitForFrame(() => expect(stdout.lastFrame()).toContain('❯ /cmd-01'));
+      await vi.waitFor(() => expect(stdout.lastFrame()).toContain('❯ /cmd-01'));
 
       let lines = frameRows(stdout);
       // The frame is always exactly the terminal: the frame box is `height={terminalRows}` and
@@ -230,7 +230,7 @@ describe('<App> bounds the slash menu to the terminal (TUI-C92)', () => {
 
       // Enter runs the highlighted command, not the first one.
       stdin.write(ENTER);
-      await waitForFrame(() => expect(stdout.frames.join('\n')).toContain(`ran ${highlighted}`));
+      await vi.waitFor(() => expect(stdout.frames.join('\n')).toContain(`ran ${highlighted}`));
       expect(stdout.frames.join('\n')).not.toContain('ran cmd-01');
 
       unmount();
@@ -249,7 +249,7 @@ describe('<App> bounds the slash menu to the terminal (TUI-C92)', () => {
       stdin.write(DRAFT);
       await waitForFrame(() => expect(stdout.lastFrame()).toContain(`> ${DRAFT}`));
       stdin.write(CTRL_G);
-      await waitForFrame(() => expect(stdout.lastFrame()).toContain('❯ /cmd-01'));
+      await vi.waitFor(() => expect(stdout.lastFrame()).toContain('❯ /cmd-01'));
 
       let lines = frameRows(stdout);
       // The draft, on the prompt row, in the frame's bottom rows — the assertion TUI-C51 could not
@@ -281,7 +281,7 @@ describe('<App> bounds the slash menu to the terminal (TUI-C92)', () => {
 
       // Enter runs the highlighted command, and the draft comes back beneath the notice.
       stdin.write(ENTER);
-      await waitForFrame(() => expect(stdout.frames.join('\n')).toContain(`ran ${highlighted}`));
+      await vi.waitFor(() => expect(stdout.frames.join('\n')).toContain(`ran ${highlighted}`));
       expect(stdout.frames.join('\n')).not.toContain('ran cmd-01');
       await waitForFrame(() => expect(stdout.lastFrame()).toContain(`> ${DRAFT}`));
       expect(frameRows(stdout)[rows - PROMPT_ROW_FROM_BOTTOM].trimEnd()).toBe(`  > ${DRAFT}`);
@@ -429,7 +429,7 @@ describe('<App> keeps the dock to its counted rows with the props a real session
     stdin.write(DRAFT);
     await waitForFrame(() => expect(stdout.lastFrame()).toContain(`> ${DRAFT}`));
     stdin.write(CTRL_G);
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('❯ /cmd-01'));
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('❯ /cmd-01'));
 
     const lines = frameRows(stdout);
 

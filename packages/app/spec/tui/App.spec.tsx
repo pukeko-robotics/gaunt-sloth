@@ -158,7 +158,7 @@ describe('tui <App>', () => {
     const agent = scriptedAgent([{ type: 'text', delta: 'done' }]);
     const { lastFrame, unmount } = render(<App {...baseProps} agent={agent} initialMessage="go" />);
 
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       const frame = lastFrame() ?? '';
       // The whole row, as one sentence: the command's own half plus this surface's fragment.
       expect(frame).toContain(
@@ -211,9 +211,7 @@ describe('tui <App>', () => {
     emit?.('DEBUG', 'internal state dump');
     emit?.('WARNING', 'experimental deepagents backend');
 
-    await waitForFrame(() =>
-      expect(frames.join('\n')).toContain('experimental deepagents backend')
-    );
+    await vi.waitFor(() => expect(frames.join('\n')).toContain('experimental deepagents backend'));
     const all = frames.join('\n');
     expect(all).not.toContain('Requested tools: read_file');
     expect(all).not.toContain('internal state dump');
@@ -303,7 +301,7 @@ describe('tui <App>', () => {
     await waitForFrame(() => expect(lastFrame()).toContain('/approval auto'));
     stdin.write('\r');
 
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       const all = frames.join('\n');
       expect(all).toContain('Unknown command: /approval');
       expect(all).toContain('Did you mean /approvals?');
@@ -369,7 +367,7 @@ describe('tui <App>', () => {
     await waitForFrame(() => expect(lastFrame()).toContain('/approvals assisted'));
     stdin.write('\r');
 
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       expect(frames.join('\n')).toContain('Approvals: Assisted');
       // §10 rule 4: the badge uses the DISPLAY spelling, never the kebab-case identifier.
       expect(lastFrame()).toContain('approvals: Assisted');
@@ -442,7 +440,7 @@ describe('tui <App>', () => {
     stdin.write('/approvals');
     await waitForFrame(() => expect(lastFrame()).toContain('/approvals'));
     stdin.write('\r');
-    await waitForFrame(() => expect(lastFrame()).toContain('Choose an approvals mode:'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('Choose an approvals mode:'));
 
     stdin.write('\x1b');
     await waitForFrame(() => expect(lastFrame()).not.toContain('Choose an approvals mode:'));
@@ -461,7 +459,7 @@ describe('tui <App>', () => {
     await waitForFrame(() => expect(lastFrame()).toContain('/approvals bypass'));
     stdin.write('\r');
 
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       expect(frames.join('\n')).toContain('nothing is rated and nothing is asked');
       expect(lastFrame()).toContain('⚡ Bypass');
     });
@@ -565,7 +563,7 @@ describe('tui <App>', () => {
         initialApprovals={{ rung: 'write', rater: 'safety-rater', allow: [], deny: [] }}
       />
     );
-    await waitForFrame(() => expect(lastFrame()).toContain('approvals: Write'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('approvals: Write'));
     expect(lastFrame()).not.toContain('safety-rater');
     unmount();
   });
@@ -613,7 +611,7 @@ describe('tui <App>', () => {
     const agent = scriptedAgent([{ type: 'text', delta: 'hi' }]);
     const { stdin, lastFrame, unmount } = render(<App {...baseProps} agent={agent} />);
 
-    await waitForFrame(() => expect(lastFrame()).toContain('>'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
     // Panel hidden initially.
     expect(lastFrame()).not.toContain('Subagents');
 
@@ -628,7 +626,7 @@ describe('tui <App>', () => {
 
     // Toggle off.
     stdin.write('/debug');
-    await waitForFrame(() =>
+    await vi.waitFor(() =>
       expect((lastFrame() ?? '').match(/\/debug/g)?.length).toBeGreaterThan(0)
     );
     stdin.write('\r');
@@ -641,7 +639,7 @@ describe('tui <App>', () => {
     const agent = scriptedAgent([{ type: 'text', delta: 'hi' }]);
     const { stdin, lastFrame, unmount } = render(<App {...baseProps} agent={agent} />);
 
-    await waitForFrame(() => expect(lastFrame()).toContain('>'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('>'));
     // No panel, no hint.
     expect(lastFrame()).not.toContain('Tab: focus debug panel');
 
@@ -920,7 +918,7 @@ describe('tui <App>', () => {
     stdin.write('/debug');
     await waitForFrame(() => expect(lastFrame()).toContain('/debug'));
     stdin.write('\r');
-    await waitForFrame(() => expect(lastFrame()).toContain('worker'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('worker'));
 
     // Default 8-row viewport clips the later rows.
     expect(lastFrame()).toContain('row-0');
@@ -1086,7 +1084,7 @@ describe('tui <App>', () => {
       <App {...baseProps} agent={agent} initialMessage="remember this" />
     );
 
-    await waitForFrame(() => expect(lastFrame()).toContain('turns: 1'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('turns: 1'));
     // No banner before the clear.
     expect(lastFrame()).not.toContain('History cleared');
 
@@ -1094,7 +1092,7 @@ describe('tui <App>', () => {
     await waitForFrame(() => expect(lastFrame()).toContain('/clear'));
     stdin.write('\r');
 
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       const f = lastFrame() ?? '';
       expect(f).toContain('History cleared'); // banner title
       expect(f).toContain('The model no longer sees the prior conversation.');
@@ -1127,7 +1125,7 @@ describe('tui <App>', () => {
 
     // The conversation really is gone from the viewport — the user line committed above it no
     // longer renders — and the counter is back to zero.
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       const f = lastFrame() ?? '';
       expect(f).toContain('History cleared');
       expect(f).toContain('turns: 0');
@@ -1156,12 +1154,12 @@ describe('tui <App>', () => {
 
     await waitForFrame(() => expect(lastFrame()).toContain('turns: 1'));
     stdin.write('/clear');
-    await waitForFrame(() => expect(lastFrame()).toContain('/clear'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('/clear'));
     stdin.write('\r');
 
     // The command consumes cleanly (its echoed text clears from the prompt) and no error line
     // surfaced — i.e. the optional clearConversation call did not blow up the run.
-    await waitForFrame(() => expect(lastFrame()).not.toContain('> /clear'));
+    await vi.waitFor(() => expect(lastFrame()).not.toContain('> /clear'));
     expect(frames.join('\n')).not.toContain('[error]');
 
     unmount();
@@ -1450,7 +1448,7 @@ describe('tui <App>', () => {
     stdin.write(CTRL_T);
 
     // The idle toggle works…
-    await waitForFrame(() => expect(lastFrame()).toContain('body-12'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('body-12'));
     // …and the chord did not land in the buffer. `draftt` is what the unguarded text input
     // produces, so it is the assertion that states the difference.
     expect(lastFrame()).not.toContain('draftt');
@@ -1468,7 +1466,7 @@ describe('tui <App>', () => {
 
     // And back: the same key re-folds it, so this is a toggle rather than a one-way reveal.
     stdin.write(CTRL_T);
-    await waitForFrame(() => expect(lastFrame()).not.toContain('body-12'));
+    await vi.waitFor(() => expect(lastFrame()).not.toContain('body-12'));
     expect(lastFrame()).toContain('draftmore');
     // The SECOND chord's letter has its own assertion: `draftmore` is a substring of `draftmoret`,
     // so the line above would pass with the stray `t` appended and prove only the first chord.
@@ -1476,7 +1474,7 @@ describe('tui <App>', () => {
 
     // The message the user is about to send is what they wrote.
     stdin.write('\r');
-    await waitForFrame(() => expect(lastFrame()).toContain('You › draftmore'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('You › draftmore'));
     expect(lastFrame()).not.toContain('You › draftmoret');
 
     unmount();
@@ -1555,7 +1553,7 @@ describe('tui <App>', () => {
       await waitForFrame(() => expect(frames.join('\n')).toContain('working'));
 
       stdin.write(opener);
-      await waitForFrame(() => expect(lastFrame()).toMatch(/❯/));
+      await vi.waitFor(() => expect(lastFrame()).toMatch(/❯/));
 
       stdin.write(ESC);
       await waitForFrame(() => expect(lastFrame()).not.toMatch(/❯/));
@@ -1644,7 +1642,7 @@ describe('tui <App>', () => {
       // The prompt stays mounted while a turn streams (EXT-12), so both rungs are live at once and
       // the order between them is a real decision rather than a state that cannot arise.
       stdin.write('a second thought');
-      await waitForFrame(() => expect(lastFrame()).toContain('> a second thought'));
+      await vi.waitFor(() => expect(lastFrame()).toContain('> a second thought'));
       stdin.write(CTRL_C);
       await vi.waitFor(() => expect(lastFrame()).not.toContain('a second thought'));
 
@@ -2064,7 +2062,7 @@ describe('tui <App>', () => {
 
       // Focus the pane; now the prompt is unmounted, so `/` can only mean "search this pane".
       stdin.write(TAB);
-      await waitForFrame(() => expect(lastFrame()).toContain('Tab: section'));
+      await vi.waitFor(() => expect(lastFrame()).toContain('Tab: section'));
       // "line-30" is clipped by the 8-row viewport before searching.
       expect(lastFrame()).not.toContain('line-30');
 
@@ -2093,7 +2091,7 @@ describe('tui <App>', () => {
       await waitForFrame(() => expect(lastFrame()).toContain('Subagents'));
 
       stdin.write('/');
-      await waitForFrame(() => {
+      await vi.waitFor(() => {
         const f = lastFrame() ?? '';
         expect(f).toContain('❯'); // the slash-command discovery menu cursor (global slash intact)
         expect(f).toContain('/help'); // a discovered command
@@ -2276,7 +2274,7 @@ describe('tui <App>', () => {
 
       // Wait until the session is idle so the chrome has fully rendered, then assert the line is
       // absent.
-      await waitForFrame(() => expect(lastFrame()).toContain('ready'));
+      await vi.waitFor(() => expect(lastFrame()).toContain('ready'));
       expect(lastFrame() ?? '').not.toContain('config has problems');
 
       unmount();
@@ -2374,7 +2372,7 @@ describe('tui <App>', () => {
       await waitForFrame(() => expect(lastFrame()).toContain('/config'));
       stdin.write('\r');
 
-      await waitForFrame(() => {
+      await vi.waitFor(() => {
         // The control: the command really did run and render its summary, so the absences below
         // are about the warnings and not about a notice that never arrived.
         expect(frames.join('\n')).toContain('Resolved configuration');
@@ -2421,7 +2419,7 @@ describe('tui <App> — the slash menu over an unfinished message (TUI-C51)', ()
     await waitForFrame(() => expect(lastFrame()).toContain('ready to chat'));
 
     stdin.write('please refactor the fo');
-    await waitForFrame(() => expect(lastFrame()).toContain('> please refactor the fo'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('> please refactor the fo'));
     // Nothing about that buffer can open the menu the typed way — it starts with a letter and it
     // holds spaces.
     expect(lastFrame() ?? '').not.toMatch(/❯/);
@@ -2527,7 +2525,7 @@ describe('tui <App> — the slash menu over an unfinished message (TUI-C51)', ()
     stdin.write('\r');
 
     // The picker is up — and the prompt really is gone while it is, which is the whole hazard.
-    await waitForFrame(() => expect(lastFrame()).toContain('Choose an approvals mode:'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('Choose an approvals mode:'));
     expect(lastFrame()).not.toContain('> please refactor the fo');
 
     stdin.write(ESC);

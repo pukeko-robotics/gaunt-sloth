@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { waitForFrame } from './waitForFrame.mjs';
 import React from 'react';
 import { render } from 'ink-testing-library';
@@ -622,7 +622,7 @@ describe('tui approval flow through <App>', () => {
       // Frames wrap mid-sentence and re-open the style run at the break, so compare on text with
       // ANSI stripped and whitespace collapsed.
       const flat = () => plain(frames);
-      await waitForFrame(() => expect(flat()).toContain('Command rejected'));
+      await vi.waitFor(() => expect(flat()).toContain('Command rejected'));
       expect(flat()).not.toContain('Command approved');
       expect(flat()).not.toContain('will not ask again in this conversation');
       expect(flat()).not.toContain('saved to the project allow-list');
@@ -1289,7 +1289,7 @@ describe('tui approvals — the [d]eny always key, and the fallthrough it must n
     expect(decision).toMatchObject({ scope: 'always' });
 
     const flat = () => plain(frames);
-    await waitForFrame(() => expect(flat()).toContain('Command refused and saved'));
+    await vi.waitFor(() => expect(flat()).toContain('Command refused and saved'));
     // The confirmation says exactly what happened, and names the way back out of it — asked of the
     // confirmation's OWN rows, since the dialog above says *save it to this project* while asking.
     const block = () => noticeBlock(lastFrame() ?? '', 'Command refused and saved');
@@ -1341,7 +1341,7 @@ describe('tui approvals — the [d]eny always key, and the fallthrough it must n
     // The notice IS committed — half of the pair, and the half that makes the negative below mean
     // something rather than pass on an empty screen.
     // GS2-20 — the lifetime named is the conversation's, and a resume keeps the refusal.
-    await waitForFrame(() =>
+    await vi.waitFor(() =>
       expect(noticeBlock(lastFrame() ?? '', 'Command refused for this conversation')).not.toBe('')
     );
     const block = () => noticeBlock(lastFrame() ?? '', 'Command refused for this conversation');
@@ -1395,7 +1395,7 @@ describe('tui approvals — the [d]eny always key, and the fallthrough it must n
       const decision = await decisionP;
       expect(decision.type).toBe('reject');
       expect((decision as { scope?: string }).scope).toBeUndefined();
-      await waitForFrame(() => expect(plain(frames)).toContain('Command rejected'));
+      await vi.waitFor(() => expect(plain(frames)).toContain('Command rejected'));
       expect(plain(frames)).not.toContain('Command refused and saved');
       unmount();
     }
@@ -1487,7 +1487,7 @@ describe('tui approvals — the [d]eny always key, and the fallthrough it must n
       const decision = await decisionP;
       expect(decision.type).toBe('reject');
       expect((decision as { scope?: string }).scope).toBeUndefined();
-      await waitForFrame(() => expect(plain(frames)).toContain('Command rejected'));
+      await vi.waitFor(() => expect(plain(frames)).toContain('Command rejected'));
       expect(plain(frames)).not.toContain('Command approved');
       expect(plain(frames)).not.toContain('Command refused and saved');
       unmount();
@@ -1549,7 +1549,7 @@ describe('tui approvals — the confirmation names what was actually stored (§6
       expect(decision.type).toBe('reject');
       expect((decision as { scope?: string }).scope).toBeUndefined();
       const flat = () => plain(frames);
-      await waitForFrame(() => expect(flat()).toContain('Command rejected'));
+      await vi.waitFor(() => expect(flat()).toContain('Command rejected'));
       expect(flat()).not.toContain('Command approved');
       unmount();
     }
@@ -1616,7 +1616,7 @@ describe('tui approvals — the confirmation names what was actually stored (§6
     expect(await decisionP).toEqual({ type: 'approve', scope: 'always' });
 
     // Present, then read: the notice exists, and then its own rows are asked what they claim.
-    await waitForFrame(() =>
+    await vi.waitFor(() =>
       expect(noticeBlock(lastFrame() ?? '', 'Command approved (session)')).not.toBe('')
     );
     const block = () => noticeBlock(lastFrame() ?? '', 'Command approved (session)');
@@ -1702,7 +1702,7 @@ describe('tui /approvals trust (EXT-70 §4.7.1)', () => {
   it('CONTROL: granting trust says nothing about approvals being withdrawn', async () => {
     const { agent } = trustingAgent({ trusted: ['readOnlyHint'], added: ['readOnlyHint'] });
     const { frames, unmount } = await submit(agent, '/approvals trust jira readOnlyHint');
-    await waitForFrame(() => expect(plain(frames)).toContain('Now believing from jira'));
+    await vi.waitFor(() => expect(plain(frames)).toContain('Now believing from jira'));
     expect(plain(frames)).not.toContain('withdrawn the next time');
     unmount();
   });

@@ -210,7 +210,7 @@ describe('[[TUI-C68]] §6.1 the attack banner in <App>', () => {
   it('backspace trims the buffer, so a typo can be corrected into the phrase', async () => {
     const banner = await raise();
     banner.type('run anywayX');
-    await waitForFrame(() => expect(banner.lastFrame() ?? '').toContain('run anywayX'));
+    await vi.waitFor(() => expect(banner.lastFrame() ?? '').toContain('run anywayX'));
     banner.type(BACKSPACE);
     await waitForFrame(() => expect(banner.lastFrame() ?? '').not.toContain('anywayX'));
     banner.enter();

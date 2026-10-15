@@ -13,12 +13,17 @@
  *
  * WHAT IT CHANGES. The callback, the timeout and the matchers are the caller's own, and a number
  * argument is a timeout exactly as in `vi.waitFor`. What moves is how much time passes between the
- * frame landing and the caller's NEXT statement: up to 50 ms with `vi.waitFor`, up to 5 ms here. So
- * a wait followed by a "nothing else happened" assertion — `not.toHaveBeenCalled()`,
- * `toHaveBeenCalledTimes(1)`, `toBe(false)` on an abort flag — stays on `vi.waitFor`: the longer
- * window is what lets a wrongly deferred side effect land before it is asserted absent. Measured:
- * a scrap that also aborted, or quit, 20 ms later, and a `/compact` that called the agent again
- * 20 ms later, each passed 5 of 5 runs behind this helper and failed 5 of 5 behind `vi.waitFor`.
+ * frame landing and the caller's NEXT statement: up to 50 ms with `vi.waitFor`, up to 5 ms here.
+ *
+ * THE RULE. A wait followed by an ABSENCE assertion, before the next `await`, uses `vi.waitFor`,
+ * never this helper. Absence means any `.not.` matcher — on a frame, on the frame history, on a
+ * mock — and also `toHaveBeenCalledTimes(1)`, `toBe(false)`, `toBeUndefined()` and
+ * `toHaveLength(0)`. No exemptions by site: the longer window is what lets a wrong render or side
+ * effect that arrives late land before it is asserted absent, and whether one can arrive late is
+ * not visible from the spec. Measured, each 5 of 5 runs passing behind this helper and failing
+ * behind `vi.waitFor`: a scrap that also aborted, or quit, 20 ms later; a `/compact` that called
+ * the agent again 20 ms later; a run recap followed 20 ms later by the unfinished-checklist notice
+ * it replaces; and a saved refusal followed 20 ms later by an approval notice.
  *
  * NOT UNDER FAKE TIMERS. With fake timers `vi.waitFor` advances the fake clock by the interval on
  * every poll, so a shorter interval would change how much time a case lets pass. No caller of this

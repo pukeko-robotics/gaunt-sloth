@@ -416,7 +416,7 @@ describe('<App> transcript scrolling', () => {
 
     stdin.write(KEY.ctrlHome);
     await settle(stdout);
-    await waitForFrame(() => expect(visibleTurns(stdout)).toContain(0), {
+    await vi.waitFor(() => expect(visibleTurns(stdout)).toContain(0), {
       timeout: TURN_TIMEOUT_MS,
     });
 
@@ -479,7 +479,7 @@ describe('<App> transcript scrolling', () => {
     // Ctrl+Home reaches the very first exchange, and the region is full there.
     stdin.write(KEY.ctrlHome);
     await settle(stdout);
-    await waitForFrame(() => expect(visibleTurns(stdout)).toContain(0), {
+    await vi.waitFor(() => expect(visibleTurns(stdout)).toContain(0), {
       timeout: TURN_TIMEOUT_MS,
     });
     expect(regionRows(stdout)[0].trim()).not.toBe('');
@@ -739,7 +739,7 @@ describe('<App> scroll bindings yield to their prior claimants', () => {
     stdin.write(KEY.tab);
     await settle(stdout);
     stdin.write(KEY.tab);
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('/60'), {
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('/60'), {
       timeout: TURN_TIMEOUT_MS,
     });
 
@@ -907,14 +907,14 @@ describe('<App> keeps the scroll position honest when the layout moves under it'
     expect(regionRows(stdout)[0]).toContain('numbered-row-018');
 
     stdout.resizeTo(120, 20);
-    await waitForFrame(() => expect(frameRows(stdout)).toHaveLength(20), { timeout: 5000 });
+    await vi.waitFor(() => expect(frameRows(stdout)).toHaveLength(20), { timeout: 5000 });
     await waitForFrame(() => expect(regionRows(stdout).join('').trim()).not.toBe(''), {
       timeout: 5000,
     });
     expect(frameRows(stdout)).toHaveLength(20);
 
     stdout.resizeTo(120, 40);
-    await waitForFrame(() => expect(frameRows(stdout)).toHaveLength(40), { timeout: 5000 });
+    await vi.waitFor(() => expect(frameRows(stdout)).toHaveLength(40), { timeout: 5000 });
     expect(regionRows(stdout).join('').trim()).not.toBe('');
 
     unmount();
@@ -1049,7 +1049,7 @@ describe('<App> scrolling inside a single answer taller than the screen', () => 
     stdin.write('go');
     await waitForFrame(() => expect(stdout.lastFrame()).toContain('> go'));
     stdin.write(KEY.enter);
-    await waitForFrame(() => expect(stdout.lastFrame()).toContain('turns: 1'), {
+    await vi.waitFor(() => expect(stdout.lastFrame()).toContain('turns: 1'), {
       timeout: TURN_TIMEOUT_MS,
     });
 

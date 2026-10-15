@@ -93,7 +93,7 @@ describe('TUI-C27 — the Auto-mode tab in the docked debug pane', () => {
   it('is in the tab strip as soon as the pane opens', async () => {
     const { stdin, lastFrame, unmount } = render(<App {...baseProps} agent={idleAgent()} />);
     try {
-      await waitForFrame(() => expect(lastFrame()).toContain('>'));
+      await vi.waitFor(() => expect(lastFrame()).toContain('>'));
       expect(stripAnsi(lastFrame() ?? '')).not.toContain('Auto-mode');
 
       stdin.write('/debug');

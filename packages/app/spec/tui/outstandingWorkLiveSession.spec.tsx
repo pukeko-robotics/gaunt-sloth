@@ -16,7 +16,7 @@
  * sentence could not tell. The silence cells use the shared title PREFIX instead, because the whole
  * claim there is that no such notice was drawn at all.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { waitForFrame } from './waitForFrame.mjs';
 import React from 'react';
 import { render } from 'ink-testing-library';
@@ -113,7 +113,7 @@ describe('[[EXT-158]] SURFACE — the Ink TUI says the checklist was left unfini
       <App {...baseProps} agent={agent} initialMessage="go" />
     );
 
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       expect(frames.join('\n')).toContain('thinking');
     });
     expect(lastFrame()).not.toContain(OUTSTANDING_WORK_NOTICE_TITLE_PREFIX);
@@ -136,7 +136,7 @@ describe('[[EXT-158]] SURFACE — the Ink TUI says the checklist was left unfini
       <App {...baseProps} agent={agent} initialMessage="go" />
     );
 
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       expect(frames.join('\n')).toContain('again');
     });
     expect(lastFrame()).not.toContain(OUTSTANDING_WORK_NOTICE_TITLE_PREFIX);
@@ -155,7 +155,7 @@ describe('[[EXT-158]] SURFACE — the Ink TUI says the checklist was left unfini
       <App {...baseProps} agent={agent} initialMessage="go" />
     );
 
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       expect(frames.join('\n')).toContain('done');
     });
     expect(lastFrame()).not.toContain(OUTSTANDING_WORK_NOTICE_TITLE_PREFIX);
@@ -191,7 +191,7 @@ describe('[[EXT-158]] SURFACE — the Ink TUI says the checklist was left unfini
       <App {...baseProps} agent={agent} initialMessage="go" />
     );
 
-    await waitForFrame(() => {
+    await vi.waitFor(() => {
       expect(frames.join('\n')).toContain('legacy');
     });
     expect(lastFrame()).not.toContain(OUTSTANDING_WORK_NOTICE_TITLE_PREFIX);

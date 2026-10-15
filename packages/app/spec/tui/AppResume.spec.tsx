@@ -234,7 +234,7 @@ describe('tui <App> — /resume (GS2-20)', () => {
     await waitForFrame(() => expect(lastFrame()).toContain('❯ #34'));
     stdin.write('\r');
 
-    await waitForFrame(() => expect(lastFrame()).toContain('Resumed conversation #34'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('Resumed conversation #34'));
     // THE assertion: the agent was asked for the highlighted conversation, once, by id.
     expect(resume.mock.calls).toEqual([[34]]);
     const frame = lastFrame() ?? '';
@@ -310,7 +310,7 @@ describe('tui <App> — /resume (GS2-20)', () => {
       />
     );
     await submit(stdin, lastFrame, '/resume');
-    await waitForFrame(() => expect(lastFrame()).toContain('No other conversation can be resumed'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('No other conversation can be resumed'));
     const frame = lastFrame() ?? '';
     expect(frame).not.toContain(RESUME_PICKER_TITLE);
     expect(frame).toContain('Nothing was changed.');
@@ -398,7 +398,7 @@ describe('tui <App> — /resume (GS2-20)', () => {
     const { lastFrame, unmount } = render(
       <App {...baseProps} agent={agent} conversationId={12} resumed={target} showLaunchBanner />
     );
-    await waitForFrame(() => expect(lastFrame()).toContain('Resumed conversation #12'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('Resumed conversation #12'));
     const frame = lastFrame() ?? '';
     expect(frame).toContain('You › first old prompt');
     expect(frame).toContain('(restored)');
