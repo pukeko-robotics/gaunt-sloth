@@ -140,14 +140,13 @@ const TUI_RENDER_SPECS = 'packages/app/spec/tui/*.spec.tsx';
  * a runner freeze (Andrew's decision, 2026-10-15). Every other spec keeps the 10 s default.
  *
  * Measured on the Windows unit cells, which are the slowest, from the GTH_TEST_TIMINGS_FILE
- * artifact, on react 19.2.8 with these specs as they are: both Windows cells of runs 38648732784,
- * 38648754702, 38679093811 and 38679096549, 8 cells, taking the worst value per metric over all
- * of them. The family's p99 duration is 2242 ms, so 20 000 / 2242 = 8.9. The slowest test under
- * this ceiling took 8089 ms, so 20 000 / 8089 = 2.5: a PromptInput TUI-C51 case in run
- * 38679096549 (Windows, node 24.x), 5.1x its own median over the other 7 cells, while the ten
- * tests running beside it were 4.6x theirs and that cell as a whole 1.0x. That is a runner stall,
- * the case this ceiling is for. The cell's p99 swings by about 1.4x between runs on identical
- * bytes; re-read the artifact before a react or ink bump.
+ * artifact, on react 19.3.0 with these specs as they are: both Windows cells of three consecutive
+ * runs, 38683507048, 38683510031 and 38683512882, 6 cells, taking the worst value per metric over
+ * all of them. The family's p99 duration is 2071 ms, so 20 000 / 2071 = 9.7. The slowest test
+ * under this ceiling took 9826 ms, so 20 000 / 9826 = 2.0: a PromptInput TUI-C95 case in run
+ * 38683512882 (Windows, node latest), 4.1x its own median over the other 5 cells, in a cell that
+ * was 1.0x overall. On react 19.2.8 the same specs measured 2242 ms and 8089 ms at worst, so the
+ * two are within the cell's run-to-run swing. Re-read the artifact before a react or ink bump.
  */
 const TUI_RENDER_TIMEOUT_MS = 20_000;
 
