@@ -2512,6 +2512,48 @@ describe('tui <PromptEditor> control and meta chords (TUI-C25)', () => {
 });
 
 /**
+ * The editor's ctrl+letter bindings, met by the same control byte BEHIND AN ESCAPE.
+ *
+ * Ink decodes `ESC` + a control byte as that letter with ctrl AND meta set: what a legacy terminal
+ * sends for `Alt+Ctrl+<key>`, and what the escape hold-back releases when the key lands inside its
+ * window after an Escape. None of the seven bindings is bound to that chord (`isCtrlKey`), so each
+ * must leave the message as it was. One row per binding, because each site asks the guard on its
+ * own: a row is chosen so its binding, had it fired, would leave a different message — `Ctrl+E`,
+ * `Ctrl+D` and `Ctrl+K` from the line start, `Ctrl+Y` after a kill that filled the slot.
+ */
+describe('tui <PromptEditor> a ctrl binding behind an escape fires nothing', () => {
+  const CASES: ReadonlyArray<readonly [string, string, string, string]> = [
+    // [binding, keys before the chord, the chord, the message submitted]
+    ['Ctrl+A', '', '\x1b\x01', 'hello worldX'],
+    ['Ctrl+E', '\x01', '\x1b\x05', 'Xhello world'],
+    ['Ctrl+W', '', '\x1b\x17', 'hello worldX'],
+    ['Ctrl+D', '\x01', '\x1b\x04', 'Xhello world'],
+    ['Ctrl+K', '\x01', '\x1b\x0b', 'Xhello world'],
+    ['Ctrl+U', '', '\x1b\x15', 'hello worldX'],
+    ['Ctrl+Y', '\x17', '\x1b\x19', 'hello X'],
+  ];
+
+  it.each(CASES)('%s', async (_binding, before, chord, submitted) => {
+    const onSubmit = vi.fn();
+    const { stdin } = render(
+      <PromptInput onSubmit={onSubmit} commands={createCommandRegistry()} />
+    );
+    await typeSlowly(stdin, 'hello world');
+    if (before) {
+      stdin.write(before);
+      await tick();
+    }
+    stdin.write(chord);
+    await tick();
+    stdin.write('X');
+    await tick();
+    stdin.write(ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith(submitted);
+  });
+});
+
+/**
  * TUI-C25 — two keystrokes that arrive in ONE stdin chunk.
  *
  * Ink splits a chunk into several key events and dispatches them synchronously, so every handler

@@ -327,6 +327,29 @@ describe('CFG-20 type-to-filter interaction', () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 
+  it('does not abort on a Ctrl+C that arrives behind an escape (Alt+Ctrl+C, or a merged Escape)', async () => {
+    // Ink decodes `ESC ^C` as `c` with ctrl AND meta. That is not the abort key (`isCtrlKey`), so
+    // the list stays up and Enter still picks — a positive consequence after the chord, so the
+    // absence of a cancel is read after the chord was handled.
+    const onSelect = vi.fn();
+    const onCancel = vi.fn();
+    const { stdin } = render(
+      <SelectList
+        title="Pick a model"
+        items={models}
+        initialIndex={0}
+        onSelect={onSelect}
+        onCancel={onCancel}
+      />
+    );
+    stdin.write('\x1b\x03');
+    await tick();
+    stdin.write(ENTER);
+    await tick();
+    expect(onSelect).toHaveBeenCalledWith(0);
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
   it('Ctrl+C aborts even with an active filter typed', async () => {
     const onSelect = vi.fn();
     const onCancel = vi.fn();

@@ -1397,6 +1397,47 @@ describe('tui <App>', () => {
     unmount();
   });
 
+  it('does not toggle tool-call detail on a Ctrl+T that arrives behind an escape', async () => {
+    // Ink decodes `ESC ^T` (Alt+Ctrl+T, or Ctrl+T merged with a held-back Escape) as `t` with ctrl
+    // AND meta. That is not the toggle (`isCtrlKey`), so the panel stays collapsed. "Nothing
+    // happened" waits on a POSITIVE consequence ordered after the chord: a letter in the prompt.
+    const longBody = Array.from(
+      { length: 12 },
+      (_, i) => `body-${String(i + 1).padStart(2, '0')}`
+    ).join('\n');
+    const agent: TuiAgent = {
+      async *runTurn(_input, signal) {
+        yield { type: 'tool_start', id: 't1', name: 'read_file' };
+        yield { type: 'tool_args', id: 't1', delta: '{"path":"live.ts"}' };
+        yield { type: 'tool_end', id: 't1' };
+        yield { type: 'tool_result', id: 't1', content: longBody };
+        yield { type: 'text', delta: 'working' };
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) return resolve();
+          signal.addEventListener('abort', () => resolve());
+        });
+      },
+    };
+    const { stdin, lastFrame, unmount } = render(
+      <App {...baseProps} agent={agent} initialMessage="go" />
+    );
+    await vi.waitFor(() => {
+      const f = lastFrame() ?? '';
+      expect(f).toContain('read_file(path=live.ts)');
+      expect(f).toContain('(+2 more lines)');
+    });
+
+    stdin.write('\x1b\x14');
+    stdin.write('z');
+    await vi.waitFor(() => expect(lastFrame()).toContain('> z'));
+    const frame = lastFrame() ?? '';
+    expect(frame).not.toContain('body-12');
+    expect(frame).toContain('(+2 more lines)');
+
+    stdin.write(String.fromCharCode(27)); // Esc to end the run cleanly
+    unmount();
+  });
+
   /**
    * TUI-C48 — Ctrl+T is bound in every state, and the letter never reaches the prompt.
    *
