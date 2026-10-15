@@ -133,22 +133,24 @@ export function resolveWorkspaceImports() {
 const TUI_RENDER_SPECS = 'packages/app/spec/tui/*.spec.tsx';
 
 /**
- * OPS-122 — the per-test ceiling of the Ink render specs. A test that sets its own keeps it.
+ * OPS-122 — the per-test ceiling of the Ink render specs. A test that sets its own keeps it,
+ * including the 25 that set 20 s, 30 s or 40 s. Every other spec keeps the 10 s default.
  *
- * Rule: these specs run well under it, and a hosted runner that freezes for a second or two must
- * not fail one of them. A few seconds of slower runs are preferred over re-running the suite after
- * a runner freeze (Andrew's decision, 2026-10-15). Every other spec keeps the 10 s default.
+ * Rule: a slower run is preferred over re-running the suite (Andrew's decision, 2026-10-15), so
+ * this is sized for a hosted runner that slows down for minutes, not only one that freezes for a
+ * second or two. Windows run 38685385617 (node 24.x) ran its whole cell at 7-9x its usual speed
+ * for about 7 minutes, and two PromptInput cases whose medians are 0.9 s and 2.4 s reached the
+ * former 20 s ceiling at 20.8 s.
  *
  * Measured on the Windows unit cells, which are the slowest, from the GTH_TEST_TIMINGS_FILE
- * artifact, on react 19.3.0 with these specs as they are: both Windows cells of three consecutive
- * runs, 38683507048, 38683510031 and 38683512882, 6 cells, taking the worst value per metric over
- * all of them. The family's p99 duration is 2071 ms, so 20 000 / 2071 = 9.7. The slowest test
- * under this ceiling took 9826 ms, so 20 000 / 9826 = 2.0: a PromptInput TUI-C95 case in run
- * 38683512882 (Windows, node latest), 4.1x its own median over the other 5 cells, in a cell that
- * was 1.0x overall. On react 19.2.8 the same specs measured 2242 ms and 8089 ms at worst, so the
- * two are within the cell's run-to-run swing. Re-read the artifact before a react or ink bump.
+ * artifact, on react 19.3.0, taking the worst value per metric:
+ *   both Windows cells of runs 38683507048, 38683510031 and 38683512882: p99 2071 ms, so
+ *   60 000 / 2071 = 29; slowest 9826 ms, so 60 000 / 9826 = 6.1;
+ *   the slowed cell of run 38685385617: p99 15 216 ms, so 60 000 / 15 216 = 3.9; slowest at
+ *   least 20 865 ms (cut off by the 20 s ceiling then), so at most 60 000 / 20 865 = 2.9.
+ * Re-read the artifact before a react or ink bump.
  */
-const TUI_RENDER_TIMEOUT_MS = 20_000;
+const TUI_RENDER_TIMEOUT_MS = 60_000;
 
 export default defineConfig({
   plugins: [resolveWorkspaceImports()],
