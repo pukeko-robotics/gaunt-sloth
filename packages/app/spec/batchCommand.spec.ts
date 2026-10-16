@@ -192,6 +192,25 @@ describe('batchCommand', () => {
     });
   });
 
+  // BATCH-54 — `gth eval` records `toolCalls` on every run; `gth batch` never does, so its cell
+  // files keep their exact key set even when the runtime hands back calls.
+  it('writes no toolCalls to a batch cell file, even when the run recorded calls', async () => {
+    runSingleShot.mockResolvedValue({
+      ok: true,
+      answer: 'CELL ANSWER',
+      tools: ['read_file'],
+      toolCalls: [{ name: 'read_file', id: 'c1', args: '{"path":"a.txt"}' }],
+    });
+    const { batchCommand } = await import('#src/commands/batchCommand.js');
+    const program = new Command();
+    batchCommand(program, {});
+    await program.parseAsync(['na', 'na', 'batch', 'script.md', '-o', outputDir]);
+
+    const cellJson = JSON.parse(readFileSync(join(outputDir, 'cell-0-0.json'), 'utf8'));
+    expect(cellJson.ok).toBe(true);
+    expect(cellJson).not.toHaveProperty('toolCalls');
+  });
+
   it('fans out over --models, one runSingleShot call per model with an overridden llm.model', async () => {
     const { batchCommand } = await import('#src/commands/batchCommand.js');
     const program = new Command();

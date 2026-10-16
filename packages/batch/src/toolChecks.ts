@@ -56,7 +56,7 @@ export function runToolCallChecks(
 
 /**
  * BATCH-52 tool-call ARGUMENT assertions — grade a cell against the arguments its tools were
- * called WITH (`toolCalls`, captured only when the run sets `evalToolCallArgs`), for a suite where
+ * called WITH (the arguments on `toolCalls`, recorded only when the run sets `evalToolCallArgs`), for a suite where
  * the fact of the call is not enough.
  *
  * Each `tool_call_json_path` entry selects the calls whose name matches its `tool` pattern (the
@@ -150,9 +150,10 @@ function evaluateCallAgainstCheck(
  * nothing, since the argument never looks at which patterns a call could also have matched. No
  * backtracking is needed, and the scan is linear in the number of calls.
  *
- * **Why it grades `toolCalls`, not `tools`.** `tools` is a name set: de-duplicated in first-seen
- * order on the in-process target, a plain list on the AG-UI target, and on both it includes names
- * seen on tool RESULTS. It cannot express a repeat, and the two targets disagree. `toolCalls` holds
+ * **Why it grades `toolCalls`, not `tools`.** On the in-process target `tools` is a first-seen
+ * name set that also takes names from tool RESULTS, so it cannot express a repeat and can hold a
+ * name the model never requested; on the AG-UI target it is a plain list of `TOOL_CALL_START`
+ * names. The two targets disagree, so `tools` cannot carry one meaning for this check. `toolCalls` holds
  * one entry per REQUESTED call in the order the model emitted them, parallel calls in one message
  * included, not de-duplicated, so a call counts whether or not it errored or returned a result.
  *

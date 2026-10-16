@@ -273,7 +273,7 @@ filter it passed to a search, the id it asked for. Set the key in the config the
 ```
 
 `gth eval` always writes a `toolCalls` list for each case: one entry per tool call, in the order the
-model made them, with the tool's `name` and the call's `id`. That list is what
+model made them, with the tool's `name` and, when the provider sent one, the call's `id`. That list is what
 [`tool_trajectory`](../COMMANDS.md#tool-call-order-assertions) checks. The setting decides only
 whether each entry also carries the call's arguments as `args`.
 
