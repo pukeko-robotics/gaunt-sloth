@@ -583,6 +583,7 @@ These grade the agent's answer (and its tool trace). Use them at case level, ins
 | `must_error` | string[] | For **each** pattern, at least one called tool matching it **returned an error** (the tool result's real error status, not text sniffing). Globs supported, same matcher as `must_call`. |
 | `tool_result_json_path` | list | Each entry is `{ tool, path }` plus optionally `equals` **or** `contains`. At least one result from a tool matching `tool` (glob) parses as JSON and `path` resolves in it (and matches `equals`/`contains` when set; neither = existence check). A non-JSON payload fails the entry. For a failed MCP call the payload graded is the server's own error body — see [Tool-result assertions](#tool-result-assertions). |
 | `tool_call_json_path` | list | Same entry shape as `tool_result_json_path`, read against the **arguments** a matching tool was called with: at least one call to a tool matching `tool` (glob) has arguments where `path` resolves (and matches `equals`/`contains`/`matches` when set). Also takes `present` and `all_calls`. Needs [`evalToolCallArgs`](configuration/output.md#recorded-tool-call-arguments-evaltoolcallargs) — see [Tool-call argument assertions](#tool-call-argument-assertions). |
+| `tool_trajectory` | object | `{ calls: [...], strict }`. The agent called tools matching `calls` **in that order** (globs supported, same matcher as `must_call`). Other calls may come before, between and after; with `strict: true` the calls must match the list exactly, with no extra calls and none missing. Each pattern stands for one call, so a pattern listed twice needs two calls. See [Tool-call order assertions](#tool-call-order-assertions). |
 | `expect_label` | string | The classification the SUT produced equals this. The value must be one the suite's `classification.labels` declares. Requires a `classification` block. |
 | `expect_action` | string | The **action** the SUT produced equals this. Requires `classification.actions` **and** `classification.action_from`. |
 | `expect_rated` | `true` | A model actually rendered a verdict for this round — `model.label` is present. Asserts nothing about *which* verdict. `rater` target only, and not on a `model_free` case; see [Asserting that the rater answered](#asserting-that-the-rater-answered). |
@@ -667,7 +668,7 @@ To assert that the agent never sent an argument, combine `present: false` with `
 
 Without `all_calls`, `present: false` passes if **at least one** call omits the argument, even when another call sent it.
 
-With the setting on, every case result in `<case>.json` (and each turn of a multi-turn case) gains a `toolCalls` list — one entry per call, in the order the model made them, with the arguments as the JSON text the model sent:
+Every case result in `<case>.json` (and each turn of a multi-turn case) has a `toolCalls` list: one entry per call, in the order the model made them. With the setting on, each entry also carries the arguments as the JSON text the model sent:
 
 ```json
 "toolCalls": [
@@ -675,9 +676,38 @@ With the setting on, every case result in `<case>.json` (and each turn of a mult
 ]
 ```
 
+Without the setting, the entries carry only `name` and, when the provider sent one, `id`.
+
 A suite that uses `tool_call_json_path` in a run without `evalToolCallArgs` is refused before anything runs (exit `2`), with an error naming the key. Arguments the model sent as invalid JSON fail the entry with `arguments are not JSON`, and arguments longer than [`toolResultCaptureMaxBytes`](configuration/output.md#recorded-tool-result-size-toolresultcapturemaxbytes) fail with a reason naming that key, the same way a cut tool result does.
 
 `tool_call_json_path` works with the `gth-agent` and `ag-ui` targets (the AG-UI stream carries each call's arguments). It is rejected before anything runs for `adk-agent`, whose A2A stream carries no tool calls, and for `rater`.
+
+#### Tool-call order assertions
+
+`must_call` checks that a tool was called, not when. For a case that writes, the order matters: look up the customer before creating the order. `tool_trajectory` checks the order of the calls:
+
+```yaml
+- id: looks-up-before-ordering
+  prompt: "Order a laptop for Acme."
+  tool_trajectory:
+    calls:
+      - "mcp__shop__get_customer"
+      - "mcp__shop__create_order"
+```
+
+By default the listed calls must happen in that order, with any other calls allowed before, between and after them. Add `strict: true` to require exactly the listed calls and nothing else, for example "list, then update, and nothing more":
+
+```yaml
+  tool_trajectory:
+    calls: ["mcp__shop__list_orders", "mcp__shop__update_order"]
+    strict: true
+```
+
+Each pattern stands for one call, so listing `mcp__shop__get_order` twice needs two calls to it. Patterns are exact names or globs, the same as `must_call`. A call counts whether or not it returned an error, and calls the model made together in one message count in the order it listed them. In a multi-turn case a turn's `tool_trajectory` checks that turn's calls only.
+
+A failing case shows the expected list against the calls made. With `strict: true` it also names the first position where they differ: `tool_trajectory (strict): differs at position 2: expected "mcp__shop__update_order", called "mcp__shop__delete_order"; expected exactly [...], calls were [...]`. Without it, the reason names the first pattern that had no matching call in order. A run with no tool calls fails any trajectory.
+
+`calls` must list at least one pattern, and each pattern must be a non-empty string. `tool_trajectory` needs no `evalToolCallArgs`: it reads the call names in `toolCalls`, which every run records. It works with the `gth-agent` and `ag-ui` targets and is rejected before anything runs (exit `2`) for `adk-agent`, whose A2A stream carries no tool calls, and for `rater`.
 
 ### Identity matrix
 

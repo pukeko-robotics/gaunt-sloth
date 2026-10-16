@@ -272,10 +272,14 @@ filter it passed to a search, the id it asked for. Set the key in the config the
 { "evalToolCallArgs": true }
 ```
 
-With it on, `gth eval` records every tool call's arguments in each case's `toolCalls` list and lets
-suites assert on them with
-[`tool_call_json_path`](../COMMANDS.md#tool-call-argument-assertions). Off (the default), a run
-records tool names and results only, and a suite using `tool_call_json_path` is refused.
+`gth eval` always writes a `toolCalls` list for each case: one entry per tool call, in the order the
+model made them, with the tool's `name` and the call's `id`. That list is what
+[`tool_trajectory`](../COMMANDS.md#tool-call-order-assertions) checks. The setting decides only
+whether each entry also carries the call's arguments as `args`.
+
+With it on, every entry carries `args`, and suites can assert on them with
+[`tool_call_json_path`](../COMMANDS.md#tool-call-argument-assertions). Off (the default), no
+argument text is written, and a suite using `tool_call_json_path` is refused.
 
 The arguments are written to `<case>.json` and `results.json`, and handed to every reporter, exactly
 as the model sent them, with nothing redacted. Keep evals away from production data and real credentials: anything the
