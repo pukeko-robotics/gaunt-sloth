@@ -1,7 +1,8 @@
 # Evaluate your agent
 
 What you ship is not a model — it is an agent: a system prompt, tools, maybe MCP servers, wired
-around a model. `gth eval` tests that **whole running agent**. A suite of YAML cases sends real
+around a model. `gth eval` tests that **whole running agent**, whether it is gaunt-sloth's own or
+[an external agent](#evaluate-an-external-agent) built with something else. A suite of YAML cases sends real
 prompts through the real agent — tool calls included — grades every answer with deterministic
 assertions and/or an LLM judge, and exits with a code a CI step can gate on.
 
@@ -54,6 +55,37 @@ The exit code is three-way, and CI should treat the values differently:
 - `1` — the suite ran but at least one case failed: a **product** regression;
 - `2` — a harness/environment error (unparseable suite, unresolved profile, no output to grade):
   nothing was meaningfully evaluated, so don't read it as a product verdict.
+
+## Evaluate an external agent
+
+The agent under test does not have to be built on gaunt-sloth. If it runs in its own process and
+speaks AG-UI or A2A, point the suite's `target` at it and keep the cases as they are:
+
+```yaml
+# An agent served over AG-UI, at POST {url}/agents/{agent_id}/run
+target: { type: ag-ui, url: http://localhost:3000, agent_id: support }
+```
+
+```yaml
+# A Google ADK agent over A2A; url is its A2A endpoint (agent-card base URL)
+target: { type: adk-agent, url: http://localhost:8080 }
+```
+
+The external agent keeps its own model, tools and credentials, and the `judge` grades with the
+model from your local gth config (or the judge profile, below). What each target can check depends
+on what its protocol carries:
+
+| Suite feature | `gth-agent` | `ag-ui` | `adk-agent` |
+|---|---|---|---|
+| Answer assertions (`must_contain`, `must_match`, …) and `judge` | yes | yes | yes |
+| `must_call`, `must_not_call`, `tool_call_json_path`, `tool_trajectory` | yes | yes | no |
+| `must_error`, `tool_result_json_path`, `tool_coverage` | yes | no | no |
+| `identities` matrix, `sweep` | yes | no | no |
+
+AG-UI streams the agent's tool calls but not their results, and A2A carries neither. A suite that
+uses a key its target cannot grade is refused before anything runs (exit `2`), rather than passing
+without checking. `identities` and `sweep` switch gth's own config, which an external agent does not
+read.
 
 ## Choose a separate judge
 
