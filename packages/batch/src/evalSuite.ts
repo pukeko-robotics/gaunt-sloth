@@ -21,6 +21,7 @@ import type {
   EvalTurn,
   ForcedByMechanism,
   ToolCallJsonPathCheck,
+  ToolTrajectoryCheck,
 } from '#src/evalTypes.js';
 // [[BATCH-31]] — the omittable note names, read off the registry rather than restated, so a suite
 // that names a note gets the same answer the arm will give it. Like the vocabulary import above
@@ -107,6 +108,9 @@ function suiteObject<T extends z.ZodRawShape>(shape: T) {
  *       - { tool: "mcp__unimarket__*", path: "code", equals: "ACCESS_DENIED" }
  *     tool_call_json_path:                      # BATCH-52: over a matching call's ARGUMENTS (opt-in)
  *       - { tool: "mcp__unimarket__search", path: "status", equals: "open" }
+ *     tool_trajectory:                          # BATCH-54: the ORDER of the calls (glob supported)
+ *       calls: [ "mcp__unimarket__search", "mcp__unimarket__buy" ]
+ *       strict: false                           # default: an ordered subsequence; true = exact
  *     judge: "Answers with a ranked summary and correctly formatted values."
  *     pass_threshold: 7
  *   # Matrix case — per-identity expectations:
@@ -150,6 +154,15 @@ const RawToolCallJsonPathCheckSchema = suiteObject({
   all_calls: z.boolean().optional(),
 });
 
+/** BATCH-54 — the `tool_trajectory` object: a non-empty, ordered list of non-blank call patterns
+ * (the `must_call` matcher) and an optional `strict` flag, defaulted to `false` in code. */
+const RawToolTrajectorySchema = suiteObject({
+  calls: z
+    .array(z.string().regex(/\S/, 'tool_trajectory calls must each be a non-empty tool pattern'))
+    .min(1, 'tool_trajectory must list at least one call in `calls`'),
+  strict: z.boolean().optional(),
+});
+
 /** The assertion bundle keys shared by a flat case and an `expect:` block. `expect:` blocks may also
  * carry `identities`; the flat case has no `identities` key (it always applies to every identity). */
 const RawAssertionsSchema = suiteObject({
@@ -166,6 +179,8 @@ const RawAssertionsSchema = suiteObject({
   tool_result_json_path: z.array(RawToolResultJsonPathCheckSchema).optional(),
   // BATCH-52 tool-call ARGUMENT assertion (opt-in via `evalToolCallArgs`; not adk-agent / rater).
   tool_call_json_path: z.array(RawToolCallJsonPathCheckSchema).optional(),
+  // BATCH-54 call-ORDER assertion (not adk-agent / rater, enforced after normalization below).
+  tool_trajectory: RawToolTrajectorySchema.optional(),
   // BATCH-25 CLASSIFICATION assertions. They sit in the assertion bundle — not on the case — so
   // they inherit identity scoping AND per-turn scoping for free; a multi-round negotiation case
   // needs a different expected action per round, which a case-level field could not express.
@@ -386,6 +401,7 @@ const FLAT_ASSERTION_KEYS = [
   'tool_result_json_path',
   // BATCH-52 — listed for the same exclusivity reasons as every key here.
   'tool_call_json_path',
+  'tool_trajectory',
   // BATCH-25 — the classification assertions MUST be listed here. This array drives BOTH the
   // flat-vs-`expect:` exclusivity check and the multi-turn "case-level assertions are rejected"
   // check; omitting them would let a suite declare both surfaces and have one silently ignored.
@@ -454,6 +470,8 @@ type RawAssertions = z.infer<typeof RawAssertionsSchema>;
  *   an invalid `matches` pattern, `present: false` together with any of the three, or used against
  *   an `adk-agent` target (A2A exposes no tool calls). The `evalToolCallArgs` opt-in is checked by
  *   the command ({@link suiteUsesToolCallArgs}), since it is run-level config, not suite content.
+ * - A `tool_trajectory` (BATCH-54) with an empty `calls` list, a blank pattern, or used against an
+ *   `adk-agent` target (A2A exposes no tool calls).
  * - A `"rater"` (BATCH-25 Half B) target missing its `rung`, naming one that is not on the approvals
  *   ladder, or carrying a `profile`; a `rater` suite with no `classification:` block (the classifier
  *   layer would be inert and every case would silently run through the ordinary agent); a `rater`
@@ -1052,10 +1070,29 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
     }
   }
 
+  // BATCH-54 — the call-ORDER assertion grades the run's recorded tool calls, and the A2A wire
+  // carries none, so against an `adk-agent` target it could never be graded. The AG-UI wire streams
+  // each `TOOL_CALL_START` in call order, so `ag-ui` grades it like `gth-agent`.
+  if (target.type === 'adk-agent') {
+    for (const evalCase of cases) {
+      for (const turn of evalCase.turns) {
+        for (const expectation of turn.expectations) {
+          if (expectation.toolTrajectory !== undefined) {
+            throw new Error(
+              `Invalid eval suite${suffix}: case "${evalCase.id}" uses \`tool_trajectory\`, ` +
+                "which needs the agent's tool calls — A2A does not expose them. Use a " +
+                '`gth-agent` or `ag-ui` target for call-order grading.'
+            );
+          }
+        }
+      }
+    }
+  }
+
   // BATCH-25 Half B — the honest boundary for the `rater` target: it runs NO agent and calls NO
   // tool, so there is no tool trace and there are no tool results. `must_not_call` would pass
   // vacuously against the empty trace (the silent false green an eval must never produce) and
-  // `must_call` would fail for a reason that has nothing to do with the rater. Reject all four,
+  // `must_call` would fail for a reason that has nothing to do with the rater. Reject every one,
   // naming the case, the same way the external targets reject what their wire cannot carry.
   if (target.type === 'rater') {
     for (const evalCase of cases) {
@@ -1066,12 +1103,13 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
             expectation.mustNotCall.length > 0 ||
             expectation.mustError.length > 0 ||
             expectation.toolResultJsonPath.length > 0 ||
-            expectation.toolCallJsonPath.length > 0
+            expectation.toolCallJsonPath.length > 0 ||
+            expectation.toolTrajectory !== undefined
           ) {
             throw new Error(
               `Invalid eval suite${suffix}: case "${evalCase.id}" uses a tool assertion ` +
                 '(`must_call` / `must_not_call` / `must_error` / `tool_result_json_path` / ' +
-                '`tool_call_json_path`), which a ' +
+                '`tool_call_json_path` / `tool_trajectory`), which a ' +
                 '"rater" target cannot carry — it rates a command string and never runs an agent, ' +
                 'so there is no tool trace to grade (and a vacuous pass is worse than no ' +
                 'assertion). Grade the rating with `expect_label` / `expect_action`, or the ' +
@@ -1921,6 +1959,13 @@ function buildExpectation(
     return check;
   });
 
+  // BATCH-54 call-ORDER assertion. The schema already holds `calls` non-empty with non-blank
+  // patterns; `strict` is defaulted here so the grader never sees it absent.
+  const toolTrajectory: ToolTrajectoryCheck | undefined =
+    raw.tool_trajectory === undefined
+      ? undefined
+      : { calls: [...raw.tool_trajectory.calls], strict: raw.tool_trajectory.strict === true };
+
   // BATCH-25 classification assertions. Validated against the suite's declared enums HERE (not
   // later) so a typo'd label is a suite error rather than a case that can never pass.
   const expectLabel = raw.expect_label?.trim() || undefined;
@@ -1979,6 +2024,7 @@ function buildExpectation(
     mustError.length > 0 ||
     toolResultJsonPath.length > 0 ||
     toolCallJsonPath.length > 0 ||
+    toolTrajectory !== undefined ||
     // BATCH-25 — a classification case whose ONLY assertion is `expect_label`/`expect_action` is the
     // primary shape of a classifier suite; without these two clauses it would be rejected here as
     // "no checks and no judge rubric".
@@ -1997,7 +2043,8 @@ function buildExpectation(
       `Invalid eval suite${ctx.suffix}: ${where} has no checks and no judge rubric — it must ` +
         'declare at least one of must_contain / must_not_contain / should_contain_any / must_call ' +
         '/ must_not_call / must_match / must_not_match / json_path / must_error / ' +
-        'tool_result_json_path / tool_call_json_path / expect_label / expect_action / ' +
+        'tool_result_json_path / tool_call_json_path / tool_trajectory / expect_label / ' +
+        'expect_action / ' +
         'expect_rated / forced_by, or a ' +
         'judge rubric.'
     );
@@ -2016,6 +2063,7 @@ function buildExpectation(
     mustError,
     toolResultJsonPath,
     toolCallJsonPath,
+    ...(toolTrajectory !== undefined ? { toolTrajectory } : {}),
     expectLabel,
     expectAction,
     expectRated,

@@ -1371,6 +1371,203 @@ cases:
     });
   });
 
+  // BATCH-54: the call-ORDER assertion — `must_call`'s placement rules, `strict` defaulted to false,
+  // counts as a check on its own, rejected where no tool calls are visible.
+  describe('BATCH-54 tool_trajectory', () => {
+    it('parses on a flat case, defaulting strict to false', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: ordered
+    prompt: "p"
+    tool_trajectory:
+      calls: ["mcp__shop__get_customer", "mcp__shop__*"]
+`);
+      expect(suite.cases[0].turns[0].expectations[0].toolTrajectory).toEqual({
+        calls: ['mcp__shop__get_customer', 'mcp__shop__*'],
+        strict: false,
+      });
+    });
+
+    it('parses strict: true inside an expect block and on a turn', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: gth-agent }
+identities: [admin]
+cases:
+  - id: scoped
+    prompt: "p"
+    expect:
+      - identities: [admin]
+        tool_trajectory: { calls: [a, b], strict: true }
+  - id: multi
+    turns:
+      - user: "one"
+        tool_trajectory: { calls: [a] }
+      - user: "two"
+        tool_trajectory: { calls: [b, b], strict: true }
+`);
+      expect(suite.cases[0].turns[0].expectations[0].toolTrajectory).toEqual({
+        calls: ['a', 'b'],
+        strict: true,
+      });
+      expect(suite.cases[1].turns.map((turn) => turn.expectations[0].toolTrajectory)).toEqual([
+        { calls: ['a'], strict: false },
+        { calls: ['b', 'b'], strict: true },
+      ]);
+    });
+
+    it('leaves toolTrajectory absent on a block that does not declare one', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    prompt: "p"
+    must_call: ["a"]
+`);
+      expect(suite.cases[0].turns[0].expectations[0]).not.toHaveProperty('toolTrajectory');
+    });
+
+    it('counts as an assertion on its own (no "no checks" rejection)', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: only-trajectory
+    prompt: "p"
+    tool_trajectory: { calls: [a] }
+`)
+      ).not.toThrow();
+    });
+
+    it('names tool_trajectory in the "no checks" rejection', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: nothing
+    prompt: "p"
+`)
+      ).toThrow(/tool_call_json_path \/ tool_trajectory \/ expect_label/);
+    });
+
+    it('rejects an empty calls list', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    prompt: "p"
+    tool_trajectory: { calls: [] }
+`)
+      ).toThrow(/tool_trajectory must list at least one call in `calls`/);
+    });
+
+    it('rejects a missing calls list', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    prompt: "p"
+    tool_trajectory: { strict: true }
+`)
+      ).toThrow(/tool_trajectory\.calls/);
+    });
+
+    it('rejects an empty or blank pattern', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      for (const pattern of ['""', '"   "']) {
+        expect(() =>
+          parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    prompt: "p"
+    tool_trajectory: { calls: [a, ${pattern}] }
+`)
+        ).toThrow(/tool_trajectory calls must each be a non-empty tool pattern/);
+      }
+    });
+
+    it('rejects a pattern that is not a string', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    prompt: "p"
+    tool_trajectory: { calls: [a, 3] }
+`)
+      ).toThrow(/tool_trajectory\.calls\.1/);
+    });
+
+    it('rejects a non-boolean strict', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    prompt: "p"
+    tool_trajectory: { calls: [a], strict: "yes" }
+`)
+      ).toThrow(/tool_trajectory\.strict/);
+    });
+
+    it('rejects declaring it both flat and in an expect array', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    prompt: "p"
+    tool_trajectory: { calls: [a] }
+    expect:
+      - must_call: [a]
+`)
+      ).toThrow(/c1/);
+    });
+
+    it('accepts it on an ag-ui target, whose wire streams each call in order', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: ag-ui, url: "http://localhost:3000", agent_id: gth }
+cases:
+  - id: c1
+    prompt: "p"
+    tool_trajectory: { calls: [search, buy] }
+`);
+      expect(suite.cases[0].turns[0].expectations[0].toolTrajectory?.calls).toEqual([
+        'search',
+        'buy',
+      ]);
+    });
+
+    it('rejects it on an adk-agent target, flat, in an expect block and on a turn', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      for (const body of [
+        '  - id: searched\n    prompt: "p"\n    tool_trajectory: { calls: [search] }\n',
+        '  - id: searched\n    prompt: "p"\n    expect:\n      - tool_trajectory: { calls: [search] }\n',
+        '  - id: searched\n    turns:\n      - user: "u"\n        tool_trajectory: { calls: [search] }\n',
+      ]) {
+        expect(() =>
+          parseEvalSuite(
+            `target: { type: adk-agent, url: "http://localhost:8080" }\ncases:\n${body}`
+          )
+        ).toThrow(/case "searched" uses `tool_trajectory`.*A2A does not expose them/s);
+      }
+    });
+  });
+
   describe('unknown keys', () => {
     const BASE_CASE = '  - id: c1\n    prompt: "p"\n    must_contain: ["x"]\n';
 
@@ -1442,6 +1639,18 @@ cases:
         'target: { type: gth-agent }\ncases:\n  - id: c1\n    prompt: "p"\n    expect:\n      - tool_call_json_path:\n          - { tool: "t", path: "a", all_call: true }\n',
         /^case "c1" \(index 0\) at expect\.0\.tool_call_json_path\.0: /,
         'all_call',
+      ],
+      [
+        'a tool_trajectory object',
+        'target: { type: gth-agent }\ncases:\n  - id: c1\n    prompt: "p"\n    tool_trajectory: { calls: [a], strcit: true }\n',
+        /^case "c1" \(index 0\) at tool_trajectory: /,
+        'strcit',
+      ],
+      [
+        'a tool_trajectory object inside a turn',
+        'target: { type: gth-agent }\ncases:\n  - id: c1\n    turns:\n      - user: "u"\n        tool_trajectory: { calls: [a], mode: exact }\n',
+        /^case "c1" \(index 0\) at turns\.0\.tool_trajectory: /,
+        'mode',
       ],
       [
         'classification',

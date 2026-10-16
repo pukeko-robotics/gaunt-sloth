@@ -135,8 +135,9 @@ export interface GthRunStats {
   toolResults?: GthToolResult[];
   /**
    * BATCH-52 — one record per tool call the model requested during the run, with the arguments it
-   * sent, in request order and NOT deduplicated. `gth eval` writes these and grades
-   * `tool_call_json_path` against them only when `evalToolCallArgs` is set. Optional (additive):
+   * sent, in request order and NOT deduplicated. `gth eval` writes them on every run and grades
+   * `tool_trajectory` against their names; it keeps the arguments, and grades
+   * `tool_call_json_path`, only when `evalToolCallArgs` is set. Optional (additive):
    * producers that predate the field omit it; {@link @gaunt-sloth/core!core/runStats.finalizeRunStats | finalizeRunStats} always sets it.
    */
   toolCalls?: GthToolCall[];

@@ -16,8 +16,9 @@
  * KEY DIFFERENCE from the ADK (A2A) runner: the AG-UI wire DOES stream the agent's tool calls
  * (`TOOL_CALL_START`). So this runner CAPTURES each `TOOL_CALL_START`'s `toolCallName` into the
  * outcome's `tools`, and `must_call`/`must_not_call` grade normally. BATCH-52 — it also reassembles
- * each call's arguments from its `TOOL_CALL_ARGS` deltas, passed through as `toolCalls` only when
- * the run opts in with `evalToolCallArgs`, so `tool_call_json_path` grades here too — unlike the adk-agent target,
+ * each call's arguments from its `TOOL_CALL_ARGS` deltas. Every started call is passed through as
+ * `toolCalls`, in `TOOL_CALL_START` order (BATCH-54, so `tool_trajectory` grades here), and keeps
+ * its arguments when the run opts in with `evalToolCallArgs`, so `tool_call_json_path` grades here too — unlike the adk-agent target,
  * where the tool trace is invisible and those assertions are rejected at parse time. AG-UI carries
  * no token accounting either, so `tokensInput`/`tokensOutput` are left unset (undefined).
  *
@@ -40,6 +41,7 @@ import type {
   ToolCallRecord,
   TurnRunOutcome,
 } from '@gaunt-sloth/batch';
+import { evalToolCallRecords } from '#src/commands/evalToolCallRecords.js';
 
 /** One AG-UI message as sent in the `RunAgentInput.messages` array. The eval only ever sends `user`
  * turns and, for conversation continuity, the `assistant` answers it assembled — the minimal shape
@@ -71,8 +73,9 @@ export interface AgUiRunResult {
 
 /** BATCH-52 — options for the AG-UI runner builders. */
 export interface AgUiRunnerOptions {
-  /** Pass each run's `toolCalls` through to the outcome (the run-level `evalToolCallArgs`). */
-  recordToolCalls?: boolean;
+  /** BATCH-54 — keep each call's `args` on the outcome's `toolCalls` (the run-level
+   * `evalToolCallArgs`). The calls themselves are always passed through, `{ name, id? }` without it. */
+  recordToolCallArgs?: boolean;
 }
 
 /**
@@ -373,7 +376,7 @@ export function buildAgUiRunCell(
         ok: true,
         answer: result.answer,
         tools: result.tools,
-        ...(options.recordToolCalls ? { toolCalls: result.toolCalls ?? [] } : {}),
+        toolCalls: evalToolCallRecords(result.toolCalls ?? [], options.recordToolCallArgs === true),
       };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -422,7 +425,10 @@ export function buildAgUiRunConversation(
           ok: true,
           answer: result.answer,
           tools: result.tools,
-          ...(options.recordToolCalls ? { toolCalls: result.toolCalls ?? [] } : {}),
+          toolCalls: evalToolCallRecords(
+            result.toolCalls ?? [],
+            options.recordToolCallArgs === true
+          ),
         });
       } catch (error) {
         outcomes.push({

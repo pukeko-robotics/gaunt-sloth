@@ -631,7 +631,7 @@ cases:
     it('grades tool_call_json_path through the real decoder when the run opts in', async () => {
       const { fetchImpl } = fakeFetch(searchStream);
       const runCell = buildAgUiRunCell(TARGET, (target) => createAgUiClient(target, fetchImpl), {
-        recordToolCalls: true,
+        recordToolCallArgs: true,
       });
 
       const summary = await runEvalSuite(parseEvalSuite(ARGS_SUITE), { runCell });
@@ -642,11 +642,65 @@ cases:
       ]);
     });
 
-    it('passes no calls to the outcome without the opt-in', async () => {
+    // BATCH-54 — the calls are always passed through; without the opt-in they carry no arguments.
+    it('passes the calls to the outcome without their arguments when the run does not opt in', async () => {
       const { fetchImpl } = fakeFetch(searchStream);
       const runCell = buildAgUiRunCell(TARGET, (target) => createAgUiClient(target, fetchImpl));
       const outcome = await runCell({ id: 'c', inputIndex: 0, content: 'x' });
-      expect(outcome).not.toHaveProperty('toolCalls');
+      expect(outcome.toolCalls).toEqual([{ name: 'search', id: 'tc-search' }]);
+    });
+
+    it('passes each turn’s calls without arguments on the multi-turn builder without the opt-in', async () => {
+      const { createClient } = fakeClientFactory(
+        vi.fn(async (): Promise<AgUiRunResult> => ({
+          answer: 'ok',
+          tools: ['search'],
+          toolCalls: [{ name: 'search', id: 'x', args: '{"page":1}' }],
+        }))
+      );
+      const runConversation = buildAgUiRunConversation(TARGET, createClient);
+      const outcomes = await runConversation(['first']);
+      expect(outcomes[0].toolCalls).toEqual([{ name: 'search', id: 'x' }]);
+    });
+
+    it('grades tool_trajectory against the TOOL_CALL_START order through the real decoder', async () => {
+      const toolStartFor = (name: string, id: string) => ({
+        type: EventType.TOOL_CALL_START,
+        toolCallId: id,
+        toolCallName: name,
+      });
+      const { fetchImpl } = fakeFetch(() =>
+        okStream([
+          runStarted,
+          toolStartFor('get_customer', 'tc-1'),
+          { type: EventType.TOOL_CALL_END, toolCallId: 'tc-1' },
+          toolStartFor('create_order', 'tc-2'),
+          { type: EventType.TOOL_CALL_END, toolCallId: 'tc-2' },
+          toolStartFor('get_customer', 'tc-3'),
+          { type: EventType.TOOL_CALL_END, toolCallId: 'tc-3' },
+          runFinished,
+        ])
+      );
+      const runCell = buildAgUiRunCell(TARGET, (target) => createAgUiClient(target, fetchImpl));
+      const suite = (strictCalls: string) => `
+target: { type: ag-ui, url: "http://localhost:3000", agent_id: gth }
+cases:
+  - id: ordered
+    prompt: "p"
+    tool_trajectory: { calls: [${strictCalls}], strict: true }
+`;
+
+      const passing = await runEvalSuite(
+        parseEvalSuite(suite('get_customer, create_order, get_customer')),
+        { runCell }
+      );
+      expect(passing.cases[0]).toMatchObject({ verdict: 'PASS', reasons: [] });
+
+      const failing = await runEvalSuite(parseEvalSuite(suite('get_customer, get_customer')), {
+        runCell,
+      });
+      expect(failing.cases[0].verdict).toBe('FAIL');
+      expect(failing.cases[0].reasons[0]).toContain('differs at position 2');
     });
 
     it('passes each turn’s calls through on the multi-turn builder when the run opts in', async () => {
@@ -658,7 +712,7 @@ cases:
         }))
       );
       const runConversation = buildAgUiRunConversation(TARGET, createClient, {
-        recordToolCalls: true,
+        recordToolCallArgs: true,
       });
       const outcomes = await runConversation(['first', 'second']);
       expect(outcomes.map((outcome) => outcome.toolCalls)).toEqual([

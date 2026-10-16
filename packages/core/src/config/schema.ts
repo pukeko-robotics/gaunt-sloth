@@ -1415,8 +1415,8 @@ export const rawGthConfigSchema = z.looseObject({
   }),
   // BATCH-52 — the opt-in for recording each tool call's arguments in `gth eval` and grading
   // `tool_call_json_path` against them. Run-level like the two keys above, read by
-  // `loadRunLevelEvalConfig`; optional with no default, so a run that never set it records names
-  // and results only. User docs: docs/COMMANDS.md
+  // `loadRunLevelEvalConfig`; optional with no default, so a run that never set it records call
+  // names, ids and results but no arguments. User docs: docs/COMMANDS.md
   evalToolCallArgs: evalToolCallArgsSchema.optional().meta({
     description:
       'Record the arguments of every tool call in gth eval results and allow tool_call_json_path ' +

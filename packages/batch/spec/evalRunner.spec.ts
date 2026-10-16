@@ -1188,3 +1188,98 @@ describe('runEvalSuite tool-call argument assertions (BATCH-52)', () => {
     ]);
   });
 });
+
+describe('runEvalSuite call-order assertions (BATCH-54)', () => {
+  it('grades against toolCalls, not tools: a repeat the de-duplicated name set hides still counts', async () => {
+    const { runEvalSuite, classifyEvalExit } = await import('#src/evalRunner.js');
+    const runCell = runCellReturning({
+      'case-1': {
+        ok: true,
+        answer: 'listed twice',
+        // The in-process `tools` is a first-seen name set; `toolCalls` keeps every call.
+        tools: ['list'],
+        toolCalls: [{ name: 'list' }, { name: 'list' }],
+      },
+    });
+    const evalCase = makeCase({ toolTrajectory: { calls: ['list', 'list'], strict: true } });
+
+    const summary = await runEvalSuite(makeSuite([evalCase]), { runCell });
+
+    expect(summary.cases[0]).toMatchObject({ verdict: 'PASS', reasons: [] });
+    expect(classifyEvalExit(summary)).toBe(0);
+  });
+
+  it('FAILs (exit 1) when the recorded calls are out of order', async () => {
+    const { runEvalSuite, classifyEvalExit } = await import('#src/evalRunner.js');
+    const runCell = runCellReturning({
+      'case-1': {
+        ok: true,
+        answer: 'ordered',
+        tools: ['create', 'get'],
+        toolCalls: [{ name: 'create' }, { name: 'get' }],
+      },
+    });
+    const evalCase = makeCase({ toolTrajectory: { calls: ['get', 'create'], strict: false } });
+
+    const summary = await runEvalSuite(makeSuite([evalCase]), { runCell });
+
+    expect(summary.cases[0].reasons).toEqual([
+      'tool_trajectory: pattern 2 "create" has no matching call after call 2 ("get"); ' +
+        'expected in order ["get", "create"], calls were ["create", "get"]',
+    ]);
+    expect(classifyEvalExit(summary)).toBe(1);
+  });
+
+  it('FAILs a runner that recorded no calls at all', async () => {
+    const { runEvalSuite } = await import('#src/evalRunner.js');
+    const runCell = runCellReturning({ 'case-1': { ok: true, answer: 'no tools' } });
+    const evalCase = makeCase({ toolTrajectory: { calls: ['get'], strict: false } });
+
+    const summary = await runEvalSuite(makeSuite([evalCase]), { runCell });
+
+    expect(summary.cases[0].verdict).toBe('FAIL');
+    expect(summary.cases[0].reasons[0]).toContain('(no tool was called)');
+  });
+
+  it('grades each turn of a multi-turn case against that turn’s own calls', async () => {
+    const { runEvalSuite } = await import('#src/evalRunner.js');
+    const evalCase: EvalCase = {
+      id: 'conv-1',
+      passThreshold: 6,
+      turns: [
+        {
+          user: 'look up and order',
+          expectations: [
+            makeExpectation({ toolTrajectory: { calls: ['get', 'create'], strict: true } }),
+          ],
+        },
+        {
+          user: 'now order again',
+          // Satisfiable only by the conversation's calls taken TOGETHER (get, create, create), so
+          // this passes only if the trajectory read the whole run instead of this turn.
+          expectations: [
+            makeExpectation({ toolTrajectory: { calls: ['get', 'create'], strict: false } }),
+          ],
+        },
+      ],
+    };
+    const runConversation: RunConversationFn = async () => [
+      {
+        ok: true,
+        answer: 't1',
+        tools: ['get', 'create'],
+        toolCalls: [{ name: 'get' }, { name: 'create' }],
+      },
+      { ok: true, answer: 't2', tools: ['create'], toolCalls: [{ name: 'create' }] },
+    ];
+
+    const summary = await runEvalSuite(makeSuite([evalCase]), { runConversation });
+
+    expect(summary.cases[0].turns![0].verdict).toBe('PASS');
+    expect(summary.cases[0].turns![1].verdict).toBe('FAIL');
+    expect(summary.cases[0].reasons).toEqual([
+      'turn 2: tool_trajectory: pattern 1 "get" has no matching call; ' +
+        'expected in order ["get", "create"], calls were ["create"]',
+    ]);
+  });
+});

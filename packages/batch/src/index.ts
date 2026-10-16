@@ -46,6 +46,7 @@ export type {
   JudgeVerdict,
   RunConversationFn,
   ToolCallJsonPathCheck,
+  ToolTrajectoryCheck,
   TurnRunOutcome,
 } from '#src/evalTypes.js';
 export type { RunEvalSuiteOptions } from '#src/evalRunner.js';

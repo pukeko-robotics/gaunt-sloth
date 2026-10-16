@@ -4,6 +4,7 @@ import type { GthConfig } from '@gaunt-sloth/core/config.js';
 import type { GthCommand } from '@gaunt-sloth/core/core/types.js';
 import { getExecSystemPrompt } from '#src/commands/commandIntrospection.js';
 import { parseIntOption } from '#src/commands/cliOptionParsers.js';
+import { evalToolCallRecords } from '#src/commands/evalToolCallRecords.js';
 import {
   displayInfo,
   displaySuccess,
@@ -99,11 +100,17 @@ export interface ProductionRunCellOptions {
    * `'prompt-executable script'` / `'user message'`). */
   wrapPrefix: string;
   /**
-   * BATCH-52 — pass each run's requested tool calls, with their arguments, through to the outcome.
-   * `gth eval` sets it from the run-level `evalToolCallArgs`; `gth batch` never does. Off, the
-   * outcome carries no `toolCalls` and the written JSON is unchanged.
+   * BATCH-54 — pass each run's requested tool calls through to the outcome as `toolCalls`. `gth eval`
+   * always sets it (`tool_trajectory` grades them); `gth batch` never does, so a batch cell carries
+   * no `toolCalls` and its written JSON is unchanged.
    */
   recordToolCalls?: boolean;
+  /**
+   * BATCH-52 — keep each recorded call's arguments (`args`, plus the truncation fields). `gth eval`
+   * sets it from the run-level `evalToolCallArgs`; without it each entry is `{ name, id? }`. Has no
+   * effect unless {@link recordToolCalls} is set. See `evalToolCallRecords.ts`.
+   */
+  recordToolCallArgs?: boolean;
 }
 
 /**
@@ -181,7 +188,9 @@ export async function buildProductionRunCell(
         tokensOutput,
         tools,
         toolResults,
-        ...(options.recordToolCalls && toolCalls ? { toolCalls } : {}),
+        ...(options.recordToolCalls && toolCalls
+          ? { toolCalls: evalToolCallRecords(toolCalls, options.recordToolCallArgs === true) }
+          : {}),
         advertisedTools,
       };
     } catch (error) {
@@ -276,7 +285,9 @@ export async function buildProductionRunConversation(
           tokensOutput,
           tools,
           toolResults,
-          ...(options.recordToolCalls && toolCalls ? { toolCalls } : {}),
+          ...(options.recordToolCalls && toolCalls
+            ? { toolCalls: evalToolCallRecords(toolCalls, options.recordToolCallArgs === true) }
+            : {}),
           advertisedTools,
           error,
         })

@@ -783,8 +783,11 @@ export function evalCommand(
             sourcePrefix: 'EVAL',
             wrapBlockPrefix: 'message',
             wrapPrefix: 'user message',
-            // BATCH-52 — run-level, like the reporters: one answer for every suite and identity.
-            recordToolCalls: runLevelConfig.evalToolCallArgs === true,
+            // BATCH-54 — every eval run records its calls (`tool_trajectory` grades them); only
+            // their arguments are opt-in. BATCH-52 — the opt-in is run-level, like the reporters:
+            // one answer for every suite and identity.
+            recordToolCalls: true,
+            recordToolCallArgs: runLevelConfig.evalToolCallArgs === true,
           } as const;
 
           // Build the SUT run function(s), selected by `target.type`, AND resolve the base config
@@ -857,7 +860,7 @@ export function evalCommand(
             baseConfig = await initConfigForCell(commandLineConfigOverrides, sweepCell);
             const { buildAgUiRunCell, buildAgUiRunConversation } =
               await import('#src/commands/agUiEvalRunner.js');
-            const agUiOptions = { recordToolCalls: runCellOptions.recordToolCalls };
+            const agUiOptions = { recordToolCallArgs: runCellOptions.recordToolCallArgs };
             runCell = buildAgUiRunCell(parsedSuite.target, undefined, agUiOptions);
             runConversation = buildAgUiRunConversation(parsedSuite.target, undefined, agUiOptions);
           } else if (parsedSuite.target.type === 'rater') {

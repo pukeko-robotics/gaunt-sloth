@@ -134,6 +134,7 @@ async function runSuite(streamOutput: boolean, outputDir: string) {
       wrapBlockPrefix: 'message',
       wrapPrefix: 'user message',
       recordToolCalls: true,
+      recordToolCallArgs: true,
     }
   );
   const summary = await runEvalSuite(parseEvalSuite(SUITE), { runCell });

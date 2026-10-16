@@ -496,6 +496,7 @@ cases:
         'must_error: [run_shell_command]',
         'tool_result_json_path: [{ tool: run_shell_command, path: "$.a" }]',
         'tool_call_json_path: [{ tool: run_shell_command, path: "command" }]',
+        'tool_trajectory: { calls: [run_shell_command] }',
       ]) {
         await expect(
           parse(

@@ -1055,12 +1055,12 @@ cases:
         }),
         undefined,
         // BATCH-52 — no `evalToolCallArgs` in the run-level config, so no arguments are recorded.
-        { recordToolCalls: false }
+        { recordToolCallArgs: false }
       );
       expect(agUiRunnerMock.buildAgUiRunConversation).toHaveBeenCalledWith(
         expect.objectContaining({ type: 'ag-ui', url: 'http://localhost:3000', agentId: 'gth' }),
         undefined,
-        { recordToolCalls: false }
+        { recordToolCallArgs: false }
       );
       // ...and NOT the in-process gth-agent path or the ADK path.
       expect(runSingleShot).not.toHaveBeenCalled();
@@ -2525,14 +2525,154 @@ cases:
       expect(caseJson.turns[1].toolCalls).toEqual([{ name: 'search', args: '{"page":2}' }]);
     });
 
-    it('leaves the arguments out of the case file when the run does not opt in', async () => {
+    // BATCH-54 — the calls are recorded on every run; only their arguments are opt-in.
+    it('records the calls without their arguments when the run does not opt in', async () => {
       const { evalCommand } = await import('#src/commands/evalCommand.js');
       const program = new Command();
       evalCommand(program, {});
       await program.parseAsync(['na', 'na', 'eval', 'suite.yaml', '-o', outputDir]);
 
       const caseJson = JSON.parse(readFileSync(join(outputDir, 'greets-politely.json'), 'utf8'));
-      expect(caseJson).not.toHaveProperty('toolCalls');
+      expect(caseJson.toolCalls).toEqual([{ name: 'mcp__shop__search', id: 'c1' }]);
+      expect(readFileSync(join(outputDir, 'greets-politely.json'), 'utf8')).not.toContain(
+        'filters'
+      );
+    });
+
+    it('writes the recorded calls unchanged, truncation fields included, when the run opts in', async () => {
+      configMock.loadRunLevelEvalConfig.mockResolvedValue({
+        found: true,
+        layer: 'project',
+        evalToolCallArgs: true,
+      });
+      const recorded = [
+        { name: 'mcp__shop__search', id: 'c1', args: '{"filters":{"status":"open"}}' },
+        {
+          name: 'mcp__shop__search',
+          args: '{"q":"lap',
+          argsTruncated: true,
+          argsOriginalBytes: 9000,
+        },
+      ];
+      runSingleShot.mockResolvedValue({
+        ok: true,
+        answer: 'hello there',
+        tools: ['mcp__shop__search'],
+        toolCalls: recorded,
+      });
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync(['na', 'na', 'eval', 'suite.yaml', '-o', outputDir]);
+
+      const caseJson = JSON.parse(readFileSync(join(outputDir, 'greets-politely.json'), 'utf8'));
+      expect(caseJson.toolCalls).toEqual(recorded);
+    });
+
+    it('records each turn’s calls without arguments on the multi-turn runner without the opt-in', async () => {
+      fileUtilsMock.readFileFromProjectDir.mockImplementation(
+        () => `
+target: { type: gth-agent }
+cases:
+  - id: ordered
+    turns:
+      - user: "look up then order"
+        tool_trajectory: { calls: [get_customer, create_order], strict: true }
+      - user: "now list"
+        tool_trajectory: { calls: [list_orders], strict: true }
+`
+      );
+      runConversation.mockResolvedValue([
+        {
+          ok: true,
+          answer: 't1',
+          tools: ['get_customer', 'create_order'],
+          toolCalls: [
+            { name: 'get_customer', id: 'a', args: '{"id":1}' },
+            { name: 'create_order', id: 'b', args: '{"sku":"x"}' },
+          ],
+        },
+        {
+          ok: true,
+          answer: 't2',
+          tools: ['list_orders'],
+          toolCalls: [{ name: 'list_orders', id: 'c', args: '{}' }],
+        },
+      ]);
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync(['na', 'na', 'eval', 'ordered.yaml', '-o', outputDir]);
+
+      expect(systemUtilsMock.setExitCode).not.toHaveBeenCalled();
+      const caseJson = JSON.parse(readFileSync(join(outputDir, 'ordered.json'), 'utf8'));
+      expect(caseJson.verdict).toBe('PASS');
+      expect(caseJson.turns.map((turn: { toolCalls: unknown }) => turn.toolCalls)).toEqual([
+        [
+          { name: 'get_customer', id: 'a' },
+          { name: 'create_order', id: 'b' },
+        ],
+        [{ name: 'list_orders', id: 'c' }],
+      ]);
+    });
+  });
+
+  // BATCH-54 — a call-ORDER assertion needs no opt-in: it reads the names, which are always recorded.
+  describe('tool_trajectory (BATCH-54)', () => {
+    const TRAJECTORY_SUITE = `
+target: { type: gth-agent }
+cases:
+  - id: ordered
+    prompt: "look up the customer, then order"
+    tool_trajectory:
+      calls: [mcp__shop__get_customer, mcp__shop__create_order]
+`;
+
+    beforeEach(() => {
+      fileUtilsMock.readFileFromProjectDir.mockImplementation(() => TRAJECTORY_SUITE);
+    });
+
+    it('grades the call order without evalToolCallArgs (exit 0 on PASS)', async () => {
+      runSingleShot.mockResolvedValue({
+        ok: true,
+        answer: 'done',
+        tools: ['mcp__shop__get_customer', 'mcp__shop__create_order'],
+        toolCalls: [
+          { name: 'mcp__shop__get_customer', id: 'a', args: '{}' },
+          { name: 'mcp__shop__create_order', id: 'b', args: '{}' },
+        ],
+      });
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync(['na', 'na', 'eval', 'ordered.yaml', '-o', outputDir]);
+
+      expect(systemUtilsMock.setExitCode).not.toHaveBeenCalled();
+      const caseJson = JSON.parse(readFileSync(join(outputDir, 'ordered.json'), 'utf8'));
+      expect(caseJson).toMatchObject({ verdict: 'PASS', reasons: [] });
+    });
+
+    it('fails the case (exit 1) when the calls came in the wrong order', async () => {
+      runSingleShot.mockResolvedValue({
+        ok: true,
+        answer: 'done',
+        tools: ['mcp__shop__create_order', 'mcp__shop__get_customer'],
+        toolCalls: [
+          { name: 'mcp__shop__create_order', id: 'b', args: '{}' },
+          { name: 'mcp__shop__get_customer', id: 'a', args: '{}' },
+        ],
+      });
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync(['na', 'na', 'eval', 'ordered.yaml', '-o', outputDir]);
+
+      expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(1);
+      const caseJson = JSON.parse(readFileSync(join(outputDir, 'ordered.json'), 'utf8'));
+      expect(caseJson.verdict).toBe('FAIL');
+      expect(caseJson.reasons).toEqual([
+        expect.stringContaining('pattern 2 "mcp__shop__create_order" has no matching call'),
+      ]);
     });
   });
 });

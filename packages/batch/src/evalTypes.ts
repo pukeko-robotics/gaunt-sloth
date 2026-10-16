@@ -359,6 +359,20 @@ export interface ToolCallJsonPathCheck extends ToolResultJsonPathCheck {
 }
 
 /**
+ * One `tool_trajectory` assertion (BATCH-54): the ORDER the run's tools were called in, graded
+ * against the run's (or turn's) `toolCalls`. Each pattern (exact or glob, `must_call`'s matcher)
+ * consumes one call. Not strict, the patterns must match an ordered subsequence of the calls; strict,
+ * the calls must match the patterns one for one, with none extra and none missing. Rejected at parse
+ * time for the `adk-agent` and `rater` targets, which have no tool calls to grade.
+ */
+export interface ToolTrajectoryCheck {
+  /** The expected call patterns, in order. Never empty; every entry a non-blank string. */
+  calls: string[];
+  /** `true` = the calls must match {@link calls} exactly. Defaults to `false` at parse. */
+  strict: boolean;
+}
+
+/**
  * One expectation block (BATCH-12) — the BATCH-10 assertion bundle PLUS an optional `identities`
  * scope. This is the atom the whole eval layer normalizes to: a flat case is sugar for ONE
  * unscoped expectation (applies to every identity), and a matrix case's `expect:` array is a list
@@ -397,6 +411,9 @@ export interface EvalExpectation {
   /** BATCH-52 minimal JSON-path assertions over a matching tool call's ARGUMENTS — see
    * {@link ToolCallJsonPathCheck}. Opt-in (`evalToolCallArgs`); `gth-agent` / `ag-ui` targets only. */
   toolCallJsonPath: ToolCallJsonPathCheck[];
+  /** BATCH-54 call-ORDER assertion — see {@link ToolTrajectoryCheck}. `undefined` = this block
+   * asserts no trajectory. Optional (not defaulted) because it is one object, not a list. */
+  toolTrajectory?: ToolTrajectoryCheck;
   /** The judge rubric, when present and non-blank. `undefined` = no judge for this block. */
   judgeRubric?: string;
   /**
@@ -523,7 +540,8 @@ export interface TurnRunOutcome {
   /** BATCH-21 — this turn's per-tool-call result records (parallel to {@link tools}; a per-turn
    * delta like everything else here). Only the in-process `gth-agent` runner populates it. */
   toolResults?: ToolResultRecord[];
-  /** BATCH-52 — this turn's requested tool calls with their arguments (opt-in; a per-turn delta). */
+  /** BATCH-52 / BATCH-54 — this turn's requested tool calls (a per-turn delta); each carries its
+   * arguments only under `evalToolCallArgs`. */
   toolCalls?: ToolCallRecord[];
   /**
    * BATCH-32 — the advertised-tool inventory (the coverage denominator). **The one field here that
@@ -931,8 +949,9 @@ export interface EvalCaseResult {
    * the runner produced none, so a pre-BATCH-21 `<id>.json` stays byte-for-byte identical). For a
    * multi-turn cell this stays unset like `tools` — read {@link turns} instead. */
   toolResults?: ToolResultRecord[];
-  /** BATCH-52 — the cell's requested tool calls with their arguments. Omitted unless the run opted
-   * in with `evalToolCallArgs`; unset on a multi-turn cell like `tools` — read {@link turns}. */
+  /** BATCH-52 / BATCH-54 — the cell's requested tool calls, in request order. Recorded on every run
+   * by the `gth-agent` and `ag-ui` targets; each entry carries `args` only when the run opted in
+   * with `evalToolCallArgs`. Unset on a multi-turn cell like `tools` — read {@link turns}. */
   toolCalls?: ToolCallRecord[];
   durationMs: number;
   checks?: DeterministicCheckResult;

@@ -1,6 +1,10 @@
 import { runBatchMatrix } from '#src/BatchRunner.js';
 import { runDeterministicChecks } from '#src/deterministicChecks.js';
-import { runToolCallArgChecks, runToolCallChecks } from '#src/toolChecks.js';
+import {
+  runToolCallArgChecks,
+  runToolCallChecks,
+  runToolTrajectoryChecks,
+} from '#src/toolChecks.js';
 import { runToolResultChecks } from '#src/toolResultChecks.js';
 import type {
   CellResult,
@@ -711,6 +715,9 @@ async function gradeApplicableBlocks(
     // BATCH-52 tool-call ARGUMENT assertions read the captured calls' arguments — recorded only
     // when the run opted in, which the command checks before any suite using them runs.
     const toolCallArgFailures = runToolCallArgChecks(toolCalls, block);
+    // BATCH-54 call-ORDER assertions read the same calls' names, in request order (recorded on
+    // every eval run; see runToolTrajectoryChecks for why `toolCalls` and not `tools`).
+    const toolTrajectoryFailures = runToolTrajectoryChecks(toolCalls, block);
     // BATCH-25 classification assertions read the cell's CLASSIFICATION (a fourth input kind,
     // beside the answer, the tool trace and the tool results), so they are graded by their own
     // checker and merged into the same `reasons` — the same PASS/FAIL/exit contract as every other
@@ -722,6 +729,7 @@ async function gradeApplicableBlocks(
       ...toolFailures,
       ...toolResultFailures,
       ...toolCallArgFailures,
+      ...toolTrajectoryFailures,
       ...classificationFailures
     );
 
@@ -775,8 +783,9 @@ async function gradeUnit(
     // BATCH-21: threaded parallel to `tools`; `undefined` for a runner that captured none, so a
     // pre-BATCH-21 cell's `<id>.json` keeps its exact keys (JSON.stringify drops undefined).
     toolResults: cellResult.toolResults,
-    // BATCH-52: present only when the run opted in (`evalToolCallArgs`); otherwise `undefined`, so
-    // the `<id>.json` of a run that did not opt in keeps its exact keys.
+    // BATCH-52 / BATCH-54: whatever the runner recorded — every `gth eval` run records its calls,
+    // carrying `args` only under `evalToolCallArgs`; `undefined` for a runner that recorded none
+    // (the adk-agent and rater targets, a test fake), so that cell's `<id>.json` keeps its keys.
     toolCalls: cellResult.toolCalls,
     durationMs: cellResult.durationMs,
     // BATCH-25 — omitted entirely (not set to `undefined`) for a non-classifier suite, so a
