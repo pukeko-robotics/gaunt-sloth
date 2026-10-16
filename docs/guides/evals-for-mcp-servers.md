@@ -153,6 +153,20 @@ setting of the run, and the matrix reads it from the config the run starts with:
           - { tool: "mcp__unimarket__contract_search", path: "status", equals: "ACTIVE" }
 ```
 
+When the order of the calls matters, for example that the agent searched for the contract before
+fetching its report, use `tool_trajectory`. It needs no setting, because every eval run records its
+calls:
+
+```yaml
+      - identities: [admin]
+        tool_trajectory:
+          calls: ["mcp__unimarket__contract_search", "mcp__unimarket__contract_report"]
+```
+
+Other calls may come before, between and after these two. With `strict: true` the run must make
+exactly these calls and no others. See
+[Tool-call order assertions](../COMMANDS.md#tool-call-order-assertions).
+
 ### 5. A separate, stronger, non-MCP judge
 
 The `judge_profile: judge` above is its own profile directory too:
@@ -181,7 +195,7 @@ TeamCity, GitHub Actions, and friends ingest natively. `eval` never waits on std
 
 - Eval basics — writing a first suite, judges, reporters: [Evaluate your agent](evals.md).
 - Every suite key and assertion, including `must_error` / `tool_result_json_path` /
-  `tool_call_json_path` details:
+  `tool_call_json_path` / `tool_trajectory` details:
   [Commands → eval](../COMMANDS.md#eval).
 - Connecting MCP servers, static auth headers, OAuth, TLS trust: [MCP](../configuration/mcp.md).
 - Profiles in depth: [Identity profiles](../configuration/profiles.md#identity-profiles).
