@@ -61,6 +61,8 @@ export interface PrFileEntry {
 
 /** The base repository a pull request was opened against, plus what the listing must account for. */
 export interface PrBaseBinding {
+  /** The GitHub host from the PR URL — `github.com`, or a GitHub Enterprise Server host. */
+  host: string;
   owner: string;
   repo: string;
   number: string;
@@ -73,7 +75,8 @@ export interface PrBaseBinding {
 const OWNER_PATTERN = /^[A-Za-z0-9-_.]+$/;
 const REPO_PATTERN = /^[A-Za-z0-9-_.]+$/;
 const PR_NUMBER_PATTERN = /^\d+$/;
-const PR_URL_PATTERN = /^https?:\/\/[^/\s]+\/([^/\s]+)\/([^/\s]+)\/pull\/(\d+)\/?$/;
+const HOST_PATTERN = /^[A-Za-z0-9.-]+$/;
+const PR_URL_PATTERN = /^https?:\/\/([^/\s]+)\/([^/\s]+)\/([^/\s]+)\/pull\/(\d+)\/?$/;
 
 function toCount(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0;
@@ -186,11 +189,11 @@ export async function resolvePrBaseBinding(prId: string | undefined): Promise<Pr
   if (!match) {
     throw new Error(`gh pr view did not return a pull request URL to bind the files listing to.`);
   }
-  const [, owner, repo, number] = match;
-  if (!OWNER_PATTERN.test(owner) || !REPO_PATTERN.test(repo)) {
-    throw new Error(`Unexpected repository "${owner}/${repo}" in the pull request URL.`);
+  const [, host, owner, repo, number] = match;
+  if (!HOST_PATTERN.test(host) || !OWNER_PATTERN.test(owner) || !REPO_PATTERN.test(repo)) {
+    throw new Error(`Unexpected repository "${host}/${owner}/${repo}" in the pull request URL.`);
   }
-  const binding: PrBaseBinding = { owner, repo, number };
+  const binding: PrBaseBinding = { host, owner, repo, number };
   if (typeof parsed.changedFiles === 'number' && Number.isFinite(parsed.changedFiles)) {
     binding.changedFiles = parsed.changedFiles;
   }
@@ -202,12 +205,21 @@ export async function resolvePrBaseBinding(prId: string | undefined): Promise<Pr
  * Read-only: one `GET` per page of 100.
  */
 export async function fetchPrFilesListing(binding: PrBaseBinding): Promise<PrFileEntry[]> {
-  const { owner, repo, number } = binding;
-  if (!OWNER_PATTERN.test(owner) || !REPO_PATTERN.test(repo) || !PR_NUMBER_PATTERN.test(number)) {
+  const { host, owner, repo, number } = binding;
+  if (
+    !HOST_PATTERN.test(host) ||
+    !OWNER_PATTERN.test(owner) ||
+    !REPO_PATTERN.test(repo) ||
+    !PR_NUMBER_PATTERN.test(number)
+  ) {
     throw new Error(`Refusing to list files for an unvalidated repository or PR number.`);
   }
+  // Double quotes, not single: `execAsync` runs through cmd.exe on Windows, which passes single
+  // quotes through as literal characters. Every interpolated part is allow-listed above, so there
+  // is nothing a POSIX shell could expand inside them either. `--hostname` keeps a GitHub
+  // Enterprise PR on its own host; `gh api` would otherwise ask github.com.
   const raw = await execAsync(
-    `gh api 'repos/${owner}/${repo}/pulls/${number}/files?per_page=100' --paginate --jq '.[]'`
+    `gh api --hostname ${host} "repos/${owner}/${repo}/pulls/${number}/files?per_page=100" --paginate --jq ".[]"`
   );
   return parsePrFilesListing(raw);
 }

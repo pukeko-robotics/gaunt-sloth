@@ -33,7 +33,7 @@ const MEASURED_406 =
 
 const VIEW_COMMAND = 'gh pr view 64122 --json number,url,changedFiles';
 const LIST_COMMAND =
-  "gh api 'repos/microsoft/TypeScript/pulls/64122/files?per_page=100' --paginate --jq '.[]'";
+  'gh api --hostname github.com "repos/microsoft/TypeScript/pulls/64122/files?per_page=100" --paginate --jq ".[]"';
 // The head of #64122 is a fork; the files endpoint must be addressed on the base repository.
 const VIEW_OUTPUT = JSON.stringify({
   number: 64122,
