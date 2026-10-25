@@ -90,7 +90,7 @@ describe('REL-21 mass-removal listing', () => {
     expect(result.content).not.toMatch(/^-x\d+$/m);
     for (const entry of removed) {
       expect(result.content).toContain(
-        `diff --git a/${entry.path} b/${entry.path}\n[not shown: removed, +0 -${entry.deletions}; removed files are named only]`
+        `diff --git a/${entry.path} b/${entry.path}\n[removed, +0 -${entry.deletions}]`
       );
     }
   });
@@ -102,7 +102,7 @@ describe('REL-21 mass-removal listing', () => {
     expect(reasons['pnpm-lock.yaml']).toBe('pattern');
     expect(reasons['assets/logo.png']).toBe('no-patch');
     expect(result.content).toContain(
-      'diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml\n[not shown: modified, +400 -380; matches an elision pattern'
+      'Generated, lockfile or vendored (matches an elision pattern) (1):\ndiff --git a/pnpm-lock.yaml b/pnpm-lock.yaml\n[modified, +400 -380]'
     );
   });
 
@@ -140,7 +140,7 @@ describe('REL-21 mass-addition listing over a small budget', () => {
   it('names every elided file with status and counts', () => {
     for (const { entry } of result.elided) {
       expect(result.content).toContain(
-        `[not shown: ${entry.status}, +${entry.additions} -${entry.deletions};`
+        `[${entry.status}, +${entry.additions} -${entry.deletions}]`
       );
     }
     expect(result.content).toContain(`Files not shown in full (${result.elided.length}):`);
@@ -180,7 +180,7 @@ describe('REL-21 assembled headers round-trip through extractChangedPathsFromDif
 
   it('writes rename lines from the previous path', () => {
     expect(result.content).toContain(
-      'diff --git a/src/old/source.ts b/src/renamed/target.ts\n[not shown: renamed, from src/old/source.ts, +0 -0;'
+      'diff --git a/src/old/source.ts b/src/renamed/target.ts\n[renamed from src/old/source.ts, +0 -0]'
     );
   });
 });

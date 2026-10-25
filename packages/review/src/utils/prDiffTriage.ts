@@ -174,20 +174,27 @@ function fullBlock(entry: PrFileEntry): string {
 /** Why a file is named rather than shown. */
 export type ElisionReason = 'removed' | 'no-patch' | 'pattern' | 'budget';
 
-const REASON_TEXT: Readonly<Record<ElisionReason, string>> = {
-  removed: 'removed files are named only',
+/**
+ * The manifest's groups, in the order they are written, each under one heading that says why its
+ * files are named only. The reason is stated once per group rather than once per file because the
+ * manifest is paid for per file: on a 1105-file PR the names alone are a quarter of a megabyte.
+ */
+const REASON_ORDER: readonly ElisionReason[] = ['budget', 'pattern', 'no-patch', 'removed'];
+
+const REASON_HEADING: Readonly<Record<ElisionReason, string>> = {
+  budget: 'Did not fit the context budget',
+  pattern: 'Generated, lockfile or vendored (matches an elision pattern)',
   'no-patch': 'GitHub sent no patch (binary or too large)',
-  pattern: 'matches an elision pattern (generated, lockfile or vendored)',
-  budget: 'did not fit the context budget',
+  removed: 'Removed (named only; the review question is whether each should be gone)',
 };
 
-/** The two lines a named-only file takes in the manifest: its header and one note. */
-function manifestBlock(entry: PrFileEntry, reason: ElisionReason): string {
+/** The two lines a named-only file takes in the manifest: its header and one short note. */
+function manifestBlock(entry: PrFileEntry): string {
   const renamed =
-    entry.previousPath !== undefined ? `, from ${quoteDiffPath(entry.previousPath)}` : '';
+    entry.previousPath !== undefined ? ` from ${quoteDiffPath(entry.previousPath)}` : '';
   return (
     `${diffGitHeader(entry)}\n` +
-    `[not shown: ${entry.status}${renamed}, +${entry.additions} -${entry.deletions}; ${REASON_TEXT[reason]}]`
+    `[${entry.status}${renamed}, +${entry.additions} -${entry.deletions}]`
   );
 }
 
@@ -251,13 +258,13 @@ export function triagePrFiles(
   const frame = renderFrame(options, entries.length, entries.length, entries.length);
   let total = bytesOf(frame);
   for (const entry of entries) {
-    total += bytesOf(manifestBlock(entry, reasons.get(entry) ?? 'budget')) + 2;
+    total += bytesOf(manifestBlock(entry)) + 1;
   }
 
   const shownSet = new Set<PrFileEntry>();
   const bySize = [...candidates].sort((a, b) => bytesOf(a.patch ?? '') - bytesOf(b.patch ?? ''));
   for (const entry of bySize) {
-    const delta = bytesOf(fullBlock(entry)) - bytesOf(manifestBlock(entry, 'budget'));
+    const delta = bytesOf(fullBlock(entry)) - bytesOf(manifestBlock(entry));
     if (total + delta > options.budgetBytes) break;
     total += delta;
     shownSet.add(entry);
@@ -280,7 +287,14 @@ export function triagePrFiles(
   if (shown.length > 0) sections.push(shown.map(fullBlock).join('\n'));
   if (elided.length > 0) {
     sections.push(manifestHeading);
-    sections.push(elided.map(({ entry, reason }) => manifestBlock(entry, reason)).join('\n'));
+    for (const reason of REASON_ORDER) {
+      const group = elided.filter((file) => file.reason === reason);
+      if (group.length === 0) continue;
+      sections.push(
+        `${REASON_HEADING[reason]} (${group.length}):\n` +
+          group.map(({ entry }) => manifestBlock(entry)).join('\n')
+      );
+    }
     sections.push(closing);
   }
   const content = sections.join('\n\n');
@@ -318,5 +332,9 @@ function renderFrame(
   shown: number,
   elided: number
 ): string {
-  return renderFrameParts(options, listed, shown, elided).join('\n\n') + '\n\n\n\n';
+  // Every group heading at its widest count, plus the separators between sections.
+  const groups = REASON_ORDER.map((reason) => `${REASON_HEADING[reason]} (${listed}):\n\n\n`);
+  return (
+    renderFrameParts(options, listed, shown, elided).join('\n\n') + groups.join('') + '\n\n\n\n'
+  );
 }
