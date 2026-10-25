@@ -1049,6 +1049,12 @@
                 }
               }
             },
+            "elidePatterns": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
             "binaryFormats": {
               "anyOf": [
                 {

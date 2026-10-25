@@ -320,7 +320,10 @@ describe('reviewCommand', () => {
       'git',
     ]);
 
-    expect(gitProvider).toHaveBeenCalledWith(undefined, 'origin/main...HEAD');
+    // REL-21 — every content source receives the resolved config as a third argument.
+    expect(gitProvider).toHaveBeenCalledWith(undefined, 'origin/main...HEAD', {
+      config: expect.objectContaining({ contentSource: 'file' }),
+    });
     expect(review).toHaveBeenCalledWith(
       'REVIEW',
       'INTERNAL BACKSTORY\nPROJECT GUIDELINES\nREVIEW INSTRUCTIONS',

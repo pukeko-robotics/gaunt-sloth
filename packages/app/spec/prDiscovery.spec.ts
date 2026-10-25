@@ -140,7 +140,8 @@ Requirements: https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant/issues/
       diff: 'Diff from gh',
       requirements: 'Issue #359 requirements',
     });
-    expect(ghDiffMock).toHaveBeenCalledWith(null, undefined);
+    // REL-21 — the resolved config rides along so the source can size a large PR.
+    expect(ghDiffMock).toHaveBeenCalledWith(null, undefined, { config });
     expect(ghPrViewMock).toHaveBeenCalledWith(null, undefined);
     // The full URL is passed through so cross-repo issue links resolve in the right repo.
     expect(ghIssueMock).toHaveBeenCalledWith(

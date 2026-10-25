@@ -43,6 +43,10 @@
         {
           "name": "get",
           "kind": "function"
+        },
+        {
+          "name": "isDiffTooLargeError",
+          "kind": "function"
         }
       ]
     },

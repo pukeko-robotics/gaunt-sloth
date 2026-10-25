@@ -119,7 +119,7 @@ export async function runPrDiscovery(config: GthConfig): Promise<PrDiscoveryResu
       );
     } else {
       try {
-        const diff = await getGhPrDiff(getGithubContentSourceConfig(config), undefined);
+        const diff = await getGhPrDiff(getGithubContentSourceConfig(config), undefined, { config });
         state.diff = diff ?? '';
         if (state.diff) {
           displayInfo('Retrieved current-branch PR diff with gh.');
@@ -248,7 +248,7 @@ function createPrDiscoveryTools(
     async ({ prId }: z.infer<typeof GhDiffArgsSchema>): Promise<string> => {
       let diff: string;
       try {
-        diff = (await getGhPrDiff(getGithubContentSourceConfig(config), prId)) ?? '';
+        diff = (await getGhPrDiff(getGithubContentSourceConfig(config), prId, { config })) ?? '';
       } catch (error) {
         // Surface the failure as text instead of throwing so the discovery run continues and the
         // model can try another approach - consistent with gh_pr/gh_issue.

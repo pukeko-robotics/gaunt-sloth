@@ -801,6 +801,13 @@ export interface PrCommandConfig extends CommandToolingConfig {
   requirementSource?: string;
   logWorkForReviewInSeconds?: number;
   rating?: RatingConfig;
+  /**
+   * Glob patterns for files a large pull request names without their diff — lockfiles, minified
+   * files, vendored and build output by default. Engaged only when the PR is too large for one
+   * review turn. Setting it replaces the default list, and `[]` names nothing by pattern. A pattern
+   * matches the full path or the file's base name, as `gh pr diff --exclude` does.
+   */
+  elidePatterns?: string[];
 }
 
 /**

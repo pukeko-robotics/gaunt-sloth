@@ -29,8 +29,15 @@ Two prerequisites for `gth pr`:
 Run with no arguments — `gth pr` — and it discovers the current branch's PR and its requirements
 for you, which is handy in a job that already knows its own branch.
 
-When a large PR's diff comes back truncated, the reviewer can pull a whole changed file from the
-PR's own repository over the GitHub API rather than review a hunk blind — the `gth_gh_read_file`
+A large PR still gets one review. When GitHub won't serve the diff (more than 300 files), or the
+diff is larger than the model's context, `gth pr` lists the PR's files instead. It leaves out
+removed files, lockfiles, generated files and, if needed, the largest files, and names every file
+it left out at the end of the content. See
+[Large pull requests](../configuration/content-sources.md#large-pull-requests) for the rules and
+for setting which files are left out.
+
+The reviewer can pull a whole changed file from the PR's own repository over the GitHub API rather
+than review a hunk blind, including any file the large-PR list names. That is the `gth_gh_read_file`
 built-in tool, on by default for `gth pr` and using the same `gh` login. Turn it off, or cap how
 much one call may return, through
 [`builtInTools`](../configuration/tools.md#github-file-reads-during-a-pr-review-gth_gh_read_file).

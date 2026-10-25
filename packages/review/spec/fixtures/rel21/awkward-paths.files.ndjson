@@ -1,0 +1,8 @@
+{"filename":"docs/naïve café.md","status":"modified","additions":1,"deletions":1,"changes":2,"patch":"@@ -1,3 +1,3 @@\n context\n-old docs/naïve café.md\n+new docs/naïve café.md\n context"}
+{"filename":"src/with \"quote\".ts","status":"modified","additions":1,"deletions":1,"changes":2,"patch":"@@ -1,3 +1,3 @@\n context\n-old src/with \"quote\".ts\n+new src/with \"quote\".ts\n context"}
+{"filename":"src/back\\slash.ts","status":"modified","additions":1,"deletions":1,"changes":2,"patch":"@@ -1,3 +1,3 @@\n context\n-old src/back\\slash.ts\n+new src/back\\slash.ts\n context"}
+{"filename":"src/new\nline.ts","status":"modified","additions":1,"deletions":1,"changes":2,"patch":"@@ -1,3 +1,3 @@\n context\n-old src/new\nline.ts\n+new src/new\nline.ts\n context"}
+{"filename":"pkg/a b/c.ts","status":"modified","additions":1,"deletions":1,"changes":2,"patch":"@@ -1,3 +1,3 @@\n context\n-old pkg/a b/c.ts\n+new pkg/a b/c.ts\n context"}
+{"filename":"src/renamed/target.ts","previous_filename":"src/old/source.ts","status":"renamed","additions":0,"deletions":0,"changes":0}
+{"filename":"src/moved/édité.ts","status":"renamed","additions":1,"deletions":1,"changes":2,"patch":"@@ -1,3 +1,3 @@\n context\n-old src/moved/édité.ts\n+new src/moved/édité.ts\n context","previous_filename":"src/orig/edited.ts"}
+{"filename":"gone/日本.ts","status":"removed","additions":0,"deletions":3,"changes":3,"patch":"@@ -1,3 +0,0 @@\n-x0\n-x1\n-x2"}

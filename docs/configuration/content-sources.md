@@ -257,6 +257,49 @@ export async function configure() {
 }
 ```
 
+## Large pull requests
+
+Goal: review a pull request that is too large to fetch as one diff, or too large for the model to
+read in one turn.
+
+The `github` content source fetches the diff with `gh pr diff`. GitHub refuses that for a PR of
+more than 300 files, and a diff can also be larger than the model's context. In either case the
+source lists the PR's files through the GitHub REST API instead and builds a diff that fits:
+
+- **Removed files** are listed by name and line count, without their deleted lines.
+- **Files GitHub sends no patch for** (binary files, very large files) are listed by name.
+- **Files matching `commands.pr.elidePatterns`** are listed by name.
+- **Everything else** goes in, smallest file first, until the budget is spent. The largest files
+  are the ones listed by name.
+
+The budget is half the model's context window, counted at 4 bytes per token. Every file left out
+appears in a list at the end of the content, with its status and its added and removed line counts.
+The reviewer can fetch any of them with
+[`gth_gh_read_file`](tools.md#github-file-reads-during-a-pr-review-gth_gh_read_file). Path-scoped
+prompts (`prompts.paths`) still see every changed file. A PR that fits is fetched and reviewed
+exactly as before.
+
+When the model's context window is unknown, a diff that `gh pr diff` returned is reviewed whole,
+and a PR GitHub refused is fitted to a 128k-token window.
+
+- **`commands.pr.elidePatterns`** (string array, optional): files to list by name only. Setting it
+  replaces the default list, and `[]` turns pattern matching off. A pattern matches the file's full
+  path or its base name, as `gh pr diff --exclude` does: `*.min.js` applies at any depth, while
+  `dist/**` matches only the top-level `dist`. The default list:
+  `pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `npm-shrinkwrap.json`, `Cargo.lock`,
+  `go.sum`, `poetry.lock`, `Gemfile.lock`, `composer.lock`, `*.min.js`, `*.min.css`, `*.map`,
+  `vendor/**`, `node_modules/**`, `dist/**`.
+
+```json
+{
+  "commands": {
+    "pr": {
+      "elidePatterns": ["pnpm-lock.yaml", "**/dist/**", "**/__snapshots__/**"]
+    }
+  }
+}
+```
+
 ## Git (local diffs)
 
 The `git` content source runs `git --no-pager diff` in the current directory, so `gth review` can

@@ -1,3 +1,5 @@
+import type { GthConfig } from '@gaunt-sloth/core/config.js';
+
 export interface ProviderConfig {
   username?: string;
   token?: string;
@@ -33,5 +35,14 @@ export interface A2AConfig {
 }
 
 export interface Provider {
-  get: (config: ProviderConfig | null, id: string | undefined) => Promise<string | null>;
+  /**
+   * `context` carries the resolved config for a source that needs more than its own slice; the
+   * `github` content source reads it to size a large pull request. Sources that do not need it
+   * ignore it.
+   */
+  get: (
+    config: ProviderConfig | null,
+    id: string | undefined,
+    context?: { config?: GthConfig }
+  ) => Promise<string | null>;
 }

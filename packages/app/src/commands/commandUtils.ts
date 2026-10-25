@@ -51,7 +51,10 @@ export async function getContentFromSource(
     contentSource,
     contentId,
     (config?.contentSourceConfig ?? {})[contentSource as string],
-    CONTENT_SOURCES
+    CONTENT_SOURCES,
+    // REL-21 — the github source sizes a large PR against the model's window and reads the
+    // elision list from `commands.pr`, neither of which is in its own config slice.
+    { config }
   );
   return wrapContent(
     content,
@@ -65,14 +68,15 @@ async function getFromSource(
   id: string | undefined,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   config: any,
-  legitPredefinedSources: typeof REQUIREMENTS_SOURCES | typeof CONTENT_SOURCES
+  legitPredefinedSources: typeof REQUIREMENTS_SOURCES | typeof CONTENT_SOURCES,
+  context?: { config?: GthConfig }
 ): Promise<string> {
   if (typeof source === 'string') {
     // Use one of the predefined sources
     if (legitPredefinedSources[source as keyof typeof legitPredefinedSources]) {
       const sourcePath = legitPredefinedSources[source as keyof typeof legitPredefinedSources];
       const { get } = await import(sourcePath);
-      return await get(config, id);
+      return await get(config, id, context);
     } else {
       displayError(`Unknown source: ${source}. Continuing without it.`);
     }

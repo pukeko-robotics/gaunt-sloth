@@ -1086,6 +1086,8 @@ const prCommandSchema = z.object({
   allowedTools: z.array(z.string()).optional(),
   logWorkForReviewInSeconds: z.number().optional(),
   rating: ratingConfigSchema.optional(),
+  // REL-21 — files a large PR names without their diff; replaces the default list when set.
+  elidePatterns: z.array(z.string()).optional(),
   binaryFormats: binaryFormatsSchema.optional(),
   discovery: prDiscoverySchema.optional(),
 });
