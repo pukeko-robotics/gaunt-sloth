@@ -7,10 +7,12 @@
  * The content is the real triage of a synthetic listing, so the first human message carries the
  * REL-21 manifest and the REL-6 framing exactly as a run would.
  *
- * These cells PIN the behaviour as it stands; they are measurements, not endorsements. Three of
- * them pin a gap (the manifest is folded away, the summariser is not asked to keep it, and the
- * rating call is not guarded), which is what a later change will turn around — those cells are
- * named for what they measure so that change knows which to flip.
+ * These cells PIN the behaviour as it stands; they are measurements, not endorsements. Two of them
+ * pin a gap that is still open (the manifest is folded away, and the summariser is not asked to
+ * keep it). The "unsized reads" Q2 cell pins the core guard sending a call it cannot fold, on reads
+ * sized to the unknown-window fallback. The cells marked "fixed" and the acceptance run pin the
+ * opposite: with reads sized from the listing's budget and the rating basis bounded, no review
+ * request and no rating request passes the threshold.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AIMessage, HumanMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages';
