@@ -190,7 +190,12 @@ async function getFromFilesListing(
         `GitHub PR ${prLabel} is large: ${result.shown.length} of ${entries.length} files shown in full, ` +
           `${result.elided.length} named only.`
       );
-      context?.onLargePr?.({ binding, entries, elidedCount: result.elided.length });
+      context?.onLargePr?.({
+        binding,
+        entries,
+        elidedCount: result.elided.length,
+        budgetBytes,
+      });
     }
     return result.content;
   } catch (error) {

@@ -167,6 +167,10 @@ export async function review(
       }
     }
 
+    // REL-6 — the rating call is bounded by the same threshold the context guard enforces, read
+    // from the runner's own controller when the rating is requested. The runner is built below,
+    // after the middleware, hence the holder.
+    const guardThreshold: { read?: () => Promise<number | null> } = {};
     const rateConfig = config.commands?.[command]?.rating;
     if (rateConfig && rateConfig.enabled !== false) {
       const confMiddleware = config.middleware || [];
@@ -180,7 +184,9 @@ export async function review(
       });
 
       // Resolve review-rate middleware directly rather than going through the registry
-      const reviewRateMiddleware = await createReviewRateMiddleware(rateConfig, config);
+      const reviewRateMiddleware = await createReviewRateMiddleware(rateConfig, config, {
+        thresholdSource: async () => (guardThreshold.read ? guardThreshold.read() : null),
+      });
       config.middleware = [...middlewareWithoutReviewRate, reviewRateMiddleware];
     }
 
@@ -195,6 +201,8 @@ export async function review(
     // the same agent every other command resolves to, so the layering costs nothing today; giving
     // this package a dependency on the agent package to reach a backend seam would invert it.
     const runner = new GthAgentRunner(defaultStatusCallback, effectiveResolvers);
+    guardThreshold.read = async () =>
+      (await runner.getAutocompactStatus())?.thresholdTokens ?? null;
     try {
       // GS2-20 — considered for the durable saver and deliberately kept in memory. A review is a
       // one-shot run over a diff, not a conversation: it ends with its verdict and there is no next
@@ -458,7 +466,7 @@ function maybeAddGhReadFileDiffTool(
     ...others,
     getGhReadFileDiffTool(
       config,
-      { binding: largePr.binding, entries: largePr.entries },
+      { binding: largePr.binding, entries: largePr.entries, budgetBytes: largePr.budgetBytes },
       command,
       readFileToolPresent
     ),

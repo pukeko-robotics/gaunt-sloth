@@ -6,7 +6,7 @@
  * and stores the structured result inside the global artifact store.
  */
 
-import { HumanMessage } from '@langchain/core/messages';
+import { AIMessage, HumanMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages';
 import { tool } from '@langchain/core/tools';
 import { createMiddleware, type AgentMiddleware } from 'langchain';
 import * as z from 'zod';
@@ -16,6 +16,8 @@ import { setArtifact, deleteArtifact, getArtifact } from '@gaunt-sloth/core/stat
 import { debugLog, debugLogError } from '@gaunt-sloth/core/utils/debugUtils.js';
 import { displayInfo, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { getNewRunnableConfig } from '@gaunt-sloth/core/utils/llmUtils.js';
+import { isCompactionSummary } from '@gaunt-sloth/core/core/compaction.js';
+import { estimatePromptTokens } from '@gaunt-sloth/core/core/GthLangChainAgent.js';
 
 /**
  * Schema describing the result of the review rating step.
@@ -111,9 +113,20 @@ export const DEFAULT_REVIEW_RATE_TIMEOUT_MS = 120_000;
 // and any caller whose stdin is not a TTY — CI, a piped diff, the batch pipeline — where Esc is off
 // by construction.
 
+/** REL-6 — what the rating step needs from the run beyond its settings and config. */
+export interface ReviewRateMiddlewareOptions {
+  /**
+   * The context guard's threshold for this run, in the estimator's tokens, or `null` when nothing
+   * fires. Read when the rating is requested, so it is the number the guard was enforcing. Absent
+   * or `null`, the rating request is sent exactly as it always was.
+   */
+  thresholdSource?: () => Promise<number | null>;
+}
+
 export function createReviewRateMiddleware(
   settings: ReviewRateMiddlewareSettings,
-  gthConfig: GthConfig
+  gthConfig: GthConfig,
+  options: ReviewRateMiddlewareOptions = {}
 ): Promise<AgentMiddleware> {
   const normalizedConfig = normalizeRatingConfig(settings);
 
@@ -180,7 +193,13 @@ export function createReviewRateMiddleware(
         }
 
         try {
-          const ratingMessages = [...state.messages, new HumanMessage(ratingPrompt)];
+          const threshold = await readThreshold(options.thresholdSource);
+          const basis =
+            threshold === null
+              ? (state.messages as BaseMessage[])
+              : reduceRatingBasis(state.messages as BaseMessage[], ratingPrompt, threshold)
+                  .messages;
+          const ratingMessages = [...basis, new HumanMessage(ratingPrompt)];
 
           // ONE call, bounded TWICE, and the second bound is not redundant.
           //
@@ -261,6 +280,147 @@ export function createReviewRateMiddleware(
       },
     })
   );
+}
+
+async function readThreshold(
+  source: (() => Promise<number | null>) | undefined
+): Promise<number | null> {
+  if (!source) return null;
+  try {
+    const threshold = await source();
+    return typeof threshold === 'number' && Number.isFinite(threshold) && threshold > 0
+      ? threshold
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * REL-6 — the first message of a rating basis whose earlier context was dropped and that has no
+ * compaction summary to open with. Providers expect the conversation to open with a user turn.
+ */
+export const RATING_BASIS_OMISSION_NOTE =
+  'Earlier parts of this review conversation (the original request and the oldest file reads) ' +
+  'were left out so the scoring request fits the model context window. The review below is whole.';
+
+/** What {@link reduceRatingBasis} decided, for the caller and the specs. */
+export interface RatingBasis {
+  messages: BaseMessage[];
+  /** `false` when the basis is `state.messages` itself, unchanged. */
+  reduced: boolean;
+  /** How many tool-call groups (an AI call with its results) were kept, when reduced. */
+  keptReads: number;
+  /** How many were left out, when reduced. */
+  droppedReads: number;
+}
+
+/**
+ * An AI message without its usage numbers, for ESTIMATING a reduced basis only. The estimator
+ * anchors on the newest reported input count, and the final review's count is the size of the
+ * whole request it answered — exactly what a reduced basis no longer holds.
+ */
+function forEstimate(message: BaseMessage): BaseMessage {
+  if (!AIMessage.isInstance(message)) return message;
+  return new AIMessage({
+    content: message.content,
+    tool_calls: message.tool_calls,
+    id: message.id,
+  });
+}
+
+/**
+ * REL-6 — **bound the rating request by the run's guard threshold, never cutting the review.**
+ *
+ * The rating is a direct `invoke` after the agent finishes, so the context guard never sees it,
+ * and it carries everything the last guarded call did plus the final review and the rating
+ * prompt. Over the threshold that is a request the provider may reject or silently truncate.
+ *
+ * Under the threshold, `messages` is returned as it is — the same array, so a small review's rating
+ * request is unchanged. Over it, the basis is rebuilt to keep, in this order: (1) the final review,
+ * whole; (2) the compaction summary, when the run folded; (3) the most recent tool-call groups,
+ * newest first, until the next one would not fit. The original request and older reads go. Kept
+ * reads stay in their original order, each AI call with all of its results, so the request remains
+ * a valid conversation. When even the review alone is over the threshold it is sent anyway: the
+ * rater must see the whole verdict.
+ *
+ * DECISION — **a deterministic reduction, not core's `compactMessages`.** Compaction cannot meet
+ * this bound: it takes no budget, it keeps the last `DEFAULT_KEEP_RECENT` messages verbatim, and
+ * that tail (the final review and the reads before it) is what overflows; with a summary and six
+ * or fewer messages it folds nothing at all. It would also cost a second model call over the
+ * folded span, which nothing guards either. The estimate is core's own `estimatePromptTokens`, so
+ * this and the guard agree about what "full" means.
+ */
+export function reduceRatingBasis(
+  messages: readonly BaseMessage[],
+  ratingPrompt: string,
+  threshold: number
+): RatingBasis {
+  const prompt = new HumanMessage(ratingPrompt);
+  const unchanged: RatingBasis = {
+    messages: messages as BaseMessage[],
+    reduced: false,
+    keptReads: 0,
+    droppedReads: 0,
+  };
+  if (estimatePromptTokens([...messages, prompt]) <= threshold) return unchanged;
+
+  let finalIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (!AIMessage.isInstance(message)) continue;
+    if (finalIndex === -1) finalIndex = i;
+    if ((message.tool_calls ?? []).length === 0) {
+      finalIndex = i;
+      break;
+    }
+  }
+  if (finalIndex === -1) return unchanged;
+  const finalReview = messages[finalIndex];
+
+  const summary = messages.slice(0, finalIndex).find((message) => isCompactionSummary(message));
+  const head = summary ?? new HumanMessage(RATING_BASIS_OMISSION_NOTE);
+
+  // Tool-call groups before the review, oldest first: an AI message that called tools and the tool
+  // results that follow it.
+  const groups: BaseMessage[][] = [];
+  for (let i = 0; i < finalIndex; i++) {
+    const message = messages[i];
+    if (AIMessage.isInstance(message) && (message.tool_calls ?? []).length > 0) {
+      groups.push([message]);
+    } else if (ToolMessage.isInstance(message) && groups.length > 0) {
+      groups[groups.length - 1].push(message);
+    }
+  }
+
+  const build = (kept: BaseMessage[][]): BaseMessage[] => [head, ...kept.flat(), finalReview];
+  const fits = (candidate: BaseMessage[]): boolean =>
+    estimatePromptTokens([...candidate, prompt].map(forEstimate)) <= threshold;
+
+  const kept: BaseMessage[][] = [];
+  for (let g = groups.length - 1; g >= 0; g--) {
+    const next = [groups[g], ...kept];
+    if (!fits(build(next))) break;
+    kept.unshift(groups[g]);
+  }
+  const reduced = build(kept);
+  if (!fits(reduced)) {
+    debugLog(
+      `ReviewRateMiddleware: the final review alone is past the ${threshold}-token threshold; ` +
+        'sending it whole anyway, because the rater must see the whole verdict.'
+    );
+  }
+  debugLog(
+    `ReviewRateMiddleware: the rating request was past the ${threshold}-token threshold, so its ` +
+      `basis was reduced to the review${summary ? ', the compaction summary' : ''} and ` +
+      `${kept.length} of ${groups.length} file reads.`
+  );
+  return {
+    messages: reduced,
+    reduced: true,
+    keptReads: kept.length,
+    droppedReads: groups.length - kept.length,
+  };
 }
 
 function buildRatingInstructions(config: NormalizedRatingConfig): string {

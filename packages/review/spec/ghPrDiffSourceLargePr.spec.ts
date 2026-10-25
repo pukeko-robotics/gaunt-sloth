@@ -191,6 +191,8 @@ describe('ghPrDiffSource — large PRs (REL-21)', () => {
     });
     expect(listing.entries).toHaveLength(45);
     expect(listing.elidedCount).toBe(42);
+    // The budget the triage used, so the tool sizes its reads without resolving the window again.
+    expect(listing.budgetBytes).toBe(1_000_000);
     expect(content).toContain('gth_gh_read_file_diff');
     // The listing was fetched once; the tool will serve from it rather than fetch again.
     expect(execAsyncMock.mock.calls.filter((c) => c[0] === LIST_COMMAND)).toHaveLength(1);

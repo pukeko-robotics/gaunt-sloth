@@ -90,6 +90,12 @@ export interface LargePrListing {
   entries: readonly PrFileEntry[];
   /** How many of those files the triage named without their diff; always above zero. */
   elidedCount: number;
+  /**
+   * The content budget in bytes the triage used: the one window resolution, or its unknown-window
+   * fallback, already turned into bytes. The per-file diff tool sizes its answers from it, so the
+   * window is not resolved twice. Absent, the tool assumes the fallback budget.
+   */
+  budgetBytes?: number;
 }
 
 // The same conservative allow-lists `ghReadFileTool.ts` applies: nothing that reaches the `gh api`

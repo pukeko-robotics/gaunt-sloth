@@ -105,17 +105,24 @@ describe('gth_gh_read_file_diff (REL-6)', () => {
         status: 'modified',
         additions: 1,
         deletions: 0,
-        patch: '@@ -1 +1 @@\n+' + 'é'.repeat(100),
+        patch: '@@ -1 +1 @@\n+' + 'é'.repeat(1000),
       };
-      const out = readFileDiffFromListing({ path: 'big.ts' }, [big], 51);
+      const out = readFileDiffFromListing({ path: 'big.ts' }, [big], 400);
+      // The cap is the WHOLE answer's, heading and marker included: the guard counts all of it.
+      expect(Buffer.byteLength(out, 'utf8')).toBeLessThanOrEqual(400);
       const [heading, rest] = out.split('\n\n');
       expect(heading).toBe('Partial diff of big.ts: modified, +1 -0 (truncated)');
       const body = rest.slice(0, rest.indexOf('\n... ['));
-      expect(Buffer.byteLength(body, 'utf8')).toBeLessThanOrEqual(51);
+      expect(body.length).toBeGreaterThan(0);
       expect(body).not.toContain('�');
       expect(out).toContain(
-        '[gth_gh_read_file_diff: diff truncated at the 51-byte cap ' +
-          '(builtInTools.gth_gh_read_file_diff.maxBytes) — this diff is INCOMPLETE'
+        "[gth_gh_read_file_diff: this diff was cut to 400 bytes to fit this model's context " +
+          'window beside the rest of the review — it is INCOMPLETE'
+      );
+      // The marker points at the whole-file tool only when the run has it.
+      expect(out).toContain('gth_gh_read_file reads the whole file');
+      expect(readFileDiffFromListing({ path: 'big.ts' }, [big], 400, false)).not.toContain(
+        'gth_gh_read_file reads'
       );
       // Under the cap, no marker.
       expect(readFileDiffFromListing({ path: 'big.ts' }, [big], 10_000)).not.toContain(
@@ -130,13 +137,13 @@ describe('gth_gh_read_file_diff (REL-6)', () => {
         status: 'modified',
         additions: 1,
         deletions: 0,
-        patch: '\u001b'.repeat(20),
+        patch: '\u001b'.repeat(200),
       };
-      // 20 raw bytes, 80 once each ESC is written as `\x1b`.
-      const out = readFileDiffFromListing({ path: 'h.ts' }, [hostile], 40);
+      // 200 raw bytes would fit 600; 800 once each ESC is written as `\x1b` do not.
+      const out = readFileDiffFromListing({ path: 'h.ts' }, [hostile], 600);
       expect(out).toContain('INCOMPLETE');
-      expect(out).toContain('\\x1b'.repeat(10));
-      expect(out).not.toContain('\\x1b'.repeat(11));
+      expect(Buffer.byteLength(out, 'utf8')).toBeLessThanOrEqual(600);
+      expect(out).not.toContain('\\x1b'.repeat(150));
     });
 
     it('answers an unlisted path with close matches and the listing size', async () => {
@@ -191,6 +198,104 @@ describe('gth_gh_read_file_diff (REL-6)', () => {
           'src/compiler/renamed.ts): renamed from src/compiler/original.ts, +1 -1\n\n' +
           '@@ -1 +1 @@\n-x\n+y'
       );
+    });
+  });
+
+  describe('listing query', () => {
+    it('lists the files a glob matches, with status and counts, and the total', async () => {
+      const { readFileDiffFromListing } = await import('#src/tools/ghReadFileDiffTool.js');
+      const out = readFileDiffFromListing({ pattern: 'src/compiler/*.ts' }, ENTRIES);
+      expect(out.split('\n')[0]).toBe(
+        `2 of the ${ENTRIES.length} files this pull request changes match "src/compiler/*.ts":`
+      );
+      expect(out).toContain('src/compiler/checker.ts: modified, +2 -1');
+      expect(out).toContain(
+        'src/compiler/renamed.ts: renamed from src/compiler/original.ts, +1 -1'
+      );
+      // A one-segment star does not cross a directory.
+      expect(out).not.toContain('tests/cases');
+      expect(out).not.toContain('@@');
+    });
+
+    it('treats a pattern without glob characters as a directory prefix', async () => {
+      const { readFileDiffFromListing } = await import('#src/tools/ghReadFileDiffTool.js');
+      const out = readFileDiffFromListing({ pattern: 'src/compiler' }, ENTRIES);
+      expect(out).toMatch(/^2 of the/);
+      // A prefix is a whole directory, not a string prefix of a sibling's name.
+      expect(readFileDiffFromListing({ pattern: 'src/comp' }, ENTRIES)).toMatch(/^None of the/);
+    });
+
+    it('matches a slash-free glob against base names, and lists everything with no arguments', async () => {
+      const { readFileDiffFromListing } = await import('#src/tools/ghReadFileDiffTool.js');
+      expect(readFileDiffFromListing({ pattern: '*.png' }, ENTRIES)).toContain(
+        'assets/logo.png: modified, +0 -0'
+      );
+      expect(readFileDiffFromListing({}, ENTRIES).split('\n')[0]).toBe(
+        `${ENTRIES.length} of the ${ENTRIES.length} files this pull request changes are listed:`
+      );
+    });
+
+    it('returns at most 50 names, and says how many more matched', async () => {
+      const { readFileDiffFromListing, MAX_LISTED_PATHS } =
+        await import('#src/tools/ghReadFileDiffTool.js');
+      const many: PrFileEntry[] = Array.from({ length: 120 }, (_, i) => ({
+        path: `pkg/f${i}.ts`,
+        status: 'added',
+        additions: 1,
+        deletions: 0,
+      }));
+      const out = readFileDiffFromListing({ pattern: 'pkg/' }, many);
+      expect(MAX_LISTED_PATHS).toBe(50);
+      expect(out.split('\n')[0]).toBe(
+        '120 of the 120 files this pull request changes match "pkg/"; the first 50 are:'
+      );
+      expect(out.match(/^pkg\/f\d+\.ts: /gm)).toHaveLength(50);
+      expect(out).toContain('70 more matched and are not shown; narrow the pattern to see them.');
+    });
+
+    it('drops names, never the count, to fit the cap', async () => {
+      const { readFileDiffFromListing } = await import('#src/tools/ghReadFileDiffTool.js');
+      const many: PrFileEntry[] = Array.from({ length: 60 }, (_, i) => ({
+        path: `pkg/${'deep/'.repeat(10)}f${i}.ts`,
+        status: 'added',
+        additions: 1,
+        deletions: 0,
+      }));
+      const out = readFileDiffFromListing({ pattern: 'pkg/**' }, many, 1000);
+      expect(Buffer.byteLength(out, 'utf8')).toBeLessThanOrEqual(1000);
+      expect(out).toMatch(/^60 of the 60 files .*; the first \d+ are:/);
+      expect(out).toMatch(/\n\d+ more matched and are not shown/);
+    });
+
+    it('neutralises listed paths and refuses an over-long pattern', async () => {
+      const { readFileDiffFromListing, MAX_PATTERN_CHARACTERS } =
+        await import('#src/tools/ghReadFileDiffTool.js');
+      const hostile: PrFileEntry[] = [
+        { path: 'src/\u001b[2Jx.ts', status: 'added', additions: 1, deletions: 0 },
+      ];
+      const out = readFileDiffFromListing({ pattern: 'src/' }, hostile);
+      expect(out).not.toContain('\u001b');
+      expect(out).toContain('src/\\x1b[2Jx.ts');
+      expect(
+        readFileDiffFromListing({ pattern: 'a'.repeat(MAX_PATTERN_CHARACTERS + 1) }, ENTRIES)
+      ).toMatch(/^That pattern is \d+ characters long/);
+    });
+
+    it('answers a pathological glob in bounded time', async () => {
+      const { readFileDiffFromListing } = await import('#src/tools/ghReadFileDiffTool.js');
+      const rows: PrFileEntry[] = [
+        { path: `pkg/${'a'.repeat(255)}/x.ts`, status: 'added', additions: 1, deletions: 0 },
+      ];
+      const started = Date.now();
+      readFileDiffFromListing({ pattern: 'pkg/a*a*a*a*a*a*a*a*b/x.ts' }, rows);
+      expect(Date.now() - started).toBeLessThan(1000);
+    });
+
+    it('prefers path when both are given', async () => {
+      const { readFileDiffFromListing } = await import('#src/tools/ghReadFileDiffTool.js');
+      expect(
+        readFileDiffFromListing({ path: 'src/compiler/checker.ts', pattern: '*.png' }, ENTRIES)
+      ).toMatch(/^Diff of src\/compiler\/checker.ts/);
     });
   });
 
@@ -253,15 +358,36 @@ describe('gth_gh_read_file_diff (REL-6)', () => {
       const { get } = await import('#src/tools/ghReadFileDiffTool.js');
       const config = {
         builtInTools: { gth_gh_read_file: { maxBytes: 999_999 } },
-        commands: { review: { builtInTools: { gth_gh_read_file_diff: { maxBytes: 10 } } } },
+        commands: { review: { builtInTools: { gth_gh_read_file_diff: { maxBytes: 300 } } } },
       } as unknown as GthConfig;
-      const asReview = get(config, { binding: BINDING, entries: ENTRIES }, 'review');
-      const asPr = get(config, { binding: BINDING, entries: ENTRIES }, 'pr');
+      const big = [{ ...ENTRIES[0], patch: '@@ -1 +1 @@\n+' + 'x'.repeat(5000) }];
+      const asReview = get(config, { binding: BINDING, entries: big }, 'review');
+      const asPr = get(config, { binding: BINDING, entries: big }, 'pr', true);
       expect(await asReview.invoke({ path: 'src/compiler/checker.ts' })).toContain(
-        'the 10-byte cap'
+        'cut to 300 bytes'
       );
-      // The read-file tool's cap is not this tool's cap: pr falls back to the 100 KiB default.
-      expect(asPr.description).toContain('At most 102400 bytes');
+      expect(asReview.description).toContain('At most 300 bytes');
+      // The read-file tool's cap is not this tool's cap: pr has the 100 KiB default, and with no
+      // budget handed over the window share of the unknown-window fallback budget is smaller.
+      expect(asPr.description).toContain('At most 16000 bytes');
+    });
+
+    it('caps each answer at the smaller of maxBytes and the window share of the run budget', async () => {
+      const { get, effectiveDiffReadCapBytes, READ_SHARE_OF_DIFF_BUDGET } =
+        await import('#src/tools/ghReadFileDiffTool.js');
+      const { diffBudgetBytes } = await import('#src/utils/prDiffTriage.js');
+      const budget = diffBudgetBytes(32_768)!;
+      const share = Math.floor(budget * READ_SHARE_OF_DIFF_BUDGET);
+      expect(effectiveDiffReadCapBytes(102_400, budget)).toBe(share);
+      expect(effectiveDiffReadCapBytes(100, budget)).toBe(100);
+      // A 1M window's share is above the configured cap, which then governs.
+      expect(effectiveDiffReadCapBytes(102_400, diffBudgetBytes(1_000_000)!)).toBe(102_400);
+
+      const big = [{ ...ENTRIES[0], patch: '@@ -1 +1 @@\n+' + 'x'.repeat(50_000) }];
+      const bound = get({} as GthConfig, { binding: BINDING, entries: big, budgetBytes: budget });
+      const out = await bound.invoke({ path: 'src/compiler/checker.ts' });
+      expect(Buffer.byteLength(out, 'utf8')).toBeLessThanOrEqual(share);
+      expect(out).toContain(`cut to ${share} bytes`);
     });
   });
 });

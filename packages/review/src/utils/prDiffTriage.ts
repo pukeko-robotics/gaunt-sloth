@@ -367,7 +367,8 @@ function closingSentence(options: TriageOptions): string {
     return (
       'This pull request is very large and you are not seeing all of it. Read the diffs of the ' +
       'files above that matter with the gth_gh_read_file_diff tool, one path at a time, choosing ' +
-      `selectively rather than trying to read them all.${wholeFile} Removed files need only their names.`
+      'selectively rather than trying to read them all; give it a pattern instead of a path to ' +
+      `list the changed files again.${wholeFile} Removed files need only their names.`
     );
   }
   return options.readFileToolEnabled
