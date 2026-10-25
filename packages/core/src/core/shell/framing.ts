@@ -283,6 +283,19 @@ export function neutralizeUntrustedText(text: string): string {
   return text.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, escapeCodePoint);
 }
 
+/**
+ * {@link neutralizeUntrustedText} for text whose line structure is its meaning — a unified-diff
+ * patch. It escapes the same set with the same alphabet, except that TAB, LF and a CR immediately
+ * followed by LF are kept: they are the indentation and line breaks the patch is made of, and
+ * escaping them would leave a reviewer reading one long line. A **lone** CR is still escaped,
+ * because it is the cursor-to-column-0 overwrite trick rather than a line break.
+ */
+export function neutralizeUntrustedMultilineText(text: string): string {
+  return text.replace(/\r\n|[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, (match) =>
+    match === '\r\n' || match === '\n' || match === '\t' ? match : escapeCodePoint(match)
+  );
+}
+
 /** One code point as the printable escape this module renders unprintable things with. */
 function escapeCodePoint(character: string): string {
   const codePoint = character.codePointAt(0) ?? 0;

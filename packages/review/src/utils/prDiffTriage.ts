@@ -29,6 +29,10 @@
  * name from writing a line of its own into the content.
  */
 import path from 'node:path';
+import {
+  neutralizeUntrustedMultilineText,
+  neutralizeUntrustedText,
+} from '@gaunt-sloth/core/core/shell/framing.js';
 import type { PrFileEntry } from '#src/utils/prFilesListing.js';
 
 /**
@@ -158,7 +162,24 @@ function diffGitHeader(entry: PrFileEntry): string {
 }
 
 /** A complete diff block for an entry with a patch: header, rename lines, file lines, hunks. */
-function fullBlock(entry: PrFileEntry): string {
+/**
+ * The entry as it may be rendered: every path and patch byte passed through core's untrusted-text
+ * neutraliser, so a large PR gets the same posture as `gh pr diff`, which neutralises terminal
+ * escape sequences by default. The bytes are attacker-controlled under `pull_request_target`, and
+ * the model's review — which may quote them — is printed, written to the report and posted. Paths
+ * use the single-line form (no file name has a legitimate TAB or line break to keep); the patch
+ * keeps its TABs, LFs and CRLFs. Applied at render time only, so the listing itself stays exact.
+ */
+function renderable(entry: PrFileEntry): PrFileEntry {
+  const safe: PrFileEntry = { ...entry, path: neutralizeUntrustedText(entry.path) };
+  if (entry.previousPath !== undefined)
+    safe.previousPath = neutralizeUntrustedText(entry.previousPath);
+  if (entry.patch !== undefined) safe.patch = neutralizeUntrustedMultilineText(entry.patch);
+  return safe;
+}
+
+function fullBlock(raw: PrFileEntry): string {
+  const entry = renderable(raw);
   const lines = [diffGitHeader(entry)];
   if (entry.previousPath !== undefined && entry.status === 'renamed') {
     lines.push(`rename from ${quoteDiffPath(entry.previousPath)}`);
@@ -189,7 +210,8 @@ const REASON_HEADING: Readonly<Record<ElisionReason, string>> = {
 };
 
 /** The two lines a named-only file takes in the manifest: its header and one short note. */
-function manifestBlock(entry: PrFileEntry): string {
+function manifestBlock(raw: PrFileEntry): string {
+  const entry = renderable(raw);
   const renamed =
     entry.previousPath !== undefined ? ` from ${quoteDiffPath(entry.previousPath)}` : '';
   return (

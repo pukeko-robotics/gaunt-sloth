@@ -13,6 +13,7 @@ import {
   neutralizeUntrustedText,
   wrapToWidth,
 } from '#src/core/shell/framing.js';
+import { neutralizeUntrustedMultilineText } from '#src/core/shell/framing.js';
 import { displayWidth, maxDisplayWidth } from '#src/utils/displayWidth.js';
 
 /**
@@ -606,5 +607,18 @@ describe("shell/framing — the renderer's OWN rows are bounded too", () => {
     const elisions = framed.lines.filter((line) => line.includes('hidden') || line.includes('⋯'));
     expect(elisions.length).toBeGreaterThan(0);
     for (const row of elisions) expect(maxDisplayWidth(row)).toBeLessThanOrEqual(MIN_FRAME_WIDTH);
+  });
+});
+
+describe('neutralizeUntrustedMultilineText', () => {
+  it('keeps TAB, LF and CRLF, and escapes everything else neutralizeUntrustedText would', () => {
+    expect(neutralizeUntrustedMultilineText('a\tb\r\nc\nd')).toBe('a\tb\r\nc\nd');
+    expect(neutralizeUntrustedMultilineText('x\u001b[2Jy\u0007\u202Ez\rw')).toBe(
+      'x\\x1b[2Jy\\x07\\u202ez\\x0dw'
+    );
+  });
+
+  it('escapes a CR at the very end, which has no LF after it', () => {
+    expect(neutralizeUntrustedMultilineText('line\r')).toBe('line\\x0d');
   });
 });

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_AUTOCOMPACT_SEED_FRACTION } from '@gaunt-sloth/core/core/compactionThreshold.js';
+import { neutralizeUntrustedText } from '@gaunt-sloth/core/core/shell/framing.js';
 import { extractChangedPathsFromDiff } from '#src/utils/diffPaths.js';
 import { parsePrFilesListing, type PrFileEntry } from '#src/utils/prFilesListing.js';
 import {
@@ -29,11 +30,19 @@ const options = (overrides: Partial<TriageOptions> = {}): TriageOptions => ({
   ...overrides,
 });
 
-/** The acceptance spec: no path in the listing is absent from both the diff and the manifest. */
+/**
+ * The acceptance spec: no path in the listing is absent from both the diff and the manifest.
+ *
+ * A path is compared in its NEUTRALISED form, because that is what the content carries: a control
+ * or format character in a file name is rendered as a printable escape before it is written, so
+ * `extractChangedPathsFromDiff` reads back the escaped name. For every ordinary path the two forms
+ * are identical.
+ */
 function expectEveryListedPathVisible(entries: PrFileEntry[], content: string): void {
   const seen = new Set(extractChangedPathsFromDiff(content));
   const missing = entries
     .flatMap((entry) => [entry.path, ...(entry.previousPath ? [entry.previousPath] : [])])
+    .map(neutralizeUntrustedText)
     .filter((p) => !seen.has(p));
   expect(missing).toEqual([]);
 }
@@ -166,7 +175,8 @@ describe('REL-21 assembled headers round-trip through extractChangedPathsFromDif
   });
 
   it('writes a hostile newline in a path as an escape, never as a line of its own', () => {
-    expect(result.content).toContain('"a/src/new\\nline.ts"');
+    // Neutralised to the printable `\x0a`, whose backslash git-quoting then doubles.
+    expect(result.content).toContain('"a/src/new\\\\x0aline.ts"');
     expect(result.content.split('\n')).not.toContain('line.ts b/src/new');
   });
 
@@ -240,5 +250,57 @@ describe('REL-21 listing parser', () => {
       JSON.stringify({ filename: 'x', status: 'evil\n', additions: '9', deletions: -1 })
     );
     expect(entry).toEqual({ path: 'x', status: 'modified', additions: 0, deletions: 0 });
+  });
+});
+
+describe('REL-21 escape neutralisation (parity with gh pr diff)', () => {
+  const ESC = '\u001b';
+  const patch = `@@ -1,2 +1,2 @@\n-\told${ESC}[2J\r\n+\tnew\u0007 \u202Eevil\rover\n`;
+  const entry: PrFileEntry = {
+    path: 'src/a.ts',
+    status: 'modified',
+    additions: 1,
+    deletions: 1,
+    patch,
+  };
+  const hostile: PrFileEntry = {
+    path: `src/${ESC}[31mred.ts`,
+    status: 'modified',
+    additions: 1,
+    deletions: 1,
+    patch: '@@ -1 +1 @@\n-a\n+b',
+  };
+  const { content } = triagePrFiles([entry], options());
+
+  it('escapes ESC, BEL, a bidi override and a lone CR in a patch', () => {
+    expect(content).not.toContain(ESC);
+    expect(content).not.toContain('\u0007');
+    expect(content).not.toContain('\u202E');
+    expect(content).toContain('\\x1b[2J');
+    expect(content).toContain('\\x07');
+    expect(content).toContain('\\u202e');
+    expect(content).toContain('evil\\x0dover');
+    expect(content).not.toMatch(/\r(?!\n)/);
+  });
+
+  it('keeps the tabs, LFs and CRLFs a patch is made of', () => {
+    expect(content).toContain('-\told\\x1b[2J\r\n+\tnew');
+    expect(content).toContain('over\n');
+  });
+
+  it('escapes a path in the header and in the manifest alike', () => {
+    const shown = triagePrFiles([hostile], options()).content;
+    const named = triagePrFiles([hostile], options({ elidePatterns: ['*.ts'] })).content;
+    for (const text of [shown, named]) {
+      expect(text).not.toContain(ESC);
+      expect(text).toContain('diff --git "a/src/\\\\x1b[31mred.ts" "b/src/\\\\x1b[31mred.ts"');
+      // extractChangedPathsFromDiff still recovers a path: the escaped one.
+      expect(extractChangedPathsFromDiff(text)).toEqual(['src/\\x1b[31mred.ts']);
+    }
+  });
+
+  it('leaves the structured listing itself exact', () => {
+    const result = triagePrFiles([hostile], options());
+    expect(result.shown[0].path).toBe(hostile.path);
   });
 });
