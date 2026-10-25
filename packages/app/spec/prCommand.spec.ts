@@ -513,11 +513,20 @@ describe('prCommand', () => {
 
     // prId must be numeric now (the pr command validates it upfront for the github content
     // source); the requirements fetch below is what this test exercises.
-    await expect(program.parseAsync(['na', 'na', 'pr', '42', 'JIRA-123'])).rejects.toThrow(
+    //
+    // REL-24 — an unresolvable requirements source is a REPORTED failure, not a thrown one: the
+    // command resolves, displays the source's own message, and fails the run with exit code 1.
+    // The report file it writes is asserted on disk by reviewFailureReport.e2e.spec.ts.
+    await program.parseAsync(['na', 'na', 'pr', '42', 'JIRA-123']);
+
+    const { setExitCode } = await import('#src/utils/systemUtils.js');
+    expect(displayErrorMock).toHaveBeenCalledWith(
       'Missing JIRA Legacy API token. ' +
         'The legacy token can be defined as JIRA_LEGACY_API_TOKEN environment variable ' +
         'or as "token" in config.'
     );
+    expect(setExitCode).toHaveBeenCalledWith(1);
+    expect(review).not.toHaveBeenCalled();
   });
 
   it('Should display predefined providers in help', async () => {

@@ -89,6 +89,8 @@ describe('a review that fails before inference still writes its report (e2e)', (
     // wherever `pnpm test` was invoked — the repo root. Inherited, it would aim this run's
     // project-relative paths at the repository instead of the temp dir under test.
     delete env.INIT_CWD;
+    // The Jira cells below need the token to be absent; an ambient one would let them reach Jira.
+    delete env.JIRA_LEGACY_API_TOKEN;
     const result = spawnSync(process.execPath, [entry, ...args], {
       encoding: 'utf8',
       cwd: dir,
@@ -169,6 +171,109 @@ describe('a review that fails before inference still writes its report (e2e)', (
 
     expect(existsSync(reportPath())).toBe(true);
     expect(readFileSync(reportPath(), 'utf8')).toContain('Invalid pull request ID "not-a-number"');
+    expect(status).toBe(1);
+  });
+
+  // REL-24 — the two inputs `gth pr` / `gth review` read outside the content fetch: `--file` and
+  // the requirements source. Each used to escape as an unhandled rejection, which exits 1 through
+  // the crash handler but never reaches the report, so the file is what these cells discriminate
+  // on. `gaunt-sloth-review` already treated them as reported failures; these hold `gth` to it.
+  const MISSING_FILE = 'no-such-notes.md';
+  const NO_JIRA_TOKEN = 'Missing JIRA Legacy API token.';
+
+  /** A Jira Legacy requirements source with every setting but the token. */
+  const jiraWithoutToken = {
+    requirementSourceConfig: {
+      'jira-legacy': {
+        username: 'test-user',
+        baseUrl: 'https://test-jira.invalid/rest/api/2/issue/',
+      },
+    },
+  };
+
+  /** A local diff and the file content source, so `gth review` gets past its content fetch. */
+  const useFileContent = (extra: Record<string, unknown> = {}): void => {
+    writeFileSync(resolve(dir, 'change.diff'), 'diff --git a/a.txt b/a.txt\n+new\n');
+    writeConfig({
+      contentSource: 'file',
+      commands: {
+        pr: { contentSource: 'github', rating: { enabled: false } },
+        review: { contentSource: 'file', rating: { enabled: false } },
+      },
+      ...extra,
+    });
+  };
+
+  it('gth pr writes the report when a --file cannot be read', () => {
+    const { status, output } = run(appCli, ['--nopipe', 'pr', '427', '--file', MISSING_FILE]);
+
+    expect(existsSync(reportPath()), `no report file was written; CLI said:\n${output}`).toBe(true);
+    const report = readFileSync(reportPath(), 'utf8');
+    expect(report).toContain(DID_NOT_RUN);
+    expect(report).toContain(MISSING_FILE);
+    expect(report).not.toContain(FAKE_VERDICT);
+    expect(status).toBe(1);
+  });
+
+  it('gth review writes the report when a --file cannot be read', () => {
+    useFileContent();
+
+    const { status, output } = run(appCli, [
+      '--nopipe',
+      'review',
+      'change.diff',
+      '--content-source',
+      'file',
+      '--file',
+      MISSING_FILE,
+    ]);
+
+    expect(existsSync(reportPath()), `no report file was written; CLI said:\n${output}`).toBe(true);
+    const report = readFileSync(reportPath(), 'utf8');
+    expect(report).toContain(DID_NOT_RUN);
+    expect(report).toContain(MISSING_FILE);
+    expect(report).not.toContain(FAKE_VERDICT);
+    expect(status).toBe(1);
+  });
+
+  it('gth pr writes the report when the requirements source cannot be resolved', () => {
+    writeConfig(jiraWithoutToken);
+
+    const { status, output } = run(appCli, [
+      '--nopipe',
+      'pr',
+      '427',
+      'JIRA-123',
+      '--requirements-source',
+      'jira-legacy',
+    ]);
+
+    expect(existsSync(reportPath()), `no report file was written; CLI said:\n${output}`).toBe(true);
+    const report = readFileSync(reportPath(), 'utf8');
+    expect(report).toContain(DID_NOT_RUN);
+    expect(report).toContain(NO_JIRA_TOKEN);
+    expect(status).toBe(1);
+  });
+
+  it('gth review writes the report when the requirements source cannot be resolved', () => {
+    useFileContent(jiraWithoutToken);
+
+    const { status, output } = run(appCli, [
+      '--nopipe',
+      'review',
+      'change.diff',
+      '--content-source',
+      'file',
+      '--requirements',
+      'JIRA-123',
+      '--requirements-source',
+      'jira-legacy',
+    ]);
+
+    expect(existsSync(reportPath()), `no report file was written; CLI said:\n${output}`).toBe(true);
+    const report = readFileSync(reportPath(), 'utf8');
+    expect(report).toContain(DID_NOT_RUN);
+    expect(report).toContain(NO_JIRA_TOKEN);
     expect(status).toBe(1);
   });
 

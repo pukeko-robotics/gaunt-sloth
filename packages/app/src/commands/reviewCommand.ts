@@ -96,6 +96,21 @@ export function reviewCommand(
       // the diff actually came from.
       const config = withReviewContentSource(initialConfig, contentSource);
 
+      /**
+       * REL-20 / REL-24 — every exit from this action that happens BEFORE `review()` runs goes
+       * through one of these two, so a caller that asked for a report file gets one naming the
+       * error, and the run still exits 1. `gth pr` keeps the same pair; the two commands must not
+       * diverge on it. Use `reportBeforeReview` only when the error has already been displayed.
+       */
+      const reportBeforeReview = (message: string): void => {
+        writeReviewFailureReport(config, REVIEW_SOURCE, 'review', message);
+        setExitCode(1);
+      };
+      const failBeforeReview = (message: string): void => {
+        displayError(message);
+        reportBeforeReview(message);
+      };
+
       // CFG-80 — discovery runs only when enabled and no `--requirements` was given; an explicit
       // `--requirements` always wins.
       const discoverRequirements =
@@ -105,13 +120,21 @@ export function reviewCommand(
       // discovery is what finds the id, and the id-less call only warns (the Jira source prints
       // "No issue ID provided") — the same reason `gth pr` skips it in discovery mode.
       if (!discoverRequirements) {
-        const requirements = await getCommandSourceInput(
-          'review',
-          'requirements',
-          requirementsId,
-          config,
-          requirementSource
-        );
+        // REL-24 — a requirements source that cannot be resolved (a Jira source with no token,
+        // say) fails the run with a report, the same as a content source that cannot be fetched.
+        let requirements: string;
+        try {
+          requirements = await getCommandSourceInput(
+            'review',
+            'requirements',
+            requirementsId,
+            config,
+            requirementSource
+          );
+        } catch (error) {
+          failBeforeReview(error instanceof Error ? error.message : String(error));
+          return;
+        }
         if (requirements) {
           content.push(requirements);
         }
@@ -129,13 +152,10 @@ export function reviewCommand(
           contentSource
         );
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        displayError(message);
         // REL-20 — `gth review` fails before inference the same way `gth pr` does (the git source
         // outside a repository, the GitHub source on a diff too large to fetch), so it owes the
-        // same report. The two commands share this exit; they must not diverge on it.
-        writeReviewFailureReport(config, REVIEW_SOURCE, 'review', message);
-        setExitCode(1);
+        // same report.
+        failBeforeReview(error instanceof Error ? error.message : String(error));
         return;
       }
       // CFG-70 — the changed paths come from `providedContent` alone, never from `content`, which
@@ -178,19 +198,23 @@ export function reviewCommand(
             for (const row of approvalStopRows(error.parts, { columns: stdout.columns })) {
               displayError(row);
             }
-            writeReviewFailureReport(config, REVIEW_SOURCE, 'review', error.message);
+            reportBeforeReview(error.message);
           } else {
-            const message = error instanceof Error ? error.message : String(error);
-            displayError(message);
-            writeReviewFailureReport(config, REVIEW_SOURCE, 'review', message);
+            failBeforeReview(error instanceof Error ? error.message : String(error));
           }
-          setExitCode(1);
           return;
         }
       }
 
+      // REL-24 — an unreadable `--file` is a reported failure, not a crash. The reader has already
+      // displayed which file and why, so only the report and the exit code are owed here.
       if (options.file) {
-        content.push(readMultipleFilesFromProjectDir(options.file));
+        try {
+          content.push(readMultipleFilesFromProjectDir(options.file));
+        } catch (error) {
+          reportBeforeReview(error instanceof Error ? error.message : String(error));
+          return;
+        }
       }
       const stringFromStdin = getStringFromStdin();
       if (stringFromStdin) {

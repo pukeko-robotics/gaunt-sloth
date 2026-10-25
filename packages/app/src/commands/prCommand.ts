@@ -81,16 +81,28 @@ export function prCommand(
        *
        * This is an enumeration of exits, which is exactly the shape that rots by omission — a new
        * guard added below without this call silently reopens the hole for one more input. Anything
-       * here that `return`s before the `review()` call must call this first.
+       * here that `return`s before the `review()` call must call one of these first —
+       * `reportBeforeReview` only when the error has already been displayed.
        */
-      const failBeforeReview = (message: string): void => {
-        displayError(message);
+      const reportBeforeReview = (message: string): void => {
         writeReviewFailureReport(config, reportSource, 'pr', message);
         setExitCode(1);
       };
+      const failBeforeReview = (message: string): void => {
+        displayError(message);
+        reportBeforeReview(message);
+      };
 
+      // REL-24 — an unreadable `--file` is a reported failure, not a crash, the same as it is in
+      // `gaunt-sloth-review`. The reader has already displayed which file and why, so only the
+      // report and the exit code are owed here.
       if (options.file) {
-        content.push(readMultipleFilesFromProjectDir(options.file));
+        try {
+          content.push(readMultipleFilesFromProjectDir(options.file));
+        } catch (error) {
+          reportBeforeReview(error instanceof Error ? error.message : String(error));
+          return;
+        }
       }
 
       // CFG-70 — the paths this run's DIFF touches, for `prompts.paths` selection. Declared out
@@ -163,22 +175,28 @@ export function prCommand(
             // the terminal rendering: a gutter and a wrap computed against this terminal's width,
             // which is meaningless in a file someone posts as a PR comment. The message is already
             // neutralised at construction, so it is safe to write raw.
-            writeReviewFailureReport(config, reportSource, 'pr', error.message);
-            setExitCode(1);
+            reportBeforeReview(error.message);
           } else {
             failBeforeReview(error instanceof Error ? error.message : String(error));
           }
           return;
         }
       } else {
-        // Handle requirements
-        const requirements = await getCommandSourceInput(
-          'pr',
-          'requirements',
-          requirementsId,
-          config,
-          requirementSource
-        );
+        // REL-24 — a requirements source that cannot be resolved (a Jira source with no token, say)
+        // fails the run with a report, the same as a content source that cannot be fetched.
+        let requirements: string;
+        try {
+          requirements = await getCommandSourceInput(
+            'pr',
+            'requirements',
+            requirementsId,
+            config,
+            requirementSource
+          );
+        } catch (error) {
+          failBeforeReview(error instanceof Error ? error.message : String(error));
+          return;
+        }
 
         if (requirements) {
           content.push(requirements);
