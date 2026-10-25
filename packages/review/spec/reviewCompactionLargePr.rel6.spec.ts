@@ -21,7 +21,7 @@ import { displaySuccess } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { isCompactionSummary } from '@gaunt-sloth/core/core/compaction.js';
 import { estimatePromptTokens } from '@gaunt-sloth/core/core/GthLangChainAgent.js';
 import { REVIEW_RATE_ARTIFACT_KEY } from '#src/middleware/reviewRateMiddleware.js';
-import { triagePrFiles } from '#src/utils/prDiffTriage.js';
+import { diffBudgetBytes, triagePrFiles } from '#src/utils/prDiffTriage.js';
 import type { PrFileEntry } from '#src/utils/prFilesListing.js';
 
 vi.mock('@gaunt-sloth/core/utils/llmUtils.js', async (importOriginal) => {
@@ -77,9 +77,11 @@ const ENTRIES: PrFileEntry[] = Array.from({ length: 30 }, (_, i) => ({
 }));
 const BINDING = { host: 'github.com', owner: 'o', repo: 'r', number: '7' };
 
-function largePrContent(): { content: string; elided: number } {
+const TRIAGE_BUDGET_BYTES = 12_000;
+
+function largePrContent(budgetBytes = TRIAGE_BUDGET_BYTES): { content: string; elided: number } {
   const result = triagePrFiles(ENTRIES, {
-    budgetBytes: 12_000,
+    budgetBytes,
     prLabel: '#7',
     readFileToolEnabled: true,
     fileDiffToolEnabled: true,
@@ -102,7 +104,7 @@ class ScriptedLargePrModel extends BaseChatModel {
   readonly ratingCalls: BaseMessage[][] = [];
   readonly toolResults: string[] = [];
   constructor(
-    private readonly paths: string[],
+    private readonly paths: Array<string | { pattern: string }>,
     private readonly finalReview: string,
     private readonly window?: number
   ) {
@@ -136,12 +138,17 @@ class ScriptedLargePrModel extends BaseChatModel {
     if (ToolMessage.isInstance(last)) this.toolResults.push(text(last));
     this.reviewCalls.push([...messages]);
     const turn = this.reviewCalls.length;
+    const step = this.paths[turn - 1];
     const message =
       turn <= this.paths.length
         ? new AIMessage({
             content: '',
             tool_calls: [
-              { name: DIFF_TOOL, args: { path: this.paths[turn - 1] }, id: `read-${turn}` },
+              {
+                name: DIFF_TOOL,
+                args: typeof step === 'string' ? { path: step } : { pattern: step.pattern },
+                id: `read-${turn}`,
+              },
             ],
           })
         : new AIMessage(this.finalReview);
@@ -170,23 +177,34 @@ function configFor(model: ScriptedLargePrModel, extra: Record<string, unknown> =
   } as unknown as GthConfig;
 }
 
+/**
+ * Run the real `review()` on the large-PR fixture. `budgetBytes` is the triage budget the source
+ * would hand over in `LargePrListing`; left out, the listing carries none, as it did before the
+ * diff tool sized its answers from it, and the tool falls back to the unknown-window budget.
+ */
 async function runReview(
   command: 'pr' | 'review',
   model: ScriptedLargePrModel,
-  extra: Record<string, unknown> = {}
+  extra: Record<string, unknown> = {},
+  budgetBytes?: number
 ): Promise<{ content: string }> {
-  const { content, elided } = largePrContent();
+  const { content, elided } = largePrContent(budgetBytes ?? TRIAGE_BUDGET_BYTES);
   const { review } = await import('#src/modules/reviewModule.js');
   await review('PR-7', '', content, configFor(model, extra), command, undefined, {
     prId: '7',
-    largePr: { binding: BINDING, entries: ENTRIES, elidedCount: elided },
+    largePr: {
+      binding: BINDING,
+      entries: ENTRIES,
+      elidedCount: elided,
+      ...(budgetBytes === undefined ? {} : { budgetBytes }),
+    },
   });
   return { content };
 }
 
 /** Elided paths, in listing order, as the model would pick them off the manifest. */
-const elidedPaths = (): string[] => {
-  const { content } = largePrContent();
+const elidedPaths = (budgetBytes = TRIAGE_BUDGET_BYTES): string[] => {
+  const { content } = largePrContent(budgetBytes);
   return ENTRIES.map((e) => e.path).filter((p) => !content.includes(`+++ b/${p}`));
 };
 
@@ -264,7 +282,9 @@ describe('REL-6 Part A — compaction inside a large-PR review', () => {
     );
   });
 
-  it('Q2: nothing can fold until three tool rounds follow the first message, so the guard lets calls past its threshold', async () => {
+  it('Q2 (task 1 measurement, unsized reads): nothing can fold until three tool rounds follow the first message, so the guard lets calls past its threshold', async () => {
+    // The listing carries no budget here, so the reads are sized to the unknown-window fallback,
+    // far above what this 6000-token threshold can hold. Kept as the measurement the sizing fixes.
     const paths = elidedPaths().slice(0, 4);
     const model = new ScriptedLargePrModel(paths, 'FINAL REVIEW');
     await runReview('pr', model, { autocompact: 6000 });
@@ -280,9 +300,20 @@ describe('REL-6 Part A — compaction inside a large-PR review', () => {
     expect(model.summaryPrompts[0]).toContain(MANIFEST_MARKER);
     expect(model.summaryPrompts[0]).not.toContain('Diff of src/');
     expect(model.summaryPrompts[1]).toContain('Diff of src/');
-    // The kept tail is three whole tool results, and after the fold the request is STILL past the
-    // threshold: the tail compaction keeps verbatim is the irreducible floor of a read loop.
     expect(estimatePromptTokens(model.reviewCalls[3])).toBeGreaterThan(6000);
+  });
+
+  it('Q2 (fixed): with the reads sized from the budget the listing hands over, no review call passes the threshold', async () => {
+    const paths = elidedPaths().slice(0, 4);
+    const model = new ScriptedLargePrModel(paths, 'FINAL REVIEW');
+    await runReview('pr', model, { autocompact: 6000 }, TRIAGE_BUDGET_BYTES);
+
+    expect(model.reviewCalls).toHaveLength(paths.length + 1);
+    for (const request of model.reviewCalls) {
+      expect(estimatePromptTokens(request)).toBeLessThanOrEqual(6000);
+    }
+    // The reads were cut to fit, and say so.
+    expect(model.toolResults[0]).toContain("cut to 750 bytes to fit this model's context window");
   });
 
   it('Q2: with the manifest folded away, the diff tool still leads the model to the path', async () => {
@@ -314,20 +345,70 @@ describe('REL-6 Part A — compaction inside a large-PR review', () => {
     expect(text(rated[rated.length - 1])).toContain(RATE_TOOL);
   });
 
-  it('Q3: the rating call is not guarded — it is sent past the threshold with no compaction', async () => {
+  it('Q3 (fixed): the rating call is bounded by the guard threshold, with the review whole and no extra model call', async () => {
     const paths = elidedPaths().slice(0, 4);
     // A long review: the guard never sees it, because it is produced by the last guarded call.
-    const longReview = 'FINAL REVIEW ' + 'finding. '.repeat(4000);
+    const longReview = 'FINAL REVIEW ' + 'finding. '.repeat(1500);
     const model = new ScriptedLargePrModel(paths, longReview);
     await runReview('pr', model, { autocompact: 6000 });
 
     const summariesBeforeRating = model.summaryPrompts.length;
     const rated = model.ratingCalls[0];
     expect(rated).toBeDefined();
-    // Estimated the way the guard estimates, the rating request is past the threshold…
-    expect(estimatePromptTokens(rated)).toBeGreaterThan(6000);
-    // …and nothing folded it first: the summariser was not called for the rating.
+    // The state it was built from is past the threshold, estimated the way the guard estimates…
+    const lastReviewCall = model.reviewCalls[model.reviewCalls.length - 1];
+    expect(estimatePromptTokens([...lastReviewCall, new AIMessage(longReview)])).toBeGreaterThan(
+      6000
+    );
+    // …and the request the rater got is not.
+    expect(estimatePromptTokens(rated)).toBeLessThanOrEqual(6000);
+    expect(isCompactionSummary(rated[0])).toBe(true);
+    expect(text(rated[rated.length - 2])).toBe(longReview);
+    // The reduction is deterministic: no summariser call was made for the rating.
     expect(model.summaryPrompts.length).toBe(summariesBeforeRating);
+    expect(displaySuccess).toHaveBeenCalledWith(expect.stringContaining('PASS 7/10'));
+  });
+
+  it('acceptance: a read loop on a known window crosses the threshold, lists after the fold, and every request fits', async () => {
+    // A 32k window and no autocompact key: the guard's own default threshold, W − 2048, and the
+    // triage budget the source would compute for that window, handed to the tool in the listing.
+    const window = 32_768;
+    const threshold = window - 2048;
+    const budget = diffBudgetBytes(window)!;
+    const paths = elidedPaths(budget);
+    expect(paths.length).toBeGreaterThan(12);
+    const steps: Array<string | { pattern: string }> = [
+      ...paths.slice(0, 10),
+      { pattern: 'src/**/*.ts' },
+      ...paths.slice(10, 12),
+    ];
+    // A review long enough that the rating request built from the final state would not fit.
+    const longReview = 'FINAL REVIEW ' + 'finding. '.repeat(9000);
+    const model = new ScriptedLargePrModel(steps, longReview, window);
+    await runReview('pr', model, {}, budget);
+
+    // Several turns of reads, and the threshold crossed at least once.
+    expect(model.reviewCalls).toHaveLength(steps.length + 1);
+    expect(model.summaryPrompts.length).toBeGreaterThanOrEqual(1);
+    const hasSummary = (request: BaseMessage[]) => request.some((m) => isCompactionSummary(m));
+    // The listing query ran after the first fold, and answered with listed paths only.
+    const listingTurn = 11; // the request that carries the listing's result
+    expect(hasSummary(model.reviewCalls[listingTurn - 1])).toBe(true);
+    expect(model.toolResults[10]).toMatch(/^30 of the 30 files this pull request changes match/);
+    expect(model.toolResults[10]).not.toContain('@@');
+    // No guarded review request passed the threshold.
+    for (const request of model.reviewCalls) {
+      expect(estimatePromptTokens(request)).toBeLessThanOrEqual(threshold);
+    }
+    // One verdict, scored, from a rating request that fits too, with the review whole.
+    expect(model.ratingCalls).toHaveLength(1);
+    const rated = model.ratingCalls[0];
+    const lastReviewCall = model.reviewCalls[model.reviewCalls.length - 1];
+    expect(estimatePromptTokens([...lastReviewCall, new AIMessage(longReview)])).toBeGreaterThan(
+      threshold
+    );
+    expect(estimatePromptTokens(rated)).toBeLessThanOrEqual(threshold);
+    expect(text(rated[rated.length - 2])).toBe(longReview);
     expect(displaySuccess).toHaveBeenCalledWith(expect.stringContaining('PASS 7/10'));
   });
 });
