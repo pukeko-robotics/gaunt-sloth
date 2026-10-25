@@ -44,6 +44,11 @@ much one call may return, through
 (It follows the content source: `gth review` gets it too whenever that run's content source is
 `github`, whether your config sets it or you pass `--content-source github` for the one run.)
 
+On a PR that large, the reviewer is also told the PR is very large and given
+[`gth_gh_read_file_diff`](../configuration/tools.md#per-file-diffs-on-a-very-large-pull-request-gth_gh_read_file_diff),
+which reads the diff of any one listed file. It reads the diffs it needs one at a time, and the
+whole file only when a diff is not enough.
+
 ## Review a local diff before you push
 
 You don't need a PR to review. Pipe any diff in:

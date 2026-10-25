@@ -62,6 +62,7 @@ top-level one. Available tools:
 | `gth_grep` | Regex search over file **contents** (ripgrep-backed, with an in-process fallback) — finds where a symbol or string appears, complementing `search_files`, which matches file **names**. Available in every mode; needs no shell approval. **Enabled by default.** Honors `.aiignore` and takes a `fileSet` option — see [Content search (`gth_grep`)](#content-search-gth_grep) below. |
 | `gth_web_fetch` | Fetch content from an HTTP/HTTPS URL. |
 | `gth_gh_read_file` | Read a whole file from the pull request under review, through the GitHub API. Loaded by `gth pr`, and by any `gth review` whose content source is `github` — from config or from `--content-source github`; needs an authenticated `gh`. **Enabled by default** on those runs. Takes `enabled` and `maxBytes` options — see [GitHub file reads during a PR review](#github-file-reads-during-a-pr-review-gth_gh_read_file) below. |
+| `gth_gh_read_file_diff` | Read the diff of one changed file of a pull request too large to show whole. Loaded on the same runs as `gth_gh_read_file`, but only when the pull request's content left files out. **Enabled by default.** Takes `enabled` and `maxBytes` options — see [Per-file diffs on a very large pull request](#per-file-diffs-on-a-very-large-pull-request-gth_gh_read_file_diff) below. |
 | `gth_status_update` | Print a short status line to the console. |
 | `show_a2ui_surface` | (AG-UI) render an A2UI surface in the web client. |
 | `run_tests` / `run_lint` / `run_build` / `run_single_test` | Dev-command tools — run the configured shell command. Only active in `code` / `exec` (and `ask --write`). See [Development Tools](#development-tools-configuration). |
@@ -227,6 +228,43 @@ Setting `maxBytes` to quieten your terminal truncates the file the review is rea
 setting `previewLines` to save tokens saves none. See
 [tool output preview depth](output.md#tool-output-preview-depth-tooloutputpreviewlines) for the root
 default that `previewLines` overrides.
+
+### Per-file diffs on a very large pull request (`gth_gh_read_file_diff`)
+
+When a pull request is too large for the model's context, the review sees the diffs of some files
+and only the names of the rest (see
+[Large pull requests](content-sources.md#large-pull-requests)). On those runs the review agent also
+gets `gth_gh_read_file_diff`: it asks for one changed file's path and gets that file's diff, so it
+can look at the changes that matter instead of judging them by name. The content tells the model the
+pull request is very large and to read diffs selectively, reaching for `gth_gh_read_file` only when
+a diff is not enough context.
+
+The diffs come from the files listing the run already fetched for the pull request, so a read costs
+no further GitHub call and needs no extra permission. Any path the pull request lists works,
+including one with parentheses or spaces. A path it does not list gets the closest listed matches
+back; a file GitHub sends no diff for (a binary file, or a diff too large for GitHub to render) says
+so and points at `gth_gh_read_file`.
+
+A pull request that fits the context never gets this tool, and its content is unchanged.
+
+Turn it off with `{ "gth_gh_read_file_diff": false }`. `maxBytes` caps the diff text one call
+returns, `102400` (100 KiB) by default. That is far below `gth_gh_read_file`'s default on purpose:
+the tool only appears when the context is already full, so one large diff could otherwise fill
+what is left. A diff over the cap comes back cut at it, with a marker saying it is incomplete:
+
+```json
+{
+  "commands": {
+    "pr": {
+      "builtInTools": {
+        "gth_gh_read_file_diff": { "maxBytes": 50000 },
+        "gth_checklist": true,
+        "gth_grep": true
+      }
+    }
+  }
+}
+```
 
 ## Development Tools Configuration
 

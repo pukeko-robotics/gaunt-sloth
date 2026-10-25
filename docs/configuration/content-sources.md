@@ -274,7 +274,9 @@ source lists the PR's files through the GitHub REST API instead and builds a dif
 
 The budget is half the model's context window, counted at 4 bytes per token. Every file left out
 appears in a list at the end of the content, with its status and its added and removed line counts.
-The reviewer can fetch any of them with
+The reviewer can read the diff of any of them with
+[`gth_gh_read_file_diff`](tools.md#per-file-diffs-on-a-very-large-pull-request-gth_gh_read_file_diff),
+and a whole file with
 [`gth_gh_read_file`](tools.md#github-file-reads-during-a-pr-review-gth_gh_read_file). Path-scoped
 prompts (`prompts.paths`) still see every changed file. A PR that fits is fetched and reviewed
 exactly as before.
