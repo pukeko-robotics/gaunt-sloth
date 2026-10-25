@@ -5,6 +5,7 @@ import { createInterface, type Interface as ReadLineInterface } from 'node:readl
 import { displayInfo, displayWarning } from './consoleUtils.js';
 import { createWriteStream, readFileSync, realpathSync, type WriteStream } from 'node:fs';
 import { ProgressIndicator } from '#src/utils/ProgressIndicator.js';
+import { MAX_SUBPROCESS_BUFFER } from '#src/constants.js';
 
 /**
  * Generic interface for program-like objects that can parse arguments.
@@ -421,8 +422,13 @@ export const stream = (chunk: string): boolean => process.stdout.write(chunk);
 export async function execAsync(command: string): Promise<string> {
   const { exec } = await import('node:child_process');
   return new Promise((resolve, reject) => {
-    exec(command, (error, stdout, stderr) => {
+    exec(command, { maxBuffer: MAX_SUBPROCESS_BUFFER }, (error, stdout, stderr) => {
       if (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+          const limitMiB = MAX_SUBPROCESS_BUFFER / (1024 * 1024);
+          reject(new Error(`output exceeded the ${limitMiB} MiB limit`, { cause: error }));
+          return;
+        }
         reject(error);
         return;
       }

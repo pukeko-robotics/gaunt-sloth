@@ -162,6 +162,10 @@
       "kind": "number"
     },
     {
+      "name": "MAX_SUBPROCESS_BUFFER",
+      "kind": "number"
+    },
+    {
       "name": "MCP_TOOL_NAME_PREFIX",
       "kind": "string"
     },

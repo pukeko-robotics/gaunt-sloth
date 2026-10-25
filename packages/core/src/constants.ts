@@ -76,3 +76,11 @@ export const MCP_TOOL_NAME_PREFIX = 'mcp';
  */
 export const DEFAULT_COMMIT_CO_AUTHOR_NAME = 'Gaunt Sloth';
 export const DEFAULT_COMMIT_CO_AUTHOR_EMAIL = 'code@gauntsloth.app';
+
+/**
+ * Ceiling on how much stdout a subprocess may buffer before it is killed and the call rejects.
+ * Node's own `child_process` default is 1 MiB, which a real PR diff or `git diff` exceeds; a cap is
+ * still kept so a runaway subprocess cannot exhaust memory. Shared by `execAsync`, the review
+ * package's git helper and the grep tool so they cannot drift.
+ */
+export const MAX_SUBPROCESS_BUFFER = 32 * 1024 * 1024;

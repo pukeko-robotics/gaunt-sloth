@@ -1,8 +1,4 @@
-/**
- * `git diff` can emit multi-megabyte output for large changes; the node default (1 MiB)
- * would truncate-and-fail such runs.
- */
-const MAX_GIT_BUFFER = 32 * 1024 * 1024;
+import { MAX_SUBPROCESS_BUFFER } from '@gaunt-sloth/core/constants.js';
 
 /** The config key that names the base a branch is reviewed against. */
 export const MERGE_BASE_SETTING = 'contentSourceConfig.git.mergeBase';
@@ -32,7 +28,7 @@ export class GitCommandError extends Error {
 export async function runGit(args: string[]): Promise<string> {
   const { execFile } = await import('node:child_process');
   return new Promise((resolve, reject) => {
-    execFile('git', args, { maxBuffer: MAX_GIT_BUFFER }, (error, stdout, stderr) => {
+    execFile('git', args, { maxBuffer: MAX_SUBPROCESS_BUFFER }, (error, stdout, stderr) => {
       if (error) {
         const code = (error as { code?: unknown }).code;
         reject(

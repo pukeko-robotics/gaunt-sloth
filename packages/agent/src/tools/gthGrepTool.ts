@@ -26,6 +26,7 @@ import type { Dirent } from 'node:fs';
 import path from 'node:path';
 import { GthConfig, normalizeBuiltInTools } from '@gaunt-sloth/core/config.js';
 import { getCurrentWorkDir } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { MAX_SUBPROCESS_BUFFER } from '@gaunt-sloth/core/constants.js';
 import { shouldIgnoreFile } from '@gaunt-sloth/core/utils/aiignoreUtils.js';
 
 export const GREP_TOOL_NAME = 'gth_grep';
@@ -128,8 +129,6 @@ const TRUNCATION_MARKER = ' … (line truncated)';
  * this bounds the fallback only. Matches beyond the cap on such a line are not found.
  */
 const MAX_SCAN_LINE_LENGTH = 4096;
-/** Ceiling on rg stdout we buffer (matches are sliced to `limit` anyway). */
-const RG_MAX_BUFFER = 32 * 1024 * 1024;
 
 /** A single content match. `path` is relative to the search root; `line` is 1-based. */
 export interface GrepMatch {
@@ -392,7 +391,7 @@ function runRipgrep(
     execFile(
       'rg',
       args,
-      { cwd: target.searchRoot, maxBuffer: RG_MAX_BUFFER },
+      { cwd: target.searchRoot, maxBuffer: MAX_SUBPROCESS_BUFFER },
       (error, stdout, stderr) => {
         if (error) {
           const code: string | number | undefined = (error as unknown as { code?: string | number })
