@@ -243,14 +243,18 @@ The diffs come from the files listing the run already fetched for the pull reque
 no further GitHub call and needs no extra permission. Any path the pull request lists works,
 including one with parentheses or spaces. A path it does not list gets the closest listed matches
 back; a file GitHub sends no diff for (a binary file, or a diff too large for GitHub to render) says
-so and points at `gth_gh_read_file`.
+so and points at `gth_gh_read_file`. Given a `pattern` instead of a path (a glob such as
+`src/**/*.ts`, or a directory prefix such as `packages/core/`), it lists up to 50 matching changed
+files with their status and line counts, plus how many matched in total.
 
 A pull request that fits the context never gets this tool, and its content is unchanged.
 
-Turn it off with `{ "gth_gh_read_file_diff": false }`. `maxBytes` caps the diff text one call
-returns, `102400` (100 KiB) by default. That is far below `gth_gh_read_file`'s default on purpose:
-the tool only appears when the context is already full, so one large diff could otherwise fill
-what is left. A diff over the cap comes back cut at it, with a marker saying it is incomplete:
+Turn it off with `{ "gth_gh_read_file_diff": false }`. One answer is capped at the smaller of
+`maxBytes` (`102400`, 100 KiB, by default) and a sixteenth of the
+[pull request content budget](content-sources.md#large-pull-requests), which is 16000 bytes on a 128k-token window (the window assumed when the model's is unknown). The
+window share keeps a few reads beside the pull request content inside what automatic compaction
+can hold. A diff over
+the cap comes back cut at it, with a marker saying it is incomplete:
 
 ```json
 {
