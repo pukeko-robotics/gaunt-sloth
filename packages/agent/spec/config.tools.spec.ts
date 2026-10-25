@@ -175,6 +175,17 @@ describe('Config Tool Functions', () => {
       expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
     });
 
+    // REL-6 — the per-file diff tool is built by the review module too; an ENABLED entry is the
+    // discriminating form for the reason given above.
+    it('should skip gth_gh_read_file_diff without warning, on a command that never loads it', async () => {
+      const result = await getDefaultTools({
+        filesystem: 'none',
+        builtInTools: { gth_gh_read_file_diff: { maxBytes: 5000 }, gth_status_update: true },
+      } as Partial<GthConfig> as GthConfig);
+      expect(result.map((t) => t.name)).toEqual(['gth_status_update']);
+      expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+    });
+
     it('should skip a CONFIGURED gth_gh_read_file entry without warning or loading it', async () => {
       const result = await getDefaultTools({
         filesystem: 'none',

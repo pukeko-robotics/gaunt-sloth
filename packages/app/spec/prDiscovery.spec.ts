@@ -141,7 +141,11 @@ Requirements: https://github.com/Galvanized-Pukeko/gaunt-sloth-assistant/issues/
       requirements: 'Issue #359 requirements',
     });
     // REL-21 — the resolved config rides along so the source can size a large PR.
-    expect(ghDiffMock).toHaveBeenCalledWith(null, undefined, { config });
+    // REL-6 — with the callback through which a large PR's triage is reported back.
+    expect(ghDiffMock).toHaveBeenCalledWith(null, undefined, {
+      config,
+      onLargePr: expect.any(Function),
+    });
     expect(ghPrViewMock).toHaveBeenCalledWith(null, undefined);
     // The full URL is passed through so cross-repo issue links resolve in the right repo.
     expect(ghIssueMock).toHaveBeenCalledWith(
@@ -501,6 +505,63 @@ No linked ticket here`;
 
       expect(processMessagesMock).toHaveBeenCalled();
       expect(result.diff).toBe('GitHub PR Diff: #360\n\ndiff body');
+    });
+
+    // REL-6 — the large-PR signal follows the diff it describes.
+    describe('the large-PR signal', () => {
+      const listing = (number: string) => ({
+        binding: { host: 'github.com', owner: 'o', repo: 'r', number },
+        entries: [],
+        elidedCount: 1,
+      });
+      const reportsLarge =
+        (number: string, diff: string) =>
+        async (_c: unknown, _id: unknown, context?: { onLargePr?: (l: unknown) => void }) => {
+          context?.onLargePr?.(listing(number));
+          return diff;
+        };
+      const discoveryTools = async () => {
+        const { GthAgentRunner } = await import('@gaunt-sloth/core/core/GthAgentRunner.js');
+        const resolvers = vi.mocked(GthAgentRunner).mock.calls.at(-1)?.[1] as AgentResolvers;
+        return resolvers.resolveTools!(config, undefined);
+      };
+
+      it('carries the deterministic fetch’s signal out with its diff', async () => {
+        ghDiffMock.mockImplementation(reportsLarge('360', 'TRIAGED'));
+        const { runPrDiscovery } = await import('#src/commands/prDiscovery.js');
+        const result = await runPrDiscovery(config);
+        expect(result.diff).toBe('TRIAGED');
+        expect(result.largePr).toEqual(listing('360'));
+      });
+
+      it('is replaced by gh_diff and cleared by set_diff', async () => {
+        ghDiffMock.mockImplementationOnce(reportsLarge('360', 'FIRST'));
+        ghPrViewMock.mockResolvedValue(noLinkMetadata);
+        processMessagesMock.mockImplementation(async () => {
+          const tools = await discoveryTools();
+          ghDiffMock.mockImplementationOnce(reportsLarge('361', 'SECOND'));
+          await tools.find((t) => t.name === 'gh_diff')!.invoke({ prId: '361' });
+          await tools.find((t) => t.name === 'set_diff')!.invoke({ diff: 'HAND-MADE' });
+        });
+        const { runPrDiscovery } = await import('#src/commands/prDiscovery.js');
+        const result = await runPrDiscovery(config);
+        expect(result.diff).toBe('HAND-MADE');
+        expect(result).not.toHaveProperty('largePr');
+      });
+
+      it('takes gh_diff’s signal when that is the last diff set', async () => {
+        ghDiffMock.mockImplementationOnce(async () => 'SMALL FIRST');
+        ghPrViewMock.mockResolvedValue(noLinkMetadata);
+        processMessagesMock.mockImplementation(async () => {
+          const tools = await discoveryTools();
+          ghDiffMock.mockImplementationOnce(reportsLarge('361', 'SECOND'));
+          await tools.find((t) => t.name === 'gh_diff')!.invoke({ prId: '361' });
+        });
+        const { runPrDiscovery } = await import('#src/commands/prDiscovery.js');
+        const result = await runPrDiscovery(config);
+        expect(result.diff).toBe('SECOND');
+        expect(result.largePr).toEqual(listing('361'));
+      });
     });
 
     it('gh_issue returns an actionable message instead of an empty string on a rejected ref', async () => {

@@ -321,8 +321,11 @@ describe('reviewCommand', () => {
     ]);
 
     // REL-21 — every content source receives the resolved config as a third argument.
+    // REL-6 — and the command plus the large-PR callback, which a non-github source ignores.
     expect(gitProvider).toHaveBeenCalledWith(undefined, 'origin/main...HEAD', {
       config: expect.objectContaining({ contentSource: 'file' }),
+      command: 'review',
+      onLargePr: expect.any(Function),
     });
     expect(review).toHaveBeenCalledWith(
       'REVIEW',

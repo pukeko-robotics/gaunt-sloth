@@ -51,6 +51,9 @@ async function main() {
   let diffWithReqs;
   let contentArg;
   let preambleText;
+  // REL-6 — set by the github source when its triage named files without their diff; passed to
+  // `review()`, where it gives the agent the per-file diff tool.
+  let largePr;
   try {
     config = await initConfig({
       identityProfile: process.env.GSLOTH_IDENTITY_PROFILE,
@@ -62,7 +65,12 @@ async function main() {
 
     // Get content (e.g. PR diff)
     const contentSource = config.commands?.pr?.contentSource || config.contentSource || 'github';
-    const content = await getContentFromSource(contentSource, contentArg, config);
+    const content = await getContentFromSource(contentSource, contentArg, config, {
+      command: 'pr',
+      onLargePr: (listing) => {
+        largePr = listing;
+      },
+    });
 
     // Get requirements if provided
     let requirements = '';
@@ -96,6 +104,7 @@ async function main() {
     // resolve it from the checked-out branch, which a CI runner's detached HEAD cannot provide.
     await review(REVIEW_SOURCE, preambleText, diffWithReqs, config, 'pr', undefined, {
       prId: resolvePrIdFromArg(contentArg),
+      largePr,
     });
   } catch (error) {
     displayError(error instanceof Error ? error.message : String(error));

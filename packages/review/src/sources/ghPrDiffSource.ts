@@ -1,11 +1,19 @@
 import type { ProviderConfig } from './types.js';
 import type { GthConfig } from '@gaunt-sloth/core/config.js';
-import { isGhReadFileToolEnabled } from '@gaunt-sloth/core/config.js';
+import {
+  isGhReadFileDiffToolEnabled,
+  isGhReadFileToolEnabled,
+  type GhReadFileCommand,
+} from '@gaunt-sloth/core/config.js';
 import { resolveContextWindow } from '@gaunt-sloth/core/core/contextWindow.js';
 import { execAsync } from '@gaunt-sloth/core/utils/systemUtils.js';
 import { ProgressIndicator } from '@gaunt-sloth/core/utils/ProgressIndicator.js';
 import { displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
-import { fetchPrFilesListing, resolvePrBaseBinding } from '#src/utils/prFilesListing.js';
+import {
+  fetchPrFilesListing,
+  resolvePrBaseBinding,
+  type LargePrListing,
+} from '#src/utils/prFilesListing.js';
 import {
   diffBudgetBytes,
   triagePrFiles,
@@ -30,6 +38,19 @@ export interface GhPrDiffSourceContext {
    * "unknown". For embedders that size their own context, and for hermetic tests.
    */
   budgetBytes?: number | null;
+  /**
+   * REL-6 — the command this content is for, which selects the `builtInTools` registry the
+   * manifest's closing sentence consults. `review()` registers the tools from the same registry, so
+   * the content never names a tool the run does not get. Defaults to `pr`, which the CI bin and
+   * discovery are.
+   */
+  command?: GhReadFileCommand;
+  /**
+   * REL-6 — called once, before `get` resolves, when the triage named files without their diff. The
+   * caller passes the value on as `ReviewContext.largePr`, which is what gives the review agent the
+   * per-file diff tool. Not called for a PR that fits.
+   */
+  onLargePr?: (_listing: LargePrListing) => void;
 }
 
 /**
@@ -154,11 +175,13 @@ async function getFromFilesListing(
       throw new Error(`the files listing for GitHub PR ${prLabel} was empty`);
     }
     const config = context?.config;
+    const command = context?.command ?? 'pr';
     const result = triagePrFiles(entries, {
       budgetBytes,
       elidePatterns: config?.commands?.pr?.elidePatterns,
       prLabel,
-      readFileToolEnabled: isGhReadFileToolEnabled(config, 'pr'),
+      readFileToolEnabled: isGhReadFileToolEnabled(config, command),
+      fileDiffToolEnabled: isGhReadFileDiffToolEnabled(config, command),
       changedFiles: binding.changedFiles,
       route,
     });
@@ -167,6 +190,7 @@ async function getFromFilesListing(
         `GitHub PR ${prLabel} is large: ${result.shown.length} of ${entries.length} files shown in full, ` +
           `${result.elided.length} named only.`
       );
+      context?.onLargePr?.({ binding, entries, elidedCount: result.elided.length });
     }
     return result.content;
   } catch (error) {

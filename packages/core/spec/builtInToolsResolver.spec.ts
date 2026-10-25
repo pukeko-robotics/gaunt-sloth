@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   getEffectiveDevToolsConfig,
+  getGhReadFileDiffMaxBytes,
   getGhReadFileMaxBytes,
+  GH_READ_FILE_DIFF_DEFAULT_MAX_BYTES,
   getShellMaxOutputBytes,
   getShellMaxTimeoutMs,
   getShellTimeoutMs,
   isBuiltInToolEntryEnabled,
+  isGhReadFileDiffToolEnabled,
   isGhReadFileToolEnabled,
   isShellToolEnabled,
   normalizeBuiltInTools,
@@ -269,5 +272,52 @@ describe('getGhReadFileMaxBytes (CFG-52)', () => {
     expect(getGhReadFileMaxBytes(config, 'pr')).toBe(222);
     // `review` names no registry, so the root cap applies there.
     expect(getGhReadFileMaxBytes(config, 'review')).toBe(111);
+  });
+});
+
+/**
+ * REL-6 — `gth_gh_read_file_diff` has its own registry entry on the same opt-out rule, and its own
+ * cap. Each cell is a pair, so a resolver reading the read-file entry by mistake fails one half.
+ */
+describe('isGhReadFileDiffToolEnabled / getGhReadFileDiffMaxBytes (REL-6)', () => {
+  it('is on when absent and off when its own entry says so', () => {
+    expect(isGhReadFileDiffToolEnabled(undefined, 'pr')).toBe(true);
+    expect(isGhReadFileDiffToolEnabled({ builtInTools: ['gth_grep'] }, 'pr')).toBe(true);
+    expect(
+      isGhReadFileDiffToolEnabled({ builtInTools: { gth_gh_read_file_diff: false } }, 'pr')
+    ).toBe(false);
+    expect(
+      isGhReadFileDiffToolEnabled(
+        { builtInTools: { gth_gh_read_file_diff: { enabled: false } } },
+        'pr'
+      )
+    ).toBe(false);
+    // The read-file tool's entry governs the read-file tool only.
+    expect(isGhReadFileDiffToolEnabled({ builtInTools: { gth_gh_read_file: false } }, 'pr')).toBe(
+      true
+    );
+  });
+
+  it('resolves per command first, then root', () => {
+    const config = {
+      builtInTools: { gth_gh_read_file_diff: false },
+      commands: { review: { builtInTools: { gth_gh_read_file_diff: true } } },
+    } as Parameters<typeof isGhReadFileDiffToolEnabled>[0];
+    expect(isGhReadFileDiffToolEnabled(config, 'pr')).toBe(false);
+    expect(isGhReadFileDiffToolEnabled(config, 'review')).toBe(true);
+  });
+
+  it('reads its own maxBytes, with its own default', () => {
+    expect(getGhReadFileDiffMaxBytes(undefined, 'pr')).toBe(GH_READ_FILE_DIFF_DEFAULT_MAX_BYTES);
+    expect(GH_READ_FILE_DIFF_DEFAULT_MAX_BYTES).toBe(102400);
+    expect(
+      getGhReadFileDiffMaxBytes({ builtInTools: { gth_gh_read_file: { maxBytes: 7 } } }, 'pr')
+    ).toBe(GH_READ_FILE_DIFF_DEFAULT_MAX_BYTES);
+    expect(
+      getGhReadFileDiffMaxBytes({ builtInTools: { gth_gh_read_file_diff: { maxBytes: 7 } } }, 'pr')
+    ).toBe(7);
+    expect(
+      getGhReadFileDiffMaxBytes({ builtInTools: { gth_gh_read_file_diff: { maxBytes: 0 } } }, 'pr')
+    ).toBe(GH_READ_FILE_DIFF_DEFAULT_MAX_BYTES);
   });
 });

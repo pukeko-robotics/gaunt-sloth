@@ -70,6 +70,28 @@ export interface PrBaseBinding {
   changedFiles?: number;
 }
 
+/**
+ * REL-6 — **the engagement signal: a run's triage named files without their diff.**
+ *
+ * The `github` source hands it to the caller through `GhPrDiffSourceContext.onLargePr`, the caller
+ * carries it into `review()` as `ReviewContext.largePr`, and `review()` registers the per-file diff
+ * tool only when it is present. It carries the listing the source already fetched, so the tool
+ * serves patches without a second paginated request, and the binding that listing came from.
+ *
+ * DECISION — a value passed along the call stack, not core's `artifactStore`. The store is one
+ * module-level map with no run key, so two reviews in one process (an embedder, the AG-UI server)
+ * would read each other's listing. Threaded through the caller, the signal lives exactly as long as
+ * the run that fetched it.
+ */
+export interface LargePrListing {
+  /** The base repository and number the listing was fetched for. */
+  binding: PrBaseBinding;
+  /** Every row of the listing, as fetched — unneutralised, so exact path matching stays exact. */
+  entries: readonly PrFileEntry[];
+  /** How many of those files the triage named without their diff; always above zero. */
+  elidedCount: number;
+}
+
 // The same conservative allow-lists `ghReadFileTool.ts` applies: nothing that reaches the `gh api`
 // command string may carry a shell metacharacter.
 const OWNER_PATTERN = /^[A-Za-z0-9-_.]+$/;

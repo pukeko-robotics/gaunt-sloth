@@ -208,6 +208,56 @@ describe('REL-21 manifest closing sentence', () => {
     );
   });
 
+  // REL-6 — the four combinations of the per-file diff tool and the whole-file tool.
+  it('frames the PR as very large and points at the diff tool, then at whole files', () => {
+    const content = triagePrFiles(entries, options({ fileDiffToolEnabled: true })).content;
+    expect(content).toContain('This pull request is very large and you are not seeing all of it.');
+    expect(content).toContain('with the gth_gh_read_file_diff tool, one path at a time');
+    expect(content).toContain(
+      'Use gth_gh_read_file for a whole file only when its diff is not enough context.'
+    );
+    // The REL-21 one-liner is replaced, not kept beside the new sentence.
+    expect(content).not.toContain('can be read in full with the gth_gh_read_file tool');
+  });
+
+  it('points at the diff tool alone when the whole-file tool is off', () => {
+    const content = triagePrFiles(
+      entries,
+      options({ fileDiffToolEnabled: true, readFileToolEnabled: false })
+    ).content;
+    expect(content).toContain('gth_gh_read_file_diff');
+    expect(content).not.toMatch(/gth_gh_read_file\b(?!_diff)/);
+  });
+
+  it('keeps the REL-21 sentences byte-for-byte when the diff tool is off', () => {
+    for (const readFileToolEnabled of [true, false]) {
+      const off = triagePrFiles(
+        entries,
+        options({ readFileToolEnabled, fileDiffToolEnabled: false })
+      );
+      const omitted = triagePrFiles(entries, options({ readFileToolEnabled }));
+      expect(off.content).toBe(omitted.content);
+      expect(off.content).not.toContain('gth_gh_read_file_diff');
+      expect(off.content).not.toContain('very large');
+    }
+  });
+
+  it('says nothing of either tool when nothing was named only', () => {
+    const small = fixture('mass-addition.files.ndjson').filter(
+      (entry) => entry.patch && !entry.path.endsWith('.min.js')
+    );
+    const result = triagePrFiles(small, options({ fileDiffToolEnabled: true }));
+    expect(result.elided).toEqual([]);
+    expect(result.content).not.toContain('gth_gh_read_file');
+  });
+
+  it('stays within the budget with the longer sentence', () => {
+    const many = fixture('mass-addition.files.ndjson');
+    const result = triagePrFiles(many, options({ budgetBytes: 6_000, fileDiffToolEnabled: true }));
+    expect(result.elided.length).toBeGreaterThan(0);
+    expect(result.bytes).toBeLessThanOrEqual(6_000);
+  });
+
   it('says so when the listing is shorter than the PR', () => {
     expect(triagePrFiles(entries, options({ changedFiles: 4000 })).content).toContain(
       `GitHub reports 4000 changed files but listed only ${entries.length}`

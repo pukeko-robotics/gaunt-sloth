@@ -1,4 +1,5 @@
 import type { GthConfig } from '@gaunt-sloth/core/config.js';
+import type { GhPrDiffSourceContext } from '#src/sources/ghPrDiffSource.js';
 import { displayError } from '@gaunt-sloth/core/utils/consoleUtils.js';
 
 import {
@@ -67,10 +68,18 @@ export async function getRequirementsFromSource(
   return wrapContent(requirements, requirementSource, 'requirements');
 }
 
+/**
+ * REL-6 — what a caller may hand the content source beyond the config: the command the content is
+ * for, and the callback through which the `github` source reports that it triaged a large PR (the
+ * value the caller then passes to `review()` as `ReviewContext.largePr`). Other sources ignore it.
+ */
+export type ContentSourceContext = Pick<GhPrDiffSourceContext, 'command' | 'onLargePr'>;
+
 export async function getContentFromSource(
   contentSource: ContentSourceType | undefined,
   contentId: string | undefined,
-  config: GthConfig
+  config: GthConfig,
+  sourceContext?: ContentSourceContext
 ): Promise<string> {
   const content = await getFromSource(
     contentSource,
@@ -79,7 +88,7 @@ export async function getContentFromSource(
     CONTENT_SOURCES,
     // REL-21 — the github source sizes a large PR against the model's window and reads the
     // elision list from `commands.pr`, neither of which is in its own config slice.
-    { config }
+    { ...sourceContext, config }
   );
   return wrapContent(
     content,
@@ -110,7 +119,7 @@ async function getFromSource(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   config: any,
   legitPredefinedSources: typeof REQUIREMENTS_SOURCES | typeof CONTENT_SOURCES,
-  context?: { config?: GthConfig }
+  context?: GhPrDiffSourceContext
 ): Promise<string> {
   if (typeof source === 'string') {
     // Use one of the predefined sources

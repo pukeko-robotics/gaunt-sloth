@@ -17,6 +17,7 @@ import { runPrDiscovery } from '#src/commands/prDiscovery.js';
 
 import { readMultipleFilesFromProjectDir } from '@gaunt-sloth/review/utils/fileUtils.js';
 import { extractChangedPathsFromDiff } from '@gaunt-sloth/review/utils/diffPaths.js';
+import type { LargePrListing } from '@gaunt-sloth/review/utils/prFilesListing.js';
 import { writeReviewFailureReport } from '@gaunt-sloth/review/modules/reviewFailureReport.js';
 
 interface PrCommandOptions {
@@ -114,6 +115,9 @@ export function prCommand(
       // requirements, `--file` contents and `--message`, any of which may quote a diff for a
       // module this change never touched.
       let changedPaths: string[] = [];
+      // REL-6 — set by the github source when its triage named files without their diff; passed to
+      // `review()`, where it gives the agent the per-file diff tool. Local to this run.
+      let largePr: LargePrListing | undefined;
 
       const isDiscovery = !prId && !requirementsId;
       const looksLikeRequirementsOnlyMode =
@@ -161,6 +165,7 @@ export function prCommand(
             return;
           }
           changedPaths = extractChangedPathsFromDiff(discoveryResult.diff);
+          largePr = discoveryResult.largePr;
           content.push(wrapContent(discoveryResult.diff, 'discovered-diff', 'GitHub diff'));
         } catch (error) {
           // [[TUI-C71]] — `runPrDiscovery` runs an agent inside a try/FINALLY with no catch of its
@@ -209,7 +214,13 @@ export function prCommand(
             'content',
             prId,
             config,
-            contentSource
+            contentSource,
+            {
+              command: 'pr',
+              onLargePr: (listing) => {
+                largePr = listing;
+              },
+            }
           );
           // A source may resolve to an empty result instead of throwing - e.g. ghPrDiffSource
           // returns null (with a warning) for an invalid PR number. Without this guard the review
@@ -244,7 +255,7 @@ export function prCommand(
         // Bind GitHub-only review tools (gth_gh_read_file) to this PR's repo/ref, so they read
         // the PR under review rather than letting the model guess owner/repo. Undefined prId =
         // discovery mode (current branch's PR), which `gh pr view` resolves on its own.
-        { prId, changedPaths }
+        { prId, changedPaths, largePr }
       );
 
       if (

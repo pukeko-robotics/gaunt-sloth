@@ -168,6 +168,82 @@ describe('ghPrDiffSource — large PRs (REL-21)', () => {
     expect(content).toMatch(/^GitHub PR Diff: for current branch\n\n/);
   });
 
+  // REL-6 — the engagement signal.
+  it('reports the triaged listing and its binding through onLargePr', async () => {
+    scriptGh({
+      'gh pr diff 64122': new Error(MEASURED_406),
+      [VIEW_COMMAND]: VIEW_OUTPUT,
+      [LIST_COMMAND]: read('mass-removal.files.ndjson'),
+    });
+    const { get } = await import('#src/sources/ghPrDiffSource.js');
+    const onLargePr = vi.fn();
+
+    const content = (await get(null, '64122', { budgetBytes: 1_000_000, onLargePr })) ?? '';
+
+    expect(onLargePr).toHaveBeenCalledTimes(1);
+    const listing = onLargePr.mock.calls[0][0];
+    expect(listing.binding).toEqual({
+      host: 'github.com',
+      owner: 'microsoft',
+      repo: 'TypeScript',
+      number: '64122',
+      changedFiles: 45,
+    });
+    expect(listing.entries).toHaveLength(45);
+    expect(listing.elidedCount).toBe(42);
+    expect(content).toContain('gth_gh_read_file_diff');
+    // The listing was fetched once; the tool will serve from it rather than fetch again.
+    expect(execAsyncMock.mock.calls.filter((c) => c[0] === LIST_COMMAND)).toHaveLength(1);
+  });
+
+  it('does not report a PR that fits, and returns it byte-identical', async () => {
+    const diff = read('small-pr.diff').trim();
+    scriptGh({ 'gh pr diff 7': diff });
+    const { get } = await import('#src/sources/ghPrDiffSource.js');
+    const onLargePr = vi.fn();
+
+    expect(await get(null, '7', { budgetBytes: 1_000_000, onLargePr })).toBe(
+      `GitHub PR Diff: #7\n\n${diff}`
+    );
+    expect(onLargePr).not.toHaveBeenCalled();
+  });
+
+  it('does not report a listing whose triage named nothing', async () => {
+    const entries = read('mass-addition.files.ndjson')
+      .split('\n')
+      .filter((line) => line.trim() && !line.includes('.min.js'))
+      .join('\n');
+    scriptGh({
+      'gh pr diff 64122': new Error(MEASURED_406),
+      [VIEW_COMMAND]: VIEW_OUTPUT,
+      [LIST_COMMAND]: entries,
+    });
+    const { get } = await import('#src/sources/ghPrDiffSource.js');
+    const onLargePr = vi.fn();
+    const content = (await get(null, '64122', { budgetBytes: 1_000_000, onLargePr })) ?? '';
+    expect(content).not.toContain('Files not shown in full');
+    expect(onLargePr).not.toHaveBeenCalled();
+  });
+
+  it('reads the tool registry of the command the content is for', async () => {
+    scriptGh({
+      'gh pr diff 64122': new Error(MEASURED_406),
+      [VIEW_COMMAND]: VIEW_OUTPUT,
+      [LIST_COMMAND]: read('mass-removal.files.ndjson'),
+    });
+    const { get } = await import('#src/sources/ghPrDiffSource.js');
+    const config = {
+      commands: { review: { builtInTools: { gth_gh_read_file_diff: false } } },
+    } as unknown as GthConfig;
+
+    const asReview = (await get(null, '64122', { config, command: 'review' })) ?? '';
+    const asPr = (await get(null, '64122', { config, command: 'pr' })) ?? '';
+
+    expect(asReview).not.toContain('gth_gh_read_file_diff');
+    expect(asReview).toContain('can be read in full with the gth_gh_read_file tool');
+    expect(asPr).toContain('gth_gh_read_file_diff');
+  });
+
   it('keeps the existing error for any other gh failure', async () => {
     scriptGh({ 'gh pr diff 9': new Error('gh: HTTP 404') });
     const { get } = await import('#src/sources/ghPrDiffSource.js');

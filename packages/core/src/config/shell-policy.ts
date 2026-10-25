@@ -68,6 +68,9 @@ export interface BuiltInToolConfig {
    * Over it, the content is truncated at the boundary and carries a marker naming the tool and the
    * cap, so the model knows the file is incomplete. See {@link GH_READ_FILE_DEFAULT_MAX_BYTES}.
    *
+   * `gth_gh_read_file_diff` (REL-6) reads the same field as the ceiling on the patch text it
+   * returns, with its own default, {@link GH_READ_FILE_DIFF_DEFAULT_MAX_BYTES}.
+   *
    * Named `maxBytes` rather than the shell's `maxOutputBytes` because this is a file read (cf.
    * `read_file`'s byte cap) rather than captured command output.
    */
@@ -159,16 +162,37 @@ export const DEV_TOOL_NAMES: readonly string[] = [...DEV_COMMAND_TOOL_NAMES, SHE
 export const GH_READ_FILE_TOOL_NAME = 'gth_gh_read_file';
 
 /**
+ * REL-6 — the per-file diff tool the review agent gets on a pull request too large to show whole.
+ * It returns one listed file's `patch` from the REST files listing the run already fetched. Built in
+ * `@gaunt-sloth/review` beside {@link GH_READ_FILE_TOOL_NAME}, and named here for the same reason:
+ * `agent`'s `getBuiltInTools` must skip it.
+ */
+export const GH_READ_FILE_DIFF_TOOL_NAME = 'gth_gh_read_file_diff';
+
+/**
  * Built-in tool names that are legitimate {@link GthConfig.builtInTools} entries but are NOT loaded
  * by `getBuiltInTools`, because the tool is constructed elsewhere: the dev/shell tools come from
- * `GthDevToolkit`, and {@link GH_READ_FILE_TOOL_NAME} is built by the review module with the
- * PR context bound in. Without the skip, configuring one of these prints
+ * `GthDevToolkit`, and {@link GH_READ_FILE_TOOL_NAME} and {@link GH_READ_FILE_DIFF_TOOL_NAME} are
+ * built by the review module with the PR context bound in. Without the skip, configuring one of these prints
  * `Unknown built-in tool: <name>` on EVERY command's run — including the ones that never load it.
  */
 export const EXTERNALLY_EMITTED_BUILT_IN_TOOL_NAMES: readonly string[] = [
   ...DEV_TOOL_NAMES,
   GH_READ_FILE_TOOL_NAME,
+  GH_READ_FILE_DIFF_TOOL_NAME,
 ];
+
+/**
+ * REL-6 — default ceiling on the patch text {@link GH_READ_FILE_DIFF_TOOL_NAME} returns: 100 KiB,
+ * about 25K tokens at four bytes a token.
+ *
+ * Much smaller than {@link GH_READ_FILE_DEFAULT_MAX_BYTES} on purpose. The tool only exists on a PR
+ * whose content already fills half the window, and the newest tool result always sits in the tail
+ * compaction keeps verbatim, so one read cannot be folded away before the next model call. A 600 KiB
+ * patch would be larger than a 128K-token window on its own. Override per entry with
+ * `{ "builtInTools": { "gth_gh_read_file_diff": { "maxBytes": 200000 } } }`.
+ */
+export const GH_READ_FILE_DIFF_DEFAULT_MAX_BYTES = 102400;
 
 /**
  * CFG-52 — default ceiling on the DECODED file text {@link GH_READ_FILE_TOOL_NAME} returns:
@@ -279,6 +303,40 @@ export function getGhReadFileMaxBytes(
     }
   }
   return GH_READ_FILE_DEFAULT_MAX_BYTES;
+}
+
+/**
+ * REL-6 — whether the review agent may get {@link GH_READ_FILE_DIFF_TOOL_NAME} on this run. The
+ * same opt-out rule as {@link isGhReadFileToolEnabled}, read from the same registry: absence means
+ * enabled, `false` or `{ "enabled": false }` turns it off. Enabled is necessary, not sufficient — the
+ * review module registers the tool only when the PR's triage named files without their diff.
+ */
+export function isGhReadFileDiffToolEnabled(
+  config: Pick<GthConfig, 'commands' | 'builtInTools'> | undefined,
+  command: GhReadFileCommand
+): boolean {
+  const registry = effectiveBuiltInToolsRegistry(config, command);
+  if (!Object.prototype.hasOwnProperty.call(registry, GH_READ_FILE_DIFF_TOOL_NAME)) {
+    return true;
+  }
+  return isBuiltInToolEntryEnabled(registry[GH_READ_FILE_DIFF_TOOL_NAME]);
+}
+
+/**
+ * REL-6 — the patch-text byte ceiling for {@link GH_READ_FILE_DIFF_TOOL_NAME}, falling back to
+ * {@link GH_READ_FILE_DIFF_DEFAULT_MAX_BYTES}, with the guard {@link getGhReadFileMaxBytes} applies.
+ */
+export function getGhReadFileDiffMaxBytes(
+  config: Pick<GthConfig, 'commands' | 'builtInTools'> | undefined,
+  command: GhReadFileCommand
+): number {
+  const entry = effectiveBuiltInToolsRegistry(config, command)[GH_READ_FILE_DIFF_TOOL_NAME];
+  if (entry && typeof entry === 'object' && typeof entry.maxBytes === 'number') {
+    if (Number.isFinite(entry.maxBytes) && entry.maxBytes > 0) {
+      return entry.maxBytes;
+    }
+  }
+  return GH_READ_FILE_DIFF_DEFAULT_MAX_BYTES;
 }
 
 /**

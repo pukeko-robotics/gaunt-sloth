@@ -77,8 +77,9 @@ export const BYTES_PER_TOKEN = 4;
  * and a first message over that line has nothing to compact, so the turn ends. The content must
  * therefore sit well under 0.8 of the window, leaving the rest for the system prompt (backstory,
  * guidelines, review instructions, path-scoped prompts), the requirements, the answer, and the
- * heuristic's underestimate: code tokenises denser than four bytes a token. Later
- * `gth_gh_read_file` reads are tool results, which compaction CAN fold, so they need no share here.
+ * heuristic's underestimate: code tokenises denser than four bytes a token. Later reads through
+ * `gth_gh_read_file_diff` and `gth_gh_read_file` are tool results, which compaction CAN fold once
+ * they leave the kept tail, so they need no share here.
  * A spec pins this fraction below the seed fraction.
  */
 export const DIFF_BUDGET_FRACTION_OF_WINDOW = 0.5;
@@ -229,6 +230,12 @@ export interface TriageOptions {
   prLabel: string;
   /** Whether `gth_gh_read_file` is on for this run, which decides the manifest's closing sentence. */
   readFileToolEnabled: boolean;
+  /**
+   * REL-6 — whether `gth_gh_read_file_diff` is on for this run. When it is and files were named
+   * only, `review()` registers it, so the closing sentence tells the model to read diffs with it.
+   * Omitted means off, which keeps a caller that predates the tool on the read-file sentence.
+   */
+  fileDiffToolEnabled?: boolean;
   /** The PR's file count per `gh pr view`; a shorter listing is called out in the content. */
   changedFiles?: number;
   /** Why the REST route was taken, for the content's first line. */
@@ -342,10 +349,30 @@ function renderFrameParts(
     `This pull request is large: ${why}, so it was assembled from the GitHub files listing. ` +
     `${listed} files changed: ${shown} shown in full, ${elided} named only in the list at the end.${short}`;
   const manifestHeading = `Files not shown in full (${elided}):`;
-  const closing = options.readFileToolEnabled
+  return [head, manifestHeading, closingSentence(options)];
+}
+
+/**
+ * The manifest's last paragraph: what the model can do about the files it was not shown.
+ *
+ * REL-6 — with the per-file diff tool available the PR is called very large outright, because the
+ * model can act on that: it reads the diffs it needs one path at a time instead of reviewing the
+ * names alone, and reaches for whole files only when a diff is not enough context.
+ */
+function closingSentence(options: TriageOptions): string {
+  if (options.fileDiffToolEnabled) {
+    const wholeFile = options.readFileToolEnabled
+      ? ' Use gth_gh_read_file for a whole file only when its diff is not enough context.'
+      : '';
+    return (
+      'This pull request is very large and you are not seeing all of it. Read the diffs of the ' +
+      'files above that matter with the gth_gh_read_file_diff tool, one path at a time, choosing ' +
+      `selectively rather than trying to read them all.${wholeFile} Removed files need only their names.`
+    );
+  }
+  return options.readFileToolEnabled
     ? 'Any file named above that still exists at the PR head can be read in full with the gth_gh_read_file tool; removed files cannot, and need only their names.'
     : 'These files are named only; judge the pull request on what is shown and on these names.';
-  return [head, manifestHeading, closing];
 }
 
 function renderFrame(

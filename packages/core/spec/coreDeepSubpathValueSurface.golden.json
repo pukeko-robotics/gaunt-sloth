@@ -90,6 +90,14 @@
           "kind": "number"
         },
         {
+          "name": "GH_READ_FILE_DIFF_DEFAULT_MAX_BYTES",
+          "kind": "number"
+        },
+        {
+          "name": "GH_READ_FILE_DIFF_TOOL_NAME",
+          "kind": "string"
+        },
+        {
           "name": "GH_READ_FILE_TOOL_NAME",
           "kind": "string"
         },
@@ -182,6 +190,10 @@
           "kind": "function"
         },
         {
+          "name": "getGhReadFileDiffMaxBytes",
+          "kind": "function"
+        },
+        {
           "name": "getGhReadFileMaxBytes",
           "kind": "function"
         },
@@ -239,6 +251,10 @@
         },
         {
           "name": "isFilesystemToolRegistered",
+          "kind": "function"
+        },
+        {
+          "name": "isGhReadFileDiffToolEnabled",
           "kind": "function"
         },
         {

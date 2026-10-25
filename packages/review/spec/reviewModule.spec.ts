@@ -797,4 +797,133 @@ describe('reviewModule', () => {
       ).toContain(`gth_gh_read_file: file truncated at the ${REVIEW_CAP}-byte cap`);
     });
   });
+
+  /**
+   * REL-6 — the per-file diff tool is registered from the run's own large-PR signal, and only then.
+   * Every "absent" cell is paired with a "present" one on the same harness, so a module that never
+   * registered the tool could not pass them.
+   */
+  describe('REL-6 per-file diff tool engagement', () => {
+    const binding = { host: 'github.com', owner: 'o', repo: 'r', number: '1' };
+    const listingOf = (patch: string) => ({
+      binding,
+      entries: [
+        { path: 'src/a(1).ts', status: 'modified' as const, additions: 1, deletions: 0, patch },
+      ],
+      elidedCount: 1,
+    });
+    type Invocable = { name: string; invoke: (args: { path: string }) => Promise<string> };
+    const diffToolsOf = (config: GthConfig): Invocable[] =>
+      ((config.tools ?? []) as unknown as Invocable[]).filter(
+        (t) => typeof t === 'object' && t !== null && t.name === 'gth_gh_read_file_diff'
+      );
+    const prConfig = (extra: Record<string, unknown> = {}) =>
+      ({
+        ...mockConfig,
+        tools: undefined,
+        commands: { pr: { contentSource: 'github' } },
+        ...extra,
+      }) as unknown as GthConfig;
+
+    it('registers no tool and sends the content byte-identical for a PR that fits', async () => {
+      const { review } = await import('#src/modules/reviewModule.js');
+      const small = prConfig();
+      await review('PR-1', 'preamble', 'SMALL DIFF', small, 'pr', undefined, { prId: '1' });
+      expect(diffToolsOf(small)).toEqual([]);
+      expect(gthAgentRunnerInstanceMock.processMessages).toHaveBeenLastCalledWith([
+        new HumanMessage('SMALL DIFF'),
+      ]);
+
+      const large = prConfig();
+      await review('PR-1', 'preamble', 'SMALL DIFF', large, 'pr', undefined, {
+        prId: '1',
+        largePr: listingOf('+LARGE'),
+      });
+      expect(diffToolsOf(large)).toHaveLength(1);
+      // The signal adds a tool; it never touches the content.
+      expect(gthAgentRunnerInstanceMock.processMessages).toHaveBeenLastCalledWith([
+        new HumanMessage('SMALL DIFF'),
+      ]);
+    });
+
+    it('serves the patch from the listing the run carries', async () => {
+      const { review } = await import('#src/modules/reviewModule.js');
+      const config = prConfig();
+      await review('PR-1', 'preamble', 'diff', config, 'pr', undefined, {
+        largePr: listingOf('+FIRST'),
+      });
+      expect(await diffToolsOf(config)[0].invoke({ path: 'src/a(1).ts' })).toContain('+FIRST');
+    });
+
+    it('does not leak a run’s tool or listing into the next review on the same config', async () => {
+      const { review } = await import('#src/modules/reviewModule.js');
+      const shared = prConfig();
+      await review('PR-1', 'preamble', 'diff', shared, 'pr', undefined, {
+        largePr: listingOf('+FIRST'),
+      });
+      await review('PR-2', 'preamble', 'diff', shared, 'pr', undefined, {
+        largePr: listingOf('+SECOND'),
+      });
+      const tools = diffToolsOf(shared);
+      expect(tools).toHaveLength(1);
+      expect(await tools[0].invoke({ path: 'src/a(1).ts' })).toContain('+SECOND');
+
+      // And a PR that fits, after a large one, gets none at all.
+      await review('PR-3', 'preamble', 'diff', shared, 'pr', undefined, { prId: '3' });
+      expect(diffToolsOf(shared)).toEqual([]);
+      // The read-file tool, registered by its own rule, is untouched by the removal.
+      expect(
+        (shared.tools ?? []).some(
+          (t) => typeof t === 'object' && t !== null && 'name' in t && t.name === 'gth_gh_read_file'
+        )
+      ).toBe(true);
+    });
+
+    it('honours the builtInTools registry of the command being run', async () => {
+      const { review } = await import('#src/modules/reviewModule.js');
+      const off = prConfig({ builtInTools: { gth_gh_read_file_diff: false } });
+      await review('PR-1', 'preamble', 'diff', off, 'pr', undefined, {
+        largePr: listingOf('+X'),
+      });
+      expect(diffToolsOf(off)).toEqual([]);
+
+      const offForReviewOnly = {
+        ...mockConfig,
+        tools: undefined,
+        contentSource: 'github',
+        commands: {
+          review: { contentSource: 'github', builtInTools: { gth_gh_read_file_diff: false } },
+        },
+      } as unknown as GthConfig;
+      await review('src', 'preamble', 'diff', offForReviewOnly, 'review', undefined, {
+        largePr: listingOf('+X'),
+      });
+      expect(diffToolsOf(offForReviewOnly)).toEqual([]);
+      await review('src', 'preamble', 'diff', offForReviewOnly, 'pr', undefined, {
+        largePr: listingOf('+X'),
+      });
+      expect(diffToolsOf(offForReviewOnly)).toHaveLength(1);
+    });
+
+    it('points a no-patch file at gth_gh_read_file only when the run has that tool', async () => {
+      const { review } = await import('#src/modules/reviewModule.js');
+      const noPatch = {
+        binding,
+        entries: [{ path: 'logo.png', status: 'modified' as const, additions: 0, deletions: 0 }],
+        elidedCount: 1,
+      };
+      const withReadFile = prConfig();
+      await review('PR-1', 'preamble', 'diff', withReadFile, 'pr', undefined, { largePr: noPatch });
+      expect(await diffToolsOf(withReadFile)[0].invoke({ path: 'logo.png' })).toContain(
+        'gth_gh_read_file'
+      );
+
+      const withoutReadFile = prConfig({ builtInTools: { gth_gh_read_file: false } });
+      await review('PR-1', 'preamble', 'diff', withoutReadFile, 'pr', undefined, {
+        largePr: noPatch,
+      });
+      const tool = diffToolsOf(withoutReadFile)[0];
+      expect(await tool.invoke({ path: 'logo.png' })).not.toContain('gth_gh_read_file');
+    });
+  });
 });

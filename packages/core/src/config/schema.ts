@@ -917,7 +917,8 @@ const builtInToolConfigSchema = z.object({
   maxOutputBytes: z.number().optional(),
   // CFG-52 — `gth_gh_read_file`: ceiling on the DECODED file text the GitHub-API file-read tool
   // returns (default 600 KiB). A file read, not captured command output, hence `maxBytes` rather
-  // than `maxOutputBytes`. See BuiltInToolConfig.
+  // than `maxOutputBytes`. See BuiltInToolConfig. REL-6 — `gth_gh_read_file_diff` reads it as the
+  // ceiling on the patch text it returns (default 100 KiB).
   maxBytes: z.number().optional(),
   // TUI-C105 — ANY tool: how many lines of ITS output the collapsed preview shows (`0` = the
   // summary line alone). Overrides the root `toolOutputPreviewLines`. A DISPLAY cap — what the

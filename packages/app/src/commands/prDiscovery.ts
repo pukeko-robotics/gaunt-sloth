@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { get as getGhPrDiff } from '@gaunt-sloth/review/sources/ghPrDiffSource.js';
+import type { LargePrListing } from '@gaunt-sloth/review/utils/prFilesListing.js';
 import { get as getGhPrView } from '@gaunt-sloth/review/sources/ghPrViewSource.js';
 import { get as getGhIssue } from '@gaunt-sloth/review/sources/ghIssueSource.js';
 import { get as getJiraIssue } from '@gaunt-sloth/review/sources/jiraIssueSource.js';
@@ -64,6 +65,12 @@ export function readPrDiscoveryPrompt(
 export interface PrDiscoveryResult {
   diff: string;
   requirements: string;
+  /**
+   * REL-6 — the github source's large-PR signal for the diff in {@link diff}, when that diff came
+   * from the source and its triage named files without their diff. It follows the diff: a later
+   * `gh_diff` replaces it and `set_diff`, whose diff never came from the source, clears it.
+   */
+  largePr?: LargePrListing;
 }
 
 type PrDiscoveryToolState = PrDiscoveryResult & {
@@ -119,8 +126,15 @@ export async function runPrDiscovery(config: GthConfig): Promise<PrDiscoveryResu
       );
     } else {
       try {
-        const diff = await getGhPrDiff(getGithubContentSourceConfig(config), undefined, { config });
+        let largePr: LargePrListing | undefined;
+        const diff = await getGhPrDiff(getGithubContentSourceConfig(config), undefined, {
+          config,
+          onLargePr: (listing) => {
+            largePr = listing;
+          },
+        });
         state.diff = diff ?? '';
+        state.largePr = state.diff ? largePr : undefined;
         if (state.diff) {
           displayInfo('Retrieved current-branch PR diff with gh.');
         }
@@ -161,10 +175,7 @@ export async function runPrDiscovery(config: GthConfig): Promise<PrDiscoveryResu
     displayInfo(
       'Resolved the PR diff and requirements deterministically; skipping the discovery agent.'
     );
-    return {
-      diff: state.diff.trim(),
-      requirements: state.requirements.trim(),
-    };
+    return discoveryResult(state);
   }
 
   // If the discovery agent is our only chance to obtain a diff (none was set deterministically)
@@ -191,10 +202,17 @@ export async function runPrDiscovery(config: GthConfig): Promise<PrDiscoveryResu
     createDiscoveryTools: () => createPrDiscoveryTools(config, state),
   });
 
-  return {
+  return discoveryResult(state);
+}
+
+/** The result handed back to `gth pr`, carrying the large-PR signal only when there is one. */
+function discoveryResult(state: PrDiscoveryToolState): PrDiscoveryResult {
+  const result: PrDiscoveryResult = {
     diff: state.diff.trim(),
     requirements: state.requirements.trim(),
   };
+  if (state.largePr) result.largePr = state.largePr;
+  return result;
 }
 
 function createPrDiscoveryTools(
@@ -204,6 +222,8 @@ function createPrDiscoveryTools(
   const setDiff = tool(
     async ({ diff }: z.infer<typeof SetDiffArgsSchema>): Promise<string> => {
       state.diff = diff;
+      // REL-6 — this diff did not come from the source, so no listing describes it.
+      state.largePr = undefined;
       return 'Diff set for PR review.';
     },
     {
@@ -247,8 +267,15 @@ function createPrDiscoveryTools(
   const ghDiff = tool(
     async ({ prId }: z.infer<typeof GhDiffArgsSchema>): Promise<string> => {
       let diff: string;
+      let largePr: LargePrListing | undefined;
       try {
-        diff = (await getGhPrDiff(getGithubContentSourceConfig(config), prId, { config })) ?? '';
+        diff =
+          (await getGhPrDiff(getGithubContentSourceConfig(config), prId, {
+            config,
+            onLargePr: (listing) => {
+              largePr = listing;
+            },
+          })) ?? '';
       } catch (error) {
         // Surface the failure as text instead of throwing so the discovery run continues and the
         // model can try another approach - consistent with gh_pr/gh_issue.
@@ -261,6 +288,7 @@ function createPrDiscoveryTools(
       // model context just so the model can copy it verbatim into set_diff doubles token
       // cost and lets weaker models truncate or corrupt the diff on the way through.
       state.diff = diff;
+      state.largePr = largePr;
       const preview = diff.split('\n').slice(0, 10).join('\n');
       return `Retrieved the PR diff (${diff.length} characters) and set it as the review diff; no need to call set_diff. Preview:\n${preview}`;
     },

@@ -23,6 +23,7 @@ import { readMultipleFilesFromProjectDir } from '@gaunt-sloth/review/utils/fileU
 // `commands/commandUtils`, and this helper lives only in review's (GS2-45).
 import { resolvePrIdFromArg } from '@gaunt-sloth/review/commands/commandUtils.js';
 import { extractChangedPathsFromDiff } from '@gaunt-sloth/review/utils/diffPaths.js';
+import type { LargePrListing } from '@gaunt-sloth/review/utils/prFilesListing.js';
 import { writeReviewFailureReport } from '@gaunt-sloth/review/modules/reviewFailureReport.js';
 
 /** The source label this command passes to `review()`, and therefore names its report file with. */
@@ -143,13 +144,22 @@ export function reviewCommand(
       // Fail loudly on a content-source error (e.g. the git source outside a repository or with
       // an empty diff) instead of surfacing a raw unhandled rejection — same shape as `gth pr`.
       let providedContent: string;
+      // REL-6 — set by the github source when its triage named files without their diff; passed to
+      // `review()`, where it gives the agent the per-file diff tool. Local to this run.
+      let largePr: LargePrListing | undefined;
       try {
         providedContent = await getCommandSourceInput(
           'review',
           'content',
           contentId,
           config,
-          contentSource
+          contentSource,
+          {
+            command: 'review',
+            onLargePr: (listing) => {
+              largePr = listing;
+            },
+          }
         );
       } catch (error) {
         // REL-20 — `gth review` fails before inference the same way `gth pr` does (the git source
@@ -238,7 +248,7 @@ export function reviewCommand(
         // request's files, silently. `contentId` is a content id rather than a PR id — a ref
         // range or a file path under the other sources — so only a bare number is taken as one;
         // anything else, including no argument at all, keeps the branch-discovery fallback.
-        { prId: resolvePrIdFromArg(contentId), changedPaths }
+        { prId: resolvePrIdFromArg(contentId), changedPaths, largePr }
       );
     });
 }

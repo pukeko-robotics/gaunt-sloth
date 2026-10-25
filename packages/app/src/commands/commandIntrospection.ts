@@ -2,6 +2,7 @@ import type { GthConfig } from '@gaunt-sloth/core/config.js';
 import {
   getContentFromSource,
   getRequirementsFromSource,
+  type ContentSourceContext,
   type ContentSourceType,
   type RequirementSourceType,
 } from '#src/commands/commandUtils.js';
@@ -161,7 +162,8 @@ export async function getCommandSourceInput(
   inputType: SourceInputType,
   id: string | undefined,
   config: GthConfig,
-  cliSource?: RequirementSourceType | ContentSourceType
+  cliSource?: RequirementSourceType | ContentSourceType,
+  sourceContext?: ContentSourceContext
 ): Promise<string> {
   if (inputType === 'requirements') {
     return getRequirementsFromSource(
@@ -174,6 +176,7 @@ export async function getCommandSourceInput(
   return getContentFromSource(
     getEffectiveContentSource(command, config, cliSource as ContentSourceType),
     id,
-    config
+    config,
+    sourceContext
   );
 }

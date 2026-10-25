@@ -1,5 +1,9 @@
 import type { GthConfig, RatingConfig } from '@gaunt-sloth/core/config.js';
-import { isGhReadFileToolEnabled, selectScopedPrompts } from '@gaunt-sloth/core/config.js';
+import {
+  isGhReadFileDiffToolEnabled,
+  isGhReadFileToolEnabled,
+  selectScopedPrompts,
+} from '@gaunt-sloth/core/config.js';
 import {
   measureScopedPrompts,
   SCOPED_PROMPT_BUDGET_BYTES,
@@ -35,6 +39,11 @@ import { displayTermination } from '@gaunt-sloth/core/core/terminationNotice.js'
 import { displayOutstandingWork } from '@gaunt-sloth/core/core/outstandingWork.js';
 import type { AgentResolvers } from '@gaunt-sloth/core/core/types.js';
 import { get as getGhReadFileTool, GTH_GH_READ_FILE_TOOL_NAME } from '#src/tools/ghReadFileTool.js';
+import {
+  get as getGhReadFileDiffTool,
+  GTH_GH_READ_FILE_DIFF_TOOL_NAME,
+} from '#src/tools/ghReadFileDiffTool.js';
+import type { LargePrListing } from '#src/utils/prFilesListing.js';
 
 /** Extra context about the review, used to bind GitHub-only tools to the PR under review. */
 export interface ReviewContext {
@@ -53,6 +62,14 @@ export interface ReviewContext {
    * mean no path was found, and both are worth saying out loud when entries are configured.
    */
   changedPaths?: string[];
+  /**
+   * REL-6 — present when the `github` source's triage named files without their diff, as its
+   * `onLargePr` callback reported it. Its presence is what gives the agent the per-file diff tool,
+   * which serves patches from the listing carried here. Absent, the run is exactly what it was
+   * before the tool existed. A caller that fetches content through the source must pass this on,
+   * because the content it got tells the model the tool exists.
+   */
+  largePr?: LargePrListing;
 }
 
 /**
@@ -99,6 +116,9 @@ export async function review(
     // context (the content source resolves to GitHub); a graceful no-op otherwise. Reads through
     // the GitHub API rather than the workspace filesystem, so it is safe under pull_request_target.
     maybeAddGhReadFileTool(config, command, reviewContext?.prId);
+    // REL-6: on a PR too large to show whole, a per-file diff read served from the listing the
+    // source already fetched. Only when the triage named files without their diff.
+    maybeAddGhReadFileDiffTool(config, command, reviewContext?.largePr);
 
     // Prepare logging path (if enabled by config)
     const filePath = getCommandOutputFilePath(config, source);
@@ -392,6 +412,57 @@ function maybeAddGhReadFileTool(
   }
 
   config.tools = [...existingTools, getGhReadFileTool(config, prId, command)];
+}
+
+/**
+ * REL-6: register `gth_gh_read_file_diff` for this run when, and only when, the triage named files
+ * without their diff (`largePr` is the engagement signal; see {@link LargePrListing}).
+ *
+ * **Any instance already in `config.tools` is removed first**, unlike the read-file tool's
+ * skip-if-present. `review()` mutates the config it is handed, and an embedder or the server may
+ * hand the same object to the next review: an instance left behind would serve the previous PR's
+ * listing to a PR that is not even large. Replacing it makes the tool, and the listing it holds,
+ * belong to this run alone.
+ */
+function maybeAddGhReadFileDiffTool(
+  config: GthConfig,
+  command: 'pr' | 'review',
+  largePr: LargePrListing | undefined
+): void {
+  const existingTools = (
+    Array.isArray(config.tools) ? config.tools : []
+  ) as StructuredToolInterface[];
+  const isDiffTool = (t: StructuredToolInterface): boolean =>
+    typeof t === 'object' &&
+    t !== null &&
+    'name' in t &&
+    t.name === GTH_GH_READ_FILE_DIFF_TOOL_NAME;
+  const others = existingTools.filter((t) => !isDiffTool(t));
+  if (others.length !== existingTools.length) {
+    config.tools = others;
+  }
+
+  if (!largePr || largePr.elidedCount <= 0) {
+    return;
+  }
+  if (!isGhReadFileDiffToolEnabled(config, command)) {
+    return;
+  }
+
+  // What the tool's own messages may point at: the read-file tool as this run actually has it.
+  const readFileToolPresent = others.some(
+    (t) =>
+      typeof t === 'object' && t !== null && 'name' in t && t.name === GTH_GH_READ_FILE_TOOL_NAME
+  );
+  config.tools = [
+    ...others,
+    getGhReadFileDiffTool(
+      config,
+      { binding: largePr.binding, entries: largePr.entries },
+      command,
+      readFileToolPresent
+    ),
+  ];
 }
 
 function handleRatingResult(rateConfig: RatingConfig | undefined, command: 'pr' | 'review'): void {
