@@ -79,22 +79,24 @@ describe('toolDisplay (TUI-C30)', () => {
         expect(repository).toBe('read_file(path=…/module/service/UserAccountRepository.java)');
       });
 
+      // REPOSITORY's raw 47-column tail opens mid-way through `project`, so these two cells see
+      // the alignment move the cut; SERVICE's tail already starts on a separator and would not.
       it('starts the kept part at a separator, within the per-value cap', async () => {
         const { summariseToolCall, TOOL_PARAM_VALUE_MAX_COLUMNS } =
           await import('#src/core/toolDisplay.js');
         const value = valueOf(
-          summariseToolCall('read_file', JSON.stringify({ path: SERVICE }), []),
+          summariseToolCall('read_file', JSON.stringify({ path: REPOSITORY }), []),
           'path'
         );
-        expect(value.startsWith('…/')).toBe(true);
+        expect(value).toBe('…/module/service/UserAccountRepository.java');
         expect(stringWidth(value)).toBeLessThanOrEqual(TOOL_PARAM_VALUE_MAX_COLUMNS);
       });
 
       it('aligns on a Windows separator too', async () => {
         const { summariseToolCall } = await import('#src/core/toolDisplay.js');
-        const path = SERVICE.replaceAll('/', '\\');
+        const path = REPOSITORY.replaceAll('/', '\\');
         expect(summariseToolCall('read_file', JSON.stringify({ path }), [])).toBe(
-          'read_file(path=…\\project\\module\\service\\UserAccountService.java)'
+          'read_file(path=…\\module\\service\\UserAccountRepository.java)'
         );
       });
 
