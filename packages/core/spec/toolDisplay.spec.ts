@@ -50,12 +50,140 @@ describe('toolDisplay (TUI-C30)', () => {
     it('caps a CJK value by terminal COLUMNS rather than code points (TUI-C34)', async () => {
       const { summariseToolCall } = await import('#src/core/toolDisplay.js');
       // 33 code points, 56 columns: it fits the 48-column value cap only by count, so a code-point
-      // cap hands the whole path back and the summary over-runs the row it is rendered on.
-      const path = '/プロジェクト/ドキュメント/設定/読み込み/テスト/深層.txt';
+      // cap hands the whole value back and the summary over-runs the row it is rendered on. A
+      // non-path argument, so the head is what is kept ([[TUI-C111]] cuts a path from the start).
+      const text = '/プロジェクト/ドキュメント/設定/読み込み/テスト/深層.txt';
       // The kept head is 47 columns and `…` is the 48th — the whole cap, and no more.
-      expect(summariseToolCall('read_file', JSON.stringify({ path }), [])).toBe(
-        'read_file(path=/プロジェクト/ドキュメント/設定/読み込み/テスト…)'
+      expect(summariseToolCall('echo_tool', JSON.stringify({ text }), [])).toBe(
+        'echo_tool(text=/プロジェクト/ドキュメント/設定/読み込み/テスト…)'
       );
+    });
+
+    // [[TUI-C111]] — a path is cut from the START, because in a deep tree the head is the part
+    // every path shares and the file name is the part that tells two calls apart.
+    describe('path arguments keep their end (TUI-C111)', () => {
+      const JAVA_DIR = 'src/main/java/com/example/organisation/project/module/service';
+      const SERVICE = `${JAVA_DIR}/UserAccountService.java`;
+      const REPOSITORY = `${JAVA_DIR}/UserAccountRepository.java`;
+
+      /** The value between `key=` and the closing parenthesis of a one-arg summary. */
+      const valueOf = (summary: string, key: string): string =>
+        summary.slice(summary.indexOf(`${key}=`) + key.length + 1, -1);
+
+      it('two deep paths differing only in the file name render differently', async () => {
+        const { summariseToolCall } = await import('#src/core/toolDisplay.js');
+        const service = summariseToolCall('read_file', JSON.stringify({ path: SERVICE }), []);
+        const repository = summariseToolCall('read_file', JSON.stringify({ path: REPOSITORY }), []);
+        expect(service).not.toBe(repository);
+        expect(service).toBe('read_file(path=…/project/module/service/UserAccountService.java)');
+        expect(repository).toBe('read_file(path=…/module/service/UserAccountRepository.java)');
+      });
+
+      it('starts the kept part at a separator, within the per-value cap', async () => {
+        const { summariseToolCall, TOOL_PARAM_VALUE_MAX_COLUMNS } =
+          await import('#src/core/toolDisplay.js');
+        const value = valueOf(
+          summariseToolCall('read_file', JSON.stringify({ path: SERVICE }), []),
+          'path'
+        );
+        expect(value.startsWith('…/')).toBe(true);
+        expect(stringWidth(value)).toBeLessThanOrEqual(TOOL_PARAM_VALUE_MAX_COLUMNS);
+      });
+
+      it('aligns on a Windows separator too', async () => {
+        const { summariseToolCall } = await import('#src/core/toolDisplay.js');
+        const path = SERVICE.replaceAll('/', '\\');
+        expect(summariseToolCall('read_file', JSON.stringify({ path }), [])).toBe(
+          'read_file(path=…\\project\\module\\service\\UserAccountService.java)'
+        );
+      });
+
+      it('keeps a raw tail when no separator survives the cut', async () => {
+        const { summariseToolCall, TOOL_PARAM_VALUE_MAX_COLUMNS } =
+          await import('#src/core/toolDisplay.js');
+        const name = `${'A'.repeat(60)}End.java`;
+        const value = valueOf(
+          summariseToolCall('read_file', JSON.stringify({ path: `dir/${name}` }), []),
+          'path'
+        );
+        expect(value).toBe(`…${name.slice(-(TOOL_PARAM_VALUE_MAX_COLUMNS - 1))}`);
+      });
+
+      it('leaves a path that fits untouched', async () => {
+        const { summariseToolCall } = await import('#src/core/toolDisplay.js');
+        expect(summariseToolCall('read_file', '{"path":"src/a/b.ts"}', [])).toBe(
+          'read_file(path=src/a/b.ts)'
+        );
+      });
+
+      it('counts COLUMNS from the end without splitting a wide character', async () => {
+        const { summariseToolCall, TOOL_PARAM_VALUE_MAX_COLUMNS } =
+          await import('#src/core/toolDisplay.js');
+        const path = '/プロジェクト/ドキュメント/設定/読み込み/テスト/深層.txt';
+        const value = valueOf(summariseToolCall('read_file', JSON.stringify({ path }), []), 'path');
+        expect(value).toBe('…/ドキュメント/設定/読み込み/テスト/深層.txt');
+        expect(stringWidth(value)).toBeLessThanOrEqual(TOOL_PARAM_VALUE_MAX_COLUMNS);
+        expect(path.endsWith(value.slice(1))).toBe(true);
+      });
+
+      it('cuts each element of a paths array from the start', async () => {
+        const { summariseToolCall } = await import('#src/core/toolDisplay.js');
+        const summary = summariseToolCall(
+          'read_multiple_files',
+          JSON.stringify({ paths: [SERVICE, REPOSITORY] }),
+          []
+        );
+        expect(summary).toBe(
+          'read_multiple_files(paths=["…/project/module/service/UserAccountService.java",' +
+            '"…/module/service/UserAccountRepository.java"])'
+        );
+      });
+
+      it('cuts move_file source and destination from the start', async () => {
+        const { summariseToolCall } = await import('#src/core/toolDisplay.js');
+        const summary = summariseToolCall(
+          'move_file',
+          JSON.stringify({ source: SERVICE, destination: REPOSITORY }),
+          []
+        );
+        expect(summary).toContain('source=…/project/module/service/UserAccountService.java');
+        expect(summary).toContain('destination=…/');
+        expect(summary).not.toContain('source=src/main');
+      });
+
+      it('still cuts a long command from the end', async () => {
+        const { summariseToolCall } = await import('#src/core/toolDisplay.js');
+        const command = `mvn -pl module test -Dtest=UserAccountServiceTest ${'-Dx=1 '.repeat(10)}`;
+        expect(summariseToolCall('run_shell_command', JSON.stringify({ command }), [])).toBe(
+          `run_shell_command(command=${command.slice(0, 47)}…)`
+        );
+      });
+
+      // Redaction runs before the cut in this direction too: a start-cut that ran first would keep
+      // the TAIL of a secret at the end of a path, which no longer literal-matches.
+      it('still redacts a secret at the END of a long path', async () => {
+        const { summariseToolCall } = await import('#src/core/toolDisplay.js');
+        const secret = 'deadbeef'.repeat(8); // 64 chars, patternless, longer than the cap
+        const summary = summariseToolCall(
+          'read_file',
+          JSON.stringify({ path: `${JAVA_DIR}/${secret}` }),
+          [secret]
+        );
+        expect(summary).toBe('read_file(path=…/organisation/project/module/service/<redacted>)');
+        expect(summary).not.toContain('deadbeef');
+      });
+
+      it('still redacts a secret at the end of a paths element', async () => {
+        const { summariseToolCall } = await import('#src/core/toolDisplay.js');
+        const secret = 'cafebabe'.repeat(8);
+        const summary = summariseToolCall(
+          'read_multiple_files',
+          JSON.stringify({ paths: [`${JAVA_DIR}/${secret}`] }),
+          [secret]
+        );
+        expect(summary).toContain('<redacted>');
+        expect(summary).not.toContain('cafebabe');
+      });
     });
 
     // What this pins is that the summary is ONE line, not the mechanism that keeps it one: since

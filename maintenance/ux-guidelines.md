@@ -597,7 +597,9 @@ rendering supplied by the **surface-agnostic tool-display registry** (TUI-C30,
   wrong place, not as an error.
 - **The call line carries the params inline, shortened** — `▸ ✓ 📁 read_file(path=README.md)
   [done]`: caret (`▸`/`▾`) + status glyph + registry glyph + `name(arg=val, …)`. Values are
-  whitespace-collapsed, per-value truncated with `…`, the whole summary capped, and
+  whitespace-collapsed, per-value truncated with `…` (a path argument — `path`, `paths`,
+  `testPath`, `source`, `destination`, `cwd` — from the *left*, keeping the file name that tells
+  two calls apart in a deep tree; every other value from the right), the whole summary capped, and
   **secret-redacted** via the GS2-47 `redactSecrets` lineage — never a raw JSON dump (DL-4
   without noise). Status semantics: `⋯ running` (yellow), `✓ done` (magenta), `✗ error` (red),
   driven by the real `isError` signal (TUI-C7), never sniffed from text.

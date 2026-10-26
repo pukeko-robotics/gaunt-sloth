@@ -39,7 +39,8 @@ import { GH_READ_FILE_TOOL_NAME, getToolPreviewLines } from '#src/config/shell-p
 import type { GthConfig } from '#src/config/types.js';
 import { neutralizeToOneLine, neutralizeUntrustedText } from '#src/core/shell/framing.js';
 import type { GthCommand } from '#src/core/types.js';
-import { displayWidth, sliceToWidth } from '#src/utils/displayWidth.js';
+import { displayWidth, sliceEndToWidth, sliceToWidth } from '#src/utils/displayWidth.js';
+import { alignTailToSeparator, isPathArgument } from '#src/utils/pathArguments.js';
 import { collectSecretValues, redactText } from '#src/utils/redactSecrets.js';
 import { env } from '#src/utils/systemUtils.js';
 
@@ -346,6 +347,17 @@ function truncate(value: string, max: number): string {
 }
 
 /**
+ * [[TUI-C111]] — {@link truncate} from the other end: keep the TAIL behind a leading
+ * {@link ELLIPSIS}, aligned to a path separator where one survives. For path arguments, whose file
+ * name is the part that tells two calls apart. Columns are counted from the end by the shared width
+ * primitive, so a wide character or a cluster is kept whole or not at all.
+ */
+function truncateStart(value: string, max: number): string {
+  if (sliceToWidth(value, max) === value) return value;
+  return ELLIPSIS + alignTailToSeparator(sliceEndToWidth(value, max - ELLIPSIS_WIDTH));
+}
+
+/**
  * Render one arg value for the summary: strings neutralised onto one line + truncated, the rest
  * JSON-ish.
  *
@@ -363,7 +375,20 @@ function truncate(value: string, max: number): string {
  * path came to look tidy while an ESC walked through it: JavaScript's `\s` covers LF, CR and TAB
  * but not ESC, BEL, the C1 range or the bidi overrides.
  */
-function formatParamValue(value: unknown, secrets: readonly string[]): string {
+function formatParamValue(key: string, value: unknown, secrets: readonly string[]): string {
+  if (isPathArgument(key)) {
+    // [[TUI-C111]] — a `paths` array is cut ELEMENT by element before it is stringified: one cut
+    // over the stringified array would keep the head of the first path and lose every file name.
+    // The array as a whole is then bounded by the whole-summary cap rather than the per-value one,
+    // which would otherwise cut the first element's file name off again.
+    if (Array.isArray(value)) {
+      const elements = value.map((element) =>
+        typeof element === 'string' ? formatPathValue(element, secrets) : element
+      );
+      return neutralizeToOneLine(redactText(JSON.stringify(elements), secrets));
+    }
+    if (typeof value === 'string') return formatPathValue(value, secrets);
+  }
   let text: string;
   if (typeof value === 'string') {
     text = value;
@@ -377,6 +402,14 @@ function formatParamValue(value: unknown, secrets: readonly string[]): string {
     }
   }
   return truncate(neutralizeToOneLine(redactText(text, secrets)), TOOL_PARAM_VALUE_MAX_COLUMNS);
+}
+
+/** One path value: the same redact → neutralise → cut order as {@link formatParamValue}, cut from the start. */
+function formatPathValue(path: string, secrets: readonly string[]): string {
+  return truncateStart(
+    neutralizeToOneLine(redactText(path, secrets)),
+    TOOL_PARAM_VALUE_MAX_COLUMNS
+  );
 }
 
 /**
@@ -651,7 +684,7 @@ export function summariseToolCall(
     entry?.summariseArgs !== undefined
       ? entry.summariseArgs.filter((k) => args[k] !== undefined)
       : Object.keys(args);
-  const parts = keys.map((k) => `${k}=${formatParamValue(args[k], secrets)}`);
+  const parts = keys.map((k) => `${k}=${formatParamValue(k, args[k], secrets)}`);
   // Anything parsed but not summarised (write_file's content, unlisted keys) is signalled with
   // a trailing ellipsis so the summary never silently pretends to be the whole call.
   const hasHiddenArgs =

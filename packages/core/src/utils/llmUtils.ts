@@ -14,6 +14,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { debugLog } from '#src/utils/debugUtils.js';
 import { displayWarning } from '#src/utils/consoleUtils.js';
 import { truncateString } from '#src/utils/stringUtils.js';
+import { isPathArgument, truncatePathStart } from '#src/utils/pathArguments.js';
 import { GthConfig, PromptSegmentName, ScopedPromptsEntry } from '#src/config.js';
 import type { GthCommand } from '#src/core/types.js';
 import { SystemMessage } from '@langchain/core/messages';
@@ -476,6 +477,15 @@ export async function executeHooks<T extends (...args: any[]) => Promise<void>>(
 export function formatToolCallArgs(args: Record<string, unknown>): string {
   return Object.entries(args)
     .map(([key, value]) => {
+      // [[TUI-C111]] — a path keeps its END, so a deep tree's file names stay apart; a `paths`
+      // array is cut per element before stringifying, and the line cap bounds the whole.
+      if (isPathArgument(key)) {
+        if (typeof value === 'string') return `${key}: ${truncatePathStart(value, 50)}`;
+        if (Array.isArray(value)) {
+          const paths = value.map((p) => (typeof p === 'string' ? truncatePathStart(p, 50) : p));
+          return `${key}: ${JSON.stringify(paths)}`;
+        }
+      }
       let displayValue: string;
       if (typeof value === 'string') {
         displayValue = value;
