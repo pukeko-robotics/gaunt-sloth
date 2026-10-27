@@ -49,9 +49,9 @@
 
 // The stable-feature set of the v2 draft, not `experimental/v2/unstable`: nothing this app
 // advertises, handles or sends is unstable in the schema the SDK ships. Adopting a feature that is
-// (session fork, system prompts, usage on the idle update, MCP over ACP, subagents) moves EVERY ACP
-// import of this app — and of acpRouter.ts, acpStdio.ts and the v2 half of acpPermissions.ts — to
-// the unstable entrypoint together, because the stable parser strips unstable fields.
+// (session fork, system prompts, usage on the idle update, MCP over ACP, subagents) moves every
+// import of `experimental/v2` under modules/acp/ — grep for it, specs included — to the unstable
+// entrypoint together, because the stable parser strips unstable fields.
 import * as acp from '@agentclientprotocol/sdk/experimental/v2';
 import { randomUUID } from 'node:crypto';
 import { resolve as resolvePath } from 'node:path';
@@ -713,8 +713,10 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
       setImmediate(() => {
         // A close that landed in the gap between accepting the prompt and this tick wins: starting
         // the turn now would run it against a session already torn down, and nothing would be
-        // waiting for it. The id answered above is then never echoed, which the draft allows: the
-        // echo is owed only during the live session, and this one has ended.
+        // waiting for it. The id answered above is then never echoed. That is NOT settled as
+        // compliant: the draft's `session/close` says a prompt whose insertion the close prevented
+        // is answered `-32800`, and an inserted one with its id plus a final idle update — and this
+        // response has already gone out as a success. Left open on EXT-202 rather than guessed.
         if (session.closed) return;
         session.turn = invocation
           ? runCommandTurn(session, params.prompt, invocation, userMessageId)
