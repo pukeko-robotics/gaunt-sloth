@@ -1936,3 +1936,196 @@ describe('the ACP v2 agent — the real ndJsonStream transport', () => {
     expect(userMessageIds).toEqual([ackId]);
   });
 });
+
+/**
+ * [[EXT-202]] — requests that land between a prompt's acceptance and the tick its turn starts on.
+ *
+ * The draft's prompt response says the user message was INSERTED, and from then on it allows no
+ * silence: the message is echoed, and a `session/close` that cancels the work sends the final
+ * updates and an idle `cancelled` before it answers. A prompt the close kept out gets `-32800`.
+ * Every case here sends its requests back to back without awaiting, over the real ndjson framing,
+ * and reads the order off the bytes.
+ */
+describe('the ACP v2 agent — requests in the acceptance gap, on the wire', () => {
+  interface WireLine {
+    id?: string | number;
+    method?: string;
+    result?: Record<string, unknown>;
+    error?: { code: number; message: string };
+    params?: { update?: Record<string, unknown> };
+  }
+
+  /**
+   * Drives `send` against a real ndjson connection and returns everything the agent wrote, in
+   * order, with each response labelled by the method of the request it answers.
+   */
+  async function overTheWire(
+    script: AgentScript,
+    send: (ctx: acp.ClientContext, sessionId: string) => Promise<void>
+  ): Promise<{ lines: (WireLine & { answers?: string })[]; agent: FixtureAgent }> {
+    const agent = new FixtureAgent(script);
+    const agentApp = createAcpAgentApp({
+      loadConfig: async () => configWith(),
+      agentFactory: () => () => agent,
+      resolvers: {},
+    });
+    const decoder = new TextDecoder();
+    const toClient: string[] = [];
+    const toAgent: string[] = [];
+    const tapInto = (sink: string[]) =>
+      new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, controller) {
+          sink.push(decoder.decode(chunk, { stream: true }));
+          controller.enqueue(chunk);
+        },
+      });
+    const agentToClient = new TransformStream<Uint8Array, Uint8Array>();
+    const clientToAgent = new TransformStream<Uint8Array, Uint8Array>();
+    const agentConnection = agentApp.connect(
+      acp.ndJsonStream(agentToClient.writable, clientToAgent.readable.pipeThrough(tapInto(toAgent)))
+    );
+    await acp
+      .client({ name: 'ext-202-gap-client' })
+      .onNotification(acp.CLIENT_METHODS.session_update, () => undefined)
+      .connectWith(
+        acp.ndJsonStream(
+          clientToAgent.writable,
+          agentToClient.readable.pipeThrough(tapInto(toClient))
+        ),
+        async (ctx) => {
+          const sessionId = await newSession(ctx);
+          await send(ctx, sessionId);
+          // Let any turn the requests started report itself before the connection closes.
+          await new Promise((r) => setTimeout(r, 50));
+        }
+      );
+    agentConnection.close();
+
+    const parse = (chunks: string[]): WireLine[] =>
+      chunks
+        .join('')
+        .split('\n')
+        .filter((line) => line.trim().length > 0)
+        .map((line) => JSON.parse(line) as WireLine);
+    const methodOf = new Map(
+      parse(toAgent)
+        .filter((line) => line.method !== undefined && line.id !== undefined)
+        .map((line) => [line.id, line.method as string])
+    );
+    const lines = parse(toClient).map((line) =>
+      line.method === undefined && line.id !== undefined
+        ? { ...line, answers: methodOf.get(line.id) }
+        : line
+    );
+    return { lines, agent };
+  }
+
+  /** A compact, order-preserving rendering of the agent's side of the wire for one session. */
+  const shape = (lines: (WireLine & { answers?: string })[]): string[] =>
+    lines.flatMap((line) => {
+      if (line.answers === 'session/prompt') {
+        return [line.error ? `prompt error ${line.error.code}` : 'prompt ok'];
+      }
+      if (line.answers === 'session/close') return [line.error ? 'close error' : 'close ok'];
+      const update = line.params?.update;
+      if (line.method !== 'session/update' || !update) return [];
+      if (update.sessionUpdate === 'user_message') return ['user_message'];
+      if (update.sessionUpdate === 'state_update') {
+        return [
+          update.state === 'idle' ? `idle ${String(update.stopReason)}` : String(update.state),
+        ];
+      }
+      return [];
+    });
+
+  const promptOf = (ctx: acp.ClientContext, sessionId: string, text: string) =>
+    ctx
+      .request(acp.AGENT_METHODS.session_prompt, { sessionId, prompt: [{ type: 'text', text }] })
+      .catch(() => undefined);
+
+  it('echoes an accepted prompt and ends it cancelled BEFORE answering a close sent right after', async () => {
+    const { lines, agent } = await overTheWire({ events: textEvents('never') }, async (ctx, id) => {
+      const prompt = promptOf(ctx, id, 'question');
+      const close = ctx.request(acp.AGENT_METHODS.session_close, { sessionId: id });
+      await Promise.all([prompt, close]);
+    });
+
+    expect(shape(lines)).toEqual([
+      'prompt ok',
+      'user_message',
+      'running',
+      'idle cancelled',
+      'close ok',
+    ]);
+    const ack = lines.find((line) => line.answers === 'session/prompt');
+    const echoed = lines.find((line) => line.params?.update?.sessionUpdate === 'user_message');
+    expect(echoed?.params?.update?.messageId).toBe(ack?.result?.messageId);
+    // Cancelled before it started: the model was never asked.
+    expect(agent.seenPrompts).toEqual([]);
+  });
+
+  it('answers -32800 to a prompt that reaches a session while its close is unwinding', async () => {
+    const { lines } = await overTheWire({ events: textEvents('never') }, async (ctx, id) => {
+      const first = promptOf(ctx, id, 'first');
+      const close = ctx.request(acp.AGENT_METHODS.session_close, { sessionId: id });
+      const second = promptOf(ctx, id, 'second');
+      await Promise.all([first, close, second]);
+    });
+
+    expect(shape(lines)).toEqual([
+      'prompt ok',
+      'prompt error -32800',
+      'user_message',
+      'running',
+      'idle cancelled',
+      'close ok',
+    ]);
+  });
+
+  it('refuses a second prompt sent in the same tick, rather than running two turns at once', async () => {
+    const { lines, agent } = await overTheWire({ events: textEvents('one') }, async (ctx, id) => {
+      await Promise.all([promptOf(ctx, id, 'first'), promptOf(ctx, id, 'second')]);
+    });
+
+    expect(shape(lines)).toEqual([
+      'prompt ok',
+      'prompt error -32600',
+      'user_message',
+      'running',
+      'idle end_turn',
+    ]);
+    expect(agent.seenPrompts).toEqual(['first']);
+  });
+
+  it('ends a prompt cancelled before its turn started as cancelled, without asking the model', async () => {
+    const { lines, agent } = await overTheWire({ events: textEvents('never') }, async (ctx, id) => {
+      const prompt = promptOf(ctx, id, 'question');
+      await ctx.notify(acp.AGENT_METHODS.session_cancel, { sessionId: id });
+      await prompt;
+    });
+
+    expect(shape(lines)).toEqual(['prompt ok', 'user_message', 'running', 'idle cancelled']);
+    expect(agent.seenPrompts).toEqual([]);
+  });
+
+  /** Control: nothing in the gap. Must read the same before and after the fix. */
+  it('runs an ordinary turn to completion and then closes, with no extra idle', async () => {
+    const { lines, agent } = await overTheWire(
+      { events: textEvents('answer') },
+      async (ctx, id) => {
+        await promptOf(ctx, id, 'question');
+        await new Promise((r) => setTimeout(r, 50));
+        await ctx.request(acp.AGENT_METHODS.session_close, { sessionId: id });
+      }
+    );
+
+    expect(shape(lines)).toEqual([
+      'prompt ok',
+      'user_message',
+      'running',
+      'idle end_turn',
+      'close ok',
+    ]);
+    expect(agent.seenPrompts).toEqual(['question']);
+  });
+});

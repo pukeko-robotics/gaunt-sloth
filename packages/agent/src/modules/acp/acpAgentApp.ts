@@ -128,16 +128,21 @@ interface AcpSession {
    * permission requests inside it, are sent while no inbound request is in flight.
    */
   client: acp.AgentContext;
-  /** Aborts the running turn; `null` between turns. */
+  /**
+   * Aborts the current turn; `null` between turns. Set when `session/prompt` ACCEPTS a prompt, not
+   * when the turn starts a tick later, so it is also what marks the session busy.
+   */
   abort: AbortController | null;
   /**
-   * The running turn, so `session/close` can wait for it to finish unwinding. `runTurn` never
-   * rejects, so awaiting it is always safe. `null` between turns.
+   * The current turn, from acceptance on, so `session/close` can wait for it to finish unwinding —
+   * including a turn accepted but not yet started. Never rejects, so awaiting it is always safe.
+   * `null` before the first prompt.
    */
   turn: Promise<void> | null;
   /**
    * Set by `session/close` before anything else, so a prompt accepted moments earlier — whose turn
-   * is deferred to the next tick — does not start against a session that is going away.
+   * is deferred to the next tick — is ended as cancelled rather than run against a session that is
+   * going away.
    */
   closed: boolean;
   /** Set when `session/cancel` arrives, so the turn reports `cancelled` rather than `end_turn`. */
@@ -155,6 +160,12 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
   const agentFactoryFor = options.agentFactory ?? ((config) => resolveAgentFactory(config, 'lean'));
 
   const sessions = new Map<string, AcpSession>();
+  /**
+   * Sessions whose `session/close` is still unwinding. Already gone from `sessions`, so nothing new
+   * starts in them, but a prompt reaching one is told it was cancelled by the close (`-32800`) rather
+   * than that the session never existed.
+   */
+  const closingSessions = new Set<string>();
   /** The workspace this process is serving, bound by the first `session/new`. */
   let workspaceRoot: string | undefined;
   /**
@@ -262,12 +273,10 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
   const runTurn = async (
     session: AcpSession,
     prompt: acp.ContentBlock[],
-    userMessageId: string
+    userMessageId: string,
+    abort: AbortController
   ): Promise<void> => {
     const mapper = new AcpUpdateMapper();
-    const abort = new AbortController();
-    session.abort = abort;
-    session.cancelled = false;
 
     const text = promptText(prompt);
     /** Assistant text accumulated per message id, so the replay log can carry whole messages. */
@@ -493,11 +502,9 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
     userMessageId: string
   ): Promise<void> => {
     let stopReason: AcpV2StopReason = 'end_turn';
-    // The same occupancy `runTurn` takes, so the concurrency check in `session/prompt` covers a
-    // command exactly as it covers a model turn. Without it a prompt arriving mid-command would be
-    // accepted, and its `state_update`s would interleave with this one's — telling the client a
-    // turn had ended while another was still running.
-    session.abort = new AbortController();
+    // The session is already marked busy: `session/prompt` set `session.abort` when it accepted
+    // this command, so a prompt arriving mid-command is refused exactly as it is mid-turn. Released
+    // below, as `runTurn` releases it.
     try {
       const userMessage: acp.SessionUpdate = {
         sessionUpdate: 'user_message',
@@ -536,11 +543,60 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
     }
   };
 
+  /**
+   * Ends a turn whose prompt was accepted — its user message inserted and its `messageId` already
+   * answered — but which was cancelled or closed before it started. Nothing reaches the runner.
+   *
+   * The draft owes the client three things here, and this sends exactly them:
+   * - the user message, under the answered id: "Agents must echo the message during the live
+   *   session" (`PromptResponse.messageId`), and a retained message keeps that id on replay;
+   * - `running`, because the agent "MUST report `running` when foreground work starts … and `idle`
+   *   when it ends" (`StateUpdate`), and an accepted prompt is foreground work;
+   * - `idle` with `cancelled`: "When closing cancels active foreground work, the Agent MUST send the
+   *   final updates for that work and the idle `state_update` with `stopReason: \"cancelled\"`
+   *   before responding successfully to `session/close`" (`CloseSessionRequest`). `session/close`
+   *   awaits this function through `session.turn`, which is what puts these before its response.
+   *
+   * Never rejects, for the reason {@link runTurn} gives.
+   */
+  const endUnstartedTurn = async (
+    session: AcpSession,
+    prompt: acp.ContentBlock[],
+    userMessageId: string
+  ): Promise<void> => {
+    try {
+      const userMessage: acp.SessionUpdate = {
+        sessionUpdate: 'user_message',
+        messageId: userMessageId,
+        content: prompt,
+      };
+      session.replayLog.push(userMessage);
+      await sendUpdate(session, userMessage);
+      await sendState(session, { state: 'running' });
+    } catch {
+      /* the connection is already gone; the idle state below is still attempted */
+    } finally {
+      session.abort = null;
+      await sendState(session, { state: 'idle', stopReason: 'cancelled' } as acp.StateUpdate).catch(
+        () => undefined
+      );
+    }
+  };
+
   const closeSession = async (session: AcpSession): Promise<void> => {
     session.closed = true;
     session.cancelled = true;
     session.abort?.abort();
     sessions.delete(session.sessionId);
+    closingSessions.add(session.sessionId);
+    try {
+      await finishClose(session);
+    } finally {
+      closingSessions.delete(session.sessionId);
+    }
+  };
+
+  const finishClose = async (session: AcpSession): Promise<void> => {
     // Wait for the aborted turn to finish unwinding before anything else. `cleanup()` does not do
     // this — it drops the agent and returns — so releasing the workspace below without the wait
     // would let a `session/new` for another directory reassign INIT_CWD out from under a turn still
@@ -684,6 +740,17 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
       return {};
     })
     .onRequest(acp.AGENT_METHODS.session_prompt, ({ params }) => {
+      // The other half of the `session/close` rule: "If closing prevents a prompt's user message
+      // from being inserted, the Agent MUST answer that request with `-32800` (Request
+      // Cancelled)." A prompt reaching a session whose close is still unwinding is exactly that.
+      // Once the close has finished the session simply does not exist, which is `sessionOrThrow`'s
+      // answer, as it is for any unknown id.
+      if (closingSessions.has(params.sessionId)) {
+        throw acp.RequestError.requestCancelled(
+          { sessionId: params.sessionId },
+          'This session is closing; the prompt was not added to it.'
+        );
+      }
       const session = sessionOrThrow(params.sessionId);
       if (session.abort) {
         throw acp.RequestError.invalidRequest(
@@ -710,17 +777,32 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
       // response is sent. It is not the id of any agent message: each message type has its own id
       // space, and those are minted where each message starts.
       const userMessageId = randomUUID();
-      setImmediate(() => {
-        // A close that landed in the gap between accepting the prompt and this tick wins: starting
-        // the turn now would run it against a session already torn down, and nothing would be
-        // waiting for it. The id answered above is then never echoed. That is NOT settled as
-        // compliant: the draft's `session/close` says a prompt whose insertion the close prevented
-        // is answered `-32800`, and an inserted one with its id plus a final idle update — and this
-        // response has already gone out as a success. Left open on EXT-202 rather than guessed.
-        if (session.closed) return;
-        session.turn = invocation
+      // **Insertion happens HERE, synchronously, and so does everything that depends on it.** This
+      // response says the user message was inserted ("Response acknowledging that a user prompt
+      // was inserted into the ACP conversation"), and once it is, the draft allows no error and no
+      // silence: "If the message has already been inserted, the Agent MUST respond successfully
+      // with its `messageId`", the message must be echoed during the live session, and a close
+      // that cancels the work must send its final updates and an idle `cancelled` first. So the
+      // turn is owned from this moment, not from the tick it starts on:
+      // - the session is marked busy now, so a second prompt in the same tick is refused (not
+      //   inserted, so an error is the draft's answer) instead of being accepted beside this one;
+      // - the abort exists now, so a `session/cancel` or `session/close` landing before the turn
+      //   starts aborts THIS turn rather than nothing;
+      // - `session.turn` exists now, so `session/close` waits for it, and a turn aborted before it
+      //   starts is ended by `endUnstartedTurn` with the echo and the idle `cancelled`.
+      // Rejected: inserting the user message on the wire before answering. The draft allows either
+      // order, but answering first is what the rest of this surface and its clients rely on.
+      // Rejected: answering a closed-in-the-gap prompt `-32800` — it has already been answered.
+      const abort = new AbortController();
+      session.abort = abort;
+      session.cancelled = false;
+      session.turn = new Promise<void>((resolve) => setImmediate(resolve)).then(() => {
+        if (session.closed || abort.signal.aborted) {
+          return endUnstartedTurn(session, params.prompt, userMessageId);
+        }
+        return invocation
           ? runCommandTurn(session, params.prompt, invocation, userMessageId)
-          : runTurn(session, params.prompt, userMessageId);
+          : runTurn(session, params.prompt, userMessageId, abort);
       });
       return { messageId: userMessageId };
     })
