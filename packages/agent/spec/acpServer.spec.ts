@@ -679,7 +679,7 @@ describe('the ACP v2 agent — session lifecycle', () => {
     expect(outcome).toContain('Invalid params');
   });
 
-  it('answers session/prompt with a bare acknowledgement, before any update for that turn', async () => {
+  it('answers session/prompt with only the user message id, before any update for that turn', async () => {
     const { response, updatesAtResponse } = await withClient(
       { script: { events: textEvents('later') } },
       async (ctx, h) => {
@@ -696,7 +696,8 @@ describe('the ACP v2 agent — session lifecycle', () => {
       }
     );
 
-    expect(response).toEqual({});
+    // The draft's acknowledgement names the user message it inserted, and says nothing else.
+    expect(response).toEqual({ messageId: expect.any(String) });
     expect(updatesAtResponse).toBe(0);
   });
 
@@ -721,7 +722,7 @@ describe('the ACP v2 agent — session lifecycle', () => {
     );
 
     // The response had already been given, and it carries nothing about how the turn ended.
-    expect(response).toEqual({});
+    expect(response).toEqual({ messageId: expect.any(String) });
     expect(response).not.toHaveProperty('stopReason');
     expect(view.states.at(-1)).toMatchObject({ state: 'idle', stopReason: 'cancelled' });
     // What was streamed before the cancel is still delivered.
@@ -1832,13 +1833,25 @@ describe('the ACP v2 agent — the real ndJsonStream transport', () => {
       .split('\n')
       .filter((line) => line.trim().length > 0)
       .map((line) => JSON.parse(line) as Record<string, unknown>);
+    // The prompt's acknowledgement is the one result whose only field is the user message id.
     const ackIndex = lines.findIndex(
-      (line) => line.result !== undefined && Object.keys(line.result as object).length === 0
+      (line) =>
+        line.result !== undefined &&
+        Object.keys(line.result as object).join(',') === 'messageId'
     );
     const firstUpdateIndex = lines.findIndex((line) => line.method === 'session/update');
     expect(ackIndex).toBeGreaterThanOrEqual(0);
     expect(firstUpdateIndex).toBeGreaterThanOrEqual(0);
     // On the wire, not just in memory: the acknowledgement precedes the first notification.
     expect(ackIndex).toBeLessThan(firstUpdateIndex);
+    // And the id survives serialization on both sides: the user message on the wire carries the
+    // same value the acknowledgement did.
+    const ackId = (lines[ackIndex].result as { messageId: string }).messageId;
+    const userMessageIds = lines
+      .filter((line) => line.method === 'session/update')
+      .map((line) => (line.params as { update: Record<string, unknown> }).update)
+      .filter((update) => update.sessionUpdate === 'user_message')
+      .map((update) => update.messageId);
+    expect(userMessageIds).toEqual([ackId]);
   });
 });

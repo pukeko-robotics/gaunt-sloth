@@ -41,7 +41,7 @@
     "@a2a-js/sdk": "^1.3.0",
     "@ag-ui/core": "^1.0.3",
     "@ag-ui/encoder": "^1.0.3",
-    "@agentclientprotocol/sdk": "1.4.0",
+    "@agentclientprotocol/sdk": "2.0.2",
     "@gaunt-sloth/core": "workspace:*",
     "@langchain/core": "^1.3.0",
     "@langchain/langgraph": "1.5.2",

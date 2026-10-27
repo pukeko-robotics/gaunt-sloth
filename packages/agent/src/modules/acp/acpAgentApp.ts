@@ -22,8 +22,9 @@
  * ## The prompt lifecycle is the part that looks wrong until you read the spec
  *
  * This is also the sharpest difference from v1, which answers the prompt request with the stop
- * reason itself. In v2 `session/prompt` returns `{}` **as soon as the prompt is accepted** — not
- * when the turn finishes.
+ * reason itself. In v2 `session/prompt` returns **as soon as the prompt is accepted** — not when the
+ * turn finishes — and its only content is the `messageId` of the user message it inserted, which
+ * the turn's `user_message` update carries too.
  * Progress, tool calls and the final stop reason all arrive as `session/update` notifications, and
  * the turn is over when an idle `state_update` carrying a stop reason lands. That is what makes
  * cancellation expressible at all: a cancelled turn reports `cancelled` on a `state_update`, while
@@ -100,6 +101,15 @@ import type { AcpAgentAppOptions } from '#src/modules/acp/acpCommon.js';
 
 export { ACP_AGENT_NAME, ACP_AGENT_TITLE, announceAcpStart, isSameWorkspace };
 export type { AcpAgentAppOptions };
+
+/**
+ * A v2 stop reason, as the idle `state_update` carries it.
+ *
+ * Derived from the SDK's own idle-state type rather than widened to `string`, so the build still
+ * checks what this module puts on the wire. The draft names the five closed reasons, `error`, and
+ * underscore-prefixed custom reasons; the SDK no longer exports a standalone alias for that union.
+ */
+type AcpV2StopReason = NonNullable<acp.IdleStateUpdate['stopReason']>;
 
 /** One live ACP session: its workspace, its runner, and the turn currently running in it. */
 interface AcpSession {
@@ -244,17 +254,20 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
     }
   };
 
-  const runTurn = async (session: AcpSession, prompt: acp.ContentBlock[]): Promise<void> => {
+  const runTurn = async (
+    session: AcpSession,
+    prompt: acp.ContentBlock[],
+    userMessageId: string
+  ): Promise<void> => {
     const mapper = new AcpUpdateMapper();
     const abort = new AbortController();
     session.abort = abort;
     session.cancelled = false;
 
     const text = promptText(prompt);
-    const userMessageId = randomUUID();
     /** Assistant text accumulated per message id, so the replay log can carry whole messages. */
     const assistantText = new Map<string, string>();
-    let stopReason: acp.StopReason = 'end_turn';
+    let stopReason: AcpV2StopReason = 'end_turn';
 
     try {
       // The spec's step 2: after accepting the prompt, report where the user message landed.
@@ -471,9 +484,10 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
   const runCommandTurn = async (
     session: AcpSession,
     prompt: acp.ContentBlock[],
-    invocation: AcpCommandInvocation
+    invocation: AcpCommandInvocation,
+    userMessageId: string
   ): Promise<void> => {
-    let stopReason: acp.StopReason = 'end_turn';
+    let stopReason: AcpV2StopReason = 'end_turn';
     // The same occupancy `runTurn` takes, so the concurrency check in `session/prompt` covers a
     // command exactly as it covers a model turn. Without it a prompt arriving mid-command would be
     // accepted, and its `state_update`s would interleave with this one's — telling the client a
@@ -482,7 +496,7 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
     try {
       const userMessage: acp.SessionUpdate = {
         sessionUpdate: 'user_message',
-        messageId: randomUUID(),
+        messageId: userMessageId,
         content: prompt,
       };
       session.replayLog.push(userMessage);
@@ -682,16 +696,26 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
       // text only because neither dialect has an invoke method for it. Everything else — which is
       // very nearly everything — is untouched and goes to the model.
       const invocation = parseAcpSessionCommand(params.prompt);
+      // The id of the USER message this prompt inserts into the conversation. The v2 draft makes
+      // it required on this response and requires the turn's `user_message` update to carry the
+      // same value, in either order on the wire; a replayed copy keeps it too. So it is minted
+      // here, where the response is built, and handed to whichever turn runs — a model turn and a
+      // command turn alike, since both echo the prompt as a user message. Minting it inside the
+      // turn would leave the response with nothing to name, because the turn starts after the
+      // response is sent. It is not the id of any agent message: each message type has its own id
+      // space, and those are minted where each message starts.
+      const userMessageId = randomUUID();
       setImmediate(() => {
         // A close that landed in the gap between accepting the prompt and this tick wins: starting
         // the turn now would run it against a session already torn down, and nothing would be
-        // waiting for it.
+        // waiting for it. The id answered above is then never echoed, which the draft allows: the
+        // echo is owed only during the live session, and this one has ended.
         if (session.closed) return;
         session.turn = invocation
-          ? runCommandTurn(session, params.prompt, invocation)
-          : runTurn(session, params.prompt);
+          ? runCommandTurn(session, params.prompt, invocation, userMessageId)
+          : runTurn(session, params.prompt, userMessageId);
       });
-      return {};
+      return { messageId: userMessageId };
     })
     .onNotification(acp.AGENT_METHODS.session_cancel, ({ params }) => {
       const session = sessions.get(params.sessionId);
