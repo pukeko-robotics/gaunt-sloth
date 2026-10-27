@@ -60,7 +60,7 @@
     "strip-ansi": "^7.2.0",
     "typedoc": "^0.28.20",
     "typescript": "npm:@typescript/typescript6@^6.0.2",
-    "vite": "~8.2.4",
+    "vite": "^8.3.5",
     "vitest": "^5.0.5"
   }
 }

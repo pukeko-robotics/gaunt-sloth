@@ -154,6 +154,16 @@ const TUI_RENDER_TIMEOUT_MS = 60_000;
 
 export default defineConfig({
   plugins: [resolveWorkspaceImports()],
+  // Leave workspace sources' template dynamic imports as real `import()` calls, resolved at run
+  // time through the plugin above. vite expands one such as the config loader's
+  // `#src/providers/${type}.js` into a glob, resolving the `#src` prefix through the package's own
+  // `imports` map, which points at `dist/`. That bypasses the plugin, so the module under test
+  // loads the BUILT provider, a `vi.doMock('#src/providers/<name>.js')` never intercepts it, and an
+  // unknown provider fails with vite's glob error instead of Node's "Cannot find module", which
+  // the loader turns into "not supported".
+  build: {
+    dynamicImportVarsOptions: { exclude: [/node_modules/, /\/packages\/[^/]+\/src\//] },
+  },
   // Ink .tsx components/specs compile via vitest's default transformer (oxc), which uses
   // the React 19 automatic JSX runtime out of the box; no extra jsx config needed.
   test: {
