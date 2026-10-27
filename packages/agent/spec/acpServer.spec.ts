@@ -771,8 +771,8 @@ describe('the ACP v2 agent — session lifecycle', () => {
       expect(userMessageIdsOf(replayed)).toEqual([response.messageId]);
     });
 
-    it('is the id on a command turn’s user message', async () => {
-      const { response, view } = await withClient(
+    it('is the id on a command turn’s user message, and on its replay', async () => {
+      const { response, live, replayed, view } = await withClient(
         { script: { events: textEvents('never reached') } },
         async (ctx, h) => {
           const sessionId = await newSession(ctx);
@@ -781,13 +781,20 @@ describe('the ACP v2 agent — session lifecycle', () => {
             prompt: [{ type: 'text', text: '/approvals' }],
           });
           await waitForStop(h.view);
-          return { response, view: h.view };
+          const live = [...h.view.updates];
+          await ctx.request(acp.AGENT_METHODS.session_resume, {
+            sessionId,
+            cwd: workspace,
+            replayFrom: { type: 'start' },
+          });
+          return { response, live, replayed: h.view.updates.slice(live.length), view: h.view };
         }
       );
 
       // A command turn, not a model turn: its answer is the command's own text.
       expect(view.textOf(view.agentMessages)).not.toContain('never reached');
-      expect(userMessageIdsOf(view.updates)).toEqual([response.messageId]);
+      expect(userMessageIdsOf(live)).toEqual([response.messageId]);
+      expect(userMessageIdsOf(replayed)).toEqual([response.messageId]);
     });
 
     it('is a fresh id for each prompt in a session', async () => {
