@@ -553,7 +553,7 @@ export function createAcpAgentApp(options: AcpAgentAppOptions = {}): acp.AgentAp
    * - `running`, because the agent "MUST report `running` when foreground work starts … and `idle`
    *   when it ends" (`StateUpdate`), and an accepted prompt is foreground work;
    * - `idle` with `cancelled`: "When closing cancels active foreground work, the Agent MUST send the
-   *   final updates for that work and the idle `state_update` with `stopReason: \"cancelled\"`
+   *   final updates for that work and the idle `state_update` with `stopReason: "cancelled"`
    *   before responding successfully to `session/close`" (`CloseSessionRequest`). `session/close`
    *   awaits this function through `session.turn`, which is what puts these before its response.
    *

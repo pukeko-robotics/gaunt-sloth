@@ -1965,10 +1965,18 @@ describe('the ACP v2 agent — requests in the acceptance gap, on the wire', () 
   /**
    * Drives `send` against a real ndjson connection and returns everything the agent wrote, in
    * order, with each response labelled by the method of the request it answers.
+   *
+   * `idles(n)` resolves once the client has received its `n`th idle `state_update`, so a case waits
+   * for the turn it depends on rather than for a guess at how long that turn takes. The tap records
+   * the agent's bytes before the client parses them, so every line up to that idle is in `lines`.
    */
   async function overTheWire(
     script: AgentScript,
-    send: (ctx: acp.ClientContext, sessionId: string) => Promise<void>
+    send: (
+      ctx: acp.ClientContext,
+      sessionId: string,
+      idles: (count: number) => Promise<void>
+    ) => Promise<void>
   ): Promise<{ lines: (WireLine & { answers?: string })[]; agent: FixtureAgent }> {
     const agent = new FixtureAgent(script);
     const agentApp = createAcpAgentApp({
@@ -1991,9 +1999,15 @@ describe('the ACP v2 agent — requests in the acceptance gap, on the wire', () 
     const agentConnection = agentApp.connect(
       acp.ndJsonStream(agentToClient.writable, clientToAgent.readable.pipeThrough(tapInto(toAgent)))
     );
+    let idlesSeen = 0;
+    const idles = (count: number): Promise<void> =>
+      waitUntil(() => idlesSeen >= count, `idle state update #${count}`);
     await acp
       .client({ name: 'ext-202-gap-client' })
-      .onNotification(acp.CLIENT_METHODS.session_update, () => undefined)
+      .onNotification(acp.CLIENT_METHODS.session_update, ({ params }) => {
+        const update = params.update as { sessionUpdate?: string; state?: string };
+        if (update.sessionUpdate === 'state_update' && update.state === 'idle') idlesSeen += 1;
+      })
       .connectWith(
         acp.ndJsonStream(
           clientToAgent.writable,
@@ -2001,9 +2015,7 @@ describe('the ACP v2 agent — requests in the acceptance gap, on the wire', () 
         ),
         async (ctx) => {
           const sessionId = await newSession(ctx);
-          await send(ctx, sessionId);
-          // Let any turn the requests started report itself before the connection closes.
-          await new Promise((r) => setTimeout(r, 50));
+          await send(ctx, sessionId, idles);
         }
       );
     agentConnection.close();
@@ -2090,9 +2102,13 @@ describe('the ACP v2 agent — requests in the acceptance gap, on the wire', () 
   });
 
   it('refuses a second prompt sent in the same tick, rather than running two turns at once', async () => {
-    const { lines, agent } = await overTheWire({ events: textEvents('one') }, async (ctx, id) => {
-      await Promise.all([promptOf(ctx, id, 'first'), promptOf(ctx, id, 'second')]);
-    });
+    const { lines, agent } = await overTheWire(
+      { events: textEvents('one') },
+      async (ctx, id, idles) => {
+        await Promise.all([promptOf(ctx, id, 'first'), promptOf(ctx, id, 'second')]);
+        await idles(1);
+      }
+    );
 
     expect(shape(lines)).toEqual([
       'prompt ok',
@@ -2105,23 +2121,58 @@ describe('the ACP v2 agent — requests in the acceptance gap, on the wire', () 
   });
 
   it('ends a prompt cancelled before its turn started as cancelled, without asking the model', async () => {
-    const { lines, agent } = await overTheWire({ events: textEvents('never') }, async (ctx, id) => {
-      const prompt = promptOf(ctx, id, 'question');
-      await ctx.notify(acp.AGENT_METHODS.session_cancel, { sessionId: id });
-      await prompt;
-    });
+    const { lines, agent } = await overTheWire(
+      { events: textEvents('never') },
+      async (ctx, id, idles) => {
+        const prompt = promptOf(ctx, id, 'question');
+        await ctx.notify(acp.AGENT_METHODS.session_cancel, { sessionId: id });
+        await prompt;
+        await idles(1);
+      }
+    );
 
     expect(shape(lines)).toEqual(['prompt ok', 'user_message', 'running', 'idle cancelled']);
     expect(agent.seenPrompts).toEqual([]);
+  });
+
+  /**
+   * A turn cancelled before it started must leave the session as an ordinary finished turn does:
+   * free for the next prompt, and with nothing of the cancel carried into that prompt's turn.
+   */
+  it('accepts the next prompt after a cancel in the gap, and reports that turn on its own terms', async () => {
+    const { lines, agent } = await overTheWire(
+      { events: textEvents('answer') },
+      async (ctx, id, idles) => {
+        const first = promptOf(ctx, id, 'first');
+        await ctx.notify(acp.AGENT_METHODS.session_cancel, { sessionId: id });
+        await first;
+        await idles(1);
+        // A refused prompt starts no turn, so there is no second idle to wait for; the wire shape
+        // below then says what went wrong instead of a timeout.
+        if (await promptOf(ctx, id, 'second')) await idles(2);
+      }
+    );
+
+    expect(shape(lines)).toEqual([
+      'prompt ok',
+      'user_message',
+      'running',
+      'idle cancelled',
+      'prompt ok',
+      'user_message',
+      'running',
+      'idle end_turn',
+    ]);
+    expect(agent.seenPrompts).toEqual(['second']);
   });
 
   /** Control: nothing in the gap. Must read the same before and after the fix. */
   it('runs an ordinary turn to completion and then closes, with no extra idle', async () => {
     const { lines, agent } = await overTheWire(
       { events: textEvents('answer') },
-      async (ctx, id) => {
+      async (ctx, id, idles) => {
         await promptOf(ctx, id, 'question');
-        await new Promise((r) => setTimeout(r, 50));
+        await idles(1);
         await ctx.request(acp.AGENT_METHODS.session_close, { sessionId: id });
       }
     );
