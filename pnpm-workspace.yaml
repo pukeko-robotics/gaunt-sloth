@@ -24,10 +24,12 @@ overrides:
   # 10.x, for eslint, typescript-eslint and typedoc, and the ReDoS advisories against minimatch are
   # fixed on it. An override would hold nothing down that the tree does not already resolve to.
 
-# No `allowBuilds` map: no dependency in the tree needs an install or build script. The PTY
-# harness, @microsoft/tui-test, ships its terminal engine as prebuilt per-platform packages. If an
-# install ever aborts with ERR_PNPM_IGNORED_BUILDS, approve the named package deliberately with
-# `pnpm approve-builds` (pnpm 11 writes an `allowBuilds` map here) rather than allowing scripts
+# Install scripts: exactly one package may run one, and the `allowBuilds` map at the end of this
+# file names it. `koffi` is the FFI library the PTY harness, @microsoft/tui-test, uses to load its
+# prebuilt Rust terminal engine (an `@microsoft/tui-test-<platform>` shared library). Its install
+# script loads koffi's own prebuilt `@koromix/koffi-<platform>` binary as a check and compiles from
+# source with CMake only if that load fails. If an install aborts with ERR_PNPM_IGNORED_BUILDS for
+# any other package, approve that package by name, deliberately, rather than allowing scripts
 # wholesale.
 
 # Strict mode: refuse an immature package outright rather than install it and append an exception
@@ -72,3 +74,6 @@ minimumReleaseAgeExclude:
   - '@gaunt-sloth/batch'
   - '@gaunt-sloth/core'
   - '@gaunt-sloth/review'
+
+allowBuilds:
+  koffi: true
