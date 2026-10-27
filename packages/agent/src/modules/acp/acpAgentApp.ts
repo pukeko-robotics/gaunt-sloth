@@ -47,6 +47,11 @@
  * tools — is the kind of quiet wrongness that is worse than an error a host can report.
  */
 
+// The stable-feature set of the v2 draft, not `experimental/v2/unstable`: nothing this app
+// advertises, handles or sends is unstable in the schema the SDK ships. Adopting a feature that is
+// (session fork, system prompts, usage on the idle update, MCP over ACP, subagents) moves EVERY ACP
+// import of this app — and of acpRouter.ts, acpStdio.ts and the v2 half of acpPermissions.ts — to
+// the unstable entrypoint together, because the stable parser strips unstable fields.
 import * as acp from '@agentclientprotocol/sdk/experimental/v2';
 import { randomUUID } from 'node:crypto';
 import { resolve as resolvePath } from 'node:path';

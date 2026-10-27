@@ -44,6 +44,11 @@
  * on v2.
  */
 
+// The package root serves stable v1 only, not `@agentclientprotocol/sdk/unstable`: nothing this app
+// advertises, handles or sends is unstable in the schema the SDK ships, and the capabilities Zed
+// advertises (session config options, terminal auth, elicitation) are stable v1 too. Adopting an
+// unstable feature (usage on the prompt response, system prompts, session fork, plan updates by id)
+// moves EVERY v1 import — this app, acpUpdatesV1.ts, acpPermissionsV1.ts — to `/unstable` together.
 import * as acp from '@agentclientprotocol/sdk';
 import { randomUUID } from 'node:crypto';
 import { resolve as resolvePath } from 'node:path';

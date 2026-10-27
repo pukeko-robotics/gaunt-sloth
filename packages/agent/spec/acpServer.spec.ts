@@ -736,6 +736,88 @@ describe('the ACP v2 agent — session lifecycle', () => {
     expect(view.textOf(view.agentMessages)).toContain(TERMINATION_NOTICE_TITLE_PREFIX);
   });
 
+  /**
+   * [[EXT-202]] — the v2 draft's prompt response names the user message the prompt inserted, and
+   * the turn's `user_message` update must carry that same id; a replayed copy keeps it. A command
+   * turn echoes its prompt as a user message too, so it is held to the same relation.
+   */
+  describe('the user message id the prompt response names', () => {
+    const userMessageIdsOf = (updates: acp.SessionUpdate[]): unknown[] =>
+      updates
+        .filter((update) => update.sessionUpdate === 'user_message')
+        .map((update) => (update as { messageId: string }).messageId);
+
+    it('is the id on the model turn’s user message, and on its replay', async () => {
+      const { response, live, replayed } = await withClient(
+        { script: { events: textEvents('answer') } },
+        async (ctx, h) => {
+          const sessionId = await newSession(ctx);
+          const response = await ctx.request(acp.AGENT_METHODS.session_prompt, {
+            sessionId,
+            prompt: [{ type: 'text', text: 'question' }],
+          });
+          await waitForStop(h.view);
+          const live = [...h.view.updates];
+          await ctx.request(acp.AGENT_METHODS.session_resume, {
+            sessionId,
+            cwd: workspace,
+            replayFrom: { type: 'start' },
+          });
+          return { response, live, replayed: h.view.updates.slice(live.length) };
+        }
+      );
+
+      expect(userMessageIdsOf(live)).toEqual([response.messageId]);
+      expect(userMessageIdsOf(replayed)).toEqual([response.messageId]);
+    });
+
+    it('is the id on a command turn’s user message', async () => {
+      const { response, view } = await withClient(
+        { script: { events: textEvents('never reached') } },
+        async (ctx, h) => {
+          const sessionId = await newSession(ctx);
+          const response = await ctx.request(acp.AGENT_METHODS.session_prompt, {
+            sessionId,
+            prompt: [{ type: 'text', text: '/approvals' }],
+          });
+          await waitForStop(h.view);
+          return { response, view: h.view };
+        }
+      );
+
+      // A command turn, not a model turn: its answer is the command's own text.
+      expect(view.textOf(view.agentMessages)).not.toContain('never reached');
+      expect(userMessageIdsOf(view.updates)).toEqual([response.messageId]);
+    });
+
+    it('is a fresh id for each prompt in a session', async () => {
+      const { responses, view } = await withClient(
+        { script: { events: textEvents('answer') } },
+        async (ctx, h) => {
+          const sessionId = await newSession(ctx);
+          const responses = [];
+          for (const [turn, text] of ['first', 'second'].entries()) {
+            responses.push(
+              await ctx.request(acp.AGENT_METHODS.session_prompt, {
+                sessionId,
+                prompt: [{ type: 'text', text }],
+              })
+            );
+            await waitUntil(
+              () => h.view.states.filter((state) => state.state === 'idle').length === turn + 1,
+              `idle after the ${text} prompt`
+            );
+          }
+          return { responses, view: h.view };
+        }
+      );
+
+      const ids = responses.map((response) => response.messageId);
+      expect(new Set(ids).size).toBe(2);
+      expect(userMessageIdsOf(view.updates)).toEqual(ids);
+    });
+  });
+
   it('reports a failed turn as idle rather than leaving the client waiting', async () => {
     const view = await withClient(
       { script: { events: [], throwAfterEvents: 'the model exploded' } },
@@ -1836,8 +1918,7 @@ describe('the ACP v2 agent — the real ndJsonStream transport', () => {
     // The prompt's acknowledgement is the one result whose only field is the user message id.
     const ackIndex = lines.findIndex(
       (line) =>
-        line.result !== undefined &&
-        Object.keys(line.result as object).join(',') === 'messageId'
+        line.result !== undefined && Object.keys(line.result as object).join(',') === 'messageId'
     );
     const firstUpdateIndex = lines.findIndex((line) => line.method === 'session/update');
     expect(ackIndex).toBeGreaterThanOrEqual(0);
