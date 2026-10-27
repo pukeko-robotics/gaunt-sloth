@@ -44,7 +44,7 @@
     "@gaunt-sloth/batch": "*"
   },
   "devDependencies": {
-    "@gaunt-sloth/batch": "2.2.3",
+    "@gaunt-sloth/batch": "2.3.1",
     "fast-xml-parser": "^5.11.2"
   },
   "publishConfig": {

@@ -533,7 +533,7 @@ describe('GS2-23 compactMessages — the compacted shape through the real provid
         convertMessagesToGeminiSystemInstruction: (
           messages: BaseMessage[]
         ) => { parts: { text?: string }[] } | undefined;
-      }>('@langchain/google', 'converters/messages.js');
+      }>('@langchain/google', 'converters/generate_content/messages.js');
 
     const messages = await compacted(geminiCalling);
     const contents = convertMessagesToGeminiContents(messages);

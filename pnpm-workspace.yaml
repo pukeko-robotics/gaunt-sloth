@@ -18,36 +18,35 @@ packages:
 # type clash ("ChatXAI is not assignable to BaseChatModel"). Deduping core alone
 # is enough — the provider copies then all build against the same core type.
 overrides:
-  '@langchain/core': ^1.2.17
-
+  '@langchain/core': ^1.3.0
   # OPS-120 — there is deliberately NO `minimatch` override. The tree holds a single minimatch line,
   # 10.x, for eslint, typescript-eslint and typedoc, and the ReDoS advisories against minimatch are
   # fixed on it. An override would hold nothing down that the tree does not already resolve to.
 
-# No `allowBuilds` map: no dependency in the tree needs an install or build script. The PTY
-# harness, @microsoft/tui-test, ships its terminal engine as prebuilt per-platform packages. If an
-# install ever aborts with ERR_PNPM_IGNORED_BUILDS, approve the named package deliberately with
-# `pnpm approve-builds` (pnpm 11 writes an `allowBuilds` map here) rather than allowing scripts
-# wholesale.
+  # No `allowBuilds` map: no dependency in the tree needs an install or build script. The PTY
+  # harness, @microsoft/tui-test, ships its terminal engine as prebuilt per-platform packages. If an
+  # install ever aborts with ERR_PNPM_IGNORED_BUILDS, approve the named package deliberately with
+  # `pnpm approve-builds` (pnpm 11 writes an `allowBuilds` map here) rather than allowing scripts
+  # wholesale.
 
-# Strict mode: refuse an immature package outright rather than install it and append an exception
-# here. A refusal is this guard working, not a broken build.
-#
-# Remedies, in order of preference: wait out the 24-hour window and install again; pin the older
-# mature version deliberately; or, only if it is genuinely urgent, have a HUMAN add a reviewed and
-# explicitly temporary exclusion and remove it once the version has aged. It is never "add the
-# package so the build goes green" — that is the behaviour strict mode exists to stop.
-#
-# It looks inert at first: the flag is not part of pnpm's lockfile-verification cache key, so where
-# this lockfile is already verified the check is skipped and an install exits 0 in about 200 ms
-# having checked nothing. It starts biting when the lockfile next changes.
-#
-# The window is 1440 minutes — the 24 hours the remedies above name. It is written out rather than
-# left to pnpm's default because that default is undocumented: measured on pnpm 11.3.0 (the version
-# `packageManager` pins here), an absent value enforced this very same 24-hour cutoff, so this line
-# changes nothing today, and a future pnpm that moved its default could not silently falsify the 24
-# hours promised above. Two careful readers had already taken the missing value for a window of
-# length zero (OPS-128).
+  # Strict mode: refuse an immature package outright rather than install it and append an exception
+  # here. A refusal is this guard working, not a broken build.
+  #
+  # Remedies, in order of preference: wait out the 24-hour window and install again; pin the older
+  # mature version deliberately; or, only if it is genuinely urgent, have a HUMAN add a reviewed and
+  # explicitly temporary exclusion and remove it once the version has aged. It is never "add the
+  # package so the build goes green" — that is the behaviour strict mode exists to stop.
+  #
+  # It looks inert at first: the flag is not part of pnpm's lockfile-verification cache key, so where
+  # this lockfile is already verified the check is skipped and an install exits 0 in about 200 ms
+  # having checked nothing. It starts biting when the lockfile next changes.
+  #
+  # The window is 1440 minutes — the 24 hours the remedies above name. It is written out rather than
+  # left to pnpm's default because that default is undocumented: measured on pnpm 11.3.0 (the version
+  # `packageManager` pins here), an absent value enforced this very same 24-hour cutoff, so this line
+  # changes nothing today, and a future pnpm that moved its default could not silently falsify the 24
+  # hours promised above. Two careful readers had already taken the missing value for a window of
+  # length zero (OPS-128).
 minimumReleaseAge: 1440
 minimumReleaseAgeStrict: true
 
@@ -72,3 +71,6 @@ minimumReleaseAgeExclude:
   - '@gaunt-sloth/batch'
   - '@gaunt-sloth/core'
   - '@gaunt-sloth/review'
+
+allowBuilds:
+  koffi: set this to true or false

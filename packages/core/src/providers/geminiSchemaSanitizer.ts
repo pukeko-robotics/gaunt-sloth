@@ -32,7 +32,7 @@
  *
  * The allowlist ({@link GEMINI_SUPPORTED_SCHEMA_KEYWORDS}) is derived DIRECTLY from the authoritative
  * in-repo type — the `Gemini.Tools.Schema` interface in
- * `node_modules/@langchain/google/dist/chat_models/api-types.d.{ts,cts}` (a `FunctionDeclaration`'s
+ * `node_modules/@langchain/google/dist/chat_models/api_types/generate_content.d.{ts,cts}` (a `FunctionDeclaration`'s
  * `parameters?: Schema`), "a select subset of an OpenAPI 3.0 schema object". Keeping it aligned with
  * that type (not a remembered list) is what prevents a stale allowlist silently over-stripping.
  *
@@ -51,7 +51,7 @@ type JsonSchemaObject = Record<string, unknown>;
 /**
  * The EXACT set of schema keywords Gemini's function-declaration schema accepts, transcribed field-
  * for-field from the `Gemini.Tools.Schema` interface in
- * `@langchain/google/dist/chat_models/api-types.d.ts`. Anything not in this set is dropped (allowlist).
+ * `@langchain/google/dist/chat_models/api_types/generate_content.d.ts`. Anything not in this set is dropped (allowlist).
  *
  * Note `anyOf` IS supported (unions / nullable) and MUST survive — only `allOf`/`oneOf`/`not` are
  * absent from the type and therefore dropped. `exclusiveMinimum`/`exclusiveMaximum` are NOT in the type
