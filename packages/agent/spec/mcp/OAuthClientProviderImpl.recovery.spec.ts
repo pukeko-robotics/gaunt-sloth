@@ -401,6 +401,31 @@ describe('OAuthClientProviderImpl after the startup handshake', () => {
         expect(message).toContain('next start');
         expect(readStorage().tokens).toBeUndefined();
       });
+
+      it('warns once however many later requests are refused', async () => {
+        stub = await startStubAuthServer('ok');
+        seedStorage(stub.origin);
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const provider = await handshake();
+        // Calls through to the real method, so the guard runs.
+        const redirectSpy = vi.spyOn(provider, 'redirectToAuthorization');
+        stub.setRefreshAnswer(refreshError);
+        const { Client, StreamableHTTPClientTransport } =
+          await import('@modelcontextprotocol/client');
+
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const transport = new StreamableHTTPClientTransport(new URL(`${stub.origin}/mcp`), {
+            authProvider: provider,
+          });
+          const client = new Client({ name: 'ext213-spec', version: '0' });
+          await expect(client.connect(transport)).rejects.toBeDefined();
+        }
+
+        // Each of the three 401s reached the guard; only the first one printed.
+        expect(redirectSpy).toHaveBeenCalledTimes(3);
+        expect(spawnSyncMock).not.toHaveBeenCalled();
+        expect(displayWarningMock).toHaveBeenCalledTimes(1);
+      });
     }
   );
 });

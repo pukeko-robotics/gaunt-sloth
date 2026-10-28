@@ -37,6 +37,7 @@ export class OAuthClientProviderImpl implements OAuthClientProvider {
   private storagePath: string;
   private storageCache?: OAuthStorageData;
   private callbackClosed = false;
+  private expiryWarned = false;
 
   constructor(config: OAuthClientProviderConfig) {
     this.config = config as OAuthClientProviderConfig;
@@ -225,11 +226,15 @@ export class OAuthClientProviderImpl implements OAuthClientProvider {
     if (this.callbackClosed) {
       // Mid-session (the transport re-running auth() on a 401) nothing listens on the redirect
       // URL any more, so a browser login could not complete. The SDK has already cleared the
-      // rejected tokens, which makes the next start sign in.
-      displayWarning(
-        `The sign-in for ${this.config.serverUrl} has expired or was revoked. ` +
-          'Gaunt Sloth will open the browser sign-in on the next start.'
-      );
+      // rejected tokens, which makes the next start sign in. Every later 401 lands here too, so
+      // the warning is printed once per provider.
+      if (!this.expiryWarned) {
+        this.expiryWarned = true;
+        displayWarning(
+          `The sign-in for ${this.config.serverUrl} has expired or was revoked. ` +
+            'Gaunt Sloth will open the browser sign-in on the next start.'
+        );
+      }
       return;
     }
     displayInfo('Auth url: ' + authUrl.toString());
