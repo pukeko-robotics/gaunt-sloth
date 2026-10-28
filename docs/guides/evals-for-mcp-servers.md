@@ -133,7 +133,7 @@ halves, and there the structured half is the one to address: `text` beside it ho
 as an unparsed JSON *string*, which `path` cannot descend into. A result with `structuredContent`
 and no text is graded the same way, as an object with just the structured half. The model itself
 sees only the text. Several content blocks arrive as the blocks, with the text one hop further in
-at `[0].text`.
+at `[0].text`, and a `structuredContent` sent beside them cannot be graded, as on 1.x.
 
 ```yaml
       - identities: [admin]
