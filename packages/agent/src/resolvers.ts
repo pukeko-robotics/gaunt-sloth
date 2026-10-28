@@ -309,7 +309,8 @@ async function getMcpClient(
     return new MultiServerMCPClient({
       throwOnLoadError: true,
       prefixToolNameWithServerName: true,
-      // TUI-C20: single-sourced so the MCP debug tab can regroup tools back by server prefix.
+      // Single-sourced so every reader of the `mcp__` namespace agrees with the names built here.
+      // A tool's server is read from the bindings (step 2c), never from this prefix.
       additionalToolNamePrefix: MCP_TOOL_NAME_PREFIX,
       mcpServers: mcpServers,
       // EXT-31: per-server surfacing. The function form of onConnectionError lets a failed server be

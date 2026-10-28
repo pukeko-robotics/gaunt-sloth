@@ -137,7 +137,7 @@ describe('approvalPromptHeader — one sentence per subject kind', () => {
    * the rendered server instead.
    */
   it('falls back to the tool sentence when the server would render as a blank', () => {
-    const name = 'mcp__ __do_thing';
+    const name = 'mcp__ _do_thing';
     expect(
       approvalPromptHeader({
         name,
