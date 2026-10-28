@@ -77,6 +77,13 @@ export interface ToolResultRecord {
    * call, and for an MCP error with neither — whose text, if JSON, is graded from `content`.
    */
   errorPayload?: string;
+  /**
+   * EXT-211 — a successful MCP tool result's `structuredContent`, recorded at capture BESIDE
+   * {@link content} in the shape `@langchain/mcp-adapters` 1.x put in the content, so a `path` such
+   * as `structuredContent.contracts[0].type` keeps grading. `tool_result_json_path` grades this when
+   * it is present. Present implies it parses as JSON.
+   */
+  structuredPayload?: string;
 }
 
 /**

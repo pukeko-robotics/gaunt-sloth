@@ -126,12 +126,17 @@ function evaluateResultAgainstCheck(
   // may not hold in a parseable form (a stock sentence, or the prefixed message). It is only ever
   // recorded when it parses, so this branch cannot introduce a new failure — when it is absent the
   // reason below is the same deterministic one the check has always given.
+  // EXT-211 — a successful MCP result's `structuredPayload` (its `structuredContent`, which the model
+  // never sees, in the envelope 1.x put in the content) is graded the same way, for the same reason.
+  // A record carries at most one of the two: capture writes `errorPayload` for an error and
+  // `structuredPayload` for a success.
   // The recovered body is graded when capture produced one; it is only recorded when it
-  // parsed, so this branch never sees a truncated `errorPayload` — an over-cap body is dropped
+  // parsed, so this branch never sees a truncated recovered body — an over-cap body is dropped
   // whole rather than cut. The truncation flag is about `content`, and it is only consulted when
   // `content` is what is being graded.
-  const gradingContent = result.errorPayload === undefined;
-  const payload = result.errorPayload ?? result.content ?? '';
+  const recovered = result.errorPayload ?? result.structuredPayload;
+  const gradingContent = recovered === undefined;
+  const payload = recovered ?? result.content ?? '';
   // Consult the flag before the parse. A cut prefix can still parse — a JSON document padded with
   // trailing whitespace past the cap, or a long top-level number cut short — and grading it would
   // judge a payload the server did not send. A cut inside an object or array never parses. `errorPayload` is only recorded when it parsed whole, so a truncated observed payload

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { mcpToolErrorMessagePrefix, mcpToolErrorPayload } from '#src/core/mcpErrorPayload.js';
+import {
+  mcpToolErrorMessagePrefix,
+  mcpToolErrorPayload,
+  mcpToolGradedPayload,
+} from '#src/core/mcpErrorPayload.js';
 import { TOOL_RESULT_CONTENT_CAP } from '#src/core/runStats.js';
 import {
   bindMcpToolsets,
@@ -308,5 +312,72 @@ describe('core/mcpErrorPayload — structuredContent artifact (EXT-211)', () => 
       TOOL_RESULT_CONTENT_CAP
     );
     expect(payload).toBeUndefined();
+  });
+});
+
+/**
+ * EXT-211 — a successful result, through the same source order. Its body is the envelope 1.x put
+ * in the content, so a 1.x-era `structuredContent.…` path keeps matching.
+ */
+describe('core/mcpErrorPayload — successful result (EXT-211)', () => {
+  const structured = { code: 'STRUCTURED_OK' };
+  const meta = { 'example.com/trace': 't-1' };
+  const artifact = [
+    { type: 'mcp_structured_content', data: structured },
+    { type: 'mcp_meta', data: meta },
+  ];
+  const graded = (content: unknown, art: unknown = artifact, bindings = UNIMARKET_BOUND) =>
+    mcpToolGradedPayload(
+      { name: UNIMARKET_SEARCH, isError: false, content, artifact: art },
+      bindings,
+      TOOL_RESULT_CONTENT_CAP
+    );
+
+  it('wraps a single text block in the 1.x envelope beside structuredContent and meta', () => {
+    expect(JSON.parse(graded('{"code":"TEXT_OK"}')!)).toEqual({
+      type: 'text',
+      text: '{"code":"TEXT_OK"}',
+      structuredContent: structured,
+      meta,
+    });
+  });
+
+  it('records structuredContent alone when the result has no text', () => {
+    expect(JSON.parse(graded([])!)).toEqual({ structuredContent: structured, meta });
+  });
+
+  it('records nothing for several content blocks, which 1.x graded as the blocks', () => {
+    expect(
+      graded([
+        { type: 'text', text: 'a' },
+        { type: 'image', data: 'x' },
+      ])
+    ).toBeUndefined();
+  });
+
+  it('control: records nothing for a success with no structuredContent, even with _meta', () => {
+    expect(graded('{"code":"TEXT_OK"}', [{ type: 'mcp_meta', data: meta }])).toBeUndefined();
+  });
+
+  it('records nothing for a name with no binding', () => {
+    expect(graded('{"code":"TEXT_OK"}', artifact, NO_MCP_TOOL_BINDINGS)).toBeUndefined();
+  });
+
+  it('records nothing when the envelope exceeds the cap', () => {
+    const payload = mcpToolGradedPayload(
+      { name: UNIMARKET_SEARCH, isError: false, content: 'ok', artifact },
+      UNIMARKET_BOUND,
+      10
+    );
+    expect(payload).toBeUndefined();
+  });
+
+  it('the error path keeps grading the structured body from its root', () => {
+    const payload = mcpToolGradedPayload(
+      { name: UNIMARKET_SEARCH, isError: true, content: 'x', artifact },
+      UNIMARKET_BOUND,
+      TOOL_RESULT_CONTENT_CAP
+    );
+    expect(JSON.parse(payload!)).toEqual(structured);
   });
 });

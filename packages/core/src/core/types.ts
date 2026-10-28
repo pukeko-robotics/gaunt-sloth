@@ -211,6 +211,18 @@ export interface GthToolResult {
    * `core/mcpErrorPayload.ts` owns those rules and the reasoning behind each of them.
    */
   errorPayload?: string;
+  /**
+   * EXT-211 — a successful MCP tool result's `structuredContent`, which the model does not see,
+   * recorded **beside** {@link content} in the envelope `@langchain/mcp-adapters` 1.x put in the
+   * content (`{ type, text, structuredContent, meta }`, or `{ structuredContent, meta }` with no
+   * text), so `tool_result_json_path` paths written against 1.x keep matching.
+   *
+   * Present only for a successful result from an MCP tool whose server resolves, whose artifact
+   * carries `structuredContent`, and whose envelope serialises within the capture cap — so
+   * **present implies parseable**. Taken in the same order as {@link errorPayload}, by the same
+   * function; `core/mcpErrorPayload.ts` owns the rules.
+   */
+  structuredPayload?: string;
 }
 
 /**

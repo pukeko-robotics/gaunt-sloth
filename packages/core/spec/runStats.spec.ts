@@ -359,6 +359,29 @@ describe('core/runStats', () => {
     });
   });
 
+  it('records a successful MCP result’s structuredContent as structuredPayload, never errorPayload (EXT-211)', () => {
+    const acc = createRunStatsAccumulator();
+    accumulateMessage(
+      acc,
+      new ToolMessage({
+        content: '{"code":"TEXT_OK"}',
+        artifact: [{ type: 'mcp_structured_content', data: { code: 'STRUCTURED_OK' } }],
+        tool_call_id: 'c1',
+        name: UNIMARKET_SEARCH,
+        status: 'success',
+      }),
+      UNIMARKET_BOUND
+    );
+    const [record] = finalizeRunStats(acc).toolResults!;
+    expect(record).not.toHaveProperty('errorPayload');
+    expect(record.content).toBe('{"code":"TEXT_OK"}');
+    expect(JSON.parse(record.structuredPayload!)).toEqual({
+      type: 'text',
+      text: '{"code":"TEXT_OK"}',
+      structuredContent: { code: 'STRUCTURED_OK' },
+    });
+  });
+
   it('records no errorPayload when the caller supplies no MCP tool bindings', () => {
     // The default: nothing names the server, so nothing is recovered and the record is exactly the
     // shape it had before BATCH-43.

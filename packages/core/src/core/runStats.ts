@@ -10,7 +10,7 @@
  * message chunks / `ToolMessage`s as they arrive), across providers whose message shapes vary.
  * Nothing here may throw into a run — a missing/odd field just means that datum is skipped.
  */
-import { mcpToolErrorPayload } from '#src/core/mcpErrorPayload.js';
+import { mcpToolGradedPayload } from '#src/core/mcpErrorPayload.js';
 import { NO_MCP_TOOL_BINDINGS, type McpToolBindings } from '#src/core/approvals/mcpSubjects.js';
 import type { GthRunStats, GthToolCall, GthToolResult } from '#src/core/types.js';
 
@@ -370,17 +370,18 @@ export function accumulateMessage(
       // payload (capped; omitted when no text can be derived). One record per ToolMessage, in
       // arrival order — deliberately NOT deduplicated, unlike the name set above.
       const captured = toolResultContentText(m.content, captureMaxBytes);
-      // BATCH-43 / EXT-211 — beside the observed payload, never instead of it: an errored MCP
-      // tool's own error body, taken from the result's `structuredContent` artifact when it has one
-      // and otherwise from the text after the adapter's plain-argument prefix (`mcpToolErrorPayload`
-      // owns that order and its reasons). Derived from the RAW `m.content` and `m.artifact`, not
+      // BATCH-43 / EXT-211 — beside the observed payload, never instead of it: an MCP tool result's
+      // gradable body, taken from the result's `structuredContent` artifact when it has one and
+      // otherwise from the outcome's own fallback (`mcpToolGradedPayload` owns that one order and its
+      // reasons). An error's body is recorded as `errorPayload`, a success's as
+      // `structuredPayload`. Derived from the RAW `m.content` and `m.artifact`, not
       // from the capped `captured` above — deriving after the cap would work on every payload short
       // enough to test with and silently stop working on the long ones. The SAME cap is applied
       // inside, to the derived payload: the two fields share one budget, so a raised
       // `toolResultCaptureMaxBytes` recovers an error body the default would have dropped, and a
       // lowered one drops one the default would have kept.
       const isError = m.status === 'error';
-      const errorPayload = mcpToolErrorPayload(
+      const gradedPayload = mcpToolGradedPayload(
         { name: m.name, isError, content: m.content, artifact: m.artifact },
         mcpToolBindings,
         captureMaxBytes
@@ -396,7 +397,11 @@ export function accumulateMessage(
         ...(captured?.truncated
           ? { contentTruncated: true, contentOriginalBytes: captured.originalBytes }
           : {}),
-        ...(errorPayload !== undefined ? { errorPayload } : {}),
+        ...(gradedPayload === undefined
+          ? {}
+          : isError
+            ? { errorPayload: gradedPayload }
+            : { structuredPayload: gradedPayload }),
       });
     }
   } catch {
