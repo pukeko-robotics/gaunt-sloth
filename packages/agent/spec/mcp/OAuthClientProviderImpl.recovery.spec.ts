@@ -6,8 +6,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const displayInfoMock = vi.fn();
+const displayWarningMock = vi.fn();
 vi.mock('@gaunt-sloth/core/utils/consoleUtils.js', () => ({
   displayInfo: displayInfoMock,
+  displayWarning: displayWarningMock,
+}));
+
+// The provider's browser opener: mocked so no browser is ever launched.
+const spawnSyncMock = vi.fn();
+vi.mock('node:child_process', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:child_process')>()),
+  spawnSync: spawnSyncMock,
 }));
 
 // Storage is never the real ~/.gsloth/.gsloth-auth: every spec points it at its own temp dir.
@@ -21,6 +30,7 @@ type RefreshAnswer = 'unauthorized_client' | 'invalid_grant' | 'ok';
 interface StubAuthServer {
   origin: string;
   requests: { method: string; path: string; grantType?: string }[];
+  setRefreshAnswer: (answer: RefreshAnswer) => void;
   close: () => Promise<void>;
 }
 
@@ -28,9 +38,11 @@ interface StubAuthServer {
  * One loopback server playing both the MCP resource and its authorization server. It publishes no
  * protected-resource metadata, so the SDK falls back to the origin as the authorization server,
  * serves RFC 8414 metadata, dynamic registration, and a token endpoint whose refresh grant answers
- * as told.
+ * as told. Its MCP endpoint answers every request 401, as a resource does once the access token is
+ * no longer accepted.
  */
-async function startStubAuthServer(refreshAnswer: RefreshAnswer): Promise<StubAuthServer> {
+async function startStubAuthServer(initialRefreshAnswer: RefreshAnswer): Promise<StubAuthServer> {
+  let refreshAnswer = initialRefreshAnswer;
   const requests: StubAuthServer['requests'] = [];
   let origin = '';
   const server = http.createServer((req, res) => {
@@ -76,6 +88,10 @@ async function startStubAuthServer(refreshAnswer: RefreshAnswer): Promise<StubAu
         return;
       }
       requests.push({ method: req.method ?? 'GET', path });
+      if (path === '/mcp') {
+        json(401, {});
+        return;
+      }
       res.writeHead(404);
       res.end();
     });
@@ -85,6 +101,9 @@ async function startStubAuthServer(refreshAnswer: RefreshAnswer): Promise<StubAu
   return {
     origin,
     requests,
+    setRefreshAnswer: (answer) => {
+      refreshAnswer = answer;
+    },
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
   };
 }
@@ -101,13 +120,13 @@ function readStorage(): Record<string, unknown> {
   return JSON.parse(readFileSync(storagePath, 'utf-8'));
 }
 
-function seedStorage(issuer: string) {
+function seedStorage(issuer: string, registeredRedirectUrl: string = REDIRECT_URL) {
   writeFileSync(
     storagePath,
     JSON.stringify({
       clientInformation: {
         client_id: 'seeded-client',
-        redirect_uris: [REDIRECT_URL],
+        redirect_uris: [registeredRedirectUrl],
         token_endpoint_auth_method: 'none',
         issuer,
       },
@@ -136,9 +155,9 @@ afterEach(async () => {
 });
 
 describe('OAuthClientProviderImpl recovery through the real auth()', () => {
-  async function runAuth(refreshAnswer: RefreshAnswer) {
+  async function runAuth(refreshAnswer: RefreshAnswer, registeredRedirectUrl?: string) {
     stub = await startStubAuthServer(refreshAnswer);
-    seedStorage(stub.origin);
+    seedStorage(stub.origin, registeredRedirectUrl);
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { auth } = await import('@modelcontextprotocol/client');
     const { OAuthClientProviderImpl } = await import('#src/mcp/OAuthClientProviderImpl.js');
@@ -183,6 +202,26 @@ describe('OAuthClientProviderImpl recovery through the real auth()', () => {
     expect(typeof stored.codeVerifier).toBe('string');
   });
 
+  it('registers afresh on invalid_grant when the stored registration names another callback URL', async () => {
+    const { outcome, redirectSpy, stub } = await runAuth(
+      'invalid_grant',
+      'http://localhost:2/oauth/callback'
+    );
+
+    expect(outcome).toBe('REDIRECT');
+    expect(redirectSpy).toHaveBeenCalledTimes(1);
+    expect(stub.requests.filter((r) => r.path === '/register')).toHaveLength(1);
+
+    const stored = readStorage();
+    expect(stored.tokens).toBeUndefined();
+    expect(stored.clientInformation).toMatchObject({
+      client_id: 'fresh-client',
+      redirect_uris: [REDIRECT_URL],
+    });
+    const authUrl = redirectSpy.mock.calls[0][0] as URL;
+    expect(authUrl.searchParams.get('client_id')).toBe('fresh-client');
+  });
+
   it('saves the new tokens and clears nothing when the refresh succeeds', async () => {
     const { outcome, redirectSpy, warnings, stub } = await runAuth('ok');
 
@@ -220,7 +259,7 @@ describe('OAuthClientProviderImpl.invalidateCredentials', () => {
     });
   }
 
-  it('tokens: removes only the tokens and keeps the client registration', async () => {
+  it('tokens: removes only the tokens and keeps a registration that lists this redirect URL', async () => {
     seedFull();
     const provider = await makeProvider();
 
@@ -232,6 +271,27 @@ describe('OAuthClientProviderImpl.invalidateCredentials', () => {
       clientInformation: { client_id: 'seeded-client', redirect_uris: [REDIRECT_URL] },
       codeVerifier: 'verifier',
     });
+  });
+
+  it('tokens: also removes a registration that does not list this redirect URL', async () => {
+    writeFileSync(
+      storagePath,
+      JSON.stringify({
+        clientInformation: {
+          client_id: 'seeded-client',
+          redirect_uris: ['http://localhost:2/oauth/callback'],
+        },
+        tokens: { access_token: 'a', token_type: 'Bearer', refresh_token: 'r' },
+        codeVerifier: 'verifier',
+      })
+    );
+    const provider = await makeProvider();
+
+    await provider.invalidateCredentials('tokens');
+
+    expect(provider.tokens()).toBeUndefined();
+    expect(await provider.clientInformation()).toBeUndefined();
+    expect(readStorage()).toEqual({ codeVerifier: 'verifier' });
   });
 
   it('client: removes only the client registration', async () => {
@@ -282,4 +342,65 @@ describe('OAuthClientProviderImpl.invalidateCredentials', () => {
     expect(provider.tokens()).toBeUndefined();
     expect(await provider.clientInformation()).toBeUndefined();
   });
+});
+
+describe('OAuthClientProviderImpl after the startup handshake', () => {
+  /** Runs the startup handshake the way the MCP resolver does, against the stub. */
+  async function handshake(callbackTimeoutMs = 5_000) {
+    const { createAuthProviderAndAuthenticate } =
+      await import('#src/mcp/OAuthClientProviderImpl.js');
+    return createAuthProviderAndAuthenticate(
+      { url: `${stub!.origin}/mcp` } as Parameters<typeof createAuthProviderAndAuthenticate>[0],
+      callbackTimeoutMs
+    );
+  }
+
+  it('control: a refresh rejected during the startup handshake still opens the browser login', async () => {
+    stub = await startStubAuthServer('invalid_grant');
+    seedStorage(stub.origin);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    // Nobody completes the login, so the handshake gives up after its (short) callback timeout.
+    await expect(handshake(200)).rejects.toThrow('was not completed');
+
+    expect(spawnSyncMock).toHaveBeenCalledTimes(1);
+    const openerArgs = spawnSyncMock.mock.calls[0][1] as string[];
+    expect(openerArgs.some((arg) => arg.startsWith(`${stub!.origin}/authorize?`))).toBe(true);
+    expect(displayWarningMock).not.toHaveBeenCalled();
+  });
+
+  describe.each(['unauthorized_client', 'invalid_grant'] as const)(
+    'mid-session refresh answered %s',
+    (refreshError) => {
+      it('opens no browser and tells the user the sign-in reopens on the next start', async () => {
+        stub = await startStubAuthServer('ok');
+        seedStorage(stub.origin);
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+        const provider = await handshake();
+        expect(stub.requests.filter((r) => r.grantType === 'refresh_token')).toHaveLength(1);
+        expect(spawnSyncMock).not.toHaveBeenCalled();
+
+        // Later in the session the resource rejects the access token and the refresh token has
+        // been revoked: the transport's 401 handler runs the full auth() with this provider.
+        stub.setRefreshAnswer(refreshError);
+        const { Client, StreamableHTTPClientTransport } =
+          await import('@modelcontextprotocol/client');
+        const transport = new StreamableHTTPClientTransport(new URL(`${stub.origin}/mcp`), {
+          authProvider: provider,
+        });
+        const client = new Client({ name: 'ext213-spec', version: '0' });
+        await expect(client.connect(transport)).rejects.toBeDefined();
+
+        expect(stub.requests.filter((r) => r.grantType === 'refresh_token')).toHaveLength(2);
+        expect(spawnSyncMock).not.toHaveBeenCalled();
+        expect(displayWarningMock).toHaveBeenCalledTimes(1);
+        const message = displayWarningMock.mock.calls[0][0] as string;
+        expect(message).toContain(`${stub.origin}/mcp`);
+        expect(message).toContain('expired or was revoked');
+        expect(message).toContain('next start');
+        expect(readStorage().tokens).toBeUndefined();
+      });
+    }
+  );
 });

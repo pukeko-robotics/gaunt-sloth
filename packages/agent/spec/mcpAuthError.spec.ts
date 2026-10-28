@@ -89,6 +89,13 @@ describe('formatMcpConnectFailureMessage (EXT-31)', () => {
     expect(msg).not.toContain('apiKeyEnvironmentVariable');
   });
 
+  it('oauth auth message does not tell the user to clear the stored token (it is cleared automatically)', () => {
+    const msg = formatMcpConnectFailureMessage('jira', authErr, { oauth: true });
+    expect(msg).toContain('complete the OAuth login flow again');
+    expect(msg).not.toMatch(/clear\w*\s+(the\s+)?stored/i);
+    expect(msg).not.toMatch(/stored token/i);
+  });
+
   it('forces the AUTH message on the oauth path even when the error text has no auth keywords', () => {
     // An OAuth handshake/refresh throw is an auth failure by construction, regardless of message.
     const keywordless = new Error('request to token endpoint returned a bad response');

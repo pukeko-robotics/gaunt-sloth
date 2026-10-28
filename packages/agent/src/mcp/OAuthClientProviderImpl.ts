@@ -11,7 +11,7 @@ import * as crypto from 'node:crypto';
 import { platform } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { AddressInfo } from 'net';
-import { displayInfo } from '@gaunt-sloth/core/utils/consoleUtils.js';
+import { displayInfo, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { StreamableHTTPConnection } from '@langchain/mcp-adapters';
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
 import { getOAuthStoragePath } from '@gaunt-sloth/core/utils/globalConfigUtils.js';
@@ -36,6 +36,7 @@ export class OAuthClientProviderImpl implements OAuthClientProvider {
   private innerState: string;
   private storagePath: string;
   private storageCache?: OAuthStorageData;
+  private callbackClosed = false;
 
   constructor(config: OAuthClientProviderConfig) {
     this.config = config as OAuthClientProviderConfig;
@@ -169,11 +170,20 @@ export class OAuthClientProviderImpl implements OAuthClientProvider {
   }
 
   /**
+   * Records that the OAuth callback server for this provider has closed. From then on
+   * `redirectToAuthorization` tells the user to restart instead of opening a browser login.
+   */
+  markCallbackClosed(): void {
+    this.callbackClosed = true;
+  }
+
+  /**
    * Called by the MCP client's `auth()` when the authorization server rejects what is stored (a
    * revoked or expired refresh token, an unknown client), so its retry starts a fresh browser login
    * instead of reusing the dead credentials. Each scope clears exactly its part of this server's
-   * storage file: `all` removes the file, `client` the registration, `tokens` the tokens, `verifier`
-   * the PKCE code verifier. `discovery` is a no-op, because this provider stores no discovery state.
+   * storage file: `all` removes the file, `client` the registration, `tokens` the tokens (and the
+   * registration too when it does not list this run's redirect URL), `verifier` the PKCE code
+   * verifier. `discovery` is a no-op, because this provider stores no discovery state.
    */
   // noinspection JSUnusedGlobalSymbols
   invalidateCredentials(
@@ -198,6 +208,11 @@ export class OAuthClientProviderImpl implements OAuthClientProvider {
       delete data.clientInformation;
     } else if (scope === 'tokens') {
       delete data.tokens;
+      // A registration made by an earlier run names that run's callback port; a strict
+      // authorization server refuses this run's redirect URL against it, so register afresh.
+      if (!data.clientInformation?.redirect_uris?.includes(this.config.redirectUrl)) {
+        delete data.clientInformation;
+      }
     } else if (scope === 'verifier') {
       delete data.codeVerifier;
     }
@@ -207,6 +222,16 @@ export class OAuthClientProviderImpl implements OAuthClientProvider {
 
   // noinspection JSUnusedGlobalSymbols
   async redirectToAuthorization(authUrl: URL): Promise<void> {
+    if (this.callbackClosed) {
+      // Mid-session (the transport re-running auth() on a 401) nothing listens on the redirect
+      // URL any more, so a browser login could not complete. The SDK has already cleared the
+      // rejected tokens, which makes the next start sign in.
+      displayWarning(
+        `The sign-in for ${this.config.serverUrl} has expired or was revoked. ` +
+          'Gaunt Sloth will open the browser sign-in on the next start.'
+      );
+      return;
+    }
     displayInfo('Auth url: ' + authUrl.toString());
     try {
       const url = authUrl.toString();
@@ -251,9 +276,10 @@ export async function createAuthProviderAndAuthenticate(
   callbackTimeoutMs: number = OAUTH_CALLBACK_TIMEOUT_MS
 ): Promise<OAuthClientProviderImpl> {
   const { port, server, callbackPromise } = await createOAuthRedirectServer('/oauth/callback');
+  let authProvider: OAuthClientProviderImpl | undefined;
   // The listening callback server keeps the process alive, so it is closed on every exit path.
   try {
-    const authProvider = new OAuthClientProviderImpl({
+    authProvider = new OAuthClientProviderImpl({
       redirectUrl: `http://localhost:${port}/oauth/callback`,
       serverUrl: mcpServer.url,
     });
@@ -281,6 +307,7 @@ export async function createAuthProviderAndAuthenticate(
     return authProvider;
   } finally {
     closeQuietly(server);
+    authProvider?.markCallbackClosed();
   }
 }
 
