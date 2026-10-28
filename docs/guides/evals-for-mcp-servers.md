@@ -126,16 +126,20 @@ error detail *only* in `structuredContent` too, although the model then sees a s
 text anything the agent should be able to act on. A server whose error text is prose and that sends
 no `structuredContent` has no path to address — assert it with `must_error` plus a judge.
 
-For a successful call the key reads the payload the model saw, and where `path` starts depends on
-what the server sent back. A lone text block arrives as the text itself, so a `path` addresses that
-JSON directly — including for a tool that declares an output schema, whose `structuredContent` the
-model does not see and the check does not read. Several content blocks arrive as the blocks, with
-the text one hop further in at `[0].text`.
+For a successful call, where `path` starts depends on what the server sent back. A lone text block
+arrives as the text itself, so a `path` addresses that JSON directly. A server that also returns
+`structuredContent` — any tool declaring an output schema — is graded as one object carrying both
+halves, and there the structured half is the one to address: `text` beside it holds the same data
+as an unparsed JSON *string*, which `path` cannot descend into. A result with `structuredContent`
+and no text is graded the same way, as an object with just the structured half. The model itself
+sees only the text. Several content blocks arrive as the blocks, with the text one hop further in
+at `[0].text`.
 
 ```yaml
       - identities: [admin]
         tool_result_json_path:
-          - { tool: "mcp__unimarket_contract*", path: "contracts[0].type", contains: "SUPPLY" }
+          # These tools declare an output schema, so the path starts at structuredContent.
+          - { tool: "mcp__unimarket_contract*", path: "structuredContent.contracts[0].type", contains: "SUPPLY" }
 ```
 
 When it matters what the agent *asked* the server for — that the admin's search was scoped to
