@@ -159,7 +159,7 @@ describe('gth eval grades a successful MCP result’s structuredContent (EXT-211
   }, 60000);
 });
 
-describe('the model-facing content of a successful MCP call (EXT-211)', () => {
+describe('the model-facing content of an MCP call (EXT-211)', () => {
   // These cells grade nothing, so they hold on either side of the change that added the
   // structured capture: they pin the bytes the model is handed, which that change must not touch.
   it('is the server text alone when the result also carries structuredContent and _meta', async () => {
@@ -176,6 +176,14 @@ describe('the model-facing content of a successful MCP call (EXT-211)', () => {
     ]);
 
     expect(JSON.stringify(modelSawToolContent)).not.toContain('STRUCTURED_OK');
+  }, 60000);
+
+  it('is the server’s own error text, with no prefix, for an errored call', async () => {
+    await runSuite('contract_search=text-error', [
+      '{ tool: "' + TOOL + '", path: "code", contains: "" }',
+    ]);
+
+    expect(modelSawToolContent).toEqual(['{"code":"TEXT_DENIED"}']);
   }, 60000);
 
   it('control: is the plain text of a result with no structured content', async () => {

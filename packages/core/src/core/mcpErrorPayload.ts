@@ -31,6 +31,7 @@
  *    defined a schema for; it is the only place a structured-only result's detail exists; and text
  *    is free-form, so where the two disagree the structured body is the authoritative one to grade.
  *    The same reasoning holds whichever way the call went, which is why one order serves both.
+ *    A `structuredContent` of `null` is treated as absent; the seam says why.
  * 2. **The path's own fallback.** An error falls back to the text after the plain-argument prefix,
  *    the only body the throwing path keeps (the adapter still throws that form, so it stays for as
  *    long as anything installed can produce it). A success has no fallback of its own.
@@ -183,8 +184,14 @@ export function mcpToolGradedPayload(
   if (subject.kind !== 'mcpTool') return undefined;
   if (subject.server === UNRESOLVED_MCP_SERVER) return undefined;
 
+  // `structuredContent` may be any JSON value: `@modelcontextprotocol/core` 2.4.0 declares
+  // `structuredContent: z.unknown().optional()` (`dist/schemas-DscsoNZN.mjs`, `CallToolResultSchema`),
+  // and its client documents it as "SEP-2106: structuredContent is `unknown` (any JSON value)". So an
+  // array or a primitive is a real body and is graded like an object. `null` alone counts as absent:
+  // it carries nothing a `path` can resolve, the adapter still forwards it as an artifact entry, and
+  // 1.x graded such an error from its text — so it falls through to the outcome's fallback.
   const structured = artifactEntryData(result.artifact, MCP_STRUCTURED_CONTENT_ARTIFACT);
-  if (structured !== undefined) {
+  if (structured !== undefined && structured !== null) {
     const body = result.isError
       ? structured
       : successEnvelope(structured, result.content, result.artifact);

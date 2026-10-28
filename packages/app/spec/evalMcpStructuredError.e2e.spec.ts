@@ -11,6 +11,7 @@
  *
  * - structured-only: the body exists nowhere but the artifact;
  * - text and structured, disagreeing: shows which one the capture prefers;
+ * - text with `structuredContent: null`: the null counts as absent, so the text is graded;
  * - control, text only: grades the text body exactly as before, with no artifact involved.
  */
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -156,6 +157,14 @@ describe('gth eval grades an MCP structured error body (EXT-211)', () => {
     expect(refused.reasons).toEqual([]);
     expect(refused.verdict).toBe('PASS');
     expect(refused.toolResults[0].content).toBe('{"code":"TEXT_DENIED"}');
+  }, 60000);
+
+  it('grades the text body when structuredContent is null, as if the key were missing', async () => {
+    const refused = await runSuite('text-and-null-structured-error', 'TEXT_DENIED', false);
+
+    expect(refused.reasons).toEqual([]);
+    expect(refused.verdict).toBe('PASS');
+    expect(refused.toolResults[0]).not.toHaveProperty('errorPayload');
   }, 60000);
 
   it('control: grades a text-only JSON body from the observed content, as before', async () => {

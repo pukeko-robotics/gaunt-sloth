@@ -303,6 +303,42 @@ describe('core/mcpErrorPayload — structuredContent artifact (EXT-211)', () => 
     expect(payload).toBeUndefined();
   });
 
+  it('treats a null structuredContent as absent and falls back to the prefixed text body', () => {
+    const payload = mcpToolErrorPayload(
+      {
+        name: UNIMARKET_SEARCH,
+        isError: true,
+        content: `${mcpToolErrorMessagePrefix('unimarket', 'contract_search')}{"code":"TEXT"}`,
+        artifact: artifact(null),
+      },
+      UNIMARKET_BOUND,
+      TOOL_RESULT_CONTENT_CAP
+    );
+    expect(payload).toBe('{"code":"TEXT"}');
+  });
+
+  it.each([
+    ['an array', ['contracts:read', 'contracts:write']],
+    ['a string', 'denied'],
+    ['a number', 403],
+    ['a boolean', false],
+  ])(
+    'grades %s structuredContent from the artifact, not from the text (any JSON value is a body)',
+    (_label, data) => {
+      const payload = mcpToolErrorPayload(
+        {
+          name: UNIMARKET_SEARCH,
+          isError: true,
+          content: `${mcpToolErrorMessagePrefix('unimarket', 'contract_search')}{"code":"TEXT"}`,
+          artifact: artifact(data),
+        },
+        UNIMARKET_BOUND,
+        TOOL_RESULT_CONTENT_CAP
+      );
+      expect(JSON.parse(payload!)).toEqual(data);
+    }
+  );
+
   it('records nothing for structuredContent that cannot be serialised', () => {
     const cyclic: Record<string, unknown> = {};
     cyclic.self = cyclic;
@@ -357,6 +393,21 @@ describe('core/mcpErrorPayload — successful result (EXT-211)', () => {
 
   it('control: records nothing for a success with no structuredContent, even with _meta', () => {
     expect(graded('{"code":"TEXT_OK"}', [{ type: 'mcp_meta', data: meta }])).toBeUndefined();
+  });
+
+  it('records nothing for a null structuredContent, as if the key were missing', () => {
+    expect(
+      graded('{"code":"TEXT_OK"}', [{ type: 'mcp_structured_content', data: null }])
+    ).toBeUndefined();
+  });
+
+  it.each([
+    ['an array', [1, 2, 3]],
+    ['a primitive', 'STRUCTURED_OK'],
+  ])('wraps %s structuredContent in the envelope like an object', (_label, data) => {
+    expect(
+      JSON.parse(graded('{"code":"TEXT_OK"}', [{ type: 'mcp_structured_content', data }])!)
+    ).toEqual({ type: 'text', text: '{"code":"TEXT_OK"}', structuredContent: data });
   });
 
   it('records nothing for a name with no binding', () => {

@@ -8,6 +8,8 @@
  * - `structured-error` — `isError: true` with only `structuredContent` `{ code: 'STRUCTURED_DENIED' }`;
  * - `text-and-structured-error` — both of the above, plus `_meta`, so the two bodies disagree and a
  *   spec can tell which one was graded;
+ * - `text-and-null-structured-error` — `isError: true` with the text block and `structuredContent:
+ *   null`, a non-conformant shape the 2.x client lets through;
  * - `structured-ok` — succeeds with only `structuredContent` `{ code: 'STRUCTURED_OK' }`;
  * - `text-and-structured-ok` — succeeds with the text `{"code":"TEXT_OK"}`, `structuredContent`
  *   `{ code: 'STRUCTURED_OK' }` and `_meta`;
@@ -32,6 +34,11 @@ const RESULTS = {
     content: [TEXT_BODY],
     structuredContent: STRUCTURED_BODY,
     _meta: { 'example.com/trace': 'fixture' },
+    isError: true,
+  },
+  'text-and-null-structured-error': {
+    content: [TEXT_BODY],
+    structuredContent: null,
     isError: true,
   },
   'structured-ok': { content: [], structuredContent: { code: 'STRUCTURED_OK' } },
