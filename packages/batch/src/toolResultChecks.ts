@@ -35,7 +35,8 @@ import type { ToolResultRecord } from '#src/types.js';
  *   and this check reads that record rather than inferring the cut from the stored length or from
  *   a parse of the prefix.
  *   (BATCH-43) The payload it reads is the result's `errorPayload` when capture recovered one — an
- *   errored MCP tool's own error body, freed from the adapter's prose prefix — and otherwise the
+ *   errored MCP tool's own error body, from its `structuredContent` or freed from the adapter's
+ *   plain-argument prefix — and otherwise the
  *   observed `content`, which is left exactly as the model saw it in either case.
  *
  * The runner only ever calls this with expectation blocks a `gth-agent` suite produced — the suite
@@ -119,12 +120,12 @@ function evaluateResultAgainstCheck(
   result: ToolResultRecord,
   check: ToolResultJsonPathCheck
 ): string | undefined {
-  // BATCH-43 — grade the recovered MCP error body when capture produced one, else the observed
-  // payload exactly as before. An errored MCP tool's `content` is the adapter's prose-prefixed
-  // message and never parses; `errorPayload` is the server's own body with that prefix removed,
-  // and it is only ever recorded when it parses, so this branch cannot introduce a new failure —
-  // when it is absent (any non-MCP result, or an MCP error whose body is prose) the reason below
-  // is the same deterministic one the check has always given.
+  // BATCH-43 / EXT-211 — grade the recovered MCP error body when capture produced one, else the
+  // observed payload exactly as before. `errorPayload` is the server's own body — its
+  // `structuredContent`, or text freed from the adapter's plain-argument prefix — which `content`
+  // may not hold in a parseable form (a stock sentence, or the prefixed message). It is only ever
+  // recorded when it parses, so this branch cannot introduce a new failure — when it is absent the
+  // reason below is the same deterministic one the check has always given.
   // The recovered body is graded when capture produced one; it is only recorded when it
   // parsed, so this branch never sees a truncated `errorPayload` — an over-cap body is dropped
   // whole rather than cut. The truncation flag is about `content`, and it is only consulted when

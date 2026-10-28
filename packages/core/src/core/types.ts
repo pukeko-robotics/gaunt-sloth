@@ -199,16 +199,16 @@ export interface GthToolResult {
    */
   contentOriginalBytes?: number;
   /**
-   * BATCH-43 — an errored MCP tool's own error body, recovered from {@link content} and recorded
-   * **beside** it, never in place of it: `content` stays byte-identical to what the model observed,
-   * which is the property the whole trace exists for, and this is the parseable view a
-   * `tool_result_json_path` assertion can grade.
+   * BATCH-43 / EXT-211 — an errored MCP tool's own error body, recorded **beside** {@link content},
+   * never in place of it: `content` stays byte-identical to what the model observed, which is the
+   * property the whole trace exists for, and this is the parseable view a `tool_result_json_path`
+   * assertion can grade.
    *
-   * Present only when the result is an error from an MCP tool whose server resolves, whose message
-   * carries the adapter's exact computed prefix, and whose remainder is JSON within the capture cap
-   * — so **present implies parseable**, and absence means the check falls back to `content` and to
-   * its existing behaviour. `core/mcpErrorPayload.ts` owns those rules and the reasoning behind
-   * each of them.
+   * Present only when the result is an error from an MCP tool whose server resolves, and either its
+   * `structuredContent` artifact serialises within the capture cap or its content carries the
+   * adapter's exact plain-argument prefix followed by JSON within the cap — so **present implies
+   * parseable**, and absence means the check falls back to `content` and to its existing behaviour.
+   * `core/mcpErrorPayload.ts` owns those rules and the reasoning behind each of them.
    */
   errorPayload?: string;
 }

@@ -1112,19 +1112,24 @@ export class GthLangChainAgent extends GthAbstractAgent {
     // (2025-11-25 & draft, "Server › Tools › Error Handling"), a tool that hits an API failure, an
     // input-validation problem, or a business-logic error (e.g. a disabled capability) returns a
     // normal tools/call result with `isError: true`, and the CLIENT *SHOULD* hand that error to the
-    // model so it can self-correct. `@langchain/mcp-adapters` instead surfaces such a result by
-    // THROWING a ToolException at call time (its `_convertCallToolResult`). Because we install a
+    // model so it can self-correct. `@langchain/mcp-adapters` does exactly that for a tool call,
+    // which is how ToolNode invokes every tool: it RETURNS a status:'error' ToolMessage carrying the
+    // server's own text, with `structuredContent` and `_meta` in its artifact, and nothing reaches
+    // this middleware. It still THROWS a ToolException for other failures — a plain-argument invoke
+    // of an errored result, an invalid result, a transport failure mid-call. Because we install a
     // wrapToolCall middleware, langchain's ToolNode treats any error a middleware rethrows as a fatal
     // "middleware error" (`errorFromMiddleware && handleToolErrors !== true` → throw) and aborts the
     // whole turn instead of relaying the error to the model — the opposite of the spec's client
-    // SHOULD. This middleware closes that gap: it catches a thrown ToolException and RETURNS it as a
-    // status:'error' ToolMessage (→ isError → ✗), so the model observes the error and can retry or
-    // explain (matching the non-stream invoke path's ToolException handling). Scope & safety: matched
+    // SHOULD. This middleware closes that gap for those throws: it catches a ToolException and
+    // RETURNS it as a status:'error' ToolMessage (→ isError → ✗), so the model observes the error
+    // and can retry or explain (matching the non-stream invoke path's ToolException handling). It adds
+    // no marker of its own, on either path: the error status carries the failure. Scope & safety: matched
     // by name === 'ToolException' (the adapter's marker), so GraphInterrupt and every non-MCP throw
-    // fall through the final rethrow untouched. The adapter ALSO wraps a call-time AbortError into a
-    // ToolException (its `_callTool` catch-all), so we RETHROW when the run's abort signal is set —
-    // otherwise softening here would swallow user cancellation that ToolNode's own `signal?.aborted`
-    // guard normally enforces (bypassed once we handle the error in middleware). MCP connect/auth
+    // fall through the final rethrow untouched. Any ToolException that arrives while the run's abort
+    // signal is set is RETHROWN, never softened — otherwise softening here would swallow user
+    // cancellation that ToolNode's own `signal?.aborted` guard normally enforces (bypassed once we
+    // handle the error in middleware). The adapter rethrows an aborted call's own error unwrapped,
+    // but a ToolException raised before the abort was noticed can still arrive with the signal set. MCP connect/auth
     // (401/403) and load failures are handled at CONNECT time (resolvers.ts throwOnLoadError +
     // onConnectionError), not here, so they stay fatal as intended.
     const mcpToolErrorSoftening = createMiddleware({

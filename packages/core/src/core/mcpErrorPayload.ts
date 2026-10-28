@@ -1,22 +1,36 @@
 /**
- * BATCH-43 — recover the **server's own error body** from the prose-wrapped message
- * `@langchain/mcp-adapters` throws for an MCP tool result carrying `isError: true`, so
+ * BATCH-43 / EXT-211 — recover the **server's own error body** from an errored MCP tool result, so
  * `gth eval`'s `tool_result_json_path` can grade *what a denial said* and not merely that one
  * happened.
  *
- * ## Why there is anything to recover at all
+ * ## What the adapter hands back
  *
- * The MCP spec treats a tool-execution error as a normal result the client SHOULD hand back to the
- * model. The adapter instead throws, and the throw discards everything structured:
+ * `@langchain/mcp-adapters` answers a tool result carrying `isError: true` in one of two ways,
+ * depending on how the tool was invoked:
  *
- *     if (result.isError) throw new ToolException(
- *       `MCP tool '${toolName}' on server '${serverName}' returned an error: ` +
- *       result.content.map((c) => c.type === 'text' ? c.text : '').join('\n'));
+ * - **As a tool call** (how the agent's tool node always invokes it): a `ToolMessage` with
+ *   `status: 'error'`, whose `content` is the server's own text with nothing added, and whose
+ *   `artifact` keeps the result's `structuredContent` (an entry of type `mcp_structured_content`)
+ *   and `_meta` (`mcp_meta`). A result with no text gets the stock sentence *The MCP tool returned
+ *   an error without text content.* as its content, so its detail survives only in the artifact.
+ * - **With plain arguments**: it throws a `ToolException` whose message is a fixed prose prefix
+ *   followed by the result's flattened text, and the softening middleware turns that message into
+ *   the observation. Nothing structured survives on this path.
  *
- * `result.structuredContent` and `result._meta` are read only on the lines *after* that throw, so a
- * server that puts its error detail solely in `structuredContent` is unreachable from here — that
- * is upstream, not a gap this module can close. What survives is the flattened **text** content,
- * behind a fixed prose prefix. Recovering it is therefore a matter of removing exactly that prefix.
+ * ## The order the body is taken in, and why
+ *
+ * 1. **The artifact's `structuredContent`, serialised as JSON.** It is the server's error body in
+ *    the shape the server chose, it is the only place a structured-only error's detail exists, and
+ *    when a server sends both forms the structured one is the one it defined a schema for. Text is
+ *    free-form, so where the two disagree the structured body is the authoritative one to grade.
+ * 2. **The text after the plain-argument prefix**, which is the only body the throwing path keeps.
+ *    The adapter still throws that form, so this stays for as long as anything installed can produce
+ *    it; on the tool-call path content never starts with the prefix and this never fires.
+ * 3. **Nothing**, and the grading check falls back to the observed `content`. On the tool-call path
+ *    that is already the server's bare text, so a text-only JSON error grades with no field at all.
+ *
+ * `_meta` is never a source. It is protocol metadata about the result, not the server's error body,
+ * and preferring it would make a text-only JSON error that grades today stop grading.
  *
  * ## The prefix is COMPUTED, never matched
  *
@@ -24,39 +38,31 @@
  * JSON is *the* JSON when a message contains several, and a heuristic like that has no business in
  * a deterministic grading path: its failure mode is a plausible wrong parse that the suite author
  * cannot see. Every variable in the adapter's template is one we already hold, so the exact
- * expected prefix can be built and stripped, which dissolves the question instead of answering it.
- * When the constructed prefix is not what the message starts with, **nothing is recovered and no
- * field is recorded** — an absent field and the check's existing "not JSON" reason are an honest
- * answer; a lucky substring is not.
+ * expected prefix can be built and stripped. When the constructed prefix is not what the message
+ * starts with, **nothing is recovered and no field is recorded**.
  *
  * Because the prefix is an upstream template literal, a dependency bump that rewords it would
- * silently stop the field ever being recorded while every other test stayed green (the observed
- * payload is untouched either way). `packages/agent/spec/mcpAdapterErrorMessage.spec.ts` therefore
- * drives the real adapter against a real in-memory MCP server and compares its thrown message to
- * {@link mcpToolErrorMessagePrefix}'s output, so such a bump reds here first.
+ * silently stop the field ever being recorded. `packages/agent/spec/mcpAdapterErrorMessage.spec.ts`
+ * therefore drives the real adapter against a real in-memory MCP server and compares its thrown
+ * message to {@link mcpToolErrorMessagePrefix}'s output, and pins the tool-call shape beside it.
  *
  * ## The server name is RESOLVED, never split off the registered name
  *
  * The adapter's template names the server by its `mcpServers` key and the tool by its **bare**
  * name, while the registered name the model calls carries both behind our namespace. A configured
  * key may itself contain the server separator, so the registered name does not determine its
- * server, and a prefix built from a guessed one would be wrong in exactly the case a multi-word
- * server name makes likely. Resolution goes through {@link approvalSubjectForToolName}, which reads
- * the bindings recorded when the tools loaded, so a recovered payload and an approvals decision can
- * never disagree about which server a tool belongs to. A name with no binding resolves to
- * {@link UNRESOLVED_MCP_SERVER} and yields no field: there is no server name to build a prefix
- * from, and guessing one is the thing this refuses to do.
+ * server. Resolution goes through {@link approvalSubjectForToolName}, which reads the bindings
+ * recorded when the tools loaded, so a recovered payload and an approvals decision can never
+ * disagree about which server a tool belongs to. The artifact path is held to the same gate: a
+ * name with no binding is not known to be an MCP tool at all, so neither source is read for it.
  *
  * ## Why this lives at the CAPTURE site, not at the softening middleware
  *
- * The softening middleware in `GthLangChainAgent` holds the same two variables, and BATCH-43's
- * ruling names it as the place where they are available. Deriving there would mean carrying the
- * result to the capture site on the `ToolMessage` itself — a new field on the one object whose
- * fidelity to "what the model observed" is the whole reason the trace is graded. That object is
- * serialised by nine provider conversion paths and by the checkpointer, and none of them is a hop
- * this change should have to defend. The registered tool name and the content are identical at
- * both sites, so the derivation is the same computation either way; done here it needs no new
- * field on a message and reuses the middleware → `accumulateMessage` hop BATCH-23 already proved.
+ * Deriving at the middleware would mean carrying the result to the capture site on the
+ * `ToolMessage` itself — a new field on the one object whose fidelity to "what the model observed"
+ * is the whole reason the trace is graded, serialised by every provider conversion path and by the
+ * checkpointer. The registered name, the content and the artifact all reach the capture site
+ * unchanged, so the derivation is the same computation either way and needs no new field here.
  *
  * @module
  */
@@ -66,10 +72,13 @@ import {
   type McpToolBindings,
 } from '#src/core/approvals/mcpSubjects.js';
 
+/** The adapter's `ToolMessage.artifact` entry type that carries a result's `structuredContent`. */
+export const MCP_STRUCTURED_CONTENT_ARTIFACT = 'mcp_structured_content';
+
 /**
  * The exact prefix `@langchain/mcp-adapters` puts in front of an errored MCP tool result's text
- * content, for a tool named `toolName` (its **bare** name, as the server advertises it) on the
- * server configured under `serverName`.
+ * content when it throws (the plain-argument path), for a tool named `toolName` (its **bare**
+ * name, as the server advertises it) on the server configured under `serverName`.
  *
  * Single-sourced so the derivation below and the spec that pins the adapter's wording compare the
  * same string: a retyped literal on both sides of that assertion would pin nothing.
@@ -86,36 +95,40 @@ export interface McpToolErrorPayloadInput {
   isError: boolean;
   /** The result payload as captured, untouched (`ToolMessage.content`). */
   content: unknown;
+  /** The result's artifact as captured, untouched (`ToolMessage.artifact`). */
+  artifact?: unknown;
 }
 
 /**
- * The server's own error body, recovered from a softened MCP tool error, or `undefined`.
+ * The server's own error body for an errored MCP tool result, or `undefined`.
+ *
+ * Taken from the artifact's `structuredContent` when there is one, and otherwise from the text
+ * after the plain-argument prefix — the order and its reasons are in the module doc.
  *
  * **Present implies parseable**, and that contract is the point: the grading check falls back to
  * the observed payload — and to its existing failure reason — whenever this returns `undefined`, so
  * a recorded field must never be something the check would then choke on. Every one of these
  * yields `undefined`:
  *
- * - the result is not an error, or its content is not a plain string (a blocks array is a SUCCESS
- *   shape; the adapter's throw always produces a string);
+ * - the result is not an error;
  * - the name is not MCP-namespaced, or has no binding to a configured server;
- * - the message does not start with the computed prefix (a different adapter message — an invalid
- *   result, an unexpected content type — or an upstream reword);
- * - the remainder is not JSON, which is simply a server that formats its errors as prose;
- * - the remainder is longer than `maxBytes` UTF-8 bytes.
+ * - there is no `structuredContent` artifact entry, and the content is not a plain string that
+ *   starts with the computed prefix (a blocks array is a SUCCESS shape; the throw always produces a
+ *   string);
+ * - the prefix remainder is not JSON, which is simply a server that formats its errors as prose;
+ * - the body is longer than `maxBytes` UTF-8 bytes.
  *
  * That last one is a deliberate choice rather than a fallout. The observed payload is capped at
  * capture so a giant result cannot bloat run stats, and the same per-field bound has to apply here
- * or the cap is trivially escaped. It bounds each field, not the record: a result that carries both
- * fields can hold two capped strings, which is the price of keeping the observed payload intact
- * beside a gradable one. But a JSON document cut off at the bound does not parse, so recording
- * a truncated one would spend the bytes, break the present-implies-parseable contract, and leave
- * the check failing anyway — while looking, to whoever reads the record, as though the recovery
- * had worked. Dropping it says the true thing instead. The bound counts UTF-8 bytes, the same unit
- * the observed-payload cap counts (BATCH-49) — a character count here would recover a body the
- * other site had already cut, or drop one it had kept, for any payload outside ASCII.
+ * or the cap is trivially escaped. A JSON document cut off at the bound does not parse, so
+ * recording a truncated one would spend the bytes, break the present-implies-parseable contract,
+ * and leave the check failing anyway. Dropping it says the true thing instead. An over-cap
+ * structured body does not fall through to the prefix source: the server's preferred body exists,
+ * it is only too large, and grading a different body in its place would hide that. The bound counts
+ * UTF-8 bytes, the same unit the observed-payload cap counts (BATCH-49).
  *
- * @param result The captured result: registered name, error status, and the untouched content.
+ * @param result The captured result: registered name, error status, and the untouched content and
+ *   artifact.
  * @param mcpToolBindings The bindings recorded when this session's tools loaded — the only thing
  *   consulted when resolving which server this tool belongs to.
  * @param maxBytes The same cap the observed payload is held to, in UTF-8 bytes. A body whose
@@ -127,12 +140,17 @@ export function mcpToolErrorPayload(
   maxBytes: number
 ): string | undefined {
   if (!result.isError) return undefined;
-  if (typeof result.content !== 'string') return undefined;
 
   const subject = approvalSubjectForToolName(result.name, mcpToolBindings);
   if (subject.kind !== 'mcpTool') return undefined;
   if (subject.server === UNRESOLVED_MCP_SERVER) return undefined;
 
+  const structured = structuredContentBody(result.artifact);
+  if (structured !== undefined) {
+    return Buffer.byteLength(structured) > maxBytes ? undefined : structured;
+  }
+
+  if (typeof result.content !== 'string') return undefined;
   const prefix = mcpToolErrorMessagePrefix(subject.server, subject.name);
   if (!result.content.startsWith(prefix)) return undefined;
 
@@ -145,4 +163,27 @@ export function mcpToolErrorPayload(
     return undefined;
   }
   return payload;
+}
+
+/**
+ * The artifact's `structuredContent`, serialised as JSON, or `undefined` when the artifact carries
+ * none or it cannot be serialised. Serialising here is what makes it parseable downstream.
+ */
+function structuredContentBody(artifact: unknown): string | undefined {
+  if (!Array.isArray(artifact)) return undefined;
+  const entry: unknown = artifact.find(
+    (item) =>
+      typeof item === 'object' &&
+      item !== null &&
+      (item as { type?: unknown }).type === MCP_STRUCTURED_CONTENT_ARTIFACT
+  );
+  if (entry === undefined) return undefined;
+  const data = (entry as { data?: unknown }).data;
+  if (data === undefined) return undefined;
+  try {
+    const serialised = JSON.stringify(data);
+    return typeof serialised === 'string' ? serialised : undefined;
+  } catch {
+    return undefined;
+  }
 }

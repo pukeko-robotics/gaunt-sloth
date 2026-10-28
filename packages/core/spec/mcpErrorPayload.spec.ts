@@ -216,3 +216,97 @@ describe('core/mcpErrorPayload', () => {
     expect(payload).toBeUndefined();
   });
 });
+
+/**
+ * EXT-211 — the artifact source. On the tool-call path the adapter returns the error as a
+ * `ToolMessage` whose artifact keeps the result's `structuredContent`; that is the preferred body.
+ */
+describe('core/mcpErrorPayload — structuredContent artifact (EXT-211)', () => {
+  const structured = { code: 'STRUCTURED_DENIED', scopes: ['contracts:read'] };
+  const artifact = (data: unknown = structured) => [
+    { type: 'mcp_meta', data: { 'example.com/trace': 't-1' } },
+    { type: 'mcp_structured_content', data },
+  ];
+  const STOCK_TEXT = 'The MCP tool returned an error without text content.';
+
+  it('records the structuredContent as JSON when the text is only the stock sentence', () => {
+    const payload = mcpToolErrorPayload(
+      { name: UNIMARKET_SEARCH, isError: true, content: STOCK_TEXT, artifact: artifact() },
+      UNIMARKET_BOUND,
+      TOOL_RESULT_CONTENT_CAP
+    );
+    expect(JSON.parse(payload!)).toEqual(structured);
+  });
+
+  it('prefers the structuredContent over a prefixed text body', () => {
+    const payload = mcpToolErrorPayload(
+      {
+        name: UNIMARKET_SEARCH,
+        isError: true,
+        content: `${mcpToolErrorMessagePrefix('unimarket', 'contract_search')}{"code":"TEXT"}`,
+        artifact: artifact(),
+      },
+      UNIMARKET_BOUND,
+      TOOL_RESULT_CONTENT_CAP
+    );
+    expect(JSON.parse(payload!)).toEqual(structured);
+  });
+
+  it('control: still recovers a prefixed text body when the artifact carries only _meta', () => {
+    const payload = mcpToolErrorPayload(
+      {
+        name: UNIMARKET_SEARCH,
+        isError: true,
+        content: `${mcpToolErrorMessagePrefix('unimarket', 'contract_search')}{"code":"TEXT"}`,
+        artifact: [{ type: 'mcp_meta', data: { code: 'META' } }],
+      },
+      UNIMARKET_BOUND,
+      TOOL_RESULT_CONTENT_CAP
+    );
+    expect(payload).toBe('{"code":"TEXT"}');
+  });
+
+  it('records nothing when the serialised structuredContent exceeds the cap, without falling back', () => {
+    const big = { code: 'x'.repeat(64) };
+    const payload = mcpToolErrorPayload(
+      {
+        name: UNIMARKET_SEARCH,
+        isError: true,
+        content: `${mcpToolErrorMessagePrefix('unimarket', 'contract_search')}{"code":"TEXT"}`,
+        artifact: artifact(big),
+      },
+      UNIMARKET_BOUND,
+      Buffer.byteLength(JSON.stringify(big)) - 1
+    );
+    expect(payload).toBeUndefined();
+  });
+
+  it('records nothing from an artifact for a name with no binding', () => {
+    const payload = mcpToolErrorPayload(
+      { name: UNIMARKET_SEARCH, isError: true, content: STOCK_TEXT, artifact: artifact() },
+      NO_MCP_TOOL_BINDINGS,
+      TOOL_RESULT_CONTENT_CAP
+    );
+    expect(payload).toBeUndefined();
+  });
+
+  it('records nothing from an artifact on a result that is not an error', () => {
+    const payload = mcpToolErrorPayload(
+      { name: UNIMARKET_SEARCH, isError: false, content: 'ok', artifact: artifact() },
+      UNIMARKET_BOUND,
+      TOOL_RESULT_CONTENT_CAP
+    );
+    expect(payload).toBeUndefined();
+  });
+
+  it('records nothing for structuredContent that cannot be serialised', () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    const payload = mcpToolErrorPayload(
+      { name: UNIMARKET_SEARCH, isError: true, content: STOCK_TEXT, artifact: artifact(cyclic) },
+      UNIMARKET_BOUND,
+      TOOL_RESULT_CONTENT_CAP
+    );
+    expect(payload).toBeUndefined();
+  });
+});

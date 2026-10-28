@@ -72,9 +72,9 @@ export interface ToolResultRecord {
    * this when it is present; when it is absent the check reads {@link content} and behaves as it
    * always has. Present implies it parses as JSON, so a check that finds it never has to ask.
    *
-   * Absent for everything that is not an errored MCP call, and absent too for an MCP error whose
-   * body is prose rather than JSON — a server that puts its detail only in MCP `structuredContent`
-   * is not gradable at all, because the adapter discards that before any of our code runs.
+   * Taken from the result's `structuredContent` when it has one, and otherwise from text the
+   * adapter wrapped in its plain-argument prefix. Absent for everything that is not an errored MCP
+   * call, and for an MCP error with neither — whose text, if JSON, is graded from `content`.
    */
   errorPayload?: string;
 }

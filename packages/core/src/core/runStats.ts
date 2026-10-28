@@ -370,18 +370,18 @@ export function accumulateMessage(
       // payload (capped; omitted when no text can be derived). One record per ToolMessage, in
       // arrival order — deliberately NOT deduplicated, unlike the name set above.
       const captured = toolResultContentText(m.content, captureMaxBytes);
-      // BATCH-43 — beside the observed payload, never instead of it: an errored MCP tool's result
-      // is the adapter's own prose-prefixed message, which `tool_result_json_path` cannot parse.
-      // `mcpToolErrorPayload` rebuilds that prefix from the resolved server + tool name and strips
-      // it, yielding the server's own error body when (and only when) it is JSON. Derived from the
-      // RAW `m.content`, not from the capped `captured` above — deriving after the cap would work
-      // on every payload short enough to test with and silently stop working on the long ones. The
-      // SAME cap is applied inside, to the derived payload: the two fields share one budget, so a
-      // raised `toolResultCaptureMaxBytes` recovers an error body the default would have dropped,
-      // and a lowered one drops one the default would have kept.
+      // BATCH-43 / EXT-211 — beside the observed payload, never instead of it: an errored MCP
+      // tool's own error body, taken from the result's `structuredContent` artifact when it has one
+      // and otherwise from the text after the adapter's plain-argument prefix (`mcpToolErrorPayload`
+      // owns that order and its reasons). Derived from the RAW `m.content` and `m.artifact`, not
+      // from the capped `captured` above — deriving after the cap would work on every payload short
+      // enough to test with and silently stop working on the long ones. The SAME cap is applied
+      // inside, to the derived payload: the two fields share one budget, so a raised
+      // `toolResultCaptureMaxBytes` recovers an error body the default would have dropped, and a
+      // lowered one drops one the default would have kept.
       const isError = m.status === 'error';
       const errorPayload = mcpToolErrorPayload(
-        { name: m.name, isError, content: m.content },
+        { name: m.name, isError, content: m.content, artifact: m.artifact },
         mcpToolBindings,
         captureMaxBytes
       );
