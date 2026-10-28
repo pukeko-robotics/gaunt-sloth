@@ -116,7 +116,9 @@ the server entry.
 - The storage location is cross-platform (Windows, macOS, Linux)
 
 **When the server rejects a stored token** (it was revoked, or has expired), Gaunt Sloth clears it
-from the token file and reopens the browser to run the OAuth login again on its own.
+from the token file. At startup it then reopens the browser and runs the OAuth login again on its
+own. If this happens mid-session, Gaunt Sloth says so, and the browser login opens on the next
+start.
 
 **If authentication gets stuck for another reason**, delete that server's token file under
 `~/.gsloth/.gsloth-auth/` and run the command again — with no cached token, Gaunt Sloth reopens the
