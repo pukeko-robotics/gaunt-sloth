@@ -117,8 +117,8 @@ the server entry.
 
 **When the server rejects a stored token** (it was revoked, or has expired), Gaunt Sloth clears it
 from the token file. At startup it then reopens the browser and runs the OAuth login again on its
-own. If this happens mid-session, Gaunt Sloth says so, and the browser login opens on the next
-start.
+own. If this happens mid-session, the MCP tool call fails and the browser login opens on the next
+start (the CLI also prints a warning to the console).
 
 **If authentication gets stuck for another reason**, delete that server's token file under
 `~/.gsloth/.gsloth-auth/` and run the command again — with no cached token, Gaunt Sloth reopens the
