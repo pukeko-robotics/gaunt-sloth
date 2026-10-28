@@ -112,7 +112,7 @@ Exits 0; the output `turns[]` breakdown confirms it routed through the multi-tur
 
 ```
 evals/mcp-authz/
-├── src/authz-mcp-server.ts        # the real HTTP (Streamable) MCP server (@modelcontextprotocol/sdk)
+├── src/authz-mcp-server.ts        # the real HTTP (Streamable) MCP server (@modelcontextprotocol/server)
 ├── bed.conf                       # port, suites, readiness probe, how to start the server
 ├── run.sh                         # two lines: hands the bed to evals/harness/run-bed.sh
 ├── workdir/

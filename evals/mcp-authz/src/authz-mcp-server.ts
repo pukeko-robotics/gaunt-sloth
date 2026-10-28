@@ -1,7 +1,7 @@
 /**
  * BATCH-13 — live authorization MCP server for the `gth eval` identity-matrix integration suite.
  *
- * A real HTTP (Streamable) MCP server built on the official `@modelcontextprotocol/sdk`. It maps a
+ * A real HTTP (Streamable) MCP server built on the official `@modelcontextprotocol/server`. It maps a
  * per-request `Authorization: Bearer <token>` to one of three identities and enforces two distinct
  * authorization mechanisms so the eval matrix can assert each the RIGHT way (see README):
  *
@@ -23,9 +23,11 @@
  */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
+import {
+  isInitializeRequest,
+  McpServer,
+  WebStandardStreamableHTTPServerTransport,
+} from '@modelcontextprotocol/server';
 import { z } from 'zod';
 
 // --- Identities, tokens, scopes (the shared source of truth the profile configs mirror) ----------
@@ -187,7 +189,7 @@ const PORT = Number(process.env.AUTHZ_MCP_PORT ?? 39405);
 const MCP_PATH = '/mcp';
 
 /** Live transports keyed by MCP session id. */
-const transports: Record<string, StreamableHTTPServerTransport> = {};
+const transports: Record<string, WebStandardStreamableHTTPServerTransport> = {};
 
 /** Read + JSON-parse an HTTP request body. Resolves `undefined` for an empty body. */
 function readJsonBody(req: IncomingMessage): Promise<unknown> {
@@ -209,6 +211,33 @@ function readJsonBody(req: IncomingMessage): Promise<unknown> {
     });
     req.on('error', reject);
   });
+}
+
+/**
+ * The SDK's HTTP transport speaks Web `Request`/`Response`, while this server is plain `node:http`.
+ * These two adapt between them, so the bed needs no framework dependency. The body has already been
+ * read (the handshake gate inspects it), so it is re-encoded here and also handed over parsed.
+ */
+function toWebRequest(req: IncomingMessage, body: unknown): Request {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (value !== undefined) headers.set(name, Array.isArray(value) ? value.join(', ') : value);
+  }
+  const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
+  return new Request(url, {
+    method: req.method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+/** Stream a Web `Response` (including an SSE body) out through a `node:http` response. */
+async function sendWebResponse(res: ServerResponse, response: Response): Promise<void> {
+  res.writeHead(response.status, Object.fromEntries(response.headers));
+  if (response.body) {
+    for await (const chunk of response.body) res.write(chunk);
+  }
+  res.end();
 }
 
 /** Map the request's `Authorization: Bearer <token>` header to an identity, or `null` if invalid. */
@@ -241,7 +270,7 @@ async function handlePost(req: IncomingMessage, res: ServerResponse): Promise<vo
   const sessionId = req.headers['mcp-session-id'];
   const existing = typeof sessionId === 'string' ? transports[sessionId] : undefined;
 
-  let transport: StreamableHTTPServerTransport;
+  let transport: WebStandardStreamableHTTPServerTransport;
   if (existing) {
     transport = existing;
   } else if (typeof sessionId === 'string') {
@@ -257,7 +286,7 @@ async function handlePost(req: IncomingMessage, res: ServerResponse): Promise<vo
       rpcError(res, 401, 'Missing or invalid Authorization bearer token.');
       return;
     }
-    transport = new StreamableHTTPServerTransport({
+    transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (sid) => {
         transports[sid] = transport;
@@ -275,7 +304,10 @@ async function handlePost(req: IncomingMessage, res: ServerResponse): Promise<vo
     return;
   }
 
-  await transport.handleRequest(req, res, body);
+  await sendWebResponse(
+    res,
+    await transport.handleRequest(toWebRequest(req, body), { parsedBody: body })
+  );
 }
 
 /** GET (SSE stream) and DELETE (session teardown) both require an established session. */
@@ -286,7 +318,7 @@ async function handleSessionRequest(req: IncomingMessage, res: ServerResponse): 
     rpcError(res, 400, 'Missing or unknown MCP session id.');
     return;
   }
-  await transport.handleRequest(req, res);
+  await sendWebResponse(res, await transport.handleRequest(toWebRequest(req, undefined)));
 }
 
 const httpServer = createServer((req, res) => {
