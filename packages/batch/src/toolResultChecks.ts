@@ -20,7 +20,7 @@ import type { ToolResultRecord } from '#src/types.js';
  * Kept beside (not inside) `runToolCallChecks` on purpose — same file-per-input-kind split the
  * answer checks use: these read the tool RESULTS, that one reads the tool NAMES. Name patterns
  * reuse the same `toolNameMatchesPattern` glob/exact matcher (`@gaunt-sloth/core`), so
- * `mcp__unimarket__*` selects results exactly as it selects calls in `must_call`; payload paths
+ * `mcp__unimarket_*` selects results exactly as it selects calls in `must_call`; payload paths
  * reuse `resolveJsonPath`, the same minimal dot/`[index]` evaluator `json_path` uses on the answer.
  *
  * - `mustError` — for **each** pattern, at least one tool result whose name matches it has

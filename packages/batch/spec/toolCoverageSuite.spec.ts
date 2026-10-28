@@ -21,14 +21,14 @@ describe('parseEvalSuite tool_coverage', () => {
     const suite = parseEvalSuite(`
 target: { type: gth-agent }
 tool_coverage:
-  waive: ["mcp__jira__delete*"]
-  require: ["mcp__jira__create"]
+  waive: ["mcp__jira_delete*"]
+  require: ["mcp__jira_create"]
   min: 60
 ${CASE}`);
 
     expect(suite.toolCoverage).toEqual({
-      waive: ['mcp__jira__delete*'],
-      require: ['mcp__jira__create'],
+      waive: ['mcp__jira_delete*'],
+      require: ['mcp__jira_create'],
       min: 60,
     });
   });

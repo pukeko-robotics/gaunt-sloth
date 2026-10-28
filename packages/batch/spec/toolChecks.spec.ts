@@ -4,7 +4,7 @@ import type { ToolCallRecord } from '#src/types.js';
 describe('runToolCallChecks', () => {
   it('passes when every must_call pattern matched and no must_not_call pattern did', async () => {
     const { runToolCallChecks } = await import('#src/toolChecks.js');
-    const failures = runToolCallChecks(['mcp__unimarket__search', 'thinking'], {
+    const failures = runToolCallChecks(['mcp__unimarket_search', 'thinking'], {
       mustCall: ['mcp__*'],
       mustNotCall: ['read_file', 'gth_grep'],
     });
@@ -34,11 +34,11 @@ describe('runToolCallChecks', () => {
 
   it('matches must_not_call by glob too', async () => {
     const { runToolCallChecks } = await import('#src/toolChecks.js');
-    const failures = runToolCallChecks(['mcp__unimarket__buy'], {
+    const failures = runToolCallChecks(['mcp__unimarket_buy'], {
       mustCall: [],
       mustNotCall: ['mcp__*'],
     });
-    expect(failures).toEqual(['called forbidden tool "mcp__unimarket__buy" (matched "mcp__*")']);
+    expect(failures).toEqual(['called forbidden tool "mcp__unimarket_buy" (matched "mcp__*")']);
   });
 
   it('combines a must_call miss and a must_not_call hit (the acceptance shape)', async () => {
@@ -78,7 +78,7 @@ describe('runToolCallChecks', () => {
 
 describe('runToolCallArgChecks — tool_call_json_path (BATCH-52)', () => {
   const search = (args: string, extra: Partial<ToolCallRecord> = {}): ToolCallRecord => ({
-    name: 'mcp__shop__search',
+    name: 'mcp__shop_search',
     args,
     ...extra,
   });
@@ -89,9 +89,9 @@ describe('runToolCallArgChecks — tool_call_json_path (BATCH-52)', () => {
       [search('{"query":"laptop bags","filters":{"status":"open"}}')],
       {
         toolCallJsonPath: [
-          { tool: 'mcp__shop__search', path: 'filters.status', equals: 'open' },
-          { tool: 'mcp__shop__*', path: 'query', contains: 'laptop' },
-          { tool: 'mcp__shop__search', path: 'filters' },
+          { tool: 'mcp__shop_search', path: 'filters.status', equals: 'open' },
+          { tool: 'mcp__shop_*', path: 'query', contains: 'laptop' },
+          { tool: 'mcp__shop_search', path: 'filters' },
         ],
       }
     );
@@ -101,17 +101,17 @@ describe('runToolCallArgChecks — tool_call_json_path (BATCH-52)', () => {
   it('fails with the value it found when equals does not hold', async () => {
     const { runToolCallArgChecks } = await import('#src/toolChecks.js');
     const failures = runToolCallArgChecks([search('{"filters":{"status":"closed"}}')], {
-      toolCallJsonPath: [{ tool: 'mcp__shop__search', path: 'filters.status', equals: 'open' }],
+      toolCallJsonPath: [{ tool: 'mcp__shop_search', path: 'filters.status', equals: 'open' }],
     });
     expect(failures).toEqual([
-      'tool_call_json_path "filters.status" (tool "mcp__shop__search"): is "closed", expected "open"',
+      'tool_call_json_path "filters.status" (tool "mcp__shop_search"): is "closed", expected "open"',
     ]);
   });
 
   it('passes when ANY of several calls to the tool satisfies it', async () => {
     const { runToolCallArgChecks } = await import('#src/toolChecks.js');
     const failures = runToolCallArgChecks([search('{"page":1}'), search('{"page":2}')], {
-      toolCallJsonPath: [{ tool: 'mcp__shop__search', path: 'page', equals: 2 }],
+      toolCallJsonPath: [{ tool: 'mcp__shop_search', path: 'page', equals: 2 }],
     });
     expect(failures).toEqual([]);
   });
@@ -119,30 +119,30 @@ describe('runToolCallArgChecks — tool_call_json_path (BATCH-52)', () => {
   it('fails when no call matches the tool pattern', async () => {
     const { runToolCallArgChecks } = await import('#src/toolChecks.js');
     const failures = runToolCallArgChecks([{ name: 'read_file', args: '{"path":"a"}' }], {
-      toolCallJsonPath: [{ tool: 'mcp__shop__*', path: 'query' }],
+      toolCallJsonPath: [{ tool: 'mcp__shop_*', path: 'query' }],
     });
     expect(failures).toEqual([
-      'tool_call_json_path "query" (tool "mcp__shop__*"): no call to a matching tool',
+      'tool_call_json_path "query" (tool "mcp__shop_*"): no call to a matching tool',
     ]);
   });
 
   it('fails deterministically on arguments that are not JSON', async () => {
     const { runToolCallArgChecks } = await import('#src/toolChecks.js');
     const failures = runToolCallArgChecks([search('{"query":')], {
-      toolCallJsonPath: [{ tool: 'mcp__shop__search', path: 'query' }],
+      toolCallJsonPath: [{ tool: 'mcp__shop_search', path: 'query' }],
     });
     expect(failures).toEqual([
-      'tool_call_json_path "query" (tool "mcp__shop__search"): arguments are not JSON',
+      'tool_call_json_path "query" (tool "mcp__shop_search"): arguments are not JSON',
     ]);
   });
 
   it('grades a call with no arguments as an empty object', async () => {
     const { runToolCallArgChecks } = await import('#src/toolChecks.js');
     const failures = runToolCallArgChecks([search('')], {
-      toolCallJsonPath: [{ tool: 'mcp__shop__search', path: 'query' }],
+      toolCallJsonPath: [{ tool: 'mcp__shop_search', path: 'query' }],
     });
     expect(failures).toEqual([
-      'tool_call_json_path "query" (tool "mcp__shop__search"): path did not resolve',
+      'tool_call_json_path "query" (tool "mcp__shop_search"): path did not resolve',
     ]);
   });
 
@@ -150,10 +150,10 @@ describe('runToolCallArgChecks — tool_call_json_path (BATCH-52)', () => {
     const { runToolCallArgChecks } = await import('#src/toolChecks.js');
     const failures = runToolCallArgChecks(
       [search('{"query":"x"}', { argsTruncated: true, argsOriginalBytes: 9000 })],
-      { toolCallJsonPath: [{ tool: 'mcp__shop__search', path: 'query' }] }
+      { toolCallJsonPath: [{ tool: 'mcp__shop_search', path: 'query' }] }
     );
     expect(failures).toEqual([
-      'tool_call_json_path "query" (tool "mcp__shop__search"): arguments were truncated at ' +
+      'tool_call_json_path "query" (tool "mcp__shop_search"): arguments were truncated at ' +
         'toolResultCaptureMaxBytes (the call sent 9000 bytes); raise toolResultCaptureMaxBytes ' +
         'to capture them whole',
     ]);
@@ -164,28 +164,28 @@ describe('runToolCallArgChecks — tool_call_json_path (BATCH-52)', () => {
     const calls = [search('{"query":"laptop bags"}')];
     expect(
       runToolCallArgChecks(calls, {
-        toolCallJsonPath: [{ tool: 'mcp__shop__search', path: 'query', matches: /^laptop\b/ }],
+        toolCallJsonPath: [{ tool: 'mcp__shop_search', path: 'query', matches: /^laptop\b/ }],
       })
     ).toEqual([]);
     expect(
       runToolCallArgChecks(calls, {
-        toolCallJsonPath: [{ tool: 'mcp__shop__search', path: 'query', matches: /^bags/ }],
+        toolCallJsonPath: [{ tool: 'mcp__shop_search', path: 'query', matches: /^bags/ }],
       })
-    ).toEqual(['tool_call_json_path "query" (tool "mcp__shop__search"): does not match /^bags/']);
+    ).toEqual(['tool_call_json_path "query" (tool "mcp__shop_search"): does not match /^bags/']);
   });
 
   it('fails matches on a value that is not a string', async () => {
     const { runToolCallArgChecks } = await import('#src/toolChecks.js');
     const failures = runToolCallArgChecks([search('{"page":2}')], {
-      toolCallJsonPath: [{ tool: 'mcp__shop__search', path: 'page', matches: /2/ }],
+      toolCallJsonPath: [{ tool: 'mcp__shop_search', path: 'page', matches: /2/ }],
     });
     expect(failures).toEqual([
-      'tool_call_json_path "page" (tool "mcp__shop__search"): is 2 (matches check requires a string)',
+      'tool_call_json_path "page" (tool "mcp__shop_search"): is 2 (matches check requires a string)',
     ]);
   });
 
   describe('present: false', () => {
-    const absent = { tool: 'mcp__shop__search', path: 'filters.status', present: false };
+    const absent = { tool: 'mcp__shop_search', path: 'filters.status', present: false };
 
     it('passes when the path does not resolve', async () => {
       const { runToolCallArgChecks } = await import('#src/toolChecks.js');
@@ -201,7 +201,7 @@ describe('runToolCallArgChecks — tool_call_json_path (BATCH-52)', () => {
           toolCallJsonPath: [absent],
         })
       ).toEqual([
-        'tool_call_json_path "filters.status" (tool "mcp__shop__search"): path is present with "open"',
+        'tool_call_json_path "filters.status" (tool "mcp__shop_search"): path is present with "open"',
       ]);
     });
 
@@ -212,7 +212,7 @@ describe('runToolCallArgChecks — tool_call_json_path (BATCH-52)', () => {
           toolCallJsonPath: [absent],
         })
       ).toEqual([
-        'tool_call_json_path "filters.status" (tool "mcp__shop__search"): path is present with null',
+        'tool_call_json_path "filters.status" (tool "mcp__shop_search"): path is present with null',
       ]);
     });
 
@@ -228,7 +228,7 @@ describe('runToolCallArgChecks — tool_call_json_path (BATCH-52)', () => {
     it('still fails when no call matches the tool pattern', async () => {
       const { runToolCallArgChecks } = await import('#src/toolChecks.js');
       expect(runToolCallArgChecks([], { toolCallJsonPath: [absent] })).toEqual([
-        'tool_call_json_path "filters.status" (tool "mcp__shop__search"): no call to a matching tool',
+        'tool_call_json_path "filters.status" (tool "mcp__shop_search"): no call to a matching tool',
       ]);
     });
   });
@@ -237,7 +237,7 @@ describe('runToolCallArgChecks — tool_call_json_path (BATCH-52)', () => {
     it('passes when every matching call satisfies the entry', async () => {
       const { runToolCallArgChecks } = await import('#src/toolChecks.js');
       const failures = runToolCallArgChecks([search('{"page":2}'), search('{"page":2}')], {
-        toolCallJsonPath: [{ tool: 'mcp__shop__search', path: 'page', equals: 2, allCalls: true }],
+        toolCallJsonPath: [{ tool: 'mcp__shop_search', path: 'page', equals: 2, allCalls: true }],
       });
       expect(failures).toEqual([]);
     });
@@ -247,13 +247,11 @@ describe('runToolCallArgChecks — tool_call_json_path (BATCH-52)', () => {
       const failures = runToolCallArgChecks(
         [search('{"page":1}'), search('{"page":2}'), search('{"page":3}'), search('{"page":1}')],
         {
-          toolCallJsonPath: [
-            { tool: 'mcp__shop__search', path: 'page', equals: 2, allCalls: true },
-          ],
+          toolCallJsonPath: [{ tool: 'mcp__shop_search', path: 'page', equals: 2, allCalls: true }],
         }
       );
       expect(failures).toEqual([
-        'tool_call_json_path "page" (tool "mcp__shop__search"): is 1, expected 2; is 3, expected 2',
+        'tool_call_json_path "page" (tool "mcp__shop_search"): is 1, expected 2; is 3, expected 2',
       ]);
     });
 
@@ -262,9 +260,7 @@ describe('runToolCallArgChecks — tool_call_json_path (BATCH-52)', () => {
       const failures = runToolCallArgChecks(
         [search('{"page":2}'), { name: 'read_file', args: '{"path":"a"}' }],
         {
-          toolCallJsonPath: [
-            { tool: 'mcp__shop__search', path: 'page', equals: 2, allCalls: true },
-          ],
+          toolCallJsonPath: [{ tool: 'mcp__shop_search', path: 'page', equals: 2, allCalls: true }],
         }
       );
       expect(failures).toEqual([]);
@@ -273,17 +269,17 @@ describe('runToolCallArgChecks — tool_call_json_path (BATCH-52)', () => {
     it('still fails when no call matches the tool pattern', async () => {
       const { runToolCallArgChecks } = await import('#src/toolChecks.js');
       const failures = runToolCallArgChecks([], {
-        toolCallJsonPath: [{ tool: 'mcp__shop__search', path: 'page', allCalls: true }],
+        toolCallJsonPath: [{ tool: 'mcp__shop_search', path: 'page', allCalls: true }],
       });
       expect(failures).toEqual([
-        'tool_call_json_path "page" (tool "mcp__shop__search"): no call to a matching tool',
+        'tool_call_json_path "page" (tool "mcp__shop_search"): no call to a matching tool',
       ]);
     });
 
     it('with present: false, fails if any call carries the argument', async () => {
       const { runToolCallArgChecks } = await import('#src/toolChecks.js');
       const check = {
-        tool: 'mcp__shop__search',
+        tool: 'mcp__shop_search',
         path: 'filters.status',
         present: false,
         allCalls: true,
@@ -293,7 +289,7 @@ describe('runToolCallArgChecks — tool_call_json_path (BATCH-52)', () => {
           toolCallJsonPath: [check],
         })
       ).toEqual([
-        'tool_call_json_path "filters.status" (tool "mcp__shop__search"): path is present with "open"',
+        'tool_call_json_path "filters.status" (tool "mcp__shop_search"): path is present with "open"',
       ]);
       expect(
         runToolCallArgChecks([search('{}'), search('{"query":"x"}')], {
@@ -353,12 +349,12 @@ describe('runToolTrajectoryChecks — tool_trajectory (BATCH-54)', () => {
 
     it('matches glob patterns with the must_call matcher', async () => {
       expect(
-        await grade(calls('mcp__shop__get_customer', 'mcp__shop__create_order'), [
-          'mcp__shop__get_*',
-          'mcp__shop__*',
+        await grade(calls('mcp__shop_get_customer', 'mcp__shop_create_order'), [
+          'mcp__shop_get_*',
+          'mcp__shop_*',
         ])
       ).toEqual([]);
-      expect(await grade(calls('mcp__crm__get'), ['mcp__shop__*'])).toHaveLength(1);
+      expect(await grade(calls('mcp__crm_get'), ['mcp__shop_*'])).toHaveLength(1);
     });
 
     // The greedy left-to-right scan takes, for each pattern, the EARLIEST call after the previous
@@ -438,7 +434,7 @@ describe('runToolTrajectoryChecks — tool_trajectory (BATCH-54)', () => {
 
     it('matches each position by glob', async () => {
       expect(
-        await grade(calls('mcp__shop__get', 'mcp__shop__put'), ['mcp__shop__*', '*put'], true)
+        await grade(calls('mcp__shop_get', 'mcp__shop_put'), ['mcp__shop_*', '*put'], true)
       ).toEqual([]);
     });
   });

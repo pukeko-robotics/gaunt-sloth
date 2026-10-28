@@ -257,12 +257,12 @@ const CASES: ReadonlyArray<{ kind: string; pending: PendingToolInterrupt; header
   {
     kind: 'mcpTool',
     pending: {
-      name: 'mcp__jira__create_issue',
+      name: 'mcp__jira_create_issue',
       args: { summary: 'ship it' },
       subject: { kind: 'mcpTool', server: 'jira', name: 'create_issue' },
     },
     header:
-      'The agent wants to call create_issue on the MCP server jira, via mcp__jira__create_issue',
+      'The agent wants to call create_issue on the MCP server jira, via mcp__jira_create_issue',
   },
   {
     kind: 'tool',

@@ -6,8 +6,8 @@
  * that arm end to end needs a tool a real MCP client actually registered from a real handshake. A
  * config entry alone registers nothing.
  *
- * **Zero dependencies, deliberately.** `@modelcontextprotocol/sdk` is a dependency of
- * `packages/agent` and does not resolve from this folder; reaching for it here would mean adding a
+ * **Zero dependencies, deliberately.** The MCP SDK packages are dependencies of
+ * `packages/agent` and do not resolve from this folder; reaching for it here would mean adding a
  * dependency to `packages/app` for a test fixture, and a lockfile change is the one class of change
  * a warm local checkout cannot validate. The wire format this has to speak is small and stable:
  * newline-delimited JSON-RPC 2.0 on stdin/stdout, which is all `StdioClientTransport` does.
@@ -17,7 +17,7 @@
  * - `initialize` — echoes the client's own `protocolVersion` back. The client rejects any version
  *   outside its supported set, and the version it just sent is by construction inside it, so
  *   echoing negotiates correctly against every SDK release without pinning a literal here.
- * - `tools/list` — exactly one tool, so the registered name is `mcp__<server key>__ping`.
+ * - `tools/list` — exactly one tool, so the registered name is `mcp__<server key>_ping`.
  * - `tools/call` — answered, though the e2e case refuses the call and never reaches it.
  * - anything else with an `id` — a JSON-RPC "method not found" error, never a silent hang.
  * - anything without an `id` is a notification and gets **no** reply, per JSON-RPC.

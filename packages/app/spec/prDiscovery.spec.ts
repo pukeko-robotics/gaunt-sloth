@@ -395,13 +395,13 @@ No linked ticket here`;
 
       const { runPrDiscovery } = await import('#src/commands/prDiscovery.js');
       await runPrDiscovery(
-        withDiscoveryConfig({ allowedTools: ['gh_pr', 'mcp__jira__getJiraIssue'] })
+        withDiscoveryConfig({ allowedTools: ['gh_pr', 'mcp__jira_getJiraIssue'] })
       );
 
       const agentConfig = initMock.mock.calls.at(-1)?.[1] as GthConfig;
       expect(agentConfig.allowedTools).toEqual([
         'gh_pr',
-        'mcp__jira__getJiraIssue',
+        'mcp__jira_getJiraIssue',
         'set_requirements',
       ]);
     });

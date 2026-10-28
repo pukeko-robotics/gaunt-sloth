@@ -8,6 +8,10 @@ import { EventType } from '@ag-ui/core';
 import { AgentCapabilitiesSchema } from '@ag-ui/core/schemas';
 import type { GthConfig } from '#src/config.js';
 import type { GthAdvertisedTools } from '@gaunt-sloth/core/core/types.js';
+import {
+  bindMcpToolsets,
+  mcpToolRegisteredName,
+} from '@gaunt-sloth/core/core/approvals/mcpSubjects.js';
 
 /**
  * [[EXT-166]] — `GET /agents/:agentId/capabilities`.
@@ -116,9 +120,19 @@ function fakeTool(name: string, description: string, schema?: unknown, client = 
   };
 }
 
+/**
+ * The server each MCP tool in these cells was bound from. Taken from bindings, as production does,
+ * because the registered name alone cannot be split back into a server key.
+ */
+const MCP_BINDINGS = bindMcpToolsets([
+  ['unimarket', [{ name: mcpToolRegisteredName('unimarket', 'search') }]],
+]);
+
 function inventory(tools: string[], filteredOut: string[] = []): GthAdvertisedTools {
-  const describe = (name: string) =>
-    name.startsWith('mcp__') ? { name, server: name.split('__')[1] } : { name };
+  const describe = (name: string) => {
+    const binding = MCP_BINDINGS.get(name);
+    return binding ? { name, server: binding.server } : { name };
+  };
   return {
     tools: tools.map(describe),
     filteredOut: filteredOut.map(describe),
@@ -281,7 +295,7 @@ describe('apiAgUiModule capabilities endpoint', () => {
   // ─── the shipped schema, not a stand-in ───────────────────────────────────
 
   it('answers a body the real AgentCapabilitiesSchema accepts', async () => {
-    agentAdvertisedToolsMock.mockReturnValue(inventory(['read_file', 'mcp__unimarket__search']));
+    agentAdvertisedToolsMock.mockReturnValue(inventory(['read_file', 'mcp__unimarket_search']));
     const body = await capabilitiesOf({
       ...baseConfig,
       tools: [fakeTool('read_file', 'Read a file', z.object({ path: z.string() }))],
@@ -361,7 +375,7 @@ describe('apiAgUiModule capabilities endpoint', () => {
       tools: [fakeTool('read_file', 'Read a file')],
     } as Partial<GthConfig>;
 
-    agentAdvertisedToolsMock.mockReturnValue(inventory(['read_file', 'mcp__unimarket__search']));
+    agentAdvertisedToolsMock.mockReturnValue(inventory(['read_file', 'mcp__unimarket_search']));
     const withInventory = await capabilitiesOf(config);
 
     agentAdvertisedToolsMock.mockReturnValue(undefined);
@@ -371,7 +385,7 @@ describe('apiAgUiModule capabilities endpoint', () => {
       (body.tools as { items: { name: string; description: string; metadata?: unknown }[] }).items;
     expect(itemsOf(withInventory)).toEqual([
       { name: 'read_file', description: 'Read a file' },
-      { name: 'mcp__unimarket__search', description: '', metadata: { server: 'unimarket' } },
+      { name: 'mcp__unimarket_search', description: '', metadata: { server: 'unimarket' } },
     ]);
     expect(itemsOf(withoutInventory)).toEqual([{ name: 'read_file', description: 'Read a file' }]);
     expect(itemsOf(withInventory)).not.toEqual(itemsOf(withoutInventory));
@@ -404,15 +418,15 @@ describe('apiAgUiModule capabilities endpoint', () => {
   });
 
   it('publishes no server metadata for a tool whose MCP server could not be named', async () => {
-    // `approvalSubjectForToolName` resolves an `mcp__` name against the configured server keys and
-    // yields UNRESOLVED_MCP_SERVER — the EMPTY STRING — when zero or two keys explain it. That value
+    // `approvalSubjectForToolName` resolves an `mcp__` name through the bindings recorded at tool
+    // load and yields UNRESOLVED_MCP_SERVER — the EMPTY STRING — for a name it has no binding for. That value
     // is an internal "we cannot attribute this call", not a server anyone can be told about, so the
     // declaration carries no `metadata` for such a tool. The resolvable sibling in the same
     // inventory is the differential: metadata is omitted HERE, not never emitted.
     agentAdvertisedToolsMock.mockReturnValue({
       tools: [
-        { name: 'mcp__unimarket__search', server: 'unimarket' },
-        { name: 'mcp__mystery__do', server: '' },
+        { name: 'mcp__unimarket_search', server: 'unimarket' },
+        { name: 'mcp__mystery_do', server: '' },
       ],
       filteredOut: [],
       unnamed: 0,
@@ -420,11 +434,11 @@ describe('apiAgUiModule capabilities endpoint', () => {
 
     const body = await capabilitiesOf(baseConfig);
     const items = (body.tools as { items: { name: string; metadata?: unknown }[] }).items;
-    expect(items.find((item) => item.name === 'mcp__mystery__do')).toEqual({
-      name: 'mcp__mystery__do',
+    expect(items.find((item) => item.name === 'mcp__mystery_do')).toEqual({
+      name: 'mcp__mystery_do',
       description: '',
     });
-    expect(items.find((item) => item.name === 'mcp__unimarket__search')).toMatchObject({
+    expect(items.find((item) => item.name === 'mcp__unimarket_search')).toMatchObject({
       metadata: { server: 'unimarket' },
     });
     expect(AgentCapabilitiesSchema.safeParse(body).success).toBe(true);

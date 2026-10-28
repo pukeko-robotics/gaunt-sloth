@@ -959,7 +959,7 @@ export class GthLangChainAgent extends GthAbstractAgent {
     let tools = advertisedTools;
     if (Array.isArray(allowedTools)) {
       // Filter named tools by the allow-list. Entries match by exact name, or glob-style when
-      // they contain `*` (e.g. `mcp__unimarket__*`) — see isToolAllowed. ServerTools
+      // they contain `*` (e.g. `mcp__unimarket_*`) — see isToolAllowed. ServerTools
       // (provider-native "magic objects" such as Anthropic web search) may have no `name`, so
       // they can never be referenced in the allow-list - drop-by-default would silently remove
       // them with no recourse. Retain such nameless tools instead; the allow-list is a name-based

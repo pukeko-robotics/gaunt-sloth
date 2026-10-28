@@ -940,11 +940,11 @@ describe('GthAgentRunner', () => {
         mockAgent.stream.mockResolvedValue(streamOf('working'));
         (mockAgent as any).getPendingToolInterrupts = vi
           .fn()
-          .mockResolvedValueOnce([{ name: 'mcp__docs__search', args: { query: 'x' } }])
+          .mockResolvedValueOnce([{ name: 'mcp__docs_search', args: { query: 'x' } }])
           .mockResolvedValueOnce([]);
         (mockAgent as any).getDeclaredMcpToolAnnotations = vi
           .fn()
-          .mockReturnValue(new Map([['mcp__docs__search', { readOnlyHint: true }]]));
+          .mockReturnValue(new Map([['mcp__docs_search', { readOnlyHint: true }]]));
         (mockAgent as any).streamResume = vi.fn().mockResolvedValue(streamOf(''));
 
         await runner.init(undefined, { ...mockConfig, ...MANUAL_CONFIG } as any);
@@ -953,7 +953,7 @@ describe('GthAgentRunner', () => {
 
         await runner.processMessages([new HumanMessage('search docs')]);
 
-        expect(human).toHaveBeenCalledWith(expect.objectContaining({ name: 'mcp__docs__search' }));
+        expect(human).toHaveBeenCalledWith(expect.objectContaining({ name: 'mcp__docs_search' }));
       });
 
       it('prompts for a custom tool at manual', async () => {
@@ -4275,7 +4275,7 @@ describe('GthAgentRunner', () => {
         deny: [{ type: 'mcpTool', server: 'jira', matcher: 'exact', pattern: 'delete_issue' }],
       });
       const runner = new GthAgentRunner(statusUpdateCallback);
-      const streamResume = pendingToolOnce('mcp__jira__delete_issue');
+      const streamResume = pendingToolOnce('mcp__jira_delete_issue');
       await runner.init('code', config);
       const human = vi.fn().mockResolvedValue({ type: 'approve' });
       runner.setToolApprovalCallback(human);
@@ -4293,9 +4293,9 @@ describe('GthAgentRunner', () => {
       // user is still asked.
       const config = gateConfig({
         mode: 'write',
-        allow: [{ type: 'tool', matcher: 'exact', pattern: 'mcp__jira__delete_issue' }],
+        allow: [{ type: 'tool', matcher: 'exact', pattern: 'mcp__jira_delete_issue' }],
       });
-      expect(await askedTheHuman(config, 'mcp__jira__delete_issue')).toBe(true);
+      expect(await askedTheHuman(config, 'mcp__jira_delete_issue')).toBe(true);
     });
 
     it('CONTROL: the same `tool` allow entry DOES auto-approve one of our own tools', async () => {
@@ -4312,9 +4312,9 @@ describe('GthAgentRunner', () => {
       // exactly and still cannot claim it.
       const config = gateConfig({
         mode: 'write',
-        allow: [{ type: 'tool', matcher: 'exact', pattern: 'mcp__ghost__delete' }],
+        allow: [{ type: 'tool', matcher: 'exact', pattern: 'mcp__ghost_delete' }],
       });
-      expect(await askedTheHuman(config, 'mcp__ghost__delete')).toBe(true);
+      expect(await askedTheHuman(config, 'mcp__ghost_delete')).toBe(true);
     });
 
     describe('the discriminating pair, end to end from config to decision', () => {
@@ -4324,23 +4324,23 @@ describe('GthAgentRunner', () => {
       ];
 
       it('TRUSTED: the server’s own readOnlyHint declaration exempts its tool', async () => {
-        declaring({ mcp__jira__search: { readOnlyHint: true } });
+        declaring({ mcp__jira_search: { readOnlyHint: true } });
         const config = gateConfig({
           mode: 'write',
           allow: allowReadOnlyMcp,
           mcp: { servers: { jira: { trustAnnotations: ['readOnlyHint'] } } },
         });
-        expect(await askedTheHuman(config, 'mcp__jira__search')).toBe(false);
+        expect(await askedTheHuman(config, 'mcp__jira_search')).toBe(false);
       });
 
       it('UNTRUSTED: the very same declaration exempts nothing, and the human is asked', async () => {
-        declaring({ mcp__jira__search: { readOnlyHint: true } });
+        declaring({ mcp__jira_search: { readOnlyHint: true } });
         const config = gateConfig({
           mode: 'write',
           allow: allowReadOnlyMcp,
           mcp: { servers: { jira: { trustAnnotations: [] } } },
         });
-        expect(await askedTheHuman(config, 'mcp__jira__search')).toBe(true);
+        expect(await askedTheHuman(config, 'mcp__jira_search')).toBe(true);
       });
 
       it('CONTROL: one of OUR OWN read tools is exempted by the same hint with no trust list', async () => {
@@ -4492,17 +4492,17 @@ describe('GthAgentRunner', () => {
        * declare `openWorldHint: false`; only the trusted one is believed.
        */
       it('an UNTRUSTED server declaring openWorldHint false is still floored', () => {
-        declaring({ mcp__jira__search: { readOnlyHint: true, openWorldHint: false } });
+        declaring({ mcp__jira_search: { readOnlyHint: true, openWorldHint: false } });
         const config = rated({ mcp: { servers: { jira: { trustAnnotations: [] } } } });
-        expect(floorVerdictFor(config, 'mcp__jira__search')?.outcome).toBe('destructive');
+        expect(floorVerdictFor(config, 'mcp__jira_search')?.outcome).toBe('destructive');
       });
 
       it('CONTROL: the very same declaration from a TRUSTED server is not floored', () => {
-        declaring({ mcp__jira__search: { readOnlyHint: true, openWorldHint: false } });
+        declaring({ mcp__jira_search: { readOnlyHint: true, openWorldHint: false } });
         const config = rated({
           mcp: { servers: { jira: { trustAnnotations: ['openWorldHint'] } } },
         });
-        expect(floorVerdictFor(config, 'mcp__jira__search')).toBeUndefined();
+        expect(floorVerdictFor(config, 'mcp__jira_search')).toBeUndefined();
       });
 
       /**
@@ -4512,8 +4512,8 @@ describe('GthAgentRunner', () => {
        */
       it('idempotentHint changes no outcome — CONTROL: openWorldHint does', async () => {
         const decide = (declaration: Record<string, unknown>) => {
-          declaring({ mcp__jira__search: declaration });
-          return floorVerdictFor(rated({ mcp: trustingJira }), 'mcp__jira__search');
+          declaring({ mcp__jira_search: declaration });
+          return floorVerdictFor(rated({ mcp: trustingJira }), 'mcp__jira_search');
         };
         const local = { readOnlyHint: true, openWorldHint: false };
         const idempotent = await decide({ ...local, idempotentHint: true });
@@ -4532,10 +4532,10 @@ describe('GthAgentRunner', () => {
        */
       it('destructiveHint false does NOT lower a floor openWorldHint set', () => {
         declaring({
-          mcp__jira__search: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+          mcp__jira_search: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
         });
         const config = rated({ mcp: trustingJira });
-        expect(floorVerdictFor(config, 'mcp__jira__search')?.outcome).toBe('destructive');
+        expect(floorVerdictFor(config, 'mcp__jira_search')?.outcome).toBe('destructive');
       });
 
       /**
@@ -4546,26 +4546,26 @@ describe('GthAgentRunner', () => {
        */
       it('destructiveHint true never buys an exemption', async () => {
         declaring({
-          mcp__jira__wipe: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+          mcp__jira_wipe: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
         });
         const config = gateConfig({ mode: 'manual', mcp: trustingJira });
-        const pending = await shownToTheHuman(config, 'mcp__jira__wipe');
+        const pending = await shownToTheHuman(config, 'mcp__jira_wipe');
         expect(pending, 'the human is still asked').not.toBeNull();
         expect(pending?.safetyVerdict).toBeUndefined();
         // ...and the floor, asked directly, agrees it is not the hint that floors.
-        expect(floorVerdictFor(config, 'mcp__jira__wipe')).toBeUndefined();
+        expect(floorVerdictFor(config, 'mcp__jira_wipe')).toBeUndefined();
       });
 
       it('CONTROL: the harness CAN exempt — an allow entry approves that very call', async () => {
         declaring({
-          mcp__jira__wipe: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+          mcp__jira_wipe: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
         });
         const config = gateConfig({
           mode: 'manual',
           allow: [{ type: 'mcpTool', server: 'jira', matcher: 'exact', pattern: 'wipe' }],
           mcp: trustingJira,
         });
-        expect(await shownToTheHuman(config, 'mcp__jira__wipe')).toBeNull();
+        expect(await shownToTheHuman(config, 'mcp__jira_wipe')).toBeNull();
       });
 
       /**
@@ -5088,9 +5088,9 @@ describe('GthAgentRunner', () => {
 
       it('names the server for an MCP tool, and no host where none is involved', async () => {
         const [first] = await driveCalls(toolConfig({ mode: 'write' }), [
-          { name: 'mcp__jira__create_issue', args: { summary: 'a bug' } },
+          { name: 'mcp__jira_create_issue', args: { summary: 'a bug' } },
         ]);
-        // §6's own example: *always approve mcp__jira__create_issue*, where no host is involved.
+        // §6's own example: *always approve mcp__jira_create_issue*, where no host is involved.
         expect(first?.grantPreview).toBe(
           '{ "type": "mcpTool", "server": "jira", "matcher": "exact", "pattern": "create_issue" }'
         );
@@ -5130,9 +5130,9 @@ describe('GthAgentRunner', () => {
      */
     it('a grant for one server’s tool never covers another server’s same-named tool', async () => {
       const prompts = await driveCalls(toolConfig({ mode: 'write' }), [
-        { name: 'mcp__jira__delete_issue' },
-        { name: 'mcp__jira__delete_issue' },
-        { name: 'mcp__gitlab__delete_issue' },
+        { name: 'mcp__jira_delete_issue' },
+        { name: 'mcp__jira_delete_issue' },
+        { name: 'mcp__gitlab_delete_issue' },
       ]);
       expect(prompts[0]).not.toBeNull();
       expect(prompts[1], 'CONTROL: the same tool on the same server IS covered').toBeNull();
@@ -5313,8 +5313,8 @@ describe('GthAgentRunner', () => {
         '%s invalidates, and the notice names it and no hint that stayed put',
         async (_label, before, after, hint, stayed) => {
           const prompts = await driveCalls(trustingJira(), [
-            { name: 'mcp__jira__search', declaring: { mcp__jira__search: before } },
-            { name: 'mcp__jira__search', declaring: { mcp__jira__search: after } },
+            { name: 'mcp__jira_search', declaring: { mcp__jira_search: before } },
+            { name: 'mcp__jira_search', declaring: { mcp__jira_search: after } },
           ]);
           expect(prompts[0], 'the first call asks and grants').not.toBeNull();
           expect(prompts[1], 'the weakened tool asks again').not.toBeNull();
@@ -5339,8 +5339,8 @@ describe('GthAgentRunner', () => {
         'the mirror image (%s) STRENGTHENS and the grant stands',
         async (_label, before, after) => {
           const prompts = await driveCalls(trustingJira(), [
-            { name: 'mcp__jira__search', declaring: { mcp__jira__search: before } },
-            { name: 'mcp__jira__search', declaring: { mcp__jira__search: after } },
+            { name: 'mcp__jira_search', declaring: { mcp__jira_search: before } },
+            { name: 'mcp__jira_search', declaring: { mcp__jira_search: after } },
           ]);
           expect(prompts[1], 'a safer tool is still covered').toBeNull();
           expect(warningsSaid(), 'and nothing was withdrawn').not.toContain(jiraSearchGrantLine);
@@ -5349,8 +5349,8 @@ describe('GthAgentRunner', () => {
 
       it('an unchanged declaration invalidates nothing', async () => {
         const prompts = await driveCalls(trustingJira(), [
-          { name: 'mcp__jira__search', declaring: { mcp__jira__search: LOCAL_WRITE } },
-          { name: 'mcp__jira__search', declaring: { mcp__jira__search: LOCAL_WRITE } },
+          { name: 'mcp__jira_search', declaring: { mcp__jira_search: LOCAL_WRITE } },
+          { name: 'mcp__jira_search', declaring: { mcp__jira_search: LOCAL_WRITE } },
         ]);
         expect(prompts[1]).toBeNull();
       });
@@ -5363,13 +5363,13 @@ describe('GthAgentRunner', () => {
       it('a change to anything BUT the four hints invalidates nothing', async () => {
         const prompts = await driveCalls(trustingJira(), [
           {
-            name: 'mcp__jira__search',
-            declaring: { mcp__jira__search: { ...LOCAL_WRITE, description: 'Search issues.' } },
+            name: 'mcp__jira_search',
+            declaring: { mcp__jira_search: { ...LOCAL_WRITE, description: 'Search issues.' } },
           },
           {
-            name: 'mcp__jira__search',
+            name: 'mcp__jira_search',
             declaring: {
-              mcp__jira__search: {
+              mcp__jira_search: {
                 ...LOCAL_WRITE,
                 description: 'Search issues, now with more fields.',
                 title: 'Issue search',
@@ -5383,13 +5383,13 @@ describe('GthAgentRunner', () => {
       it('CONTROL: the same pair with one hint weakened DOES invalidate', async () => {
         const prompts = await driveCalls(trustingJira(), [
           {
-            name: 'mcp__jira__search',
-            declaring: { mcp__jira__search: { ...LOCAL_WRITE, description: 'Search issues.' } },
+            name: 'mcp__jira_search',
+            declaring: { mcp__jira_search: { ...LOCAL_WRITE, description: 'Search issues.' } },
           },
           {
-            name: 'mcp__jira__search',
+            name: 'mcp__jira_search',
             declaring: {
-              mcp__jira__search: {
+              mcp__jira_search: {
                 ...LOCAL_WRITE,
                 openWorldHint: true,
                 description: 'Search issues, now with more fields.',
@@ -5409,13 +5409,13 @@ describe('GthAgentRunner', () => {
         // No `mcp` block at all: nothing external is believed.
         const prompts = await driveCalls(toolConfig({ mode: 'write' }), [
           {
-            name: 'mcp__jira__search',
-            declaring: { mcp__jira__search: { ...LOCAL_WRITE, readOnlyHint: true } },
+            name: 'mcp__jira_search',
+            declaring: { mcp__jira_search: { ...LOCAL_WRITE, readOnlyHint: true } },
           },
           {
-            name: 'mcp__jira__search',
+            name: 'mcp__jira_search',
             declaring: {
-              mcp__jira__search: { ...LOCAL_WRITE, readOnlyHint: false, openWorldHint: true },
+              mcp__jira_search: { ...LOCAL_WRITE, readOnlyHint: false, openWorldHint: true },
             },
           },
         ]);
@@ -5426,13 +5426,13 @@ describe('GthAgentRunner', () => {
       it('CONTROL: the very same declaration pair from a TRUSTED server does invalidate', async () => {
         const prompts = await driveCalls(trustingJira(), [
           {
-            name: 'mcp__jira__search',
-            declaring: { mcp__jira__search: { ...LOCAL_WRITE, readOnlyHint: true } },
+            name: 'mcp__jira_search',
+            declaring: { mcp__jira_search: { ...LOCAL_WRITE, readOnlyHint: true } },
           },
           {
-            name: 'mcp__jira__search',
+            name: 'mcp__jira_search',
             declaring: {
-              mcp__jira__search: { ...LOCAL_WRITE, readOnlyHint: false, openWorldHint: true },
+              mcp__jira_search: { ...LOCAL_WRITE, readOnlyHint: false, openWorldHint: true },
             },
           },
         ]);
@@ -5453,11 +5453,11 @@ describe('GthAgentRunner', () => {
         it('the weakening is caught even though the call now names a host', async () => {
           const prompts = await driveCalls(trustingJira(), [
             // Grants {mcpTool jira/fetch} — no host in these arguments, so no host bound.
-            { name: 'mcp__jira__fetch', declaring: { mcp__jira__fetch: LOCAL_WRITE } },
+            { name: 'mcp__jira_fetch', declaring: { mcp__jira_fetch: LOCAL_WRITE } },
             {
-              name: 'mcp__jira__fetch',
+              name: 'mcp__jira_fetch',
               args: withHost,
-              declaring: { mcp__jira__fetch: { ...LOCAL_WRITE, openWorldHint: true } },
+              declaring: { mcp__jira_fetch: { ...LOCAL_WRITE, openWorldHint: true } },
             },
           ]);
           expect(prompts[1], 'the weakened tool asks again').not.toBeNull();
@@ -5466,11 +5466,11 @@ describe('GthAgentRunner', () => {
 
         it('CONTROL: without the weakening that very call is auto-approved by it', async () => {
           const prompts = await driveCalls(trustingJira(), [
-            { name: 'mcp__jira__fetch', declaring: { mcp__jira__fetch: LOCAL_WRITE } },
+            { name: 'mcp__jira_fetch', declaring: { mcp__jira_fetch: LOCAL_WRITE } },
             {
-              name: 'mcp__jira__fetch',
+              name: 'mcp__jira_fetch',
               args: withHost,
-              declaring: { mcp__jira__fetch: LOCAL_WRITE },
+              declaring: { mcp__jira_fetch: LOCAL_WRITE },
             },
           ]);
           expect(prompts[1], 'a tool-only grant covers a call carrying a host').toBeNull();
@@ -5484,19 +5484,19 @@ describe('GthAgentRunner', () => {
         it('a grant bound to another host is NOT invalidated by a weakened call elsewhere', async () => {
           const prompts = await driveCalls(trustingJira(), [
             {
-              name: 'mcp__jira__fetch',
+              name: 'mcp__jira_fetch',
               args: { url: 'https://a.example/1' },
-              declaring: { mcp__jira__fetch: LOCAL_WRITE },
+              declaring: { mcp__jira_fetch: LOCAL_WRITE },
             },
             {
-              name: 'mcp__jira__fetch',
+              name: 'mcp__jira_fetch',
               args: { url: 'https://b.example/2' },
-              declaring: { mcp__jira__fetch: { ...LOCAL_WRITE, openWorldHint: true } },
+              declaring: { mcp__jira_fetch: { ...LOCAL_WRITE, openWorldHint: true } },
             },
             {
-              name: 'mcp__jira__fetch',
+              name: 'mcp__jira_fetch',
               args: { url: 'https://a.example/3' },
-              declaring: { mcp__jira__fetch: LOCAL_WRITE },
+              declaring: { mcp__jira_fetch: LOCAL_WRITE },
             },
           ]);
           expect(prompts[1], 'the other host was never granted').not.toBeNull();
@@ -5511,14 +5511,14 @@ describe('GthAgentRunner', () => {
        */
       it('the human can re-grant the weakened tool, and the new grant holds', async () => {
         const prompts = await driveCalls(trustingJira(), [
-          { name: 'mcp__jira__search', declaring: { mcp__jira__search: LOCAL_WRITE } },
+          { name: 'mcp__jira_search', declaring: { mcp__jira_search: LOCAL_WRITE } },
           {
-            name: 'mcp__jira__search',
-            declaring: { mcp__jira__search: { ...LOCAL_WRITE, openWorldHint: true } },
+            name: 'mcp__jira_search',
+            declaring: { mcp__jira_search: { ...LOCAL_WRITE, openWorldHint: true } },
           },
           {
-            name: 'mcp__jira__search',
-            declaring: { mcp__jira__search: { ...LOCAL_WRITE, openWorldHint: true } },
+            name: 'mcp__jira_search',
+            declaring: { mcp__jira_search: { ...LOCAL_WRITE, openWorldHint: true } },
           },
         ]);
         expect(prompts[1], 'the weakening asked again').not.toBeNull();
@@ -5533,7 +5533,7 @@ describe('GthAgentRunner', () => {
         const storePath = join(projectDir, SHELL_ALLOWLIST_FILE);
         await driveCalls(
           trustingJira(),
-          [{ name: 'mcp__jira__search', declaring: { mcp__jira__search: LOCAL_WRITE } }],
+          [{ name: 'mcp__jira_search', declaring: { mcp__jira_search: LOCAL_WRITE } }],
           { type: 'approve', scope: 'always' }
         );
         const written = JSON.parse(readFileSync(storePath, 'utf8'));
@@ -5551,8 +5551,8 @@ describe('GthAgentRunner', () => {
           trustingJira(),
           [
             {
-              name: 'mcp__jira__search',
-              declaring: { mcp__jira__search: { ...LOCAL_WRITE, openWorldHint: true } },
+              name: 'mcp__jira_search',
+              declaring: { mcp__jira_search: { ...LOCAL_WRITE, openWorldHint: true } },
             },
           ],
           { type: 'reject' }
@@ -5607,10 +5607,10 @@ describe('GthAgentRunner', () => {
          */
         it('the summary the menu shows is the exact line the withdrawal notice later names', async () => {
           const prompts = await driveCalls(believingJira(), [
-            { name: 'mcp__jira__search', declaring: { mcp__jira__search: SAFE_DECL } },
+            { name: 'mcp__jira_search', declaring: { mcp__jira_search: SAFE_DECL } },
             {
-              name: 'mcp__jira__search',
-              declaring: { mcp__jira__search: { ...SAFE_DECL, openWorldHint: true } },
+              name: 'mcp__jira_search',
+              declaring: { mcp__jira_search: { ...SAFE_DECL, openWorldHint: true } },
             },
           ]);
           const summary = prompts[0]?.grantSummary;
@@ -5685,8 +5685,8 @@ describe('GthAgentRunner', () => {
           // affordance itself and not the config path Task 1 already covers.
           await driveCalls(toolConfig({ mode: 'write' }), [
             {
-              name: 'mcp__jira__search',
-              declaring: { mcp__jira__search: SAFE_DECL },
+              name: 'mcp__jira_search',
+              declaring: { mcp__jira_search: SAFE_DECL },
               before: (r) => {
                 r.setMcpAnnotationTrust('jira', ['readOnlyHint'], true);
                 runner = r;
@@ -5770,8 +5770,8 @@ describe('GthAgentRunner', () => {
           let runner!: GthAgentRunner;
           await driveCalls(believingJira(), [
             {
-              name: 'mcp__jira__search',
-              declaring: { mcp__jira__search: decl },
+              name: 'mcp__jira_search',
+              declaring: { mcp__jira_search: decl },
               before: (r) => {
                 runner = r;
               },
@@ -5792,8 +5792,8 @@ describe('GthAgentRunner', () => {
           let runner!: GthAgentRunner;
           await driveCalls(believingJira(), [
             {
-              name: 'mcp__jira__search',
-              declaring: { mcp__jira__search: SAFE_DECL },
+              name: 'mcp__jira_search',
+              declaring: { mcp__jira_search: SAFE_DECL },
               before: (r) => {
                 runner = r;
               },
@@ -5816,8 +5816,8 @@ describe('GthAgentRunner', () => {
           let runner!: GthAgentRunner;
           await driveCalls(believingJira(['readOnlyHint']), [
             {
-              name: 'mcp__jira__search',
-              declaring: { mcp__jira__search: SAFE_DECL },
+              name: 'mcp__jira_search',
+              declaring: { mcp__jira_search: SAFE_DECL },
               before: (r) => {
                 runner = r;
               },
@@ -5861,13 +5861,13 @@ describe('GthAgentRunner', () => {
             }),
             [
               {
-                name: 'mcp__jira__search',
-                declaring: { mcp__jira__search: SAFE_DECL },
+                name: 'mcp__jira_search',
+                declaring: { mcp__jira_search: SAFE_DECL },
                 before: (r) => {
                   runner = r;
                 },
               },
-              { name: 'mcp__gitlab__search', declaring: { mcp__gitlab__search: SAFE_DECL } },
+              { name: 'mcp__gitlab_search', declaring: { mcp__gitlab_search: SAFE_DECL } },
             ]
           );
           expect(runner.getGrants(), 'both were granted').toHaveLength(2);
@@ -5905,10 +5905,10 @@ describe('GthAgentRunner', () => {
           'a mid-session withdrawal of %s invalidates the grant at the next call, with the notice',
           async (hint) => {
             const prompts = await driveCalls(believingJira(), [
-              { name: 'mcp__jira__search', declaring: { mcp__jira__search: SAFE_DECL } },
+              { name: 'mcp__jira_search', declaring: { mcp__jira_search: SAFE_DECL } },
               {
-                name: 'mcp__jira__search',
-                declaring: { mcp__jira__search: SAFE_DECL },
+                name: 'mcp__jira_search',
+                declaring: { mcp__jira_search: SAFE_DECL },
                 before: (r) => {
                   r.setMcpAnnotationTrust('jira', [hint], false);
                 },
@@ -5929,10 +5929,10 @@ describe('GthAgentRunner', () => {
          */
         it('CONTROL: withdrawing idempotentHint leaves the grant covering the next call', async () => {
           const prompts = await driveCalls(believingJira(), [
-            { name: 'mcp__jira__search', declaring: { mcp__jira__search: SAFE_DECL } },
+            { name: 'mcp__jira_search', declaring: { mcp__jira_search: SAFE_DECL } },
             {
-              name: 'mcp__jira__search',
-              declaring: { mcp__jira__search: SAFE_DECL },
+              name: 'mcp__jira_search',
+              declaring: { mcp__jira_search: SAFE_DECL },
               before: (r) => {
                 r.setMcpAnnotationTrust('jira', ['idempotentHint'], false);
               },
@@ -5960,8 +5960,8 @@ describe('GthAgentRunner', () => {
           let runner!: GthAgentRunner;
           await driveCalls(believingJira(), [
             {
-              name: 'mcp__jira__search',
-              declaring: { mcp__jira__search: SAFE_DECL },
+              name: 'mcp__jira_search',
+              declaring: { mcp__jira_search: SAFE_DECL },
               before: (r) => {
                 runner = r;
               },
@@ -5988,8 +5988,8 @@ describe('GthAgentRunner', () => {
           let runner!: GthAgentRunner;
           await driveCalls(believingJira(), [
             {
-              name: 'mcp__jira__search',
-              declaring: { mcp__jira__search: SAFE_DECL },
+              name: 'mcp__jira_search',
+              declaring: { mcp__jira_search: SAFE_DECL },
               before: (r) => {
                 runner = r;
               },
@@ -6029,8 +6029,8 @@ describe('GthAgentRunner', () => {
             believingJira(),
             [
               {
-                name: 'mcp__jira__search',
-                declaring: { mcp__jira__search: SAFE_DECL },
+                name: 'mcp__jira_search',
+                declaring: { mcp__jira_search: SAFE_DECL },
                 before: (r) => {
                   runner = r;
                 },

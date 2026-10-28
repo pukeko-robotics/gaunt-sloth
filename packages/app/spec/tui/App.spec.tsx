@@ -1009,7 +1009,7 @@ describe('tui <App>', () => {
         'MCP server overview. See the Tools tab for full definitions.\n' +
         '────────\n\n' +
         '=== MCP SERVERS (1) ===\n\n── ctx7 ──\ninstructions:\n  Use library IDs.\n' +
-        'tools (1):\n  • mcp__ctx7__get_docs: Fetch docs for a library',
+        'tools (1):\n  • mcp__ctx7_get_docs: Fetch docs for a library',
     });
 
     stdin.write('/debug');
@@ -1033,7 +1033,7 @@ describe('tui <App>', () => {
       // The server, its captured instructions, and its server-prefixed tool all render.
       expect(f).toContain('ctx7');
       expect(f).toContain('Use library IDs.');
-      expect(f).toContain('mcp__ctx7__get_docs');
+      expect(f).toContain('mcp__ctx7_get_docs');
     });
 
     unmount();

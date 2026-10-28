@@ -3245,7 +3245,7 @@ export class GthAgentRunner {
    * - **A tool call** records identity — the tool, its server, and the host where the call carries
    *   one (§4.7.4, {@link toolGrantEntry}) — never arguments, which would produce a grant that
    *   never matches twice. A call naming no host records the tool alone, which is §6's own example
-   *   (*always approve `mcp__jira__create_issue`*, where no host is involved); what keeps that from
+   *   (*always approve `mcp__jira_create_issue`*, where no host is involved); what keeps that from
    *   being unbounded is §3.2's default that a tool entry is still `rate: true`, so the rater goes
    *   on seeing every call's full arguments.
    *

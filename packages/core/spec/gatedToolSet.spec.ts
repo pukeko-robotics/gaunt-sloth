@@ -73,8 +73,8 @@ const WRITE_BUILT_INS = [
 const UNCLASSED = [
   SHELL_TOOL_NAME,
   'execute',
-  'mcp__docs__search', // declares readOnlyHint: true — earns nothing at these two rungs
-  'mcp__jira__create_issue',
+  'mcp__docs_search', // declares readOnlyHint: true — earns nothing at these two rungs
+  'mcp__jira_create_issue',
   'my_custom_tool',
   'gth_checklist',
   'gth_status_update',
@@ -88,13 +88,13 @@ const BOUND = [
   'read_file',
   'write_file',
   SHELL_TOOL_NAME,
-  'mcp__docs__search',
+  'mcp__docs_search',
   'ls',
   'edit_file',
   'my_custom_tool',
   'glob',
   'create_directory',
-  'mcp__jira__create_issue',
+  'mcp__jira_create_issue',
   'grep',
   'move_file',
   'gth_checklist',
@@ -210,8 +210,8 @@ describe('EXT-80 — resolveGatedToolNames membership', () => {
 
   it('gates an MCP tool that declares readOnlyHint exactly like one that does not', () => {
     for (const rung of ['manual', 'write'] as const) {
-      expect(gatedAt(rung)).toContain('mcp__docs__search');
-      expect(gatedAt(rung)).toContain('mcp__jira__create_issue');
+      expect(gatedAt(rung)).toContain('mcp__docs_search');
+      expect(gatedAt(rung)).toContain('mcp__jira_create_issue');
     }
   });
 
@@ -349,9 +349,9 @@ describe('EXT-80 — resolveInterruptToolNames: the rung-independent interrupt s
   });
 
   it('is non-empty for a chat session with no shell gate, so manual stays reachable there', () => {
-    const chatTools = ['read_file', 'mcp__docs__search', 'my_custom_tool'];
+    const chatTools = ['read_file', 'mcp__docs_search', 'my_custom_tool'];
     expect(resolveInterruptToolNames({ gateShell: false, boundToolNames: chatTools })).toEqual([
-      'mcp__docs__search',
+      'mcp__docs_search',
       'my_custom_tool',
     ]);
   });

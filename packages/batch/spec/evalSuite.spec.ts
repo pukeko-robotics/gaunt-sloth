@@ -495,7 +495,7 @@ target: { type: gth-agent }
 cases:
   - id: rich
     prompt: "p"
-    must_call: ["mcp__unimarket__*"]
+    must_call: ["mcp__unimarket_*"]
     must_not_call: ["read_file"]
     must_match: ["\\\\bRPP-\\\\d+\\\\b"]
     must_not_match: ["\\\\bERROR\\\\b"]
@@ -504,7 +504,7 @@ cases:
       - { path: "data.status", contains: "ok" }
 `);
       const c = suite.cases[0].turns[0].expectations[0];
-      expect(c.mustCall).toEqual(['mcp__unimarket__*']);
+      expect(c.mustCall).toEqual(['mcp__unimarket_*']);
       expect(c.mustNotCall).toEqual(['read_file']);
       // Regex strings are compiled to RegExp and stored.
       expect(c.mustMatch).toHaveLength(1);
@@ -1035,18 +1035,18 @@ target: { type: gth-agent }
 cases:
   - id: denied
     prompt: "get the data"
-    must_error: ["mcp__authz__*"]
+    must_error: ["mcp__authz_*"]
     tool_result_json_path:
-      - { tool: "mcp__authz__*", path: "error.code", equals: "MODULE_DISABLED" }
-      - { tool: "mcp__authz__*", path: "error.message", contains: "denied" }
-      - { tool: "mcp__authz__*", path: "error" }
+      - { tool: "mcp__authz_*", path: "error.code", equals: "MODULE_DISABLED" }
+      - { tool: "mcp__authz_*", path: "error.message", contains: "denied" }
+      - { tool: "mcp__authz_*", path: "error" }
 `);
       const block = suite.cases[0].turns[0].expectations[0];
-      expect(block.mustError).toEqual(['mcp__authz__*']);
+      expect(block.mustError).toEqual(['mcp__authz_*']);
       expect(block.toolResultJsonPath).toEqual([
-        { tool: 'mcp__authz__*', path: 'error.code', equals: 'MODULE_DISABLED' },
-        { tool: 'mcp__authz__*', path: 'error.message', contains: 'denied' },
-        { tool: 'mcp__authz__*', path: 'error' }, // existence check: no equals/contains key at all
+        { tool: 'mcp__authz_*', path: 'error.code', equals: 'MODULE_DISABLED' },
+        { tool: 'mcp__authz_*', path: 'error.message', contains: 'denied' },
+        { tool: 'mcp__authz_*', path: 'error' }, // existence check: no equals/contains key at all
       ]);
     });
 
@@ -1203,14 +1203,14 @@ cases:
   - id: searched-open
     prompt: "find open orders for laptops"
     tool_call_json_path:
-      - { tool: "mcp__shop__search", path: "filters.status", equals: "open" }
-      - { tool: "mcp__shop__*", path: "query", contains: "laptop" }
-      - { tool: "mcp__shop__search", path: "filters" }
+      - { tool: "mcp__shop_search", path: "filters.status", equals: "open" }
+      - { tool: "mcp__shop_*", path: "query", contains: "laptop" }
+      - { tool: "mcp__shop_search", path: "filters" }
 `);
       expect(suite.cases[0].turns[0].expectations[0].toolCallJsonPath).toEqual([
-        { tool: 'mcp__shop__search', path: 'filters.status', equals: 'open' },
-        { tool: 'mcp__shop__*', path: 'query', contains: 'laptop' },
-        { tool: 'mcp__shop__search', path: 'filters' },
+        { tool: 'mcp__shop_search', path: 'filters.status', equals: 'open' },
+        { tool: 'mcp__shop_*', path: 'query', contains: 'laptop' },
+        { tool: 'mcp__shop_search', path: 'filters' },
       ]);
       expect(suiteUsesToolCallArgs(suite)).toBe(true);
     });
@@ -1382,10 +1382,10 @@ cases:
   - id: ordered
     prompt: "p"
     tool_trajectory:
-      calls: ["mcp__shop__get_customer", "mcp__shop__*"]
+      calls: ["mcp__shop_get_customer", "mcp__shop_*"]
 `);
       expect(suite.cases[0].turns[0].expectations[0].toolTrajectory).toEqual({
-        calls: ['mcp__shop__get_customer', 'mcp__shop__*'],
+        calls: ['mcp__shop_get_customer', 'mcp__shop_*'],
         strict: false,
       });
     });

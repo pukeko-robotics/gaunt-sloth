@@ -18,7 +18,7 @@
  * Regex metacharacters in the literal segments are escaped, so a `.` or `+` in a pattern
  * matches that character literally, never as a regex class.
  *
- * @example toolNameMatchesPattern('mcp__unimarket__buy', 'mcp__unimarket__*') // true
+ * @example toolNameMatchesPattern('mcp__unimarket_buy', 'mcp__unimarket_*') // true
  * @example toolNameMatchesPattern('read_file', '*_file')                       // true
  * @example toolNameMatchesPattern('abcde', 'a*c*e')                            // true
  * @example toolNameMatchesPattern('read_file', 'gh_pr')                        // false

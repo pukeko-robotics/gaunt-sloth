@@ -502,7 +502,7 @@ describe('[[EXT-115]] the stop LABELS the subject kind the gate decided on', () 
   const TOOL: ApprovalSubject = { kind: 'tool', name: 'write_file' };
   const MCP: ApprovalSubject = { kind: 'mcpTool', server: 'issues', name: 'create_issue' };
   /** What `GthAgentRunner` passes as the message's first argument: `command ?? tool.name`. */
-  const MCP_REGISTERED_NAME = 'mcp__issues__create_issue';
+  const MCP_REGISTERED_NAME = 'mcp__issues_create_issue';
 
   /** The two stops, built the way each of their production throw sites builds them. */
   const halt = (text: string, subject?: ApprovalSubject) =>

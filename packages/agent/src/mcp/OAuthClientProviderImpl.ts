@@ -1,11 +1,11 @@
-import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
-import { auth } from '@modelcontextprotocol/sdk/client/auth.js';
-import type {
-  OAuthClientInformationFull,
-  OAuthClientMetadata,
-  OAuthTokens,
-} from '@modelcontextprotocol/sdk/shared/auth.js';
-import type { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js';
+import {
+  auth,
+  type FetchLike,
+  type OAuthClientInformationFull,
+  type OAuthClientMetadata,
+  type OAuthClientProvider,
+  type OAuthTokens,
+} from '@modelcontextprotocol/client';
 import express from 'express';
 import * as crypto from 'node:crypto';
 import { platform } from 'node:os';

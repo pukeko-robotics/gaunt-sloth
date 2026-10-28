@@ -2434,10 +2434,10 @@ cases:
   - id: searched-open
     prompt: "find open orders"
     tool_call_json_path:
-      - { tool: mcp__shop__search, path: filters.status, equals: open }
+      - { tool: mcp__shop_search, path: filters.status, equals: open }
 `;
     const searchCalls = [
-      { name: 'mcp__shop__search', id: 'c1', args: '{"filters":{"status":"open"}}' },
+      { name: 'mcp__shop_search', id: 'c1', args: '{"filters":{"status":"open"}}' },
     ];
 
     beforeEach(() => {
@@ -2449,7 +2449,7 @@ cases:
       runSingleShot.mockResolvedValue({
         ok: true,
         answer: 'hello there',
-        tools: ['mcp__shop__search'],
+        tools: ['mcp__shop_search'],
         toolCalls: searchCalls,
       });
     });
@@ -2533,7 +2533,7 @@ cases:
       await program.parseAsync(['na', 'na', 'eval', 'suite.yaml', '-o', outputDir]);
 
       const caseJson = JSON.parse(readFileSync(join(outputDir, 'greets-politely.json'), 'utf8'));
-      expect(caseJson.toolCalls).toEqual([{ name: 'mcp__shop__search', id: 'c1' }]);
+      expect(caseJson.toolCalls).toEqual([{ name: 'mcp__shop_search', id: 'c1' }]);
       expect(readFileSync(join(outputDir, 'greets-politely.json'), 'utf8')).not.toContain(
         'filters'
       );
@@ -2546,9 +2546,9 @@ cases:
         evalToolCallArgs: true,
       });
       const recorded = [
-        { name: 'mcp__shop__search', id: 'c1', args: '{"filters":{"status":"open"}}' },
+        { name: 'mcp__shop_search', id: 'c1', args: '{"filters":{"status":"open"}}' },
         {
-          name: 'mcp__shop__search',
+          name: 'mcp__shop_search',
           args: '{"q":"lap',
           argsTruncated: true,
           argsOriginalBytes: 9000,
@@ -2557,7 +2557,7 @@ cases:
       runSingleShot.mockResolvedValue({
         ok: true,
         answer: 'hello there',
-        tools: ['mcp__shop__search'],
+        tools: ['mcp__shop_search'],
         toolCalls: recorded,
       });
       const { evalCommand } = await import('#src/commands/evalCommand.js');
@@ -2625,7 +2625,7 @@ cases:
   - id: ordered
     prompt: "look up the customer, then order"
     tool_trajectory:
-      calls: [mcp__shop__get_customer, mcp__shop__create_order]
+      calls: [mcp__shop_get_customer, mcp__shop_create_order]
 `;
 
     beforeEach(() => {
@@ -2636,10 +2636,10 @@ cases:
       runSingleShot.mockResolvedValue({
         ok: true,
         answer: 'done',
-        tools: ['mcp__shop__get_customer', 'mcp__shop__create_order'],
+        tools: ['mcp__shop_get_customer', 'mcp__shop_create_order'],
         toolCalls: [
-          { name: 'mcp__shop__get_customer', id: 'a', args: '{}' },
-          { name: 'mcp__shop__create_order', id: 'b', args: '{}' },
+          { name: 'mcp__shop_get_customer', id: 'a', args: '{}' },
+          { name: 'mcp__shop_create_order', id: 'b', args: '{}' },
         ],
       });
       const { evalCommand } = await import('#src/commands/evalCommand.js');
@@ -2656,10 +2656,10 @@ cases:
       runSingleShot.mockResolvedValue({
         ok: true,
         answer: 'done',
-        tools: ['mcp__shop__create_order', 'mcp__shop__get_customer'],
+        tools: ['mcp__shop_create_order', 'mcp__shop_get_customer'],
         toolCalls: [
-          { name: 'mcp__shop__create_order', id: 'b', args: '{}' },
-          { name: 'mcp__shop__get_customer', id: 'a', args: '{}' },
+          { name: 'mcp__shop_create_order', id: 'b', args: '{}' },
+          { name: 'mcp__shop_get_customer', id: 'a', args: '{}' },
         ],
       });
       const { evalCommand } = await import('#src/commands/evalCommand.js');
@@ -2671,7 +2671,7 @@ cases:
       const caseJson = JSON.parse(readFileSync(join(outputDir, 'ordered.json'), 'utf8'));
       expect(caseJson.verdict).toBe('FAIL');
       expect(caseJson.reasons).toEqual([
-        expect.stringContaining('pattern 2 "mcp__shop__create_order" has no matching call'),
+        expect.stringContaining('pattern 2 "mcp__shop_create_order" has no matching call'),
       ]);
     });
   });

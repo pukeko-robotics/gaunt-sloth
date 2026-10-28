@@ -97,14 +97,14 @@ describe('core/runStats', () => {
       new AIMessage({
         content: '',
         tool_calls: [
-          { id: 'c1', name: 'mcp__authz__get_data', args: {} },
+          { id: 'c1', name: 'mcp__authz_get_data', args: {} },
           { id: 'c2', name: 'read_file', args: { path: 'a.txt' } },
         ],
       }),
       new ToolMessage({
         content: '{"error":{"code":"MODULE_DISABLED"}}',
         tool_call_id: 'c1',
-        name: 'mcp__authz__get_data',
+        name: 'mcp__authz_get_data',
         status: 'error',
       }),
       new ToolMessage({ content: 'file body', tool_call_id: 'c2', name: 'read_file' }),
@@ -113,11 +113,11 @@ describe('core/runStats', () => {
 
     const stats = extractRunStats(messages);
     // Existing name capture: unchanged (deduped across request + execution, same as before).
-    expect(stats.tools.sort()).toEqual(['mcp__authz__get_data', 'read_file']);
+    expect(stats.tools.sort()).toEqual(['mcp__authz_get_data', 'read_file']);
     // New result capture: one record per ToolMessage, in arrival order.
     expect(stats.toolResults).toEqual([
       {
-        name: 'mcp__authz__get_data',
+        name: 'mcp__authz_get_data',
         isError: true,
         content: '{"error":{"code":"MODULE_DISABLED"}}',
       },
@@ -147,12 +147,12 @@ describe('core/runStats', () => {
       new ToolMessage({
         content: [{ type: 'text', text: 'denied' }],
         tool_call_id: 'c1',
-        name: 'mcp__x__y',
+        name: 'mcp__x_y',
       })
     );
     const stats = finalizeRunStats(acc);
     expect(stats.toolResults).toEqual([
-      { name: 'mcp__x__y', isError: false, content: '[{"type":"text","text":"denied"}]' },
+      { name: 'mcp__x_y', isError: false, content: '[{"type":"text","text":"denied"}]' },
     ]);
   });
 

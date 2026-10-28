@@ -24,7 +24,7 @@
  * A grant's `host` is one exact string, so only a call naming **exactly one** host has a host to
  * record — but the decision needs the count and not just that one host, because the two ways of
  * having no single host are opposite outcomes: a call naming **no** host gets a tool-only grant
- * (§6's *always approve `mcp__jira__create_issue`*, where no host is involved), while a call naming
+ * (§6's *always approve `mcp__jira_create_issue`*, where no host is involved), while a call naming
  * **several** gets no grant at all, since the menu may not display one bound and store another.
  * A convenience that collapsed both to "no host" would hand a caller the one distinction this
  * module exists to preserve, already discarded — so {@link toolCallHosts} is the whole surface, and

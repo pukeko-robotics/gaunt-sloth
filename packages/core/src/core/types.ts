@@ -959,7 +959,7 @@ export interface GthAgentInterface {
 
   /**
    * EXT-70 (spec §4.7.1) — what the connected MCP servers declared about their own tools in their
-   * `tools/list` responses, keyed by the REGISTERED tool name (`mcp__<server>__<tool>`). The runner
+   * `tools/list` responses, keyed by the REGISTERED tool name (`mcp__<server>_<tool>`). The runner
    * reads it as the `mcp` half of a declared-annotation lookup when it computes a call's effective
    * annotation set.
    *

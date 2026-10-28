@@ -94,7 +94,9 @@ export function createResolvers(): AgentResolvers {
         // EXT-211: one discovery that keeps the adapter's per-server grouping. The grouping is the
         // only moment a tool's server is known exactly, so the bindings are recorded from it below;
         // a flat list would leave nothing but the registered name, which cannot be parsed back.
-        const catalog = await mcpClientInstance.initializeConnections();
+        // listToolsets() skips the adapter's cross-server collision check (getTools() runs it), so
+        // step 2c's bindMcpToolsets performs that check over these tools plus the resource tools.
+        const catalog = await mcpClientInstance.listToolsets();
         const rawMcpTools: DynamicStructuredTool[] = [];
         for (const [serverName, serverTools] of Object.entries(catalog)) {
           mcpToolsets.push([serverName, serverTools]);
@@ -152,10 +154,10 @@ export function createResolvers(): AgentResolvers {
             mcpServerInstructions.push({ server: serverName, instructions });
           }
           // EXT-48: if this server advertises the `resources` capability, synthesize two
-          // agent-callable tools (mcp__<server>__list_resources / __read_resource) bound to the
+          // agent-callable tools (mcp__<server>_list_resources / _read_resource) bound to the
           // live client + server name, and push them into the SAME tools array the agent
           // consumes — no agent-backend edit. On-by-default when advertised; opt-out is the
-          // existing allowedTools glob (mcp__<server>__*). Concrete-URI list/read only —
+          // existing allowedTools glob (mcp__<server>_*). Concrete-URI list/read only —
           // resource TEMPLATES are deferred. Reuses this loop's per-server try/catch: a server
           // that lacks resources or throws on capability/synthesis contributes no resource tools
           // and does not abort the rest.

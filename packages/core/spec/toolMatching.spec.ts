@@ -16,9 +16,9 @@ describe('toolMatching', () => {
 
     it('matches a trailing wildcard as a prefix glob', async () => {
       const { toolNameMatchesPattern } = await import('#src/utils/toolMatching.js');
-      expect(toolNameMatchesPattern('mcp__unimarket__buy', 'mcp__unimarket__*')).toBe(true);
-      expect(toolNameMatchesPattern('mcp__unimarket__', 'mcp__unimarket__*')).toBe(true);
-      expect(toolNameMatchesPattern('mcp__jira__getIssue', 'mcp__unimarket__*')).toBe(false);
+      expect(toolNameMatchesPattern('mcp__unimarket_buy', 'mcp__unimarket_*')).toBe(true);
+      expect(toolNameMatchesPattern('mcp__unimarket_', 'mcp__unimarket_*')).toBe(true);
+      expect(toolNameMatchesPattern('mcp__jira_getIssue', 'mcp__unimarket_*')).toBe(false);
     });
 
     it('matches a leading wildcard as a suffix glob', async () => {
@@ -32,7 +32,7 @@ describe('toolMatching', () => {
       const { toolNameMatchesPattern } = await import('#src/utils/toolMatching.js');
       expect(toolNameMatchesPattern('abcde', 'a*e')).toBe(true);
       expect(toolNameMatchesPattern('abcde', 'a*c*e')).toBe(true);
-      expect(toolNameMatchesPattern('mcp__jira__searchIssues', 'mcp__*__search*')).toBe(true);
+      expect(toolNameMatchesPattern('mcp__jira_searchIssues', 'mcp__*_search*')).toBe(true);
       expect(toolNameMatchesPattern('abde', 'a*c*e')).toBe(false);
     });
 
@@ -60,12 +60,12 @@ describe('toolMatching', () => {
     it('is true when the name matches any pattern in the list', async () => {
       const { isToolAllowed } = await import('#src/utils/toolMatching.js');
       expect(isToolAllowed('read_file', ['write_file', 'read_file'])).toBe(true);
-      expect(isToolAllowed('mcp__unimarket__buy', ['gh_pr', 'mcp__unimarket__*'])).toBe(true);
+      expect(isToolAllowed('mcp__unimarket_buy', ['gh_pr', 'mcp__unimarket_*'])).toBe(true);
     });
 
     it('is false when no pattern matches', async () => {
       const { isToolAllowed } = await import('#src/utils/toolMatching.js');
-      expect(isToolAllowed('read_file', ['write_file', 'mcp__unimarket__*'])).toBe(false);
+      expect(isToolAllowed('read_file', ['write_file', 'mcp__unimarket_*'])).toBe(false);
     });
 
     it('an empty pattern list matches nothing', async () => {

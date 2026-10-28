@@ -101,12 +101,12 @@ describe('[[EXT-137]] the ACP permission request keeps the call in its own field
    */
   it('still names the tool in a non-shell title, which is TUI-C89’s to settle', () => {
     const mcp = {
-      name: 'mcp__jira__create_issue',
+      name: 'mcp__jira_create_issue',
       args: { summary: 'ship it' },
       subject: { kind: 'mcpTool', server: 'jira', name: 'create_issue' },
     } as unknown as PendingToolInterrupt;
     const request = permissionRequestFor({ sessionId: SESSION, pending: mcp, cwd: '/p' });
-    expect(request.title).toBe('Run the mcp__jira__create_issue tool');
+    expect(request.title).toBe('Run the mcp__jira_create_issue tool');
   });
 });
 

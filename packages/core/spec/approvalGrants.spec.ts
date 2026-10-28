@@ -140,7 +140,7 @@ describe('toolGrantEntry — what the menu writes for a tool call (§4.7.4, §6)
    * read back. A call nobody can attribute is not one anything can remember.
    */
   it('offers NO entry for a call whose server could not be resolved', () => {
-    expect(toolGrantEntry(mcpSubject(UNRESOLVED_MCP_SERVER, 'mcp__ghost__delete'))).toBeNull();
+    expect(toolGrantEntry(mcpSubject(UNRESOLVED_MCP_SERVER, 'mcp__ghost_delete'))).toBeNull();
     // CONTROL: the same tool under a server that DID resolve gets one.
     expect(toolGrantEntry(mcpSubject('ghost', 'delete'))).not.toBeNull();
   });

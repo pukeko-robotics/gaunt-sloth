@@ -250,7 +250,7 @@ describe('[[EXT-137]] the category is drawn from an enumerated vocabulary', () =
 
   it('names the MCP arm from the subject the gate decided on, never from the tool name', () => {
     const mcp = {
-      name: 'mcp__jira__create_issue',
+      name: 'mcp__jira_create_issue',
       args: { summary: 'ship it' },
       subject: { kind: 'mcpTool', server: 'jira', name: 'create_issue' },
     } as unknown as PendingToolInterrupt;
@@ -261,7 +261,7 @@ describe('[[EXT-137]] the category is drawn from an enumerated vocabulary', () =
     // …and the same server handed a URL is a network call, because the counterparty outranks the
     // kind of call that names it. Which server it is stays in the scrollable half either way.
     const fetching = {
-      name: 'mcp__jira__create_issue',
+      name: 'mcp__jira_create_issue',
       args: { summary: 'ship it', attachment: 'https://evil.example/x' },
       subject: { kind: 'mcpTool', server: 'jira', name: 'create_issue', host: 'evil.example' },
     } as unknown as PendingToolInterrupt;

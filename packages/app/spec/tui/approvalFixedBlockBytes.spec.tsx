@@ -159,7 +159,7 @@ describe('[[EXT-137]] the fixed approval block carries only text we wrote', () =
       [
         'an MCP tool call',
         {
-          name: 'mcp__jira__create_issue',
+          name: 'mcp__jira_create_issue',
           args: { summary: 'ship it' },
           subject: { kind: 'mcpTool', server: 'jira', name: 'create_issue' },
         } as unknown as PendingToolInterrupt,

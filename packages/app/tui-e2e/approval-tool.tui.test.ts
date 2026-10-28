@@ -123,7 +123,7 @@ test.describe('gth code TUI — [[TUI-C67]] a gated non-shell tool call names th
  * or not `subject` survived the trip through the real TUI approval bridge. The `mcpTool` arm is the
  * one whose sentence is distinguishable: it names the **server** the call reaches, in a connective
  * phrase — *on the MCP server `<key>`, via* — that the fallback has no way to produce. The fallback
- * for this same call would read *The agent wants to use the mcp__fixture__ping tool*, which contains
+ * for this same call would read *The agent wants to use the mcp__fixture_ping tool*, which contains
  * the server key only as a substring of the registered name, so an assertion on the key alone would
  * still pass; the assertion below is anchored on the whole sentence, and the negative is anchored on
  * the fallback's own opening words.
@@ -164,7 +164,7 @@ test.describe('gth code TUI — [[TUI-C88]] a gated MCP tool call names the serv
     // the rows joined end to end.
     await expect(
       terminal.getByText(
-        'The agent wants to call ping on the MCP server fixture, via mcp__fixture__ping'
+        'The agent wants to call ping on the MCP server fixture, via mcp__fixture_ping'
       )
     ).toBeVisible();
     await expect(terminal.getByText('[o]nce', { strict: false })).toBeVisible();

@@ -60,26 +60,26 @@ describe('renderToolCoverage', () => {
     const { renderToolCoverage } = await import('#src/toolCoverageRender.js');
     const lines = renderToolCoverage(
       report({
-        covered: ['mcp__jira__create'],
-        uncovered: ['mcp__uni__buy'],
+        covered: ['mcp__jira_create'],
+        uncovered: ['mcp__uni_buy'],
         byServer: [
-          { kind: 'mcp', server: 'jira', covered: ['mcp__jira__create'], uncovered: [] },
-          { kind: 'mcp', server: 'uni', covered: [], uncovered: ['mcp__uni__buy'] },
+          { kind: 'mcp', server: 'jira', covered: ['mcp__jira_create'], uncovered: [] },
+          { kind: 'mcp', server: 'uni', covered: [], uncovered: ['mcp__uni_buy'] },
         ],
       })
     );
 
     expect(lines).toContain('  by server:');
     expect(lines).toContain('    jira: 1/1');
-    expect(lines).toContain('    uni: 0/1 — uncovered: mcp__uni__buy');
+    expect(lines).toContain('    uni: 0/1 — uncovered: mcp__uni_buy');
   });
 
   it('suppresses the breakdown for a single server, where it only restates the headline', async () => {
     const { renderToolCoverage } = await import('#src/toolCoverageRender.js');
     const lines = renderToolCoverage(
       report({
-        covered: ['mcp__jira__create'],
-        byServer: [{ kind: 'mcp', server: 'jira', covered: ['mcp__jira__create'], uncovered: [] }],
+        covered: ['mcp__jira_create'],
+        byServer: [{ kind: 'mcp', server: 'jira', covered: ['mcp__jira_create'], uncovered: [] }],
       })
     );
 
@@ -91,18 +91,18 @@ describe('renderToolCoverage', () => {
     const lines = renderToolCoverage(
       report({
         covered: ['read_file'],
-        uncovered: ['mcp__ghost__x'],
+        uncovered: ['mcp__ghost_x'],
         byServer: [
           { kind: 'mcp', server: 'a', covered: [], uncovered: [] },
           { kind: 'mcp', server: 'b', covered: [], uncovered: [] },
           { kind: 'builtin', covered: ['read_file'], uncovered: [] },
-          { kind: 'unresolved', covered: [], uncovered: ['mcp__ghost__x'] },
+          { kind: 'unresolved', covered: [], uncovered: ['mcp__ghost_x'] },
         ],
       })
     );
 
     expect(lines).toContain('    built-in / config tools: 1/1');
-    expect(lines).toContain('    unattributed MCP tools: 0/1 — uncovered: mcp__ghost__x');
+    expect(lines).toContain('    unattributed MCP tools: 0/1 — uncovered: mcp__ghost_x');
   });
 
   it('renders warnings and gate failures on their own marked lines', async () => {

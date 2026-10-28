@@ -1468,7 +1468,7 @@ describe('the ACP v2 agent — session/request_permission', () => {
         setProjectDir(writable);
         // No `mcpServers` are configured, so nothing explains this name and the subject resolves to
         // the unnameable server — the one shape neither an allow nor a deny entry can be built for.
-        const unattributable = 'mcp__ghost-server__do_thing';
+        const unattributable = 'mcp__ghost-server_do_thing';
         const said = await withClient(
           {
             approvals: 'manual',

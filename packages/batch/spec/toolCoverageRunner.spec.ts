@@ -172,14 +172,14 @@ describe('runEvalSuite tool coverage', () => {
   it('an unmet require entry exits 1', async () => {
     const { runEvalSuite, classifyEvalExit } = await import('#src/evalRunner.js');
     const summary = await runEvalSuite(
-      makeSuite([makeCase('c1')], { waive: [], require: ['mcp__jira__*'] }),
+      makeSuite([makeCase('c1')], { waive: [], require: ['mcp__jira_*'] }),
       {
         runCell: runCellReturning({
           c1: {
             ok: true,
             answer: 'ok',
             tools: ['read_file'],
-            advertisedTools: inventory(['read_file', 'mcp__jira__create']),
+            advertisedTools: inventory(['read_file', 'mcp__jira_create']),
           },
         }),
       }

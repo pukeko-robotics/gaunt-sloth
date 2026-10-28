@@ -154,18 +154,18 @@ describe('computeToolCoverage', () => {
   it('fails a require glob no case exercised, and passes one that was', async () => {
     const { computeToolCoverage } = await import('#src/toolCoverage.js');
     const unmet = computeToolCoverage({
-      inventories: [inventory(['mcp__jira__create', 'read_file'])],
+      inventories: [inventory(['mcp__jira_create', 'read_file'])],
       exercised: ['read_file'],
-      spec: { waive: [], require: ['mcp__jira__*'] },
+      spec: { waive: [], require: ['mcp__jira_*'] },
     })!;
     expect(unmet.gateFailures).toEqual([
-      'require "mcp__jira__*": no case exercised a tool matching it',
+      'require "mcp__jira_*": no case exercised a tool matching it',
     ]);
 
     const met = computeToolCoverage({
-      inventories: [inventory(['mcp__jira__create', 'read_file'])],
-      exercised: ['mcp__jira__create'],
-      spec: { waive: [], require: ['mcp__jira__*'] },
+      inventories: [inventory(['mcp__jira_create', 'read_file'])],
+      exercised: ['mcp__jira_create'],
+      spec: { waive: [], require: ['mcp__jira_*'] },
     })!;
     expect(met.gateFailures).toEqual([]);
   });
@@ -188,12 +188,12 @@ describe('computeToolCoverage', () => {
     const { computeToolCoverage } = await import('#src/toolCoverage.js');
     const report = computeToolCoverage({
       // The second cell's MCP server failed to connect, so it advertised one tool fewer.
-      inventories: [inventory(['read_file', 'mcp__jira__create']), inventory(['read_file'])],
+      inventories: [inventory(['read_file', 'mcp__jira_create']), inventory(['read_file'])],
       exercised: ['read_file'],
     })!;
 
     // Taking the shorter list would make coverage IMPROVE because a server broke.
-    expect(report.uncovered).toEqual(['mcp__jira__create']);
+    expect(report.uncovered).toEqual(['mcp__jira_create']);
     expect(report.warnings).toContainEqual(
       expect.stringContaining('did not all advertise the same tools')
     );
@@ -226,23 +226,23 @@ describe('computeToolCoverage', () => {
     const report = computeToolCoverage({
       inventories: [
         inventory([
-          { name: 'mcp__jira__create', server: 'jira' },
-          { name: 'mcp__jira__search', server: 'jira' },
-          { name: 'mcp__unimarket__buy', server: 'unimarket' },
+          { name: 'mcp__jira_create', server: 'jira' },
+          { name: 'mcp__jira_search', server: 'jira' },
+          { name: 'mcp__unimarket_buy', server: 'unimarket' },
           { name: 'read_file' },
         ]),
       ],
-      exercised: ['mcp__jira__create', 'read_file'],
+      exercised: ['mcp__jira_create', 'read_file'],
     })!;
 
     expect(report.byServer).toEqual([
       {
         kind: 'mcp',
         server: 'jira',
-        covered: ['mcp__jira__create'],
-        uncovered: ['mcp__jira__search'],
+        covered: ['mcp__jira_create'],
+        uncovered: ['mcp__jira_search'],
       },
-      { kind: 'mcp', server: 'unimarket', covered: [], uncovered: ['mcp__unimarket__buy'] },
+      { kind: 'mcp', server: 'unimarket', covered: [], uncovered: ['mcp__unimarket_buy'] },
       { kind: 'builtin', covered: ['read_file'], uncovered: [] },
     ]);
   });

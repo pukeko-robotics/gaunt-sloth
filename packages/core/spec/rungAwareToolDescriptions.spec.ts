@@ -85,7 +85,7 @@ const TOOL_FIXTURES = [
   { name: 'gth_web_fetch', description: 'Fetch a URL.' },
   { name: 'run_tests', description: 'Run the tests.' },
   { name: SHELL_TOOL_NAME, description: 'Run a shell command.' },
-  { name: 'mcp__srv__query', description: 'Query the server.' },
+  { name: 'mcp__srv_query', description: 'Query the server.' },
 ] as const;
 
 const ORIGINAL_DESCRIPTIONS = new Map(TOOL_FIXTURES.map((t) => [t.name, t.description]));
@@ -177,7 +177,7 @@ describe('§4.5 registration matrix — with a wide gated set (what the determin
     'delete_file',
     'gth_web_fetch',
     'run_tests',
-    'mcp__srv__query',
+    'mcp__srv_query',
   ];
 
   it('at manual the read tools are granted and the write tools are not', () => {
@@ -189,7 +189,7 @@ describe('§4.5 registration matrix — with a wide gated set (what the determin
       delete_file: SUFFIX['manual'],
       gth_web_fetch: SUFFIX['manual'],
       run_tests: SUFFIX['manual'],
-      mcp__srv__query: SUFFIX['manual'],
+      mcp__srv_query: SUFFIX['manual'],
       [SHELL_TOOL_NAME]: SUFFIX['manual'],
     });
   });
@@ -204,7 +204,7 @@ describe('§4.5 registration matrix — with a wide gated set (what the determin
     expect(suffixedNames(tools)).toEqual({
       gth_web_fetch: expected,
       run_tests: expected,
-      mcp__srv__query: expected,
+      mcp__srv_query: expected,
       [SHELL_TOOL_NAME]: expected,
     });
   });
@@ -253,7 +253,7 @@ describe('applyRungAwareToolDescriptions — mechanics', () => {
 
 describe('isGrantedAtRung', () => {
   it('grants everything under bypass', () => {
-    for (const name of [SHELL_TOOL_NAME, 'write_file', 'mcp__srv__query']) {
+    for (const name of [SHELL_TOOL_NAME, 'write_file', 'mcp__srv_query']) {
       expect(isGrantedAtRung(name, 'bypass', [SHELL_TOOL_NAME, 'write_file'])).toBe(true);
     }
   });
@@ -261,7 +261,7 @@ describe('isGrantedAtRung', () => {
   it('grants any tool the gate does not gate, at every rung', () => {
     for (const rung of APPROVAL_RUNGS) {
       expect(isGrantedAtRung('write_file', rung, [SHELL_TOOL_NAME])).toBe(true);
-      expect(isGrantedAtRung('mcp__srv__query', rung, [SHELL_TOOL_NAME])).toBe(true);
+      expect(isGrantedAtRung('mcp__srv_query', rung, [SHELL_TOOL_NAME])).toBe(true);
     }
   });
 

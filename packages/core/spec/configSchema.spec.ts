@@ -494,7 +494,7 @@ describe('config schema (GS2-1 B1)', () => {
     it('accepts evalToolCoverage with a min and a waive list', () => {
       expect(
         rawGthConfigSchema.safeParse({
-          evalToolCoverage: { min: 13, waive: ['read_file', 'mcp__unimarket__*'] },
+          evalToolCoverage: { min: 13, waive: ['read_file', 'mcp__unimarket_*'] },
         }).success
       ).toBe(true);
       expect(rawGthConfigSchema.safeParse({ evalToolCoverage: { min: 0 } }).success).toBe(true);

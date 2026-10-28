@@ -280,10 +280,10 @@ Requirements: #42`);
 
     it('always keeps set_requirements in the discovery allow-list', async () => {
       const { runReviewDiscovery } = await import('#src/commands/reviewDiscovery.js');
-      await runReviewDiscovery(reviewConfig({ allowedTools: ['mcp__jira__getJiraIssue'] }), 'jira');
+      await runReviewDiscovery(reviewConfig({ allowedTools: ['mcp__jira_getJiraIssue'] }), 'jira');
 
       const agentConfig = initMock.mock.calls.at(-1)![1] as GthConfig;
-      expect(agentConfig.allowedTools).toEqual(['mcp__jira__getJiraIssue', 'set_requirements']);
+      expect(agentConfig.allowedTools).toEqual(['mcp__jira_getJiraIssue', 'set_requirements']);
     });
 
     it('runs commandless under the review discovery prompt with a checkpoint saver', async () => {

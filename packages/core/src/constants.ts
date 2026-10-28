@@ -70,8 +70,11 @@ export const MCP_TOOL_NAME_PREFIX = 'mcp';
 /** The separator the adapter puts between {@link MCP_TOOL_NAME_PREFIX} and the server key. */
 export const MCP_NAMESPACE_SEPARATOR = '__';
 
-/** The separator the adapter puts between the server key and the server's own tool name. */
-export const MCP_SERVER_SEPARATOR = '__';
+/**
+ * The separator the adapter puts between the server key and the server's own tool name — a single
+ * underscore, which server keys commonly contain too.
+ */
+export const MCP_SERVER_SEPARATOR = '_';
 
 /**
  * GS2-35 — the canonical Git co-author identity for agent-authored commits. When Gaunt Sloth writes

@@ -96,20 +96,20 @@ function suiteObject<T extends z.ZodRawShape>(shape: T) {
  *     must_contain: [ "foo", "bar" ]
  *     must_not_contain: [ "baz" ]
  *     should_contain_any: [ "x", "y" ]
- *     must_call: [ "mcp__unimarket__*" ]      # BATCH-10: tool-trace assertions (glob supported)
+ *     must_call: [ "mcp__unimarket_*" ]      # BATCH-10: tool-trace assertions (glob supported)
  *     must_not_call: [ "read_file" ]
  *     must_match: [ "\\bRPP-\\d+\\b" ]         # BATCH-10: regex over the answer (author owns flags)
  *     must_not_match: [ "\\bERROR\\b" ]
  *     json_path:                                # BATCH-10: over the answer parsed as JSON
  *       - { path: "$.items[0].scope", equals: "caller" }
  *       - { path: "data.status", contains: "ok" }
- *     must_error: [ "mcp__unimarket__*" ]       # BATCH-21: a matching called tool RETURNED an error
+ *     must_error: [ "mcp__unimarket_*" ]       # BATCH-21: a matching called tool RETURNED an error
  *     tool_result_json_path:                    # BATCH-21: over a matching tool RESULT's payload
- *       - { tool: "mcp__unimarket__*", path: "code", equals: "ACCESS_DENIED" }
+ *       - { tool: "mcp__unimarket_*", path: "code", equals: "ACCESS_DENIED" }
  *     tool_call_json_path:                      # BATCH-52: over a matching call's ARGUMENTS (opt-in)
- *       - { tool: "mcp__unimarket__search", path: "status", equals: "open" }
+ *       - { tool: "mcp__unimarket_search", path: "status", equals: "open" }
  *     tool_trajectory:                          # BATCH-54: the ORDER of the calls (glob supported)
- *       calls: [ "mcp__unimarket__search", "mcp__unimarket__buy" ]
+ *       calls: [ "mcp__unimarket_search", "mcp__unimarket_buy" ]
  *       strict: false                           # default: an ordered subsequence; true = exact
  *     judge: "Answers with a ranked summary and correctly formatted values."
  *     pass_threshold: 7

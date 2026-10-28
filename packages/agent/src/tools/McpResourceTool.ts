@@ -7,13 +7,13 @@
  * {@link @gaunt-sloth/agent!"tools/A2AAgentTool.js" | ../tools/A2AAgentTool.ts} — each tool closes over the LIVE MultiServerMCPClient
  * plus the server name and calls it in `func`:
  *
- *   - `mcp__<server>__list_resources` — no args; lists the server's concrete resources.
- *   - `mcp__<server>__read_resource`  — { uri }; reads one resource by URI.
+ *   - `mcp__<server>_list_resources` — no args; lists the server's concrete resources.
+ *   - `mcp__<server>_read_resource`  — { uri }; reads one resource by URI.
  *
- * The `mcp__<server>__*` namespace (single-sourced from MCP_TOOL_NAME_PREFIX) makes these
- * tools inherit the `allowedTools` glob opt-out and TUI-C20 server-grouping for free, and
- * lets the agent consume them generically via the resolveTools array (zero
- * agent-backend edits).
+ * Named by `mcpToolRegisteredName`, exactly as the adapter names the server's own tools, so every
+ * MCP tool has one shape: these inherit the `allowedTools` glob opt-out (`mcp__<server>_*`), and
+ * the resolver records their server in the same bindings as the adapter's tools. The agent
+ * consumes them generically via the resolveTools array (zero agent-backend edits).
  *
  * Concrete-URI list/read only: resource TEMPLATES (parameterized URIs) are deferred.
  *
@@ -26,7 +26,7 @@ import type {
   MCPResource,
   MCPResourceContent,
 } from '@langchain/mcp-adapters';
-import { MCP_TOOL_NAME_PREFIX } from '@gaunt-sloth/core/constants.js';
+import { mcpToolRegisteredName } from '@gaunt-sloth/core/core/approvals/mcpSubjects.js';
 import { debugLog } from '@gaunt-sloth/core/utils/debugUtils.js';
 
 /**
@@ -34,10 +34,11 @@ import { debugLog } from '@gaunt-sloth/core/utils/debugUtils.js';
  * (base64) `blob` is SUMMARIZED — never dumped as raw base64 into the model context.
  */
 function formatResourceContent(content: MCPResourceContent): string {
-  if (typeof content.text === 'string') {
+  // A text|blob union: narrow on the member before reading it.
+  if ('text' in content && typeof content.text === 'string') {
     return content.text;
   }
-  if (typeof content.blob === 'string') {
+  if ('blob' in content && typeof content.blob === 'string') {
     // Decode only to measure the real byte length; the raw base64 is intentionally discarded.
     const size = Buffer.from(content.blob, 'base64').length;
     const mimeType = content.mimeType ?? 'application/octet-stream';
@@ -52,15 +53,14 @@ function formatResourceContent(content: MCPResourceContent): string {
  * @param mcpClientInstance - the live MultiServerMCPClient the tools call through (closed over)
  * @param serverName - the connected server whose resources these tools expose
  * @returns the `list_resources` + `read_resource` DynamicStructuredTools, namespaced
- *          `mcp__<serverName>__*`
+ *          `mcp__<serverName>_*`
  */
 export function createMcpResourceTools(
   mcpClientInstance: MultiServerMCPClient,
   serverName: string
 ): DynamicStructuredTool[] {
-  const namePrefix = `${MCP_TOOL_NAME_PREFIX}__${serverName}__`;
-  const listName = `${namePrefix}list_resources`;
-  const readName = `${namePrefix}read_resource`;
+  const listName = mcpToolRegisteredName(serverName, 'list_resources');
+  const readName = mcpToolRegisteredName(serverName, 'read_resource');
 
   const listResourcesTool = new DynamicStructuredTool({
     name: listName,

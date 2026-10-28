@@ -395,7 +395,7 @@ describe('GthAgentRunner — [[TUI-C26]] §6 the always-reject control', () => {
    */
   it('offers no deny entry where the grammar cannot hold one, and does where it can', async () => {
     const unattributable = await runTool({
-      name: 'mcp__nosuchserver__do_thing',
+      name: 'mcp__nosuchserver_do_thing',
       args: { x: 1 },
     });
     expect(unattributable.denyPreview).toBeUndefined();

@@ -80,7 +80,7 @@ const toolPending = (args: Record<string, unknown>): PendingToolInterrupt =>
  */
 const mcpPending = (args: Record<string, unknown>): PendingToolInterrupt =>
   ({
-    name: 'mcp__devops__run',
+    name: 'mcp__devops_run',
     args,
     subject: { kind: 'mcpTool', server: 'devops', name: 'run' },
   }) as unknown as PendingToolInterrupt;

@@ -28,7 +28,7 @@ describe('prepareMcpTools', () => {
       },
     } as const;
     const tool = new DynamicStructuredTool({
-      name: 'mcp__jira__getConfluenceSpaces',
+      name: 'mcp__jira_getConfluenceSpaces',
       description: 'Test tool',
       schema,
       func: async () => 'ok',
@@ -53,7 +53,7 @@ describe('prepareMcpTools', () => {
       },
     } as const;
     const tool = new DynamicStructuredTool({
-      name: 'mcp__jira__getConfluenceSpaces',
+      name: 'mcp__jira_getConfluenceSpaces',
       description: 'Test tool',
       schema,
       func: async () => 'ok',
@@ -83,7 +83,7 @@ describe('prepareMcpTools', () => {
       },
     } as const;
     const tool = new DynamicStructuredTool({
-      name: 'mcp__jira__getConfluenceSpaces',
+      name: 'mcp__jira_getConfluenceSpaces',
       description: 'Test tool',
       schema,
       func: async () => 'ok',
@@ -131,7 +131,7 @@ describe('prepareMcpTools', () => {
       },
     } as const;
     const tool = new DynamicStructuredTool({
-      name: 'mcp__jira__getConfluenceSpaces',
+      name: 'mcp__jira_getConfluenceSpaces',
       description: 'Test tool',
       schema,
       func: async () => 'ok',
@@ -165,7 +165,7 @@ describe('prepareMcpTools', () => {
       },
     } as const;
     const tool = new DynamicStructuredTool({
-      name: 'mcp__jira__getConfluenceSpaces',
+      name: 'mcp__jira_getConfluenceSpaces',
       description: 'Test tool',
       schema,
       func: async () => 'ok',
@@ -202,7 +202,7 @@ describe('prepareMcpTools', () => {
       },
     } as const;
     const tool = new DynamicStructuredTool({
-      name: 'mcp__jira__getConfluenceSpaces',
+      name: 'mcp__jira_getConfluenceSpaces',
       description: 'Test tool',
       schema,
       func: async () => 'ok',
@@ -234,7 +234,7 @@ describe('prepareMcpTools', () => {
       },
     } as const;
     const tool = new DynamicStructuredTool({
-      name: 'mcp__jira__getJiraIssue',
+      name: 'mcp__jira_getJiraIssue',
       description: 'Test tool',
       schema,
       func: async () => 'ok',
@@ -263,7 +263,7 @@ describe('prepareMcpTools', () => {
       },
     } as const;
     const tool = new DynamicStructuredTool({
-      name: 'mcp__jira__getJiraIssue',
+      name: 'mcp__jira_getJiraIssue',
       description: 'Test tool',
       schema,
       func: async () => 'ok',
@@ -309,7 +309,7 @@ describe('prepareMcpTools', () => {
       },
     } as const;
     const tool = new DynamicStructuredTool({
-      name: 'mcp__jira__getConfluenceSpaces',
+      name: 'mcp__jira_getConfluenceSpaces',
       description: 'Test tool',
       schema,
       func: async () => 'ok',

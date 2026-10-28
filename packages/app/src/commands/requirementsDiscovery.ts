@@ -48,7 +48,7 @@ export interface RequirementsDiscoveryConfig {
    * source (filesystem, built-in, custom, MCP, A2A, and `tools`) is resolved. Unlike
    * `builtInTools`/`customTools`/`filesystem` (which gate whole tool groups), this trims the
    * final tool set by exact name, so it can pare down MCP server tools
-   * (e.g. "mcp__jira__getJiraIssue") and the discovery helper tools to the minimum needed.
+   * (e.g. "mcp__jira_getJiraIssue") and the discovery helper tools to the minimum needed.
    *
    * `set_requirements` is always retained regardless, since it is how the discovery agent
    * records the requirements it found. When omitted, all resolved tools remain available; an

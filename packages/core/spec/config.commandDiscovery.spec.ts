@@ -73,7 +73,7 @@ describe('command discovery settings survive config loading (CFG-80)', () => {
         commands: {
           review: {
             requirementSource: 'jira',
-            discovery: { enabled: true, allowedTools: ['mcp__jira__getJiraIssue'] },
+            discovery: { enabled: true, allowedTools: ['mcp__jira_getJiraIssue'] },
           },
           pr: { discovery: { enabled: false } },
         },
@@ -87,7 +87,7 @@ describe('command discovery settings survive config loading (CFG-80)', () => {
     const commands = config.commands as Record<string, Record<string, unknown>>;
     expect(commands.review.discovery).toEqual({
       enabled: true,
-      allowedTools: ['mcp__jira__getJiraIssue'],
+      allowedTools: ['mcp__jira_getJiraIssue'],
     });
     expect(commands.review.requirementSource).toBe('jira');
     expect(commands.pr.discovery).toEqual({ enabled: false });

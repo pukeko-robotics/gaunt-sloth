@@ -74,7 +74,7 @@ describe('EXT-80 — the lean backend wires the interrupt on the whole gated set
     { name: 'delete_directory', description: 'Delete a directory.' },
     { name: SHELL_TOOL_NAME, description: 'Run a shell command.' },
     {
-      name: 'mcp__docs__search',
+      name: 'mcp__docs_search',
       description: 'Search the docs.',
       metadata: { mcp: { serverName: 'docs', annotations: { readOnlyHint: true } } },
     },
@@ -152,7 +152,7 @@ describe('EXT-80 — the lean backend wires the interrupt on the whole gated set
     'delete_file',
     'edit_file',
     'gth_checklist',
-    'mcp__docs__search',
+    'mcp__docs_search',
     'move_file',
     'my_custom_tool',
     SHELL_TOOL_NAME,
@@ -202,7 +202,7 @@ describe('EXT-80 — the lean backend wires the interrupt on the whole gated set
 
     const wired = wiredInterruptNames();
     expect(wired).not.toBeNull();
-    expect(wired).toContain('mcp__docs__search');
+    expect(wired).toContain('mcp__docs_search');
     expect(wired).toContain('write_file');
     expect(wired).toContain('my_custom_tool');
     // Nothing is DESCRIBED as needing approval, because at `assisted` with no shell gate nothing
@@ -215,7 +215,7 @@ describe('EXT-80 — the lean backend wires the interrupt on the whole gated set
 
     const wired = wiredInterruptNames();
     expect(wired).not.toBeNull();
-    expect(wired).toContain('mcp__docs__search');
+    expect(wired).toContain('mcp__docs_search');
     expect(wired).toContain('write_file');
     expect(wired).toContain('my_custom_tool');
   });
@@ -253,7 +253,7 @@ describe('EXT-80 — the lean backend wires the interrupt on the whole gated set
     expect(suffixedNames()).not.toContain('write_file');
     expect(suffixedNames()).toEqual([
       'gth_checklist',
-      'mcp__docs__search',
+      'mcp__docs_search',
       'my_custom_tool',
       SHELL_TOOL_NAME,
     ]);

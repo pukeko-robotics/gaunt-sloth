@@ -17,7 +17,7 @@ import type { ToolCallRecord } from '#src/types.js';
  *
  * Kept separate from `runDeterministicChecks` (which reads the *answer*) on purpose — these read the
  * tool trace — so neither signature is muddied. Patterns reuse GS2-61's `toolNameMatchesPattern`
- * (`@gaunt-sloth/core`), the same glob/exact matcher `allowedTools` uses, so `mcp__unimarket__*`
+ * (`@gaunt-sloth/core`), the same glob/exact matcher `allowedTools` uses, so `mcp__unimarket_*`
  * behaves identically here.
  *
  * - `mustCall` — for **each** pattern, at least one called tool must match it, else
@@ -146,7 +146,7 @@ function evaluateCallAgainstCheck(
  * match except through position. So taking, for pattern i, the EARLIEST matching call after the one
  * pattern i-1 took never hurts: by induction, if any ordered embedding of the patterns exists, the
  * greedy choice for pattern i sits at or before that embedding's choice for pattern i, which leaves
- * at least as many calls for the rest. Overlapping globs (`mcp__*` before `mcp__shop__get`) change
+ * at least as many calls for the rest. Overlapping globs (`mcp__*` before `mcp__shop_get`) change
  * nothing, since the argument never looks at which patterns a call could also have matched. No
  * backtracking is needed, and the scan is linear in the number of calls.
  *

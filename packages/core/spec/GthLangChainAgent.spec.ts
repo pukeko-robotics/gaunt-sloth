@@ -719,7 +719,7 @@ describe('GthLangChainAgent', () => {
         tools: [mockToolkit],
       } as GthConfig;
 
-      const mcpTools = [{ name: 'mcp__filesystem__list_directory' } as StructuredToolInterface];
+      const mcpTools = [{ name: 'mcp__filesystem_list_directory' } as StructuredToolInterface];
       mcpClientInstanceMock.getTools.mockResolvedValue(mcpTools);
 
       await agent.init(undefined, configWithTools, new MemorySaver());
@@ -729,8 +729,8 @@ describe('GthLangChainAgent', () => {
       const resolveTools = vi
         .fn()
         .mockResolvedValue([
-          { name: 'mcp__jira__getJiraIssue' },
-          { name: 'mcp__jira__searchJiraIssuesUsingJql' },
+          { name: 'mcp__jira_getJiraIssue' },
+          { name: 'mcp__jira_searchJiraIssuesUsingJql' },
           { name: 'gh_pr' },
         ] as StructuredToolInterface[]);
       const agent = new GthLangChainAgent(statusUpdateCallback, {
@@ -740,24 +740,24 @@ describe('GthLangChainAgent', () => {
 
       const config = {
         ...mockConfig,
-        allowedTools: ['mcp__jira__getJiraIssue'],
+        allowedTools: ['mcp__jira_getJiraIssue'],
       } as GthConfig;
 
       await agent.init(undefined, config, new MemorySaver());
 
       expect(resolveTools).toHaveBeenCalled();
       const toolsArg = createAgentMock.mock.calls.at(-1)?.[0].tools as StructuredToolInterface[];
-      expect(toolsArg.map((t) => t.name)).toEqual(['mcp__jira__getJiraIssue']);
+      expect(toolsArg.map((t) => t.name)).toEqual(['mcp__jira_getJiraIssue']);
     });
 
-    it('GS2-61: filters resolved tools by an allowedTools glob (mcp__unimarket__*)', async () => {
+    it('GS2-61: filters resolved tools by an allowedTools glob (mcp__unimarket_*)', async () => {
       const resolveTools = vi
         .fn()
         .mockResolvedValue([
-          { name: 'mcp__unimarket__buy' },
-          { name: 'mcp__unimarket__search' },
+          { name: 'mcp__unimarket_buy' },
+          { name: 'mcp__unimarket_search' },
           { name: 'read_file' },
-          { name: 'mcp__jira__getJiraIssue' },
+          { name: 'mcp__jira_getJiraIssue' },
         ] as StructuredToolInterface[]);
       const agent = new GthLangChainAgent(statusUpdateCallback, {
         resolveTools,
@@ -766,17 +766,14 @@ describe('GthLangChainAgent', () => {
 
       const config = {
         ...mockConfig,
-        allowedTools: ['mcp__unimarket__*'],
+        allowedTools: ['mcp__unimarket_*'],
       } as GthConfig;
 
       await agent.init(undefined, config, new MemorySaver());
 
       const toolsArg = createAgentMock.mock.calls.at(-1)?.[0].tools as StructuredToolInterface[];
-      // Every mcp__unimarket__… tool is kept; the filesystem tool and the other MCP server drop.
-      expect(toolsArg.map((t) => t.name)).toEqual([
-        'mcp__unimarket__buy',
-        'mcp__unimarket__search',
-      ]);
+      // Every mcp__unimarket_… tool is kept; the filesystem tool and the other MCP server drop.
+      expect(toolsArg.map((t) => t.name)).toEqual(['mcp__unimarket_buy', 'mcp__unimarket_search']);
     });
 
     it('retains nameless server tools when an allowedTools allow-list is set', async () => {
@@ -812,8 +809,8 @@ describe('GthLangChainAgent', () => {
         const resolveTools = vi
           .fn()
           .mockResolvedValue([
-            { name: 'mcp__jira__getJiraIssue' },
-            { name: 'mcp__jira__searchJiraIssuesUsingJql' },
+            { name: 'mcp__jira_getJiraIssue' },
+            { name: 'mcp__jira_searchJiraIssuesUsingJql' },
             { name: 'gh_pr' },
           ] as StructuredToolInterface[]);
         const agent = new GthLangChainAgent(statusUpdateCallback, {
@@ -823,7 +820,7 @@ describe('GthLangChainAgent', () => {
 
         const config = {
           ...mockConfig,
-          allowedTools: ['mcp__jira__getJiraIssue'],
+          allowedTools: ['mcp__jira_getJiraIssue'],
         } as GthConfig;
 
         await agent.init(undefined, config, new MemorySaver());
@@ -833,12 +830,12 @@ describe('GthLangChainAgent', () => {
         // coverage over a surface narrowed to exactly what the allow-list let through.
         const advertised = agent.getAdvertisedTools();
         expect(advertised?.tools.map((t) => t.name)).toEqual([
-          'mcp__jira__getJiraIssue',
-          'mcp__jira__searchJiraIssuesUsingJql',
+          'mcp__jira_getJiraIssue',
+          'mcp__jira_searchJiraIssuesUsingJql',
           'gh_pr',
         ]);
         expect(advertised?.filteredOut.map((t) => t.name)).toEqual([
-          'mcp__jira__searchJiraIssuesUsingJql',
+          'mcp__jira_searchJiraIssuesUsingJql',
           'gh_pr',
         ]);
       });
@@ -900,7 +897,7 @@ describe('GthLangChainAgent', () => {
       it('BATCH-32: an MCP-named tool with no binding is left unattributed, not guessed', async () => {
         const resolveTools = vi
           .fn()
-          .mockResolvedValue([{ name: 'mcp__ghost__vanish' }] as StructuredToolInterface[]);
+          .mockResolvedValue([{ name: 'mcp__ghost_vanish' }] as StructuredToolInterface[]);
         const agent = new GthLangChainAgent(statusUpdateCallback, {
           resolveTools,
           resolveMiddleware: async (m) => m ?? [],
@@ -913,7 +910,7 @@ describe('GthLangChainAgent', () => {
         // Still counted — it is a real advertised tool — but attributed to no server rather than
         // to the wrong one.
         expect(agent.getAdvertisedTools()?.tools).toEqual([
-          { name: 'mcp__ghost__vanish', server: '' },
+          { name: 'mcp__ghost_vanish', server: '' },
         ]);
       });
 
@@ -1599,7 +1596,7 @@ describe('GthLangChainAgent', () => {
 
         const result = await softening!.wrapToolCall!(
           {
-            toolCall: { id: 'tc-mcp', name: 'mcp__unimarket__contract_search', args: {} },
+            toolCall: { id: 'tc-mcp', name: 'mcp__unimarket_contract_search', args: {} },
             runtime: { signal: undefined },
           },
           handler
@@ -1610,7 +1607,7 @@ describe('GthLangChainAgent', () => {
         // ...as a status:'error' observation (→ isError → ✗), NOT a turn-aborting throw.
         expect(result.status).toBe('error');
         // BATCH-23 — named, so `gth eval`'s must_error can see the denial at all.
-        expect(result.name).toBe('mcp__unimarket__contract_search');
+        expect(result.name).toBe('mcp__unimarket_contract_search');
       });
 
       it('rethrows a ToolException when the run was aborted (user cancellation is never swallowed)', async () => {
@@ -1629,7 +1626,7 @@ describe('GthLangChainAgent', () => {
         await expect(
           softening!.wrapToolCall!(
             {
-              toolCall: { id: 'tc-abort', name: 'mcp__unimarket__contract_search', args: {} },
+              toolCall: { id: 'tc-abort', name: 'mcp__unimarket_contract_search', args: {} },
               runtime: { signal: { aborted: true } },
             },
             handler
@@ -1651,7 +1648,7 @@ describe('GthLangChainAgent', () => {
         await expect(
           softening!.wrapToolCall!(
             {
-              toolCall: { id: 'tc-other', name: 'mcp__unimarket__contract_search', args: {} },
+              toolCall: { id: 'tc-other', name: 'mcp__unimarket_contract_search', args: {} },
               runtime: {},
             },
             handler
@@ -1671,7 +1668,7 @@ describe('GthLangChainAgent', () => {
         const handler = vi.fn().mockResolvedValue(ok);
 
         const result = await softening!.wrapToolCall!(
-          { toolCall: { id: 'tc-ok', name: 'mcp__unimarket__ping', args: {} }, runtime: {} },
+          { toolCall: { id: 'tc-ok', name: 'mcp__unimarket_ping', args: {} }, runtime: {} },
           handler
         );
         expect(result).toBe(ok);
@@ -1724,12 +1721,12 @@ describe('GthLangChainAgent', () => {
         const call = new AIMessage({
           content: '',
           tool_calls: [
-            { id: 'tc-mcp', name: 'mcp__unimarket__contract_search', args: { q: 'contracts' } },
+            { id: 'tc-mcp', name: 'mcp__unimarket_contract_search', args: { q: 'contracts' } },
           ],
         });
         const softened = await softening!.wrapToolCall!(
           {
-            toolCall: { id: 'tc-mcp', name: 'mcp__unimarket__contract_search', args: {} },
+            toolCall: { id: 'tc-mcp', name: 'mcp__unimarket_contract_search', args: {} },
             runtime: { signal: undefined },
           },
           vi.fn().mockRejectedValue(Object.assign(new Error(message), { name: 'ToolException' }))
@@ -1737,11 +1734,11 @@ describe('GthLangChainAgent', () => {
 
         const stats = traceOf(call, softened);
         expect(stats.toolResults).toEqual([
-          { name: 'mcp__unimarket__contract_search', isError: true, content: message },
+          { name: 'mcp__unimarket_contract_search', isError: true, content: message },
         ]);
         // The name set is unchanged by this (it already saw the REQUESTED call) — the record is
         // what was missing, so assert the trace gained one without disturbing the other half.
-        expect(stats.tools).toEqual(['mcp__unimarket__contract_search']);
+        expect(stats.tools).toEqual(['mcp__unimarket_contract_search']);
       });
 
       it('captures a failed shell/dev command with its name and isError', async () => {

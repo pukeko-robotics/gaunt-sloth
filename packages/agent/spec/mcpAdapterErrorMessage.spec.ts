@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadMcpTools } from '@langchain/mcp-adapters';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
+import { McpServer } from '@modelcontextprotocol/server';
 import { MCP_TOOL_NAME_PREFIX } from '@gaunt-sloth/core/constants.js';
 import {
   approvalSubjectForToolName,

@@ -42,9 +42,9 @@ describe('GthAbstractAgent records what MCP servers declared (EXT-70 §4.7.1)', 
 
   it('records an MCP tool’s declaration, keyed by its registered name', () => {
     const agent = new TestAgent(() => {});
-    agent.register([toolWith('mcp__jira__search', { readOnlyHint: true, openWorldHint: true })]);
+    agent.register([toolWith('mcp__jira_search', { readOnlyHint: true, openWorldHint: true })]);
 
-    expect(agent.getDeclaredMcpToolAnnotations().get('mcp__jira__search')).toEqual({
+    expect(agent.getDeclaredMcpToolAnnotations().get('mcp__jira_search')).toEqual({
       readOnlyHint: true,
       openWorldHint: true,
     });
@@ -56,31 +56,31 @@ describe('GthAbstractAgent records what MCP servers declared (EXT-70 §4.7.1)', 
     const agent = new TestAgent(() => {});
     agent.register([
       toolWith('gth_grep', { readOnlyHint: true }),
-      toolWith('mcp__jira__search', { readOnlyHint: true }),
+      toolWith('mcp__jira_search', { readOnlyHint: true }),
     ]);
 
     const declared = agent.getDeclaredMcpToolAnnotations();
     expect(declared.has('gth_grep')).toBe(false);
     // CONTROL: the MCP sibling registered in the same call WAS recorded, so this is about the
     // namespace rather than about recording being broken.
-    expect(declared.has('mcp__jira__search')).toBe(true);
+    expect(declared.has('mcp__jira_search')).toBe(true);
   });
 
   it('re-registration REPLACES the record rather than accumulating across inits', () => {
     // An MCP client caches its tool objects, and a re-init re-resolves the list. A stale record
     // would keep a declaration alive for a server that is no longer connected.
     const agent = new TestAgent(() => {});
-    agent.register([toolWith('mcp__jira__search', { readOnlyHint: true })]);
-    agent.register([toolWith('mcp__github__create_pr', { readOnlyHint: true })]);
+    agent.register([toolWith('mcp__jira_search', { readOnlyHint: true })]);
+    agent.register([toolWith('mcp__github_create_pr', { readOnlyHint: true })]);
 
     const declared = agent.getDeclaredMcpToolAnnotations();
-    expect(declared.has('mcp__jira__search')).toBe(false);
-    expect(declared.has('mcp__github__create_pr')).toBe(true);
+    expect(declared.has('mcp__jira_search')).toBe(false);
+    expect(declared.has('mcp__github_create_pr')).toBe(true);
   });
 
   it('a tool that declares nothing is not recorded as declaring nothing', () => {
     const agent = new TestAgent(() => {});
-    agent.register([toolWith('mcp__jira__search'), toolWith('mcp__jira__delete', {})]);
+    agent.register([toolWith('mcp__jira_search'), toolWith('mcp__jira_delete', {})]);
 
     expect(agent.getDeclaredMcpToolAnnotations().size).toBe(0);
   });
@@ -89,10 +89,10 @@ describe('GthAbstractAgent records what MCP servers declared (EXT-70 §4.7.1)', 
     // The hook does three things; this pins that adding the third did not disturb the second.
     const agent = new TestAgent(() => {});
     agent.register(
-      [toolWith('mcp__jira__search', { readOnlyHint: true }), toolWith('gth_grep')],
+      [toolWith('mcp__jira_search', { readOnlyHint: true }), toolWith('gth_grep')],
       ['ls']
     );
 
-    expect(agent.getRegisteredToolNames()).toEqual(['mcp__jira__search', 'gth_grep', 'ls']);
+    expect(agent.getRegisteredToolNames()).toEqual(['mcp__jira_search', 'gth_grep', 'ls']);
   });
 });

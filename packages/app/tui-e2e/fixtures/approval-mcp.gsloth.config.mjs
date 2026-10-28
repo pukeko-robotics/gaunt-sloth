@@ -6,7 +6,7 @@
  * **The server is the point, not the config entry.** The approval interrupt is wired over the
  * **bound** tool names, so a tool only reaches the gate if an MCP client really registered it from a
  * real handshake. `mcpFixtureServer.mjs` beside this file is that server, spoken to over stdio; the
- * registered name it produces is `mcp__fixture__ping`, and `fixture` — the key below — is the
+ * registered name it produces is `mcp__fixture_ping`, and `fixture` — the key below — is the
  * identity the prompt has to print.
  *
  * `manual` is the rung, for the same reason the sibling `write_file` fixture uses it: an MCP tool
@@ -29,7 +29,7 @@ import { AIMessage, ToolMessage } from '@langchain/core/messages';
 import { fileURLToPath } from 'node:url';
 
 /** The registered name mcp-adapters composes for the fixture server's one tool. */
-const MCP_TOOL = 'mcp__fixture__ping';
+const MCP_TOOL = 'mcp__fixture_ping';
 
 class ScriptedMcpCallingModel extends BaseChatModel {
   callCount = 0;

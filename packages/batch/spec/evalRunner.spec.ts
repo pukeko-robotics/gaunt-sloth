@@ -289,7 +289,7 @@ describe('runEvalSuite tool-call assertions', () => {
       makeCase({ mustCall: ['mcp__*'], mustNotCall: ['read_file', 'gth_grep'] }),
     ]);
     const runCell = runCellReturning({
-      'case-1': { ok: true, answer: 'done', tools: ['mcp__unimarket__search'] },
+      'case-1': { ok: true, answer: 'done', tools: ['mcp__unimarket_search'] },
     });
 
     const summary = await runEvalSuite(suite, { runCell });
@@ -350,10 +350,10 @@ describe('runEvalSuite tool-result assertions', () => {
     const { runEvalSuite, classifyEvalExit } = await import('#src/evalRunner.js');
     const suite = makeSuite([
       makeCase({
-        mustCall: ['mcp__authz__*'],
-        mustError: ['mcp__authz__*'],
+        mustCall: ['mcp__authz_*'],
+        mustError: ['mcp__authz_*'],
         toolResultJsonPath: [
-          { tool: 'mcp__authz__*', path: 'error.code', equals: 'MODULE_DISABLED' },
+          { tool: 'mcp__authz_*', path: 'error.code', equals: 'MODULE_DISABLED' },
         ],
       }),
     ]);
@@ -361,10 +361,10 @@ describe('runEvalSuite tool-result assertions', () => {
       'case-1': {
         ok: true,
         answer: 'Access to that module is disabled for your account.',
-        tools: ['mcp__authz__get_data'],
+        tools: ['mcp__authz_get_data'],
         toolResults: [
           {
-            name: 'mcp__authz__get_data',
+            name: 'mcp__authz_get_data',
             isError: true,
             content: '{"error":{"code":"MODULE_DISABLED"}}',
           },
@@ -382,10 +382,10 @@ describe('runEvalSuite tool-result assertions', () => {
     const { runEvalSuite, classifyEvalExit } = await import('#src/evalRunner.js');
     const suite = makeSuite([
       makeCase({
-        mustCall: ['mcp__authz__*'],
-        mustError: ['mcp__authz__*'],
+        mustCall: ['mcp__authz_*'],
+        mustError: ['mcp__authz_*'],
         toolResultJsonPath: [
-          { tool: 'mcp__authz__*', path: 'error.code', equals: 'MODULE_DISABLED' },
+          { tool: 'mcp__authz_*', path: 'error.code', equals: 'MODULE_DISABLED' },
         ],
       }),
     ]);
@@ -393,10 +393,8 @@ describe('runEvalSuite tool-result assertions', () => {
       'case-1': {
         ok: true,
         answer: 'Here are the rows.',
-        tools: ['mcp__authz__get_data'],
-        toolResults: [
-          { name: 'mcp__authz__get_data', isError: false, content: '{"rows":[1,2,3]}' },
-        ],
+        tools: ['mcp__authz_get_data'],
+        toolResults: [{ name: 'mcp__authz_get_data', isError: false, content: '{"rows":[1,2,3]}' }],
       },
     });
 
@@ -404,8 +402,8 @@ describe('runEvalSuite tool-result assertions', () => {
 
     expect(summary.cases[0].verdict).toBe('FAIL');
     expect(summary.cases[0].reasons).toEqual([
-      'tool "mcp__authz__*" did not return an error',
-      'tool_result_json_path "error.code" (tool "mcp__authz__*"): path did not resolve',
+      'tool "mcp__authz_*" did not return an error',
+      'tool_result_json_path "error.code" (tool "mcp__authz_*"): path did not resolve',
     ]);
     expect(classifyEvalExit(summary)).toBe(1);
   });
@@ -414,16 +412,16 @@ describe('runEvalSuite tool-result assertions', () => {
     const { runEvalSuite } = await import('#src/evalRunner.js');
     const suite = makeSuite([
       makeCase({
-        toolResultJsonPath: [{ tool: 'mcp__authz__*', path: 'error.code' }],
+        toolResultJsonPath: [{ tool: 'mcp__authz_*', path: 'error.code' }],
       }),
     ]);
     const runCell = runCellReturning({
       'case-1': {
         ok: true,
         answer: 'denied',
-        tools: ['mcp__authz__get_data'],
+        tools: ['mcp__authz_get_data'],
         toolResults: [
-          { name: 'mcp__authz__get_data', isError: true, content: 'Error: access denied' },
+          { name: 'mcp__authz_get_data', isError: true, content: 'Error: access denied' },
         ],
       },
     });
@@ -432,7 +430,7 @@ describe('runEvalSuite tool-result assertions', () => {
 
     expect(summary.cases[0].verdict).toBe('FAIL');
     expect(summary.cases[0].reasons).toEqual([
-      'tool_result_json_path "error.code" (tool "mcp__authz__*"): result payload is not JSON',
+      'tool_result_json_path "error.code" (tool "mcp__authz_*"): result payload is not JSON',
     ]);
   });
 
@@ -441,7 +439,7 @@ describe('runEvalSuite tool-result assertions', () => {
     const suite = makeSuite([makeCase({ mustError: ['mcp__*'] })]);
     // Outcome has tools but NO toolResults field (e.g. an older/fake producer).
     const runCell = runCellReturning({
-      'case-1': { ok: true, answer: 'done', tools: ['mcp__authz__get_data'] },
+      'case-1': { ok: true, answer: 'done', tools: ['mcp__authz_get_data'] },
     });
 
     const summary = await runEvalSuite(suite, { runCell });
@@ -471,11 +469,11 @@ describe('runEvalSuite tool-result assertions', () => {
   it('threads toolResults through to the EvalCaseResult (parallel to tools)', async () => {
     const { runEvalSuite } = await import('#src/evalRunner.js');
     const toolResults = [
-      { name: 'mcp__authz__get_data', isError: true, content: '{"error":{"code":"X"}}' },
+      { name: 'mcp__authz_get_data', isError: true, content: '{"error":{"code":"X"}}' },
     ];
-    const suite = makeSuite([makeCase({ mustError: ['mcp__authz__*'] })]);
+    const suite = makeSuite([makeCase({ mustError: ['mcp__authz_*'] })]);
     const runCell = runCellReturning({
-      'case-1': { ok: true, answer: 'denied', tools: ['mcp__authz__get_data'], toolResults },
+      'case-1': { ok: true, answer: 'denied', tools: ['mcp__authz_get_data'], toolResults },
     });
 
     const summary = await runEvalSuite(suite, { runCell });
@@ -496,11 +494,11 @@ describe('runEvalSuite tool-result assertions', () => {
       turns: [
         {
           user: 'fetch as admin scope',
-          expectations: [makeExpectation({ mustCall: ['mcp__authz__*'] })],
+          expectations: [makeExpectation({ mustCall: ['mcp__authz_*'] })],
         },
         {
           user: 'now fetch the restricted module',
-          expectations: [makeExpectation({ mustError: ['mcp__authz__*'] })],
+          expectations: [makeExpectation({ mustError: ['mcp__authz_*'] })],
         },
       ],
     };
@@ -508,15 +506,15 @@ describe('runEvalSuite tool-result assertions', () => {
       {
         ok: true,
         answer: 'rows',
-        tools: ['mcp__authz__get_data'],
-        toolResults: [{ name: 'mcp__authz__get_data', isError: false, content: '{"rows":[1]}' }],
+        tools: ['mcp__authz_get_data'],
+        toolResults: [{ name: 'mcp__authz_get_data', isError: false, content: '{"rows":[1]}' }],
       },
       {
         ok: true,
         answer: 'denied',
-        tools: ['mcp__authz__get_data'],
+        tools: ['mcp__authz_get_data'],
         toolResults: [
-          { name: 'mcp__authz__get_data', isError: true, content: '{"error":"denied"}' },
+          { name: 'mcp__authz_get_data', isError: true, content: '{"error":"denied"}' },
         ],
       },
     ];
@@ -526,10 +524,10 @@ describe('runEvalSuite tool-result assertions', () => {
     expect(summary.cases[0].verdict).toBe('PASS');
     expect(summary.cases[0].turns).toHaveLength(2);
     expect(summary.cases[0].turns![0].toolResults).toEqual([
-      { name: 'mcp__authz__get_data', isError: false, content: '{"rows":[1]}' },
+      { name: 'mcp__authz_get_data', isError: false, content: '{"rows":[1]}' },
     ]);
     expect(summary.cases[0].turns![1].toolResults).toEqual([
-      { name: 'mcp__authz__get_data', isError: true, content: '{"error":"denied"}' },
+      { name: 'mcp__authz_get_data', isError: true, content: '{"error":"denied"}' },
     ]);
   });
 
@@ -548,8 +546,8 @@ describe('runEvalSuite tool-result assertions', () => {
       {
         ok: true,
         answer: 'here',
-        tools: ['mcp__x__y'],
-        toolResults: [{ name: 'mcp__x__y', isError: false, content: '{}' }],
+        tools: ['mcp__x_y'],
+        toolResults: [{ name: 'mcp__x_y', isError: false, content: '{}' }],
       },
     ];
 
@@ -692,7 +690,7 @@ describe('runEvalSuite identity matrix', () => {
         'admin',
         async (cell: MatrixCell) => {
           contentSeenBy.admin = cell.content;
-          return { ok: true, answer: 'contracts: A, B, C', tools: ['mcp__unimarket__list'] };
+          return { ok: true, answer: 'contracts: A, B, C', tools: ['mcp__unimarket_list'] };
         },
       ],
       [
@@ -714,7 +712,7 @@ describe('runEvalSuite identity matrix', () => {
     expect(admin).toMatchObject({ id: 'list-contracts', identity: 'admin', verdict: 'PASS' });
     expect(limited).toMatchObject({ id: 'list-contracts', identity: 'limited', verdict: 'PASS' });
     // admin graded by the admin block (mcp called), limited by the limited block (no mcp called).
-    expect(admin.tools).toEqual(['mcp__unimarket__list']);
+    expect(admin.tools).toEqual(['mcp__unimarket_list']);
     expect(limited.tools).toEqual([]);
     // Each identity ran under ITS OWN runCell with the case prompt.
     expect(contentSeenBy.admin).toContain('list the contract types');
@@ -725,12 +723,9 @@ describe('runEvalSuite identity matrix', () => {
     const { runEvalSuite, classifyEvalExit } = await import('#src/evalRunner.js');
     const runCellByIdentity = new Map<string, RunCellFn>([
       // admin correctly calls mcp → PASS its must_call block.
-      ['admin', async () => ({ ok: true, answer: 'contracts: A, B, C', tools: ['mcp__x__list'] })],
+      ['admin', async () => ({ ok: true, answer: 'contracts: A, B, C', tools: ['mcp__x_list'] })],
       // limited leaks: it DID call an mcp tool it must not → FAIL its must_not_call block.
-      [
-        'limited',
-        async () => ({ ok: true, answer: 'contracts: A, B, C', tools: ['mcp__x__list'] }),
-      ],
+      ['limited', async () => ({ ok: true, answer: 'contracts: A, B, C', tools: ['mcp__x_list'] })],
     ]);
 
     const summary = await runEvalSuite(makeMatrixSuite(), { runCellByIdentity });
@@ -740,7 +735,7 @@ describe('runEvalSuite identity matrix', () => {
     const limited = summary.cases.find((c) => c.identity === 'limited')!;
     expect(admin.verdict).toBe('PASS');
     expect(limited.verdict).toBe('FAIL');
-    expect(limited.reasons).toEqual(['called forbidden tool "mcp__x__list" (matched "mcp__*")']);
+    expect(limited.reasons).toEqual(['called forbidden tool "mcp__x_list" (matched "mcp__*")']);
     // Some cell failed but every cell produced a gradeable answer → product regression, exit 1.
     expect(classifyEvalExit(summary)).toBe(1);
   });
@@ -948,7 +943,7 @@ describe('runEvalSuite multi-turn', () => {
         async (m) => {
           seenBy.admin = m;
           return [
-            { ok: true, answer: 'types: A, B', tools: ['mcp__x__list'] }, // called mcp → PASS admin block
+            { ok: true, answer: 'types: A, B', tools: ['mcp__x_list'] }, // called mcp → PASS admin block
             { ok: true, answer: 'the count is 2' }, // has "count" → PASS
           ];
         },
@@ -958,7 +953,7 @@ describe('runEvalSuite multi-turn', () => {
         async (m) => {
           seenBy.limited = m;
           return [
-            { ok: true, answer: 'here they are: A, B', tools: ['mcp__x__list'] }, // LEAK → FAIL must_not_call
+            { ok: true, answer: 'here they are: A, B', tools: ['mcp__x_list'] }, // LEAK → FAIL must_not_call
             { ok: true, answer: 'the count is 2' },
           ];
         },
@@ -978,7 +973,7 @@ describe('runEvalSuite multi-turn', () => {
     // The authorization leak is turn 1 of the limited conversation.
     expect(limited.turns![0].verdict).toBe('FAIL');
     expect(limited.turns![1].verdict).toBe('PASS');
-    expect(limited.reasons.some((r) => r.startsWith('turn 1:') && r.includes('mcp__x__list'))).toBe(
+    expect(limited.reasons.some((r) => r.startsWith('turn 1:') && r.includes('mcp__x_list'))).toBe(
       true
     );
     expect(classifyEvalExit(summary)).toBe(1);
@@ -1093,17 +1088,17 @@ describe('runEvalSuite multi-turn', () => {
 describe('runEvalSuite tool-call argument assertions (BATCH-52)', () => {
   const searchCase = () =>
     makeCase({
-      mustCall: ['mcp__shop__search'],
-      toolCallJsonPath: [{ tool: 'mcp__shop__search', path: 'filters.status', equals: 'open' }],
+      mustCall: ['mcp__shop_search'],
+      toolCallJsonPath: [{ tool: 'mcp__shop_search', path: 'filters.status', equals: 'open' }],
     });
 
   it('PASSes when the tool was called with the expected argument, and writes the calls', async () => {
     const { runEvalSuite, classifyEvalExit } = await import('#src/evalRunner.js');
     const toolCalls = [
-      { name: 'mcp__shop__search', id: 'c1', args: '{"filters":{"status":"open"}}' },
+      { name: 'mcp__shop_search', id: 'c1', args: '{"filters":{"status":"open"}}' },
     ];
     const runCell = runCellReturning({
-      'case-1': { ok: true, answer: 'Two open orders.', tools: ['mcp__shop__search'], toolCalls },
+      'case-1': { ok: true, answer: 'Two open orders.', tools: ['mcp__shop_search'], toolCalls },
     });
 
     const summary = await runEvalSuite(makeSuite([searchCase()]), { runCell });
@@ -1119,15 +1114,15 @@ describe('runEvalSuite tool-call argument assertions (BATCH-52)', () => {
       'case-1': {
         ok: true,
         answer: 'All orders.',
-        tools: ['mcp__shop__search'],
-        toolCalls: [{ name: 'mcp__shop__search', args: '{"filters":{"status":"any"}}' }],
+        tools: ['mcp__shop_search'],
+        toolCalls: [{ name: 'mcp__shop_search', args: '{"filters":{"status":"any"}}' }],
       },
     });
 
     const summary = await runEvalSuite(makeSuite([searchCase()]), { runCell });
 
     expect(summary.cases[0].reasons).toEqual([
-      'tool_call_json_path "filters.status" (tool "mcp__shop__search"): is "any", expected "open"',
+      'tool_call_json_path "filters.status" (tool "mcp__shop_search"): is "any", expected "open"',
     ]);
     expect(classifyEvalExit(summary)).toBe(1);
   });

@@ -10,19 +10,19 @@ describe('runToolResultChecks — must_error', () => {
   it('passes when a tool matching the pattern returned an error', async () => {
     const { runToolResultChecks } = await import('#src/toolResultChecks.js');
     const failures = runToolResultChecks(
-      [result('mcp__authz__get_data', true, '{"error":"denied"}')],
-      { mustError: ['mcp__authz__*'], toolResultJsonPath: [] }
+      [result('mcp__authz_get_data', true, '{"error":"denied"}')],
+      { mustError: ['mcp__authz_*'], toolResultJsonPath: [] }
     );
     expect(failures).toEqual([]);
   });
 
   it('fails with the exact message when the matching tool succeeded', async () => {
     const { runToolResultChecks } = await import('#src/toolResultChecks.js');
-    const failures = runToolResultChecks([result('mcp__authz__get_data', false, '{"rows":[]}')], {
-      mustError: ['mcp__authz__get_data'],
+    const failures = runToolResultChecks([result('mcp__authz_get_data', false, '{"rows":[]}')], {
+      mustError: ['mcp__authz_get_data'],
       toolResultJsonPath: [],
     });
-    expect(failures).toEqual(['tool "mcp__authz__get_data" did not return an error']);
+    expect(failures).toEqual(['tool "mcp__authz_get_data" did not return an error']);
   });
 
   it('fails when no tool matching the pattern was called at all', async () => {
@@ -37,19 +37,19 @@ describe('runToolResultChecks — must_error', () => {
   it('passes when ANY of several same-named calls errored (retry-then-denied trace)', async () => {
     const { runToolResultChecks } = await import('#src/toolResultChecks.js');
     const failures = runToolResultChecks(
-      [result('mcp__x__y', false, 'ok'), result('mcp__x__y', true, 'denied')],
-      { mustError: ['mcp__x__y'], toolResultJsonPath: [] }
+      [result('mcp__x_y', false, 'ok'), result('mcp__x_y', true, 'denied')],
+      { mustError: ['mcp__x_y'], toolResultJsonPath: [] }
     );
     expect(failures).toEqual([]);
   });
 
   it('grades each pattern independently (one miss = one failure line)', async () => {
     const { runToolResultChecks } = await import('#src/toolResultChecks.js');
-    const failures = runToolResultChecks([result('mcp__a__x', true)], {
-      mustError: ['mcp__a__*', 'mcp__b__*'],
+    const failures = runToolResultChecks([result('mcp__a_x', true)], {
+      mustError: ['mcp__a_*', 'mcp__b_*'],
       toolResultJsonPath: [],
     });
-    expect(failures).toEqual(['tool "mcp__b__*" did not return an error']);
+    expect(failures).toEqual(['tool "mcp__b_*" did not return an error']);
   });
 });
 
@@ -57,11 +57,11 @@ describe('runToolResultChecks — tool_result_json_path', () => {
   it('passes an equals check against a matching JSON payload', async () => {
     const { runToolResultChecks } = await import('#src/toolResultChecks.js');
     const failures = runToolResultChecks(
-      [result('mcp__authz__get_data', true, '{"error":{"code":"MODULE_DISABLED"}}')],
+      [result('mcp__authz_get_data', true, '{"error":{"code":"MODULE_DISABLED"}}')],
       {
         mustError: [],
         toolResultJsonPath: [
-          { tool: 'mcp__authz__*', path: 'error.code', equals: 'MODULE_DISABLED' },
+          { tool: 'mcp__authz_*', path: 'error.code', equals: 'MODULE_DISABLED' },
         ],
       }
     );
@@ -71,26 +71,26 @@ describe('runToolResultChecks — tool_result_json_path', () => {
   it('fails an equals check on a wrong value, quoting actual vs expected', async () => {
     const { runToolResultChecks } = await import('#src/toolResultChecks.js');
     const failures = runToolResultChecks(
-      [result('mcp__authz__get_data', false, '{"error":{"code":"OTHER"}}')],
+      [result('mcp__authz_get_data', false, '{"error":{"code":"OTHER"}}')],
       {
         mustError: [],
         toolResultJsonPath: [
-          { tool: 'mcp__authz__*', path: 'error.code', equals: 'MODULE_DISABLED' },
+          { tool: 'mcp__authz_*', path: 'error.code', equals: 'MODULE_DISABLED' },
         ],
       }
     );
     expect(failures).toEqual([
-      'tool_result_json_path "error.code" (tool "mcp__authz__*"): is "OTHER", expected "MODULE_DISABLED"',
+      'tool_result_json_path "error.code" (tool "mcp__authz_*"): is "OTHER", expected "MODULE_DISABLED"',
     ]);
   });
 
   it('passes a contains check on a substring of a string value', async () => {
     const { runToolResultChecks } = await import('#src/toolResultChecks.js');
     const failures = runToolResultChecks(
-      [result('mcp__x__y', false, '{"message":"access denied for caller"}')],
+      [result('mcp__x_y', false, '{"message":"access denied for caller"}')],
       {
         mustError: [],
-        toolResultJsonPath: [{ tool: 'mcp__x__y', path: 'message', contains: 'denied' }],
+        toolResultJsonPath: [{ tool: 'mcp__x_y', path: 'message', contains: 'denied' }],
       }
     );
     expect(failures).toEqual([]);
@@ -98,12 +98,12 @@ describe('runToolResultChecks — tool_result_json_path', () => {
 
   it('fails a contains check against a non-string value', async () => {
     const { runToolResultChecks } = await import('#src/toolResultChecks.js');
-    const failures = runToolResultChecks([result('mcp__x__y', false, '{"message":42}')], {
+    const failures = runToolResultChecks([result('mcp__x_y', false, '{"message":42}')], {
       mustError: [],
-      toolResultJsonPath: [{ tool: 'mcp__x__y', path: 'message', contains: 'denied' }],
+      toolResultJsonPath: [{ tool: 'mcp__x_y', path: 'message', contains: 'denied' }],
     });
     expect(failures).toEqual([
-      'tool_result_json_path "message" (tool "mcp__x__y"): is 42 (contains check requires a string)',
+      'tool_result_json_path "message" (tool "mcp__x_y"): is 42 (contains check requires a string)',
     ]);
   });
 
@@ -207,7 +207,7 @@ describe('runToolResultChecks — tool_result_json_path', () => {
     const failures = runToolResultChecks(
       [
         {
-          name: 'mcp__x__y',
+          name: 'mcp__x_y',
           isError: true,
           content: 'MCP tool \'y\' on server \'x\' returned an error: {"code":"forbidden"',
           contentTruncated: true,
@@ -217,7 +217,7 @@ describe('runToolResultChecks — tool_result_json_path', () => {
       ],
       {
         mustError: [],
-        toolResultJsonPath: [{ tool: 'mcp__x__*', path: 'code', equals: 'forbidden' }],
+        toolResultJsonPath: [{ tool: 'mcp__x_*', path: 'code', equals: 'forbidden' }],
       }
     );
     expect(failures).toEqual([]);
@@ -272,12 +272,12 @@ describe('runToolResultChecks — tool_result_json_path', () => {
     const { runToolResultChecks } = await import('#src/toolResultChecks.js');
     const failures = runToolResultChecks(
       [
-        result('mcp__x__y', false, 'not json at all'),
-        result('mcp__x__y', true, '{"error":{"code":"DENIED"}}'),
+        result('mcp__x_y', false, 'not json at all'),
+        result('mcp__x_y', true, '{"error":{"code":"DENIED"}}'),
       ],
       {
         mustError: [],
-        toolResultJsonPath: [{ tool: 'mcp__x__*', path: 'error.code', equals: 'DENIED' }],
+        toolResultJsonPath: [{ tool: 'mcp__x_*', path: 'error.code', equals: 'DENIED' }],
       }
     );
     expect(failures).toEqual([]);
@@ -287,17 +287,17 @@ describe('runToolResultChecks — tool_result_json_path', () => {
     const { runToolResultChecks } = await import('#src/toolResultChecks.js');
     const failures = runToolResultChecks(
       [
-        result('mcp__x__y', false, 'not json'),
-        result('mcp__x__y', false, 'still not json'),
-        result('mcp__x__y', false, '{"error":{}}'),
+        result('mcp__x_y', false, 'not json'),
+        result('mcp__x_y', false, 'still not json'),
+        result('mcp__x_y', false, '{"error":{}}'),
       ],
       {
         mustError: [],
-        toolResultJsonPath: [{ tool: 'mcp__x__*', path: 'error.code' }],
+        toolResultJsonPath: [{ tool: 'mcp__x_*', path: 'error.code' }],
       }
     );
     expect(failures).toEqual([
-      'tool_result_json_path "error.code" (tool "mcp__x__*"): ' +
+      'tool_result_json_path "error.code" (tool "mcp__x_*"): ' +
         'result payload is not JSON; path did not resolve',
     ]);
   });
@@ -330,7 +330,7 @@ describe('runToolResultChecks — tool_result_json_path', () => {
       "MCP tool 'contract_search' on server 'unimarket' returned an error: " +
       '{"code":"forbidden","reason":"identity lacks scope contracts:read"}';
     const record: ToolResultRecord = {
-      name: 'mcp__unimarket__contract_search',
+      name: 'mcp__unimarket_contract_search',
       isError: true,
       content: observed,
       errorPayload: '{"code":"forbidden","reason":"identity lacks scope contracts:read"}',
@@ -338,10 +338,10 @@ describe('runToolResultChecks — tool_result_json_path', () => {
 
     expect(
       runToolResultChecks([record], {
-        mustError: ['mcp__unimarket__*'],
+        mustError: ['mcp__unimarket_*'],
         toolResultJsonPath: [
-          { tool: 'mcp__unimarket__*', path: 'code', equals: 'forbidden' },
-          { tool: 'mcp__unimarket__*', path: 'reason', contains: 'contracts:read' },
+          { tool: 'mcp__unimarket_*', path: 'code', equals: 'forbidden' },
+          { tool: 'mcp__unimarket_*', path: 'reason', contains: 'contracts:read' },
         ],
       })
     ).toEqual([]);
@@ -351,10 +351,10 @@ describe('runToolResultChecks — tool_result_json_path', () => {
     expect(
       runToolResultChecks([{ ...record, errorPayload: undefined }], {
         mustError: [],
-        toolResultJsonPath: [{ tool: 'mcp__unimarket__*', path: 'code', equals: 'forbidden' }],
+        toolResultJsonPath: [{ tool: 'mcp__unimarket_*', path: 'code', equals: 'forbidden' }],
       })
     ).toEqual([
-      'tool_result_json_path "code" (tool "mcp__unimarket__*"): result payload is not JSON',
+      'tool_result_json_path "code" (tool "mcp__unimarket_*"): result payload is not JSON',
     ]);
   });
 
@@ -369,13 +369,13 @@ describe('runToolResultChecks — tool_result_json_path', () => {
 
   it('combines a must_error miss and a json_path failure (the acceptance shape)', async () => {
     const { runToolResultChecks } = await import('#src/toolResultChecks.js');
-    const failures = runToolResultChecks([result('mcp__x__y', false, '{"rows":[1,2]}')], {
-      mustError: ['mcp__x__y'],
-      toolResultJsonPath: [{ tool: 'mcp__x__y', path: 'error.code', equals: 'DENIED' }],
+    const failures = runToolResultChecks([result('mcp__x_y', false, '{"rows":[1,2]}')], {
+      mustError: ['mcp__x_y'],
+      toolResultJsonPath: [{ tool: 'mcp__x_y', path: 'error.code', equals: 'DENIED' }],
     });
     expect(failures).toEqual([
-      'tool "mcp__x__y" did not return an error',
-      'tool_result_json_path "error.code" (tool "mcp__x__y"): path did not resolve',
+      'tool "mcp__x_y" did not return an error',
+      'tool_result_json_path "error.code" (tool "mcp__x_y"): path did not resolve',
     ]);
   });
 });

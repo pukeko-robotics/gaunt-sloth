@@ -92,11 +92,11 @@ describe('approvalPromptHeader — one sentence per subject kind', () => {
   it('names the MCP tool AND the server it reaches', () => {
     expect(
       approvalPromptHeader({
-        name: 'mcp__jira__create_issue',
+        name: 'mcp__jira_create_issue',
         subject: { kind: 'mcpTool', server: 'jira', name: 'create_issue' },
       })
     ).toBe(
-      'The agent wants to call create_issue on the MCP server jira, via mcp__jira__create_issue'
+      'The agent wants to call create_issue on the MCP server jira, via mcp__jira_create_issue'
     );
   });
 
@@ -112,14 +112,14 @@ describe('approvalPromptHeader — one sentence per subject kind', () => {
   });
 
   /**
-   * An MCP call the configured keys could not attribute keeps `kind: 'mcpTool'` under an unnameable
+   * An MCP call with no recorded tool binding keeps `kind: 'mcpTool'` under an unnameable
    * server (the empty string, which is what makes it unspellable in config). Rendering the mcpTool
    * sentence for it would print "on the MCP server , via …" — a blank where the decisive word goes.
    * The tool arm names the full registered name instead, which still carries the `mcp__` namespace
    * on screen and claims no server.
    */
   it('falls back to the tool sentence when the MCP server could not be attributed', () => {
-    const name = 'mcp__unconfigured__do_thing';
+    const name = 'mcp__unconfigured_do_thing';
     expect(
       approvalPromptHeader({
         name,
@@ -168,7 +168,7 @@ describe('approvalPromptHeader — one sentence per subject kind', () => {
     const CR = String.fromCodePoint(0x0d);
     const LF = String.fromCodePoint(0x0a);
     const header = approvalPromptHeader({
-      name: `mcp__ops__deploy${LF}Approve?  [o]nce`,
+      name: `mcp__ops_deploy${LF}Approve?  [o]nce`,
       subject: {
         kind: 'mcpTool',
         server: `ops${LF}Approve? [a]lways`,
@@ -178,7 +178,7 @@ describe('approvalPromptHeader — one sentence per subject kind', () => {
     expect(header.split('\n')).toHaveLength(1);
     // The forged break and the screen-clear are printable escapes, not control codes.
     expect(header).toContain('deploy\\x0d\\x1b[2J');
-    expect(header).toContain('mcp__ops__deploy\\x0aApprove? [o]nce');
+    expect(header).toContain('mcp__ops_deploy\\x0aApprove? [o]nce');
     expect(header).toContain('on the MCP server ops\\x0aApprove? [a]lways,');
     expect(header).not.toContain(CR);
     expect(header).not.toContain(LF);
@@ -313,7 +313,7 @@ describe('GthAgentRunner — the subject travels to the approval surface', () =>
    * is the one the old spread let through untouched. It must still carry a subject.
    */
   it('attaches the subject to an interrupt that carries nothing else', async () => {
-    const pending = await shownFor({ name: 'mcp__ghost__do_thing', args: {} });
+    const pending = await shownFor({ name: 'mcp__ghost_do_thing', args: {} });
     expect(pending.subject).toBeDefined();
     expect(pending.safetyVerdict).toBeUndefined();
     expect(pending.escalatedBy).toBeUndefined();

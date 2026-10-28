@@ -119,9 +119,9 @@ describe('approvalSubjectForToolName (EXT-70 §4.7.5, EXT-211) — provenance by
     ['a bound name', mcpToolRegisteredName('jira', 'delete_issue'), 'jira', 'delete_issue'],
     [
       'a name nothing bound',
-      'mcp__unknown__delete_issue',
+      'mcp__unknown_delete_issue',
       UNRESOLVED_MCP_SERVER,
-      'mcp__unknown__delete_issue',
+      'mcp__unknown_delete_issue',
     ],
     ['the bare namespace', 'mcp__', UNRESOLVED_MCP_SERVER, 'mcp__'],
   ])('%s is never a `tool` subject', (_why, toolName, expectedServer, expectedName) => {
@@ -138,8 +138,8 @@ describe('approvalSubjectForToolName (EXT-70 §4.7.5, EXT-211) — provenance by
   it('the server is the binding’s, whatever the name looks like', () => {
     // A binding for a name whose shape suggests another server: the binding governs, because the
     // name is never parsed.
-    const bindings = new Map([['mcp__jira__x', { server: 'github', tool: 'jira__x' }]]);
-    expect(approvalSubjectForToolName('mcp__jira__x', bindings)).toEqual({
+    const bindings = new Map([['mcp__jira_x', { server: 'github', tool: 'jira__x' }]]);
+    expect(approvalSubjectForToolName('mcp__jira_x', bindings)).toEqual({
       kind: 'mcpTool',
       server: 'github',
       name: 'jira__x',
@@ -147,10 +147,10 @@ describe('approvalSubjectForToolName (EXT-70 §4.7.5, EXT-211) — provenance by
   });
 
   it('an unbound name fails closed even when a configured-looking server prefixes it', () => {
-    expect(approvalSubjectForToolName('mcp__jira__delete_issue', NO_MCP_TOOL_BINDINGS)).toEqual({
+    expect(approvalSubjectForToolName('mcp__jira_delete_issue', NO_MCP_TOOL_BINDINGS)).toEqual({
       kind: 'mcpTool',
       server: UNRESOLVED_MCP_SERVER,
-      name: 'mcp__jira__delete_issue',
+      name: 'mcp__jira_delete_issue',
     });
   });
 
@@ -177,7 +177,7 @@ describe('approvalSubjectForToolName (EXT-70 §4.7.5, EXT-211) — provenance by
   });
 
   it.each([
-    ['mcp__jira__x', true],
+    ['mcp__jira_x', true],
     ['gth_grep', false],
     ['mcpjira__x', false],
     ['mcp_jira__x', false],
@@ -205,11 +205,11 @@ describe('bindMcpToolsets (EXT-211) — the bindings are recorded per server, ne
   });
 
   it('a duplicate registered name across servers throws instead of overwriting', () => {
-    // `jira` + `staging__search` and `jira__staging` + `search` register the same name.
+    // `jira` + `staging_search` and `jira_staging` + `search` register the same name.
     expect(() =>
       bindMcpToolsets([
-        ['jira', [{ name: mcpToolRegisteredName('jira', 'staging__search') }]],
-        ['jira__staging', [{ name: mcpToolRegisteredName('jira__staging', 'search') }]],
+        ['jira', [{ name: mcpToolRegisteredName('jira', 'staging_search') }]],
+        ['jira_staging', [{ name: mcpToolRegisteredName('jira_staging', 'search') }]],
       ])
     ).toThrow(McpToolNameCollisionError);
   });
@@ -370,7 +370,7 @@ describe('BUILT_IN_TOOL_ANNOTATIONS (EXT-70 §4.7) — what OUR OWN tools declar
    * table has no MCP-namespaced key that a future `builtIn` lookup could reach either.
    */
   it('the built-in lookup cannot answer for an MCP tool name', () => {
-    expect(builtInToolAnnotations('mcp__jira__read_file')).toBeUndefined();
+    expect(builtInToolAnnotations('mcp__jira_read_file')).toBeUndefined();
   });
 
   it('no key in the authored table is MCP-namespaced', () => {
@@ -411,7 +411,7 @@ describe('declared MCP annotations (EXT-70 §4.7.1) — read off tools/list, bel
     const collected = collectDeclaredMcpToolAnnotations([
       mcpTool(JIRA_SEARCH, { readOnlyHint: true, openWorldHint: true }),
     ]);
-    expect(collected.get('mcp__jira__search')).toEqual({
+    expect(collected.get('mcp__jira_search')).toEqual({
       readOnlyHint: true,
       openWorldHint: true,
     });
@@ -427,7 +427,7 @@ describe('declared MCP annotations (EXT-70 §4.7.1) — read off tools/list, bel
     expect(collected.has('my_custom_tool')).toBe(false);
     // CONTROL: the MCP sibling in the same list WAS collected, so this is about the namespace and
     // not about collection being broken.
-    expect(collected.has('mcp__jira__search')).toBe(true);
+    expect(collected.has('mcp__jira_search')).toBe(true);
   });
 
   it.each([
@@ -553,7 +553,7 @@ describe('the fail-open this task closes (EXT-70 §4.7.1)', () => {
   });
 
   it('the declared-MCP lookup refuses the unresolvable server outright', () => {
-    const unresolved = 'mcp__ghost__delete';
+    const unresolved = 'mcp__ghost_delete';
     const collided = new Map<string, DeclaredToolAnnotations>([
       [mcpToolRegisteredName(UNRESOLVED_MCP_SERVER, unresolved), DECLARES_READ_ONLY],
       [JIRA_SEARCH, DECLARES_READ_ONLY],

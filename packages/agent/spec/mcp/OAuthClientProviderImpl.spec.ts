@@ -13,7 +13,8 @@ vi.mock('@gaunt-sloth/core/utils/globalConfigUtils.js', () => ({
 }));
 
 const authMock = vi.fn();
-vi.mock('@modelcontextprotocol/sdk/client/auth.js', () => ({
+vi.mock('@modelcontextprotocol/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@modelcontextprotocol/client')>()),
   auth: authMock,
 }));
 

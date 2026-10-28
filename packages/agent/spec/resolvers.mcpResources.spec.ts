@@ -8,7 +8,7 @@ import { MCP_SERVER_SEPARATOR } from '@gaunt-sloth/core/constants.js';
  * EXT-48 — resource-tool synthesis: for each connected MCP server that advertises the `resources`
  * capability (SDK Client.getServerCapabilities().resources, reached via
  * MultiServerMCPClient.getClient(name)), resolvers push two agent-callable tools into the resolved
- * tools array — `mcp__<server>__list_resources` and `mcp__<server>__read_resource` — that close
+ * tools array — `mcp__<server>_list_resources` and `mcp__<server>_read_resource` — that close
  * over the live client. Servers without the capability (or that throw) contribute none, and one
  * bad server must not abort the rest. read_resource returns text inline and SUMMARIZES a blob
  * (never leaks raw base64).
@@ -70,7 +70,7 @@ describe('resolvers MCP resource tools synthesis (EXT-48)', () => {
     listToolsetsMock.mockResolvedValue({});
   });
 
-  it('synthesizes list_resources + read_resource for a resources-capable server (namespaced mcp__<server>__)', async () => {
+  it('synthesizes list_resources + read_resource for a resources-capable server (namespaced mcp__<server>_)', async () => {
     getClientMock.mockImplementation(async (name: string) =>
       name === 'files' ? fakeClient({ resources: true }) : undefined
     );
@@ -78,10 +78,10 @@ describe('resolvers MCP resource tools synthesis (EXT-48)', () => {
     const tools = await resolve(makeConfig({ files: { url: 'https://files.example/mcp' } }));
     const names = toolNames(tools);
 
-    expect(names).toContain('mcp__files__list_resources');
-    expect(names).toContain('mcp__files__read_resource');
-    // Namespaced so `allowedTools: ['mcp__files__*']` would gate them.
-    expect(names.filter((n) => n.startsWith('mcp__files__'))).toHaveLength(2);
+    expect(names).toContain('mcp__files_list_resources');
+    expect(names).toContain('mcp__files_read_resource');
+    // Namespaced so `allowedTools: ['mcp__files_*']` would gate them.
+    expect(names.filter((n) => n.startsWith('mcp__files_'))).toHaveLength(2);
   });
 
   it('contributes NO resource tools for a server that does not advertise the resources capability', async () => {
@@ -110,10 +110,10 @@ describe('resolvers MCP resource tools synthesis (EXT-48)', () => {
     const names = toolNames(tools);
 
     // The broken server aborts nothing: the good server's tools are still present.
-    expect(names).toContain('mcp__good__list_resources');
-    expect(names).toContain('mcp__good__read_resource');
+    expect(names).toContain('mcp__good_list_resources');
+    expect(names).toContain('mcp__good_read_resource');
     // The broken server contributed no tools of its own.
-    expect(names.some((n) => n.startsWith('mcp__broken__'))).toBe(false);
+    expect(names.some((n) => n.startsWith('mcp__broken_'))).toBe(false);
   });
 
   it('list_resources returns the resource list shape (uri/name/description/mimeType)', async () => {
@@ -130,7 +130,7 @@ describe('resolvers MCP resource tools synthesis (EXT-48)', () => {
     });
 
     const tools = await resolve(makeConfig({ files: { url: 'https://files.example/mcp' } }));
-    const listTool = tools.find((t) => t.name === 'mcp__files__list_resources')!;
+    const listTool = tools.find((t) => t.name === 'mcp__files_list_resources')!;
     const result = (await listTool.invoke({})) as string;
 
     expect(listResourcesMock).toHaveBeenCalledWith('files');
@@ -146,7 +146,7 @@ describe('resolvers MCP resource tools synthesis (EXT-48)', () => {
     ]);
 
     const tools = await resolve(makeConfig({ files: { url: 'https://files.example/mcp' } }));
-    const readTool = tools.find((t) => t.name === 'mcp__files__read_resource')!;
+    const readTool = tools.find((t) => t.name === 'mcp__files_read_resource')!;
     const result = (await readTool.invoke({ uri: 'file:///notes/todo.md' })) as string;
 
     expect(readResourceMock).toHaveBeenCalledWith('files', 'file:///notes/todo.md');
@@ -162,7 +162,7 @@ describe('resolvers MCP resource tools synthesis (EXT-48)', () => {
     ]);
 
     const tools = await resolve(makeConfig({ files: { url: 'https://files.example/mcp' } }));
-    const readTool = tools.find((t) => t.name === 'mcp__files__read_resource')!;
+    const readTool = tools.find((t) => t.name === 'mcp__files_read_resource')!;
     const result = (await readTool.invoke({ uri: 'file:///img/logo.png' })) as string;
 
     // Summary is present: mimeType + a decoded byte size, and the resource uri.
