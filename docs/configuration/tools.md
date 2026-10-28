@@ -769,13 +769,15 @@ issue lookups run `gh` from the `gth` process itself, so they keep working witho
 
 `allowedTools` restricts an agent to an explicit allow-list of tool names. It is applied after
 every tool source (filesystem, built-in, custom, MCP, A2A and `tools`) has been resolved, so it is
-the only knob that can gate individual MCP and A2A tools (e.g. `mcp__jira__getJiraIssue`), which
+the only knob that can gate individual MCP and A2A tools (e.g. `mcp__jira_getJiraIssue`), which
 have no per-source override of their own.
 
 - **omitted or `undefined`**: no filtering, all resolved tools remain available
 - **non-empty array**: only tools whose name matches an entry remain available. Entries are exact
-  tool names, or **glob patterns** using `*` as a wildcard — e.g. `mcp__jira__*` allows every tool
-  from the `jira` MCP server without listing each one by name
+  tool names, or **glob patterns** using `*` as a wildcard — e.g. `mcp__jira_*` allows every tool
+  from the `jira` MCP server without listing each one by name. An MCP tool is named
+  `mcp__<server>_<tool>`, so that glob also matches the tools of a server named, say,
+  `jira_staging`; list exact names when one server's name extends another's
 - **empty array `[]`**: every tool is disabled; MCP servers are not even contacted (no OAuth),
   which suits agents that only need to reason over the provided prompt, such as review agents
 

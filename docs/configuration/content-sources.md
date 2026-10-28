@@ -426,7 +426,7 @@ For example, to let it read the branch's commit subjects:
             "description": "List the subjects of the commits on this branch that are not on origin/main"
           }
         },
-        "allowedTools": ["branch_commits", "mcp__jira__getJiraIssue"]
+        "allowedTools": ["branch_commits", "mcp__jira_getJiraIssue"]
       }
     }
   }

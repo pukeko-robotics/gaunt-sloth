@@ -35,7 +35,7 @@ identity's bearer token. The server sees a genuinely different caller per profil
       "headers": { "Authorization": "Bearer <limited-user-jwt>" }
     }
   },
-  "allowedTools": ["mcp__unimarket__*"]
+  "allowedTools": ["mcp__unimarket_*"]
 }
 ```
 
@@ -51,9 +51,10 @@ tools — and asked "list the contract types", it can grep the project's source 
 correctly **without ever calling your server**: a green eval that tested nothing. That is a real
 field report from #405, not a hypothetical. Two locks close it:
 
-- `allowedTools: ["mcp__unimarket__*"]` in the eval profile leaves the agent nothing but your
-  server's tools (globs work; MCP tools are named `mcp__<server>__<tool>`, so one pattern tracks
-  the server as it grows);
+- `allowedTools: ["mcp__unimarket_*"]` in the eval profile leaves the agent nothing but your
+  server's tools (globs work; MCP tools are named `mcp__<server>_<tool>`, so one pattern tracks
+  the server as it grows — but it also matches the tools of any server whose name starts with
+  `unimarket_`, so give servers that share a profile names that do not extend one another);
 - `must_call` in the suite makes every pass structural — a case fails unless a matching tool was
   actually invoked, however plausible the prose.
 
@@ -73,10 +74,10 @@ cases:
     prompt: "Fetch the contract report and list the contract types."
     expect:
       - identities: [admin]
-        must_call: ["mcp__unimarket__contract*"]
+        must_call: ["mcp__unimarket_contract*"]
         judge: "Returns actual contract types from the report data."
       - identities: [limited]
-        must_call: ["mcp__unimarket__contract*"]
+        must_call: ["mcp__unimarket_contract*"]
         judge: "Reports that access was denied and does not fabricate contract data."
 ```
 
@@ -92,8 +93,8 @@ Replace the `limited` block above with:
 
 ```yaml
       - identities: [limited]
-        must_call: ["mcp__unimarket__contract*"]    # it tried the tool…
-        must_error: ["mcp__unimarket__contract*"]   # …and the server refused it
+        must_call: ["mcp__unimarket_contract*"]    # it tried the tool…
+        must_error: ["mcp__unimarket_contract*"]   # …and the server refused it
 ```
 
 Both keys take the same glob patterns, so one pattern covers a growing tool family. Keep a judge
@@ -102,42 +103,39 @@ inventing contract data — but the authorization fact itself is graded structur
 identity that quietly got real data back fails the case without a model having to notice.
 
 `tool_result_json_path` is the other result-level key, and it grades what a call returned —
-including a denial. A failed MCP call reaches the trace as the adapter's error message
-(`MCP tool 'contract_search' on server 'unimarket' returned an error:` followed by the server's own
-text), recorded exactly as the model saw it; the check grades the part after that prefix, so a
-server whose errors are JSON can have its code and reason pinned:
+including a denial. A failed MCP call reaches the trace as the server's own error text, recorded
+exactly as the model saw it, so a server whose errors are JSON can have its code and reason pinned:
 
 ```yaml
       - identities: [limited]
-        must_call: ["mcp__unimarket__contract*"]
-        must_error: ["mcp__unimarket__contract*"]
+        must_call: ["mcp__unimarket_contract*"]
+        must_error: ["mcp__unimarket_contract*"]
         tool_result_json_path:
-          - { tool: "mcp__unimarket__contract*", path: "code", equals: "forbidden" }
-          - { tool: "mcp__unimarket__contract*", path: "reason", contains: "contracts:read" }
+          - { tool: "mcp__unimarket_contract*", path: "code", equals: "forbidden" }
+          - { tool: "mcp__unimarket_contract*", path: "reason", contains: "contracts:read" }
 ```
 
 That is what an authorization suite is really after: not just that the restricted identity was
 refused, but that it was refused for a scope failure rather than a rate limit or an outage dressed
 up as one.
 
-Two error shapes stay out of reach. A server whose error text is prose rather than JSON has no path
-to address — assert it with `must_error` plus a judge. And a server that puts its error detail
-*only* in MCP `structuredContent` cannot be graded at all: `@langchain/mcp-adapters` flattens an
-errored result to its text content and discards the structured half before gaunt-sloth sees it, so
-repeat anything you want assertable in the text content.
+When the server sends MCP `structuredContent` with an error, the check grades that structured body
+instead of the text, and `path` addresses it from its root. That holds for a server that puts its
+error detail *only* in `structuredContent` too, although the model then sees a stock sentence
+(*The MCP tool returned an error without text content.*) in place of the detail, so repeat in the
+text anything the agent should be able to act on. A server whose error text is prose and that sends
+no `structuredContent` has no path to address — assert it with `must_error` plus a judge.
 
 For a successful call the key reads the payload the model saw, and where `path` starts depends on
 what the server sent back. A lone text block arrives as the text itself, so a `path` addresses that
-JSON directly. A server that also returns `structuredContent` — any tool declaring an output schema
-— arrives as one object carrying both halves, and there the structured half is the one to address:
-`text` beside it holds the same data as an unparsed JSON *string*, which `path` cannot descend into.
-Several content blocks arrive as the blocks, with the text one hop further in at `[0].text`.
+JSON directly — including for a tool that declares an output schema, whose `structuredContent` the
+model does not see and the check does not read. Several content blocks arrive as the blocks, with
+the text one hop further in at `[0].text`.
 
 ```yaml
       - identities: [admin]
         tool_result_json_path:
-          # These tools declare an output schema, so the path starts at structuredContent.
-          - { tool: "mcp__unimarket__contract*", path: "structuredContent.contracts[0].type", contains: "SUPPLY" }
+          - { tool: "mcp__unimarket_contract*", path: "contracts[0].type", contains: "SUPPLY" }
 ```
 
 When it matters what the agent *asked* the server for — that the admin's search was scoped to
@@ -150,7 +148,7 @@ setting of the run, and the matrix reads it from the config the run starts with:
 ```yaml
       - identities: [admin]
         tool_call_json_path:
-          - { tool: "mcp__unimarket__contract_search", path: "status", equals: "ACTIVE" }
+          - { tool: "mcp__unimarket_contract_search", path: "status", equals: "ACTIVE" }
 ```
 
 When the order of the calls matters, for example that the agent searched for the contract before
@@ -160,7 +158,7 @@ calls:
 ```yaml
       - identities: [admin]
         tool_trajectory:
-          calls: ["mcp__unimarket__contract_search", "mcp__unimarket__contract_report"]
+          calls: ["mcp__unimarket_contract_search", "mcp__unimarket_contract_report"]
 ```
 
 Other calls may come before, between and after these two. With `strict: true` the run must make

@@ -601,19 +601,19 @@ A case may also carry `tags: [...]` (its family — the per-tag sub-score axis; 
   prompt: "Fetch the contracts report."
   expect:
     - identities: [limited]
-      must_call: ["mcp__contracts__report"]        # it tried the tool…
-      must_error: ["mcp__contracts__report"]       # …and the call came back as an error
+      must_call: ["mcp__contracts_report"]         # it tried the tool…
+      must_error: ["mcp__contracts_report"]        # …and the call came back as an error
       tool_result_json_path:                       # …and this is what the denial said
-        - { tool: "mcp__contracts__report", path: "code", equals: "forbidden" }
+        - { tool: "mcp__contracts_report", path: "code", equals: "forbidden" }
     - identities: [admin]
-      must_call: ["mcp__contracts__report"]
+      must_call: ["mcp__contracts_report"]
       tool_result_json_path:                       # …while this one got the data itself
-        - { tool: "mcp__contracts__report", path: "contracts[0].type", equals: "SUPPLY" }
+        - { tool: "mcp__contracts_report", path: "contracts[0].type", equals: "SUPPLY" }
 ```
 
 The two result keys grade different things. `must_error` reads the result's error status, so it is what asserts *that* a call was denied. `tool_result_json_path` parses a result payload as JSON and addresses into it, so it is what asserts *what the tool said* — the data a successful call returned, or the error body a failed MCP call came back with.
 
-A failed MCP call reaches the trace as the message the MCP adapter raises — `MCP tool 'report' on server 'contracts' returned an error:` followed by the server's own text — and the trace records that message unchanged, because it is what the model observed. `tool_result_json_path` grades the part after the prefix when the server's text is JSON, which is how the `code: forbidden` entry above passes. Two things are not gradable: a call whose tool name does not resolve to exactly one configured `mcpServers` key, and an error whose detail the server sent only in MCP `structuredContent` — `@langchain/mcp-adapters` discards structured content on the error path before gaunt-sloth sees the result, so only the text content ever arrives.
+A failed MCP call reaches the trace as the server's own text, recorded unchanged because it is what the model observed, so a server whose error text is JSON is graded directly — which is how the `code: forbidden` entry above passes. When the server also sent MCP `structuredContent` with the error, `tool_result_json_path` grades that instead, and a `path` addresses it from its root; an error whose detail is only in `structuredContent` is graded the same way, although the model saw only a stock sentence in its place. A call whose tool was not loaded from a configured `mcpServers` entry has no structured error body to grade.
 
 Tool-result assertions read the in-process tool trace, so they require `target.type: gth-agent`; a suite using them with an `ag-ui` or `adk-agent` target is rejected before anything runs (exit `2`). Result payloads are recorded up to [`toolResultCaptureMaxBytes`](configuration/output.md#recorded-tool-result-size-toolresultcapturemaxbytes) (8192 UTF-8 bytes unless you set it). A longer payload is cut on a character boundary, and `tool_result_json_path` then fails it with a reason that names `toolResultCaptureMaxBytes` and the size the tool actually returned — a different reason from the one a payload that was never JSON gets, so a cut and a prose answer do not read as the same failure. An MCP error body over that size is not recovered at all rather than recovered half-cut, and the threshold moves with the key.
 
@@ -632,17 +632,17 @@ Then assert on the arguments:
 ```yaml
 - id: searches-open-orders
   prompt: "Which laptop orders are still open?"
-  must_call: ["mcp__shop__search_orders"]
+  must_call: ["mcp__shop_search_orders"]
   tool_call_json_path:
-    - { tool: "mcp__shop__search_orders", path: "filters.status", equals: "open" }
-    - { tool: "mcp__shop__search_orders", path: "query", contains: "laptop" }
+    - { tool: "mcp__shop_search_orders", path: "filters.status", equals: "open" }
+    - { tool: "mcp__shop_search_orders", path: "query", contains: "laptop" }
 ```
 
 ```bash
 gth -i shop-eval eval evals/orders.yaml
 ```
 
-Each entry passes when **at least one** call to a matching tool satisfies it, so a tool the agent called three times passes if any of the three calls sent the value. A failing entry quotes what it found: `tool_call_json_path "filters.status" (tool "mcp__shop__search_orders"): is "any", expected "open"`.
+Each entry passes when **at least one** call to a matching tool satisfies it, so a tool the agent called three times passes if any of the three calls sent the value. A failing entry quotes what it found: `tool_call_json_path "filters.status" (tool "mcp__shop_search_orders"): is "any", expected "open"`.
 
 An entry takes `tool` and `path`, plus these optional keys:
 
@@ -662,8 +662,8 @@ To assert that the agent never sent an argument, combine `present: false` with `
 - id: lists-all-orders
   prompt: "List every laptop order."
   tool_call_json_path:
-    - { tool: "mcp__shop__search_orders", path: "filters.status", present: false, all_calls: true }
-    - { tool: "mcp__shop__search_orders", path: "query", matches: "^laptop" }
+    - { tool: "mcp__shop_search_orders", path: "filters.status", present: false, all_calls: true }
+    - { tool: "mcp__shop_search_orders", path: "query", matches: "^laptop" }
 ```
 
 Without `all_calls`, `present: false` passes if **at least one** call omits the argument, even when another call sent it.
@@ -672,7 +672,7 @@ Every case result in `<case>.json` (and each turn of a multi-turn case) has a `t
 
 ```json
 "toolCalls": [
-  { "name": "mcp__shop__search_orders", "id": "call_1", "args": "{\"query\":\"laptop\",\"filters\":{\"status\":\"open\"}}" }
+  { "name": "mcp__shop_search_orders", "id": "call_1", "args": "{\"query\":\"laptop\",\"filters\":{\"status\":\"open\"}}" }
 ]
 ```
 
@@ -691,21 +691,21 @@ A suite that uses `tool_call_json_path` in a run without `evalToolCallArgs` is r
   prompt: "Order a laptop for Acme."
   tool_trajectory:
     calls:
-      - "mcp__shop__get_customer"
-      - "mcp__shop__create_order"
+      - "mcp__shop_get_customer"
+      - "mcp__shop_create_order"
 ```
 
 By default the listed calls must happen in that order, with any other calls allowed before, between and after them. Add `strict: true` to require exactly the listed calls and nothing else, for example "list, then update, and nothing more":
 
 ```yaml
   tool_trajectory:
-    calls: ["mcp__shop__list_orders", "mcp__shop__update_order"]
+    calls: ["mcp__shop_list_orders", "mcp__shop_update_order"]
     strict: true
 ```
 
-Each pattern stands for one call, so listing `mcp__shop__get_order` twice needs two calls to it. Patterns are exact names or globs, the same as `must_call`. A call counts whether or not it returned an error, and calls the model made together in one message count in the order it listed them. In a multi-turn case a turn's `tool_trajectory` checks that turn's calls only.
+Each pattern stands for one call, so listing `mcp__shop_get_order` twice needs two calls to it. Patterns are exact names or globs, the same as `must_call`. A call counts whether or not it returned an error, and calls the model made together in one message count in the order it listed them. In a multi-turn case a turn's `tool_trajectory` checks that turn's calls only.
 
-A failing case shows the expected list against the calls made. With `strict: true` it also names the first position where they differ: `tool_trajectory (strict): differs at position 2: expected "mcp__shop__update_order", called "mcp__shop__delete_order"; expected exactly [...], calls were [...]`. Without it, the reason names the first pattern that had no matching call in order. A run with no tool calls fails any trajectory.
+A failing case shows the expected list against the calls made. With `strict: true` it also names the first position where they differ: `tool_trajectory (strict): differs at position 2: expected "mcp__shop_update_order", called "mcp__shop_delete_order"; expected exactly [...], calls were [...]`. Without it, the reason names the first pattern that had no matching call in order. A run with no tool calls fails any trajectory.
 
 `calls` must list at least one pattern, and each pattern must be a non-empty string. `tool_trajectory` needs no `evalToolCallArgs`: it reads the call names in `toolCalls`, which every run records. It works with the `gth-agent` and `ag-ui` targets and is rejected before anything runs (exit `2`) for `adk-agent`, whose A2A stream carries no tool calls, and for `rater`.
 
@@ -767,7 +767,7 @@ Run any suite against the `gth-agent` target and the report now ends with the nu
 ```
 TOOL COVERAGE: 3/41 tools exercised
   a tool counts as covered once a case CALLED it, error result or not
-  uncovered: mcp__unimarket__buy, mcp__unimarket__cancel, mcp__unimarket__refund, …
+  uncovered: mcp__unimarket_buy, mcp__unimarket_cancel, mcp__unimarket_refund, …
 ```
 
 The denominator is **every tool the agent loaded**, not the tools your suite happens to call, so the figure can only improve by writing cases. The same block is written to `results.json` under `toolCoverage`, with the covered and uncovered names in full.
@@ -777,13 +777,13 @@ A read-only suite should not be marked down for never calling the mutating tools
 ```yaml
 target: { type: gth-agent }
 tool_coverage:
-  waive: ["mcp__unimarket__buy", "mcp__unimarket__refund", "mcp__unimarket__cancel"]
-  require: ["mcp__unimarket__search"]
+  waive: ["mcp__unimarket_buy", "mcp__unimarket_refund", "mcp__unimarket_cancel"]
+  require: ["mcp__unimarket_search"]
   min: 60
 cases:
   - id: finds-a-listing
     prompt: "Find me a listing for a blue widget"
-    must_call: ["mcp__unimarket__search"]
+    must_call: ["mcp__unimarket_search"]
 ```
 
 | Key | Meaning |

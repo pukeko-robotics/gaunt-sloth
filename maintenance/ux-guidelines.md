@@ -1140,7 +1140,7 @@ Auto-mode**.
   read as duplicates.
 - **MCP tab (TUI-C20).** The MCP-server *overview*: per connected server, its discovery
   `instructions` and the tools it contributes, shown by their server-prefixed names
-  (`mcp__<server>__<tool>`) with a one-line description. It renders the **same** captured
+  (`mcp__<server>_<tool>`) with a one-line description. It renders the **same** captured
   instructions the system prompt was composed with (EXT-32's `getMcpServerInstructions()`: capture
   once, consume in both places, never a second query), so the panel can't drift from what the model
   saw (DL-4). It is deliberately **not** the tool schemas; its intro points at the **Tools** tab

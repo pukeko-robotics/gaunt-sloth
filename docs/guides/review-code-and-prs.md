@@ -106,7 +106,7 @@ issue the branch is for, with nobody typing the issue key.
         "filesystem": "none",
         "builtInTools": [],
         "customTools": false,
-        "allowedTools": ["gh_pr", "gh_diff", "mcp__jira__getJiraIssue"]
+        "allowedTools": ["gh_pr", "gh_diff", "mcp__jira_getJiraIssue"]
       }
     },
     "review": {
@@ -117,7 +117,7 @@ issue the branch is for, with nobody typing the issue key.
         "filesystem": "none",
         "builtInTools": [],
         "customTools": false,
-        "allowedTools": ["mcp__jira__getJiraIssue"]
+        "allowedTools": ["mcp__jira_getJiraIssue"]
       }
     }
   }
@@ -127,7 +127,7 @@ issue the branch is for, with nobody typing the issue key.
 A bare `gth review` then diffs the branch against where it left `origin/main`. With no `-r`, it
 collects the branch name and the branch's pull request as evidence, and because Jira is reached
 through the MCP server rather than a Jira requirement source, a discovery agent reads the issue key
-from that evidence and fetches the issue with `mcp__jira__getJiraIssue`. A bare `gth pr` runs the
+from that evidence and fetches the issue with `mcp__jira_getJiraIssue`. A bare `gth pr` runs the
 same kind of discovery from the pull request. Each discovery agent gets only the tools in its own
 `allowedTools` and no filesystem access, so it looks up the issue and nothing else. The first run
 opens a browser for the Atlassian sign-in.

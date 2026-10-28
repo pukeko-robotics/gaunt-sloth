@@ -5,6 +5,18 @@ the agent in `chat` and `code`. It speaks OAuth (for hosted servers like Atlassi
 `http`/`sse`, and local `stdio` servers. This page is part of the
 [configuration guide](./index.md); MCP servers are declared under the top-level `mcpServers` key.
 
+Each MCP tool reaches the agent as `mcp__<server>_<tool>`, where `<server>` is your key under
+`mcpServers`: the `getJiraIssue` tool of a server keyed `jira` is `mcp__jira_getJiraIssue`. That is
+the name to use in [`allowedTools`](./tools.md#allowed-tools) and in `gth eval` suites. Two servers
+whose tools would end up with the same name cannot be loaded together: the session then offers no
+MCP tools at all, with a warning naming the clash, until one of the keys is renamed.
+
+**One unknown key in any server entry drops every MCP tool.** Server entries are checked strictly
+when the session starts, and a key the MCP client does not recognise — a misspelling, or an option
+it no longer supports — rejects the whole `mcpServers` block, not only that server. The session
+still starts, with a warning naming the key, and runs with no MCP tools until the key is corrected
+or removed.
+
 ## Connect the Atlassian Jira MCP server
 
 Goal: let `gth chat` and `gth code` read and update Jira issues by connecting Atlassian's hosted

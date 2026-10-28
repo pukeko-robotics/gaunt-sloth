@@ -584,12 +584,12 @@ at all — `create_issue` against a scratch tracker and `create_issue` against t
 on are the same tool name and a different decision:
 
 ```
-The agent wants to call create_issue on the MCP server jira, via mcp__jira__create_issue
+The agent wants to call create_issue on the MCP server jira, via mcp__jira_create_issue
   1 │ {"summary":"ship it"}
 ```
 
 `jira` is your own key under `mcpServers`, so it is the name you gave that server yourself, and
-`mcp__jira__create_issue` is the registered tool name the agent called. The answers are the same
+`mcp__jira_create_issue` is the registered tool name the agent called. The answers are the same
 ones listed [at the top of this page](#the-main-use-case-let-the-agent-run-your-tests-on-your-terms)
 — and **session** / **always** remember *that tool on that server*, so approving `create_issue` on
 `jira` says nothing about the same tool name on any other server.
