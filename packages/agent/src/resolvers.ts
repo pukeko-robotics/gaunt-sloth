@@ -113,11 +113,14 @@ export function createResolvers(): AgentResolvers {
     } catch (error) {
       debugLog(`MCP tools error: ${error}`);
       // EXT-31: both connection-level failures (incl. expired/invalid auth) AND per-tool schema-load
-      // errors under throwOnLoadError are caught inside the adapter's _initializeConnection and
-      // routed to the function-form onConnectionError callback in getMcpClient (surface + skip, no
-      // re-throw), so they do NOT reach here. This backstop therefore only catches a wholesale
-      // getTools() throw (belt-and-braces) — surface it neutrally so MCP tool loading can never fail
-      // silently, while the session degrades gracefully (built-in and A2A tools below still load).
+      // errors under throwOnLoadError are caught inside the adapter's connection setup and routed
+      // to the function-form onConnectionError callback in getMcpClient (surface + skip, no
+      // re-throw), so they do NOT reach here. This backstop catches a wholesale throw: chiefly the
+      // adapter's strict validation of the mcpServers entries, which rejects the WHOLE configuration
+      // in the MultiServerMCPClient constructor when any one entry carries a key it does not know —
+      // so one stale key drops every MCP tool (accepted, and documented for users). Surface it
+      // neutrally so MCP tool loading can never fail silently, while the session degrades
+      // gracefully (built-in and A2A tools below still load).
       displayWarning(
         `MCP integration tools could not be fully loaded; continuing without them. ` +
           `Underlying error: ${error}`
@@ -318,7 +321,8 @@ async function getMcpClient(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const oauth = (rawMcpServers[serverName]?.authProvider as any) === 'OAuth';
         recordFailure(serverName, error);
-        // The adapter's error keeps only the text of the original; the capture holds its cause.
+        // The adapter's error carries the original as its cause; the capture is the fallback for
+        // an error that arrives without one.
         const cause = fetchErrors.errorFor(rawMcpServers[serverName]?.url);
         displayWarning(formatMcpConnectFailureMessage(serverName, error, { oauth, cause }));
       },

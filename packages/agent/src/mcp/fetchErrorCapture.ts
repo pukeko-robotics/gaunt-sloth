@@ -3,9 +3,10 @@
  * Records the network errors behind failed `fetch` calls, by origin, so a failed MCP connection can
  * name its cause.
  *
- * `@langchain/mcp-adapters` reports a failed connect as a new error built from the text of the
- * original, so all that reaches `onConnectionError` is `TypeError: fetch failed`; the TLS or socket
- * error that undici attached as its `cause` is gone. undici publishes every request error on a
+ * `@langchain/mcp-adapters` reports a failed connect as a new error that keeps the original as its
+ * `cause`, and the failure message reads the cause from that chain first. This capture is the
+ * fallback for an error that arrives with no chain of its own, whose TLS or socket detail would
+ * otherwise be lost. undici publishes every request error on a
  * diagnostics channel, which holds the same error and works with Node's built-in `fetch` and with
  * the dispatcher `tlsTrust.ts` installs. Subscribing to a channel does not load undici.
  */
