@@ -168,6 +168,43 @@ export class OAuthClientProviderImpl implements OAuthClientProvider {
     return Promise.resolve(data.codeVerifier);
   }
 
+  /**
+   * Called by the MCP client's `auth()` when the authorization server rejects what is stored (a
+   * revoked or expired refresh token, an unknown client), so its retry starts a fresh browser login
+   * instead of reusing the dead credentials. Each scope clears exactly its part of this server's
+   * storage file: `all` removes the file, `client` the registration, `tokens` the tokens, `verifier`
+   * the PKCE code verifier. `discovery` is a no-op, because this provider stores no discovery state.
+   */
+  // noinspection JSUnusedGlobalSymbols
+  invalidateCredentials(
+    scope: 'all' | 'client' | 'tokens' | 'verifier' | 'discovery'
+  ): Promise<void> {
+    if (scope === 'discovery') {
+      return Promise.resolve();
+    }
+    if (scope === 'all') {
+      this.storageCache = {};
+      try {
+        if (existsSync(this.storagePath)) {
+          unlinkSync(this.storagePath);
+        }
+      } catch (error) {
+        displayInfo('Failed to delete OAuth storage file: ' + error);
+      }
+      return Promise.resolve();
+    }
+    const data = this.loadStorageData();
+    if (scope === 'client') {
+      delete data.clientInformation;
+    } else if (scope === 'tokens') {
+      delete data.tokens;
+    } else if (scope === 'verifier') {
+      delete data.codeVerifier;
+    }
+    this.saveStorageData(data);
+    return Promise.resolve();
+  }
+
   // noinspection JSUnusedGlobalSymbols
   async redirectToAuthorization(authUrl: URL): Promise<void> {
     displayInfo('Auth url: ' + authUrl.toString());
