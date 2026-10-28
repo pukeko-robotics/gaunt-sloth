@@ -73,6 +73,43 @@ describe('createAuthProviderAndAuthenticate', () => {
     expect(closeSpy).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * Completes the login the way a browser does: once `auth` asks for a redirect, the authorization
+   * server's answer arrives at the provider's own redirect URL with the given query.
+   */
+  async function loginWithCallbackQuery(query: string) {
+    authMock
+      .mockImplementationOnce(async (provider: { redirectUrl: string }) => {
+        setTimeout(() => void fetch(`${provider.redirectUrl}?${query}`), 0);
+        return 'REDIRECT';
+      })
+      .mockResolvedValueOnce('AUTHORIZED');
+    const { createAuthProviderAndAuthenticate } =
+      await import('#src/mcp/OAuthClientProviderImpl.js');
+    await createAuthProviderAndAuthenticate(server, 5_000);
+    expect(authMock).toHaveBeenCalledTimes(2);
+    return authMock.mock.calls[1][1];
+  }
+
+  it("passes the callback's RFC 9207 iss to the code exchange", async () => {
+    const exchange = await loginWithCallbackQuery(
+      'code=the-code&iss=' + encodeURIComponent('https://auth.example.com')
+    );
+
+    expect(exchange).toMatchObject({
+      serverUrl: server.url,
+      authorizationCode: 'the-code',
+      iss: 'https://auth.example.com',
+    });
+  });
+
+  it('control: passes no iss when the authorization server sent none', async () => {
+    const exchange = await loginWithCallbackQuery('code=the-code');
+
+    expect(exchange).toMatchObject({ authorizationCode: 'the-code' });
+    expect(exchange.iss).toBeUndefined();
+  });
+
   it('gives up and closes the callback server when the login is never completed', async () => {
     authMock.mockResolvedValue('REDIRECT');
     const { createAuthProviderAndAuthenticate } =

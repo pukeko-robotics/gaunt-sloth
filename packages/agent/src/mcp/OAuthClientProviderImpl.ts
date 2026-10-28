@@ -213,7 +213,7 @@ export async function createAuthProviderAndAuthenticate(
   mcpServer: StreamableHTTPConnection,
   callbackTimeoutMs: number = OAUTH_CALLBACK_TIMEOUT_MS
 ): Promise<OAuthClientProviderImpl> {
-  const { port, server, codePromise } = await createOAuthRedirectServer('/oauth/callback');
+  const { port, server, callbackPromise } = await createOAuthRedirectServer('/oauth/callback');
   // The listening callback server keeps the process alive, so it is closed on every exit path.
   try {
     const authProvider = new OAuthClientProviderImpl({
@@ -222,14 +222,18 @@ export async function createAuthProviderAndAuthenticate(
     });
     const outcome = await auth(authProvider, { serverUrl: mcpServer.url, fetchFn: oauthFetch });
     if (outcome == 'REDIRECT') {
-      const authorizationCode = await withTimeout(
-        codePromise,
+      const callback = await withTimeout(
+        callbackPromise,
         callbackTimeoutMs,
         `OAuth login for ${mcpServer.url} was not completed within ${Math.round(callbackTimeoutMs / 1000)}s`
       );
+      // The callback's `iss` goes to the SDK as received: it checks it against the authorization
+      // server's issuer (RFC 9207) before redeeming the code, and refuses a server that advertises
+      // the parameter when it is missing.
       await auth(authProvider, {
         serverUrl: mcpServer.url,
-        authorizationCode,
+        authorizationCode: callback.code,
+        iss: callback.iss,
         fetchFn: oauthFetch,
       });
     } else if (outcome == 'AUTHORIZED') {
@@ -260,20 +264,28 @@ function closeQuietly(server: http.Server): void {
   } catch {}
 }
 
+/** What the authorization server sent back to the redirect URL. */
+export interface OAuthCallback {
+  code: string;
+  /** The RFC 9207 `iss` parameter, when the authorization server sent one. */
+  iss?: string;
+}
+
 export function createOAuthRedirectServer(
   path: string,
   portParam: number = 0
 ): Promise<{
   port: number;
   server: http.Server;
-  codePromise: Promise<string>;
+  callbackPromise: Promise<OAuthCallback>;
 }> {
   const redirectApp = express();
   return new Promise((resolve, reject) => {
-    const codePromise = new Promise<string>((resolveCode, rejectCode) => {
+    const callbackPromise = new Promise<OAuthCallback>((resolveCode, rejectCode) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       redirectApp.get(path, (req: any, res: any) => {
         const code = req.query.code as string | undefined;
+        const iss = typeof req.query.iss === 'string' ? req.query.iss : undefined;
         if (!code) {
           res.status(400).send('Error: No auth code received');
           rejectCode('Error: No auth code received');
@@ -289,7 +301,7 @@ export function createOAuthRedirectServer(
                 </div>
             </div>
         </div>`);
-        resolveCode(code);
+        resolveCode({ code, iss });
         if (server) {
           displayInfo('Cleaning auth redirect server...');
           server.close();
@@ -301,7 +313,7 @@ export function createOAuthRedirectServer(
       const addressInfo = server.address() as AddressInfo;
       const port = addressInfo.port;
       displayInfo(`OAuth callback server listening at ${port}`);
-      resolve({ port, server, codePromise });
+      resolve({ port, server, callbackPromise });
     });
 
     server.on('error', (err) => {
