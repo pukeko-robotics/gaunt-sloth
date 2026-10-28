@@ -1,10 +1,10 @@
-# v2.3.2
+# v2.4.0
 
 ## Potentially Breaking Changes
 
 - **MCP tool names change from `mcp__<server>__<tool>` to `mcp__<server>_<tool>`**, with a single underscore after the server key: `mcp__jira__getJiraIssue` is now `mcp__jira_getJiraIssue`. Update every `allowedTools` entry and every `gth eval` suite pattern (`must_call`, `must_error`, `tool_result_json_path`, `tool_trajectory` and the rest) that names an MCP tool. A glob such as `mcp__github_*` now also matches the tools of a server keyed `github_enterprise`, so list exact names where one server key extends another. Approval rules and remembered approvals are unaffected: they name the server key and the tool separately. Two servers whose tools would end up with the same name can no longer be loaded together; the session then offers no MCP tools until one key is renamed.
 - **A successful MCP result with no `structuredContent` is graded by `gth eval` as its plain text**, even when it carries `_meta` (servers on the newest protocol version stamp their identity into every result's `_meta`), so a suite that graded `text` or `meta.…` on such a result now addresses the text itself.
-- **One unknown key in any `mcpServers` entry now drops every MCP tool.** Server entries are checked strictly when the session starts, so a misspelt key, or an option the MCP client no longer supports such as `automaticSSEFallback` or `reconnect`, leaves the session with no MCP tools and a warning naming the key. See [MCP](https://github.com/pukeko-robotics/gaunt-sloth/blob/v2.3.2/docs/configuration/mcp.md).
+- **One unknown key in any `mcpServers` entry now drops every MCP tool.** Server entries are checked strictly when the session starts, so a misspelt key, or an option the MCP client no longer supports such as `automaticSSEFallback` or `reconnect`, leaves the session with no MCP tools and a warning naming the key. See [MCP](https://github.com/pukeko-robotics/gaunt-sloth/blob/v2.4.0/docs/configuration/mcp.md).
 - **Library: `@gaunt-sloth/agent` now uses `@agentclientprotocol/sdk` 2.0.2.** `createAcpAgentApp`, `createAcpV1AgentApp` and `createAcpAgentRouter` return that SDK's app types. If you connect them in-process to your own ACP client, move that client to `@agentclientprotocol/sdk` 2.0 as well. Using the agent over stdio (`gaunt-sloth-acp`, `gth --acp-agent`) needs nothing.
 
 ## Improvements
