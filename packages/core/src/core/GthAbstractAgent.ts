@@ -31,6 +31,11 @@ import { ConfigDiscoveryError } from '#src/config/configDiscovery.js';
 import type { GthOutputHeaderRung } from '#src/config/schema.js';
 import type { DeclaredToolAnnotations } from '#src/core/approvals/annotations.js';
 import { collectDeclaredMcpToolAnnotations } from '#src/core/approvals/toolAnnotationSources.js';
+import {
+  NO_MCP_TOOL_BINDINGS,
+  restrictMcpToolBindings,
+  type McpToolBindings,
+} from '#src/core/approvals/mcpSubjects.js';
 import type { DebugCapture, DebugRequestExtras, LastModelRequest } from '#src/core/debugCapture.js';
 import { modelProviderLabel } from '#src/core/modelLabel.js';
 import { providerErrorNotice } from '#src/core/providerErrorNotice.js';
@@ -450,6 +455,13 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
   private declaredMcpToolAnnotations: ReadonlyMap<string, DeclaredToolAnnotations> = new Map();
 
   /**
+   * EXT-211 — the configured server each loaded MCP tool belongs to (see
+   * {@link getMcpToolBindings}). Recorded by {@link recordMcpToolBindings} from the resolver's map,
+   * restricted to the tools this init actually resolved.
+   */
+  private mcpToolBindings: McpToolBindings = NO_MCP_TOOL_BINDINGS;
+
+  /**
    * BATCH-32 — the tool inventory this agent advertised to the model at the last `init`, or
    * `undefined` before one (see {@link getAdvertisedTools}).
    *
@@ -597,6 +609,27 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
   }
 
   /**
+   * EXT-211 — record which configured server each MCP tool in `resolvedTools` belongs to, from the
+   * resolver's bindings. Called by a backend with exactly the tools its resolver returned at this
+   * init — an empty list when tool loading was skipped — so a binding left over from an earlier
+   * resolution, or for a tool this session never loaded, is dropped rather than consulted.
+   */
+  protected recordMcpToolBindings(resolvedTools: readonly { name?: unknown }[]): void {
+    this.mcpToolBindings = restrictMcpToolBindings(
+      this.resolvers?.getMcpToolBindings?.(),
+      resolvedTools.map((tool) => tool?.name)
+    );
+  }
+
+  /**
+   * EXT-211 — registered MCP tool name → the configured server it was loaded under, for the tools
+   * loaded at the last {@link init} (empty before it). The one map every server attribution reads.
+   */
+  getMcpToolBindings(): McpToolBindings {
+    return this.mcpToolBindings;
+  }
+
+  /**
    * GS2-16 — clear the per-run analytics tally so the next turn starts from zero. The runner
    * calls this at each turn boundary because it (and this agent) are reused across turns in an
    * interactive session.
@@ -636,11 +669,11 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
   /**
    * GS2-16 — fold one message (or chunk) into the run tally. Fully guarded (fail-soft).
    *
-   * BATCH-43 — the configured `mcpServers` keys ride along so an errored MCP tool result can be
-   * attributed to its server and its own error body recovered beside the observed payload. Read
-   * from `this.config` at fold time rather than captured when the accumulator is created: the
-   * accumulator is rebuilt at every turn boundary while the config is set once at `init`, and a
-   * capture would silently record nothing for any turn whose ordering ever changed.
+   * BATCH-43 — the MCP tool bindings ride along so an errored MCP tool result can be attributed to
+   * its server and its own error body recovered beside the observed payload. Read at fold time
+   * rather than captured when the accumulator is created: the accumulator is rebuilt at every turn
+   * boundary while the bindings are set once at `init`, and a capture would silently record nothing
+   * for any turn whose ordering ever changed.
    *
    * BATCH-49 — `toolResultCaptureMaxBytes` rides the same argument, for the same reason: the cap
    * is a config value, and reading it here at fold time means a turn boundary that rebuilds the
@@ -652,7 +685,7 @@ export abstract class GthAbstractAgent implements GthAgentInterface {
     accumulateMessage(
       this.runStatsAcc,
       message,
-      Object.keys(this.config?.mcpServers ?? {}),
+      this.mcpToolBindings,
       resolveToolResultCaptureMaxBytes(this.config ?? undefined)
     );
   }

@@ -10,7 +10,10 @@ import {
 } from '#src/core/approvals/matcher.js';
 import {
   approvalSubjectForToolName,
+  bindMcpToolsets,
   mcpToolRegisteredName,
+  NO_MCP_TOOL_BINDINGS,
+  type McpToolBindings,
 } from '#src/core/approvals/mcpSubjects.js';
 import {
   mapAllowMatchedVerdictToAction,
@@ -110,14 +113,19 @@ function registeredName(corpusCase: ToolCorpusCase): string {
     : corpusCase.tool;
 }
 
-/** The `mcpServers` keys configured for a case — its own server, and nothing else. */
-function configuredServers(corpusCase: ToolCorpusCase): string[] {
-  return corpusCase.server === undefined ? [] : [corpusCase.server];
+/**
+ * The bindings a session that loaded this case's tool would hold — its own server's tool, recorded
+ * by production's own builder, and nothing else.
+ */
+function bindingsFor(corpusCase: ToolCorpusCase): McpToolBindings {
+  return corpusCase.subject === 'mcpTool' && corpusCase.server !== undefined
+    ? bindMcpToolsets([[corpusCase.server, [{ name: registeredName(corpusCase) }]]])
+    : NO_MCP_TOOL_BINDINGS;
 }
 
 /** The subject a gated call on this case presents, built by production's own resolution. */
 function subjectFor(corpusCase: ToolCorpusCase): ApprovalSubject {
-  return approvalSubjectForToolName(registeredName(corpusCase), configuredServers(corpusCase));
+  return approvalSubjectForToolName(registeredName(corpusCase), bindingsFor(corpusCase));
 }
 
 /**

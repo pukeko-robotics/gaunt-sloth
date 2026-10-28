@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { ToolMessage } from '@langchain/core/messages';
 import { mcpToolErrorMessagePrefix } from '@gaunt-sloth/core/core/mcpErrorPayload.js';
 import { extractRunStats } from '@gaunt-sloth/core/core/runStats.js';
+import {
+  bindMcpToolsets,
+  mcpToolRegisteredName,
+} from '@gaunt-sloth/core/core/approvals/mcpSubjects.js';
 import type { GthToolResult } from '@gaunt-sloth/core/core/types.js';
 import type { EvalCase, EvalExpectation, EvalSuite } from '#src/evalTypes.js';
 import type { MatrixCell, RunCellFn, ToolResultRecord } from '#src/types.js';
@@ -23,7 +27,11 @@ import type { MatrixCell, RunCellFn, ToolResultRecord } from '#src/types.js';
 
 const SERVER = 'unimarket';
 const BARE_TOOL = 'contract_search';
-const REGISTERED_TOOL = `mcp__${SERVER}__${BARE_TOOL}`;
+const REGISTERED_TOOL = mcpToolRegisteredName(SERVER, BARE_TOOL);
+/** Every tool of the server, as a `must_error` / `tool_result_json_path` glob. */
+const SERVER_GLOB = mcpToolRegisteredName(SERVER, '*');
+/** The bindings the session recorded when the server's tool loaded. */
+const BINDINGS = bindMcpToolsets([[SERVER, [{ name: REGISTERED_TOOL }]]]);
 const SERVER_ERROR_BODY = '{"code":"forbidden","reason":"identity lacks scope contracts:read"}';
 
 /** Exactly what `@langchain/mcp-adapters` throws for an `isError: true` result from this tool. */
@@ -40,7 +48,7 @@ function captureDeniedMcpCall(): GthToolResult[] {
         status: 'error',
       }),
     ],
-    [SERVER]
+    BINDINGS
   );
   return stats.toolResults ?? [];
 }
@@ -88,11 +96,11 @@ describe('BATCH-43 — grading an MCP tool error payload end to end', () => {
 
     const summary = await runEvalSuite(
       makeSuite({
-        mustCall: [`mcp__${SERVER}__*`],
-        mustError: [`mcp__${SERVER}__*`],
+        mustCall: [SERVER_GLOB],
+        mustError: [SERVER_GLOB],
         toolResultJsonPath: [
-          { tool: `mcp__${SERVER}__*`, path: 'code', equals: 'forbidden' },
-          { tool: `mcp__${SERVER}__*`, path: 'reason', contains: 'contracts:read' },
+          { tool: SERVER_GLOB, path: 'code', equals: 'forbidden' },
+          { tool: SERVER_GLOB, path: 'reason', contains: 'contracts:read' },
         ],
       }),
       { runCell: runCellWith(toolResults) }
@@ -121,15 +129,15 @@ describe('BATCH-43 — grading an MCP tool error payload end to end', () => {
 
     const summary = await runEvalSuite(
       makeSuite({
-        mustError: [`mcp__${SERVER}__*`],
-        toolResultJsonPath: [{ tool: `mcp__${SERVER}__*`, path: 'code', equals: 'rate_limited' }],
+        mustError: [SERVER_GLOB],
+        toolResultJsonPath: [{ tool: SERVER_GLOB, path: 'code', equals: 'rate_limited' }],
       }),
       { runCell: runCellWith(captureDeniedMcpCall()) }
     );
 
     expect(summary.cases[0].verdict).toBe('FAIL');
     expect(summary.cases[0].reasons).toEqual([
-      'tool_result_json_path "code" (tool "mcp__unimarket__*"): ' +
+      `tool_result_json_path "code" (tool "${SERVER_GLOB}"): ` +
         'is "forbidden", expected "rate_limited"',
     ]);
     expect(classifyEvalExit(summary)).toBe(1);
@@ -150,19 +158,19 @@ describe('BATCH-43 — grading an MCP tool error payload end to end', () => {
             status: 'error',
           }),
         ],
-        [SERVER]
+        BINDINGS
       ).toolResults ?? [];
 
     const summary = await runEvalSuite(
       makeSuite({
-        toolResultJsonPath: [{ tool: `mcp__${SERVER}__*`, path: 'code', equals: 'forbidden' }],
+        toolResultJsonPath: [{ tool: SERVER_GLOB, path: 'code', equals: 'forbidden' }],
       }),
       { runCell: runCellWith(toolResults) }
     );
 
     expect(summary.cases[0].verdict).toBe('FAIL');
     expect(summary.cases[0].reasons).toEqual([
-      'tool_result_json_path "code" (tool "mcp__unimarket__*"): result payload is not JSON',
+      `tool_result_json_path "code" (tool "${SERVER_GLOB}"): result payload is not JSON`,
     ]);
     expect(summary.cases[0].toolResults).toEqual([
       { name: REGISTERED_TOOL, isError: true, content: prose },

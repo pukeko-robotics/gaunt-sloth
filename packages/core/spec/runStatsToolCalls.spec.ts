@@ -7,6 +7,7 @@ import {
   extractRunStats,
   finalizeRunStats,
 } from '#src/core/runStats.js';
+import { NO_MCP_TOOL_BINDINGS } from '#src/core/approvals/mcpSubjects.js';
 
 /**
  * BATCH-52 — the run-stats accumulator records each requested tool call WITH its arguments, so
@@ -134,7 +135,7 @@ describe('core/runStats tool-call arguments (BATCH-52)', () => {
     const args = { text: 'x'.repeat(100) };
     const stats = extractRunStats(
       [new AIMessage({ content: '', tool_calls: [{ id: 'c1', name: 'write', args }] })],
-      [],
+      NO_MCP_TOOL_BINDINGS,
       32
     );
 

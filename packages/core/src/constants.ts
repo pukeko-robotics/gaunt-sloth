@@ -57,11 +57,21 @@ export const SHELL_DENYLIST_FILE = 'shell-denylist.json';
 /**
  * The `additionalToolNamePrefix` handed to `MultiServerMCPClient` so every MCP tool name is
  * namespaced. Combined with `prefixToolNameWithServerName`, the adapter emits tool names shaped
- * `${MCP_TOOL_NAME_PREFIX}__<serverName>__<toolName>` (the `__` separator is the mcp-adapters
- * convention). Single-sourced here so the resolver that sets the prefix (EXT-32) and any consumer
- * that groups tools back by server (the [[TUI-C20]] MCP debug tab) can never silently drift apart.
+ * `${MCP_TOOL_NAME_PREFIX}${MCP_NAMESPACE_SEPARATOR}<serverName>${MCP_SERVER_SEPARATOR}<toolName>`
+ * (both separators are the adapter's own templates). Single-sourced here so the resolver that sets
+ * the prefix (EXT-32) and every consumer that needs the namespace can never silently drift apart.
+ *
+ * Nothing may recover the server from a registered name by splitting it: a server key may contain
+ * the server separator. Attribution comes from the bindings recorded when the tools load (see
+ * `core/approvals/mcpSubjects.ts`).
  */
 export const MCP_TOOL_NAME_PREFIX = 'mcp';
+
+/** The separator the adapter puts between {@link MCP_TOOL_NAME_PREFIX} and the server key. */
+export const MCP_NAMESPACE_SEPARATOR = '__';
+
+/** The separator the adapter puts between the server key and the server's own tool name. */
+export const MCP_SERVER_SEPARATOR = '__';
 
 /**
  * GS2-35 — the canonical Git co-author identity for agent-authored commits. When Gaunt Sloth writes

@@ -28,7 +28,9 @@ import { checkHardline } from '#src/core/shell/hardline.js';
 import { describeApprovalEntry, MCP_FAIL_CLOSED_ANNOTATIONS } from '#src/core/approvals/matcher.js';
 import {
   approvalSubjectForToolName,
+  bindMcpToolsets,
   mcpToolRegisteredName,
+  type McpToolBindings,
 } from '#src/core/approvals/mcpSubjects.js';
 import { peekProjectDir, setProjectDir } from '#src/utils/systemUtils.js';
 import { SHELL_ALLOWLIST_FILE, SHELL_DENYLIST_FILE } from '#src/constants.js';
@@ -41,7 +43,34 @@ const mockAgent = {
   stream: vi.fn(),
   streamWithEvents: vi.fn(),
   cleanup: vi.fn(),
+  getMcpToolBindings: vi.fn(() => mockMcpToolBindings()),
 };
+
+/** The tools every configured MCP server in these tests loads (EXT-211). */
+const MOCK_MCP_SERVER_TOOLS = [
+  'search',
+  'delete_issue',
+  'fetch',
+  'create_issue',
+  'wipe',
+  'run_query',
+].map((tool) => ({ tool }));
+
+/**
+ * EXT-211 — the bindings a real agent would record for the config the runner initialised it with:
+ * each configured `mcpServers` key loads {@link MOCK_MCP_SERVER_TOOLS}, recorded by production's own
+ * builder. A server the config does not name loads nothing, so its tools stay unbound.
+ */
+function mockMcpToolBindings(
+  config = mockAgent.init.mock.calls.at(-1)?.[1] as { mcpServers?: object } | undefined
+): McpToolBindings {
+  return bindMcpToolsets(
+    Object.keys(config?.mcpServers ?? {}).map((server) => [
+      server,
+      MOCK_MCP_SERVER_TOOLS.map(({ tool }) => ({ name: mcpToolRegisteredName(server, tool) })),
+    ])
+  );
+}
 
 // CFG-26 — the rater-profile seam. Mocked HERE (its own module) rather than the whole
 // `#src/config.js` barrel, so the rest of the runner's config resolution stays real.
@@ -4433,10 +4462,7 @@ describe('GthAgentRunner', () => {
             mcp: mcpDeclaredAnnotationLookup((mockAgent as any).getDeclaredMcpToolAnnotations?.()),
           },
         });
-        const subject = approvalSubjectForToolName(
-          toolName,
-          Object.keys((config as { mcpServers?: object }).mcpServers ?? {})
-        );
+        const subject = approvalSubjectForToolName(toolName, mockMcpToolBindings(config));
         return applyDestructiveFloor(undefined, openWorldToolFloorReason(source(subject)));
       }
 

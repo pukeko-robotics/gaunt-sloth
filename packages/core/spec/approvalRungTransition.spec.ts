@@ -39,6 +39,10 @@ import { APPROVAL_RUNGS, type ApprovalRung } from '#src/config.js';
 import { getNewRunnableConfig } from '#src/utils/llmUtils.js';
 import { peekProjectDir, setProjectDir } from '#src/utils/systemUtils.js';
 import type { PendingToolInterrupt, ToolApprovalDecision } from '#src/core/types.js';
+import { bindMcpToolsets, mcpToolRegisteredName } from '#src/core/approvals/mcpSubjects.js';
+
+/** The registered name of the `docs` server's `search` tool. */
+const DOCS_SEARCH = mcpToolRegisteredName('docs', 'search');
 
 // The rater is observable rather than real: "no rating call" is half of the scope boundary this
 // file exists to pin, and only a spy can say it.
@@ -159,11 +163,11 @@ describe('EXT-80 — a mid-session rung change decides the gate (real createAgen
     ),
     tool(
       async ({ query }: { query: string }) => {
-        ran.push(`mcp__docs__search:${query}`);
+        ran.push(`${DOCS_SEARCH}:${query}`);
         return `found ${query}`;
       },
       {
-        name: 'mcp__docs__search',
+        name: DOCS_SEARCH,
         description: 'Search the docs.',
         schema: z.object({ query: z.string() }),
       }
@@ -190,6 +194,14 @@ describe('EXT-80 — a mid-session rung change decides the gate (real createAgen
     const runner = new GthAgentRunner(vi.fn(), {
       resolveTools: vi.fn().mockResolvedValue(makeTools()),
       resolveMiddleware: async (m: unknown[] | undefined) => m ?? [],
+      // EXT-211 — a configured `docs` server is what loads the docs search tool, so only then does
+      // the resolver hold a binding for it.
+      getMcpToolBindings: () =>
+        bindMcpToolsets(
+          (extraConfig.mcpServers as Record<string, unknown> | undefined)?.docs
+            ? [['docs', [{ name: DOCS_SEARCH }]]]
+            : []
+        ),
     });
     const config = {
       ...BASE_CONFIG,
@@ -243,7 +255,7 @@ describe('EXT-80 — a mid-session rung change decides the gate (real createAgen
 
     it('assisted then /approvals manual: an MCP tool reaches the human too', async () => {
       const runner = await makeRunner('assisted', [
-        { name: 'mcp__docs__search', args: { query: 'gates' } },
+        { name: DOCS_SEARCH, args: { query: 'gates' } },
       ]);
       const human = vi.fn().mockResolvedValue({ type: 'reject', message: 'No.' });
       runner.setToolApprovalCallback(human);
@@ -290,9 +302,7 @@ describe('EXT-80 — a mid-session rung change decides the gate (real createAgen
     it('manual then /approvals write: an MCP tool still reaches the human', async () => {
       // `write` frees the file built-ins and nothing else — the control that stops the cell above
       // passing on a gate that simply stopped gating at `write`.
-      const runner = await makeRunner('manual', [
-        { name: 'mcp__docs__search', args: { query: 'gates' } },
-      ]);
+      const runner = await makeRunner('manual', [{ name: DOCS_SEARCH, args: { query: 'gates' } }]);
       const human = vi.fn().mockResolvedValue({ type: 'reject' });
       runner.setToolApprovalCallback(human);
 
@@ -320,7 +330,7 @@ describe('EXT-80 — a mid-session rung change decides the gate (real createAgen
    * rung cannot show that on its own: it is the one rung where every candidate set is empty.
    *
    * **Two scripted calls, because they are gated at different rungs.** `write_file` is granted by
-   * its access class at `write`, so it discriminates at `manual` alone; `mcp__docs__search` has
+   * its access class at `write`, so it discriminates at `manual` alone; the docs search tool has
    * no access class and is gated at both deterministic rungs. Neither cell subsumes the other.
    */
   describe('a surface that drains no approvals is handed no approval interrupt', () => {
@@ -375,13 +385,13 @@ describe('EXT-80 — a mid-session rung change decides the gate (real createAgen
       'runs an MCP tool on an api session at %s, and parks nothing',
       async (rung) => {
         const agent = await apiAgentCalling(rung, {
-          name: 'mcp__docs__search',
+          name: DOCS_SEARCH,
           args: { query: 'gates' },
         });
 
         const parked = await runApiTurn(agent, `api-mcp-${rung}`);
 
-        expect(ran).toEqual(['mcp__docs__search:gates']);
+        expect(ran).toEqual([`${DOCS_SEARCH}:gates`]);
         expect(parked).toEqual([]);
       }
     );
@@ -415,15 +425,13 @@ describe('EXT-80 — a mid-session rung change decides the gate (real createAgen
     it.each(['assisted', 'auto', 'bypass'] as const)(
       'at %s an MCP tool runs with no rating call and no prompt',
       async (rung) => {
-        const runner = await makeRunner(rung, [
-          { name: 'mcp__docs__search', args: { query: 'gates' } },
-        ]);
+        const runner = await makeRunner(rung, [{ name: DOCS_SEARCH, args: { query: 'gates' } }]);
         const human = vi.fn().mockResolvedValue({ type: 'reject' });
         runner.setToolApprovalCallback(human);
 
         await runTurn(runner, 'search the docs');
 
-        expect(ran).toEqual(['mcp__docs__search:gates']);
+        expect(ran).toEqual([`${DOCS_SEARCH}:gates`]);
         expect(human).not.toHaveBeenCalled();
         expect(rateShellCommandMock).not.toHaveBeenCalled();
       }
@@ -503,7 +511,7 @@ describe('EXT-80 — a mid-session rung change decides the gate (real createAgen
     it('a gated MCP call is reported as an MCP tool, with the server it reaches', async () => {
       const runner = await makeRunner(
         'manual',
-        [{ name: 'mcp__docs__search', args: { query: 'gates' } }],
+        [{ name: DOCS_SEARCH, args: { query: 'gates' } }],
         // §4.7.5 — the user's own key is the only identity a server has, so the subject only
         // carries one when the call resolves against a CONFIGURED key.
         { mcpServers: { docs: { command: 'node', args: [] } } }
@@ -511,7 +519,7 @@ describe('EXT-80 — a mid-session rung change decides the gate (real createAgen
 
       const error = await stopFrom(runner, 'search the docs');
 
-      expect(error.message).toContain('\n  MCP tool: mcp__docs__search\n');
+      expect(error.message).toContain(`\n  MCP tool: ${DOCS_SEARCH}\n`);
       expect(error.message).toContain('\n  MCP server: docs\n');
       expect(error.message).not.toContain('Command:');
       expect(error.message).toContain(

@@ -8,6 +8,21 @@ import {
   finalizeRunStats,
   TOOL_RESULT_CONTENT_CAP,
 } from '#src/core/runStats.js';
+import {
+  bindMcpToolsets,
+  mcpToolRegisteredName,
+  NO_MCP_TOOL_BINDINGS,
+  type McpToolBindings,
+} from '#src/core/approvals/mcpSubjects.js';
+
+/** Bindings for `(server, tool)` pairs, recorded by the production builder. */
+const bound = (...pairs: [server: string, tool: string][]): McpToolBindings =>
+  bindMcpToolsets(
+    pairs.map(([server, tool]) => [server, [{ name: mcpToolRegisteredName(server, tool) }]])
+  );
+
+const UNIMARKET_SEARCH = mcpToolRegisteredName('unimarket', 'contract_search');
+const UNIMARKET_BOUND = bound(['unimarket', 'contract_search']);
 
 /**
  * GS2-16 — the run-stats harvester. These lock in that token usage + invoked tool names are read
@@ -179,7 +194,7 @@ describe('core/runStats', () => {
     accumulateMessage(
       acc,
       new ToolMessage({ content: payload, tool_call_id: 'c1', name: 'read_file' }),
-      [],
+      NO_MCP_TOOL_BINDINGS,
       40
     );
     const record = finalizeRunStats(acc).toolResults![0];
@@ -233,7 +248,7 @@ describe('core/runStats', () => {
     accumulateMessage(
       acc,
       new ToolMessage({ content: text, tool_call_id: 'c1', name: 'read_file' }),
-      [],
+      NO_MCP_TOOL_BINDINGS,
       4
     );
     const record = finalizeRunStats(acc).toolResults![0];
@@ -256,10 +271,10 @@ describe('core/runStats', () => {
       new ToolMessage({
         content: observed,
         tool_call_id: 'c1',
-        name: 'mcp__unimarket__contract_search',
+        name: UNIMARKET_SEARCH,
         status: 'error',
       }),
-      ['unimarket']
+      UNIMARKET_BOUND
     );
     expect(finalizeRunStats(atDefault).toolResults![0].errorPayload).toBe(body);
 
@@ -269,10 +284,10 @@ describe('core/runStats', () => {
       new ToolMessage({
         content: observed,
         tool_call_id: 'c1',
-        name: 'mcp__unimarket__contract_search',
+        name: UNIMARKET_SEARCH,
         status: 'error',
       }),
-      ['unimarket'],
+      UNIMARKET_BOUND,
       40
     );
     const record = finalizeRunStats(atSmallCap).toolResults![0];
@@ -302,16 +317,16 @@ describe('core/runStats', () => {
       new ToolMessage({
         content: observed,
         tool_call_id: 'c1',
-        name: 'mcp__unimarket__contract_search',
+        name: UNIMARKET_SEARCH,
         status: 'error',
       }),
-      ['unimarket']
+      UNIMARKET_BOUND
     );
 
     const stats = finalizeRunStats(acc);
     expect(stats.toolResults).toEqual([
       {
-        name: 'mcp__unimarket__contract_search',
+        name: UNIMARKET_SEARCH,
         isError: true,
         // What the model saw — prose prefix and all, unchanged.
         content: observed,
@@ -321,7 +336,7 @@ describe('core/runStats', () => {
     ]);
   });
 
-  it('threads the configured mcpServers keys through, so a key containing "__" still resolves', () => {
+  it('threads the MCP tool bindings through, so a key containing the separator still resolves', () => {
     const observed =
       "MCP tool 'contract__search' on server 'uni__market' returned an error: " +
       '{"code":"forbidden"}';
@@ -331,20 +346,20 @@ describe('core/runStats', () => {
       new ToolMessage({
         content: observed,
         tool_call_id: 'c1',
-        name: 'mcp__uni__market__contract__search',
+        name: mcpToolRegisteredName('uni__market', 'contract__search'),
         status: 'error',
       }),
-      ['uni__market']
+      bound(['uni__market', 'contract__search'])
     );
     expect(finalizeRunStats(acc).toolResults![0]).toEqual({
-      name: 'mcp__uni__market__contract__search',
+      name: mcpToolRegisteredName('uni__market', 'contract__search'),
       isError: true,
       content: observed,
       errorPayload: '{"code":"forbidden"}',
     });
   });
 
-  it('records no errorPayload when the caller supplies no configured servers', () => {
+  it('records no errorPayload when the caller supplies no MCP tool bindings', () => {
     // The default: nothing names the server, so nothing is recovered and the record is exactly the
     // shape it had before BATCH-43.
     const observed =
@@ -355,12 +370,12 @@ describe('core/runStats', () => {
       new ToolMessage({
         content: observed,
         tool_call_id: 'c1',
-        name: 'mcp__unimarket__contract_search',
+        name: UNIMARKET_SEARCH,
         status: 'error',
       })
     );
     expect(finalizeRunStats(acc).toolResults).toEqual([
-      { name: 'mcp__unimarket__contract_search', isError: true, content: observed },
+      { name: UNIMARKET_SEARCH, isError: true, content: observed },
     ]);
   });
 
@@ -373,10 +388,10 @@ describe('core/runStats', () => {
       new ToolMessage({
         content: observed,
         tool_call_id: 'c1',
-        name: 'mcp__unimarket__contract_search',
+        name: UNIMARKET_SEARCH,
         status: 'error',
       }),
-      ['unimarket']
+      UNIMARKET_BOUND
     );
     const record = finalizeRunStats(acc).toolResults![0];
     // ASCII, so the byte cap and the old character cap land on the same character — pinned in

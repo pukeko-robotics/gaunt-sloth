@@ -5,6 +5,7 @@ import { GthAbstractAgent } from '#src/core/GthAbstractAgent.js';
 import { TOOL_RESULT_CONTENT_CAP } from '#src/core/runStats.js';
 import type { GthConfig } from '#src/config.js';
 import type { GthCompiledGraph } from '#src/core/types.js';
+import { bindMcpToolsets, mcpToolRegisteredName } from '#src/core/approvals/mcpSubjects.js';
 
 /**
  * GS2-16 regression — the NON-streaming `invoke` path must harvest ONLY the CURRENT turn's new
@@ -101,11 +102,17 @@ class TestAgent extends GthAbstractAgent {
 
   /**
    * BATCH-43 — set `this.config` the way a real agent does, through `getEffectiveConfig`, rather
-   * than assigning the object directly. That merge is what stands between the user's configured
-   * `mcpServers` keys and the fold that reads them, so the test covers it instead of assuming it.
+   * than assigning the object directly, and record the MCP tool bindings the way a backend does at
+   * init (EXT-211), from the resolver's map restricted to the tools resolved — so the test covers
+   * that hop to the fold instead of assuming it.
    */
-  useGraphWithConfig(graph: GthCompiledGraph, extra: Partial<GthConfig>): void {
+  useGraphWithConfig(
+    graph: GthCompiledGraph,
+    extra: Partial<GthConfig>,
+    resolvedToolNames: readonly string[] = []
+  ): void {
     (this as any).agent = graph;
+    this.recordMcpToolBindings(resolvedToolNames.map((name) => ({ name })));
     (this as any).config = this.getEffectiveConfig(
       {
         writeBinaryOutputsToFile: false,
@@ -161,23 +168,27 @@ describe('GthAbstractAgent invoke run-stats (GS2-16 per-turn isolation)', () => 
 /**
  * BATCH-43 — the production wiring, exercised end to end through a real `invoke`.
  *
- * Every other spec for this feature calls `accumulateMessage` / `extractRunStats` with the server
- * keys passed by hand, so all of them stay green if `recordRunStats` stops supplying them: the
- * parameter defaults to an empty list, no server resolves, and the field is simply never recorded
- * in a real run while the suite reports success. This is the only test that fails when that single
- * argument goes missing, and the only one that fails if `getEffectiveConfig` ever stops carrying
- * `mcpServers` through to `this.config`.
+ * Every other spec for this feature calls `accumulateMessage` / `extractRunStats` with the MCP tool
+ * bindings passed by hand, so all of them stay green if `recordRunStats` stops supplying them: the
+ * parameter defaults to no bindings, no server resolves, and the field is simply never recorded in
+ * a real run while the suite reports success. This is the only test that fails when that single
+ * argument goes missing, or when the agent stops recording the resolver's bindings.
  */
 describe('GthAbstractAgent run-stats MCP error capture (BATCH-43 wiring)', () => {
-  const REGISTERED = 'mcp__unimarket__contract_search';
+  const REGISTERED = mcpToolRegisteredName('unimarket', 'contract_search');
+  const resolvers = {
+    getMcpToolBindings: () => bindMcpToolsets([['unimarket', [{ name: REGISTERED }]]]),
+  };
   const BODY = '{"code":"forbidden","reason":"identity lacks scope contracts:read"}';
   const OBSERVED = `MCP tool 'contract_search' on server 'unimarket' returned an error: ${BODY}`;
 
-  it('records the recovered error body from the agent CONFIG, on a real invoke', async () => {
-    const agent = new TestAgent(() => {});
-    agent.useGraphWithConfig(createMcpErrorGraph(OBSERVED, REGISTERED), {
-      mcpServers: { unimarket: { command: 'node', args: ['server.js'] } },
-    });
+  it('records the recovered error body from the agent’s bindings, on a real invoke', async () => {
+    const agent = new TestAgent(() => {}, resolvers);
+    agent.useGraphWithConfig(
+      createMcpErrorGraph(OBSERVED, REGISTERED),
+      { mcpServers: { unimarket: { command: 'node', args: ['server.js'] } } },
+      [REGISTERED]
+    );
 
     agent.resetRunStats();
     await agent.invoke([new HumanMessage('search the contracts')], runConfig);
@@ -194,9 +205,9 @@ describe('GthAbstractAgent run-stats MCP error capture (BATCH-43 wiring)', () =>
     ]);
   });
 
-  it('records no error body when the run configured no MCP servers at all', async () => {
-    const agent = new TestAgent(() => {});
-    agent.useGraphWithConfig(createMcpErrorGraph(OBSERVED, REGISTERED), {});
+  it('records no error body when the run resolved no MCP tools, whatever the resolver holds', async () => {
+    const agent = new TestAgent(() => {}, resolvers);
+    agent.useGraphWithConfig(createMcpErrorGraph(OBSERVED, REGISTERED), {}, []);
 
     agent.resetRunStats();
     await agent.invoke([new HumanMessage('search the contracts')], runConfig);
@@ -235,11 +246,15 @@ describe('GthAbstractAgent run-stats MCP error capture (BATCH-43 wiring)', () =>
     const body = `{"reason":"${'z'.repeat(TOOL_RESULT_CONTENT_CAP)}"}`;
     expect(Buffer.byteLength(body)).toBeGreaterThan(TOOL_RESULT_CONTENT_CAP);
     const observed = `MCP tool 'contract_search' on server 'unimarket' returned an error: ${body}`;
-    const agent = new TestAgent(() => {});
-    agent.useGraphWithConfig(createMcpErrorGraph(observed, 'mcp__unimarket__contract_search'), {
-      mcpServers: { unimarket: { command: 'node', args: ['server.js'] } },
-      toolResultCaptureMaxBytes: Buffer.byteLength(body),
-    });
+    const agent = new TestAgent(() => {}, resolvers);
+    agent.useGraphWithConfig(
+      createMcpErrorGraph(observed, REGISTERED),
+      {
+        mcpServers: { unimarket: { command: 'node', args: ['server.js'] } },
+        toolResultCaptureMaxBytes: Buffer.byteLength(body),
+      },
+      [REGISTERED]
+    );
 
     agent.resetRunStats();
     await agent.invoke([new HumanMessage('search the contracts')], runConfig);

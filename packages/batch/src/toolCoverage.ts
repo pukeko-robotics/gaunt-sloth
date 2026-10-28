@@ -38,9 +38,9 @@ export interface AdvertisedToolRecord {
   /** The registered tool name, exactly as the model would call it. */
   name: string;
   /**
-   * The `mcpServers` key that explains the name, resolved against the configured keys at capture.
+   * The `mcpServers` key the tool was loaded under, from the bindings recorded at tool load.
    * Absent for a tool outside the MCP namespace (a built-in or a user-configured one); the empty
-   * string for an MCP-namespaced name no configured key explains.
+   * string for an MCP-namespaced name with no binding.
    */
   server?: string;
 }

@@ -1,6 +1,7 @@
 import type { GthConfig } from '#src/config.js';
 import type { DeclaredToolAnnotations } from '#src/core/approvals/annotations.js';
 import type { ApprovalSubject } from '#src/core/approvals/matcher.js';
+import type { McpToolBindings } from '#src/core/approvals/mcpSubjects.js';
 import type { ConversationCompaction } from '#src/core/compaction.js';
 import type { AutocompactController } from '#src/core/compactionThreshold.js';
 import type { RaterNegotiationRound, ShellSafetyVerdict } from '#src/core/shell/rater.js';
@@ -41,6 +42,7 @@ import type { BaseCheckpointSaver } from '@langchain/langgraph';
  * as a later consumer's problem.
  */
 export type { DeclaredToolAnnotations } from '#src/core/approvals/annotations.js';
+export type { McpToolBinding, McpToolBindings } from '#src/core/approvals/mcpSubjects.js';
 export type {
   ApprovalSubject,
   McpToolApprovalSubject,
@@ -223,16 +225,16 @@ export interface GthAdvertisedTool {
   /** The registered tool name, exactly as the model would call it. */
   name: string;
   /**
-   * The `mcpServers` key this tool belongs to, resolved against the user's own configured keys —
-   * never by splitting the name (a key may itself contain the separator, and splitting then
-   * attributes a tool to a shorter key that also happens to be configured).
+   * The `mcpServers` key this tool belongs to, from the bindings recorded when the tools loaded —
+   * never by splitting the name (a key may itself contain the separator, so a registered name does
+   * not determine its server).
    *
    * Three states, and the distinction is load-bearing for a per-server breakdown:
    * - **absent** — the name is outside the MCP namespace: a built-in, or a tool the user wired into
    *   their own `tools` config. It belongs to no server.
-   * - **a non-empty string** — the configured `mcpServers` key that explains the name.
+   * - **a non-empty string** — the configured `mcpServers` key the tool was loaded under.
    * - **the empty string** — `UNRESOLVED_MCP_SERVER` from `core/approvals/mcpSubjects.js`: an
-   *   MCP-namespaced name that no configured key explains, or that two nested keys both explain.
+   *   MCP-namespaced name with no binding.
    *   The tool is real and counts; only its attribution is unknown, and a report must say so
    *   rather than guess.
    */
@@ -969,6 +971,15 @@ export interface GthAgentInterface {
   getDeclaredMcpToolAnnotations?(): ReadonlyMap<string, DeclaredToolAnnotations>;
 
   /**
+   * EXT-211 — which configured server each MCP tool this agent loaded at the last `init` belongs
+   * to, keyed by registered tool name: the resolver's bindings, restricted to the tools the agent
+   * actually received. Every consumer that needs an MCP tool's server (the approvals gate, the
+   * advertised-tool inventory, the eval tool trace) reads it here, so they cannot disagree.
+   * Optional — an agent that omits it leaves every MCP tool on the unresolved server.
+   */
+  getMcpToolBindings?(): McpToolBindings;
+
+  /**
    * GS2-16 — reset the per-run analytics accumulator so the NEXT turn's token/tool totals start
    * from zero. Called by {@link @gaunt-sloth/core!core/GthAgentRunner.GthAgentRunner | GthAgentRunner} at each turn boundary (the runner is reused across
    * turns in interactive sessions). Optional: agents that don't collect stats simply omit it.
@@ -1169,4 +1180,12 @@ export interface AgentResolvers {
    * TUI to surface a persistent notice and to annotate the /debug MCP tab.
    */
   getMcpConnectionFailures?(): McpConnectionFailure[];
+  /**
+   * EXT-211 — registered MCP tool name → the configured server it was loaded under, recorded during
+   * the most recent {@link ToolsResolver} call (see `core/approvals/mcpSubjects.ts`). The only
+   * source of server attribution for an MCP tool: a registered name cannot be parsed back into its
+   * server. Optional: resolvers without MCP support omit it, and every MCP-namespaced name then
+   * resolves to the unresolved server, which fails closed.
+   */
+  getMcpToolBindings?(): McpToolBindings;
 }

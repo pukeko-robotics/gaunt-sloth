@@ -6,6 +6,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { MCP_TOOL_NAME_PREFIX } from '@gaunt-sloth/core/constants.js';
 import {
   approvalSubjectForToolName,
+  bindMcpToolsets,
   mcpToolRegisteredName,
 } from '@gaunt-sloth/core/core/approvals/mcpSubjects.js';
 import { mcpToolErrorMessagePrefix } from '@gaunt-sloth/core/core/mcpErrorPayload.js';
@@ -87,7 +88,8 @@ describe('@langchain/mcp-adapters error-message shape (BATCH-43 tripwire)', () =
   it('registers the tool under the name the server resolver reverses back to that same pair', async () => {
     // The adapter names the server by its configured key and the tool by its BARE name, while the
     // model calls the namespaced one. The recovery is only correct if resolving the registered name
-    // against the configured keys returns the very pair the adapter's message was built from — a
+    // through the bindings recorded from the adapter's own per-server tools returns the very pair
+    // the adapter's message was built from — a
     // separate claim from the message shape above, and the one that breaks if the naming convention
     // changes rather than the wording.
     const client = await connectFixture();
@@ -100,7 +102,10 @@ describe('@langchain/mcp-adapters error-message shape (BATCH-43 tripwire)', () =
     const registered = tools.map((t) => t.name);
     expect(registered).toContain(mcpToolRegisteredName(SERVER_KEY, BARE_TOOL_NAME));
     expect(
-      approvalSubjectForToolName(mcpToolRegisteredName(SERVER_KEY, BARE_TOOL_NAME), [SERVER_KEY])
+      approvalSubjectForToolName(
+        mcpToolRegisteredName(SERVER_KEY, BARE_TOOL_NAME),
+        bindMcpToolsets([[SERVER_KEY, tools]])
+      )
     ).toEqual({ kind: 'mcpTool', server: SERVER_KEY, name: BARE_TOOL_NAME });
   });
 });

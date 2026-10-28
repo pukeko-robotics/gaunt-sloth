@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AIMessage, HumanMessage, SystemMessage } from '@langchain/core/messages';
+import {
+  bindMcpToolsets,
+  mcpToolRegisteredName,
+  NO_MCP_TOOL_BINDINGS,
+} from '@gaunt-sloth/core/core/approvals/mcpSubjects.js';
+import { MCP_SERVER_SEPARATOR } from '@gaunt-sloth/core/constants.js';
 
 describe('tui/debugRender', () => {
   beforeEach(() => {
@@ -97,23 +103,23 @@ describe('tui/debugRender', () => {
   });
 
   // ── TUI-C20: the MCP overview tab ────────────────────────────────────────────
-  it('renderMcpDetails lists each server, its instructions and server-prefixed tools, and names the Tools tab', async () => {
+  it('renderMcpDetails lists each server, its instructions and its bound tools, and names the Tools tab', async () => {
     const { renderMcpDetails } = await import('#src/tui/debugRender.js');
+    const getDocs = mcpToolRegisteredName('ctx7', 'get_docs');
+    const resolveId = mcpToolRegisteredName('ctx7', 'resolve_id');
     const out = renderMcpDetails(
       {
         tools: [
-          // MCP tools carry the `mcp__<server>__` prefix the resolver assigns …
-          {
-            name: 'mcp__ctx7__get_docs',
-            description: 'Fetch docs for a library\n(second line ignored)',
-          },
-          { name: 'mcp__ctx7__resolve_id', description: 'Resolve a library id' },
-          // … a non-MCP built-in tool must NOT be grouped under any server.
+          { name: getDocs, description: 'Fetch docs for a library\n(second line ignored)' },
+          { name: resolveId, description: 'Resolve a library id' },
+          // … a non-MCP built-in tool has no binding and must NOT be grouped under any server.
           { name: 'read_file', description: 'Reads a file' },
         ],
       },
       ['ctx7'],
-      [{ server: 'ctx7', instructions: 'Use resolve_id before get_docs.' }]
+      [{ server: 'ctx7', instructions: 'Use resolve_id before get_docs.' }],
+      [],
+      bindMcpToolsets([['ctx7', [{ name: getDocs }, { name: resolveId }]]])
     );
 
     // Intro points at the Tools tab for the full definitions (this is the overview, not the schemas).
@@ -121,28 +127,54 @@ describe('tui/debugRender', () => {
     // The server heading and its captured instructions.
     expect(out).toContain('ctx7');
     expect(out).toContain('Use resolve_id before get_docs.');
-    // Its tools, by their server-prefixed name + a one-line description (first line only).
-    expect(out).toContain('mcp__ctx7__get_docs: Fetch docs for a library');
-    expect(out).toContain('mcp__ctx7__resolve_id: Resolve a library id');
+    // Its tools, by their registered name + a one-line description (first line only).
+    expect(out).toContain(`${getDocs}: Fetch docs for a library`);
+    expect(out).toContain(`${resolveId}: Resolve a library id`);
     expect(out).not.toContain('second line ignored');
-    // A built-in (non-prefixed) tool is not attributed to the server.
+    // A built-in tool is not attributed to the server.
     expect(out).not.toContain('read_file');
     // Instruction text renders ABOVE the tool list under each server.
-    expect(out.indexOf('Use resolve_id')).toBeLessThan(out.indexOf('mcp__ctx7__get_docs'));
+    expect(out.indexOf('Use resolve_id')).toBeLessThan(out.indexOf(getDocs));
+  });
+
+  it('renderMcpDetails groups by binding, so a nested server key does not swallow its sibling’s tools', async () => {
+    // EXT-211: every `github_enterprise` tool name starts with `github`'s prefix as well, so a
+    // prefix grouping would list them under both servers.
+    const { renderMcpDetails } = await import('#src/tui/debugRender.js');
+    const nested = `github${MCP_SERVER_SEPARATOR}enterprise`;
+    const ghSearch = mcpToolRegisteredName('github', 'search');
+    const gheList = mcpToolRegisteredName(nested, 'list_repos');
+    const out = renderMcpDetails(
+      { tools: [{ name: ghSearch }, { name: gheList }] },
+      ['github', nested],
+      [],
+      [],
+      bindMcpToolsets([
+        ['github', [{ name: ghSearch }]],
+        [nested, [{ name: gheList }]],
+      ])
+    );
+    const githubSection = out.slice(out.indexOf('── github ──'), out.indexOf(`── ${nested} ──`));
+    expect(githubSection).toContain(ghSearch);
+    expect(githubSection).not.toContain(gheList);
+    expect(out.slice(out.indexOf(`── ${nested} ──`))).toContain(gheList);
   });
 
   it('renderMcpDetails shows a neutral line for a server that supplied no instructions', async () => {
     const { renderMcpDetails } = await import('#src/tui/debugRender.js');
     // `github` is in the server list but absent from the captured instructions array.
+    const listPrs = mcpToolRegisteredName('github', 'list_prs');
     const out = renderMcpDetails(
-      { tools: [{ name: 'mcp__github__list_prs', description: 'List PRs' }] },
+      { tools: [{ name: listPrs, description: 'List PRs' }] },
       ['github'],
-      []
+      [],
+      [],
+      bindMcpToolsets([['github', [{ name: listPrs }]]])
     );
     expect(out).toContain('github');
     expect(out).toContain('(no instructions provided)');
     // The tool list still renders even without instructions.
-    expect(out).toContain('mcp__github__list_prs');
+    expect(out).toContain(listPrs);
   });
 
   it('renderMcpDetails renders a neutral empty state (no crash) when no MCP servers are configured', async () => {
@@ -176,11 +208,13 @@ describe('tui/debugRender', () => {
       servers: [],
       instructions: [],
       failures: [],
+      bindings: NO_MCP_TOOL_BINDINGS,
     });
     expect(collectMcpOverview({ mcpServers: undefined } as never, {})).toEqual({
       servers: [],
       instructions: [],
       failures: [],
+      bindings: NO_MCP_TOOL_BINDINGS,
     });
   });
 

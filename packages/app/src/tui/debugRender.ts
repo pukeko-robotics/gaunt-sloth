@@ -17,7 +17,10 @@ import type {
 } from '@gaunt-sloth/core/core/shell/approvalCapture.js';
 import { neutralizeUntrustedText } from '@gaunt-sloth/core/core/shell/framing.js';
 import { redactForToolDisplay } from '@gaunt-sloth/core/core/toolDisplay.js';
-import { MCP_TOOL_NAME_PREFIX } from '@gaunt-sloth/core/constants.js';
+import {
+  NO_MCP_TOOL_BINDINGS,
+  type McpToolBindings,
+} from '@gaunt-sloth/core/core/approvals/mcpSubjects.js';
 
 /**
  * Pure renderers turning the agent's debug captures into the JSON strings the `/debug`
@@ -152,33 +155,41 @@ const MCP_TAB_DESCRIPTION =
 export function collectMcpOverview(
   config: Pick<GthConfig, 'mcpServers'> | undefined,
   resolvers:
-    Pick<AgentResolvers, 'getMcpServerInstructions' | 'getMcpConnectionFailures'> | undefined
+    | Pick<
+        AgentResolvers,
+        'getMcpServerInstructions' | 'getMcpConnectionFailures' | 'getMcpToolBindings'
+      >
+    | undefined
 ): {
   servers: string[];
   instructions: McpServerInstruction[];
   failures: McpConnectionFailure[];
+  bindings: McpToolBindings;
 } {
   const servers = Object.keys(config?.mcpServers ?? {});
   const instructions = resolvers?.getMcpServerInstructions?.() ?? [];
   const failures = resolvers?.getMcpConnectionFailures?.() ?? [];
-  return { servers, instructions, failures };
+  const bindings = resolvers?.getMcpToolBindings?.() ?? NO_MCP_TOOL_BINDINGS;
+  return { servers, instructions, failures, bindings };
 }
 
 /**
  * Render the "MCP" tab (TUI-C20): a per-server overview of the connected MCP servers. Under each
  * server it shows (a) its discovery `instructions` (from EXT-32's captured accessor, threaded in via
  * `instructions`; a server that supplied none gets a neutral line, never an empty block) and (b) its
- * contributed tools by their server-prefixed name (`mcp__<server>__<tool>`) with a one-line
- * description. Tool SCHEMAS are deliberately NOT rendered here — the intro points at the Tools tab
- * for those. `servers` is the full configured server list; `extras.tools` is the live per-turn tool
- * catalogue, regrouped by the shared {@link @gaunt-sloth/core!constants.MCP_TOOL_NAME_PREFIX | MCP_TOOL_NAME_PREFIX} prefix so the grouping can't drift
- * from how the resolver named them. No servers → a neutral empty state (never a throw).
+ * contributed tools by their registered name with a one-line description. Tool SCHEMAS are
+ * deliberately NOT rendered here — the intro points at the Tools tab for those. `servers` is the
+ * full configured server list; `extras.tools` is the live per-turn tool catalogue, grouped under a
+ * server by `bindings` — the resolver's record of which server each tool was loaded under — and
+ * never by name prefix, because a server key may contain the adapter's separator and one server's
+ * prefix can then be the start of another's. No servers → a neutral empty state (never a throw).
  */
 export function renderMcpDetails(
   extras: DebugRequestExtras | undefined,
   servers: string[],
   instructions: McpServerInstruction[],
-  failures: McpConnectionFailure[] = []
+  failures: McpConnectionFailure[] = [],
+  bindings: McpToolBindings = NO_MCP_TOOL_BINDINGS
 ): string {
   const sections: string[] = [];
   sections.push(`=== MCP SERVERS (${servers.length}) ===`);
@@ -214,8 +225,7 @@ export function renderMcpDetails(
     }
 
     // (b) the server's tools by their server-prefixed name + a one-line description.
-    const prefix = `${MCP_TOOL_NAME_PREFIX}__${server}__`;
-    const serverTools = tools.filter((t) => t.name.startsWith(prefix));
+    const serverTools = tools.filter((t) => bindings.get(t.name)?.server === server);
     sections.push(`tools (${serverTools.length}):`);
     if (serverTools.length > 0) {
       for (const tool of serverTools) {

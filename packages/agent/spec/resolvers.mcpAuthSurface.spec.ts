@@ -1,6 +1,7 @@
 import { channel } from 'node:diagnostics_channel';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GthConfig } from '#src/config.js';
+import { mcpToolRegisteredName } from '@gaunt-sloth/core/core/approvals/mcpSubjects.js';
 
 const requestErrorChannel = channel('undici:request:error');
 
@@ -56,8 +57,9 @@ class MultiServerMCPClientStub {
   constructor(
     public _config: { mcpServers: Record<string, unknown>; onConnectionError?: unknown }
   ) {}
-  getTools = async () => {
-    const tools: unknown[] = [];
+  // The adapter's per-server discovery (EXT-211): tools grouped under the server they loaded for.
+  listToolsets = async () => {
+    const catalog: Record<string, unknown[]> = {};
     for (const name of Object.keys(this._config.mcpServers)) {
       const behavior = serverBehaviors[name];
       if (behavior?.requestError) {
@@ -70,10 +72,11 @@ class MultiServerMCPClientStub {
         cb?.({ serverName: name, error: behavior.fail });
         continue; // failed server contributes no tools
       }
-      tools.push(...(behavior?.tools ?? [{ name: `mcp__${name}__tool` }]));
+      catalog[name] = behavior?.tools ?? [{ name: mcpToolRegisteredName(name, 'tool') }];
     }
-    return tools;
+    return catalog;
   };
+  initializeConnections = this.listToolsets;
   getClient = async (name: string) =>
     serverBehaviors[name]?.fail ? undefined : { getInstructions: () => undefined };
   close = vi.fn().mockResolvedValue(undefined);
@@ -209,7 +212,7 @@ describe('resolveTools MCP auth surfacing (EXT-31)', () => {
   it('degrades gracefully: one server auth failure keeps the healthy server and built-in tools', async () => {
     serverBehaviors = {
       jira: { fail: new Error('HTTP 401 Unauthorized: token expired') },
-      github: { tools: [{ name: 'mcp__github__search' }] },
+      github: { tools: [{ name: mcpToolRegisteredName('github', 'search') }] },
     };
 
     const { createResolvers } = await import('#src/resolvers.js');
@@ -223,11 +226,11 @@ describe('resolveTools MCP auth surfacing (EXT-31)', () => {
 
     const names = toolNames(tools);
     // Healthy server's tools survive the sibling's auth failure...
-    expect(names).toContain('mcp__github__search');
+    expect(names).toContain(mcpToolRegisteredName('github', 'search'));
     // ...and built-in tools are untouched...
     expect(names).toContain('builtin__read');
     // ...while the failed integration contributes nothing.
-    expect(names).not.toContain('mcp__jira__tool');
+    expect(names).not.toContain(mcpToolRegisteredName('jira', 'tool'));
     // The failure was still surfaced (named), and resolveTools did not throw.
     expect(consoleUtilsMock.displayWarning).toHaveBeenCalledTimes(1);
     expect(consoleUtilsMock.displayWarning.mock.calls[0][0]).toContain('"jira"');

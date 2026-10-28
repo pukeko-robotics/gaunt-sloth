@@ -9,9 +9,14 @@ import {
 } from '#src/core/approvals/matcher.js';
 import {
   approvalSubjectForToolName,
+  bindMcpToolsets,
   isMcpNamespacedToolName,
+  McpToolNameCollisionError,
   mcpToolRegisteredName,
+  NO_MCP_TOOL_BINDINGS,
+  restrictMcpToolBindings,
   UNRESOLVED_MCP_SERVER,
+  type McpToolBindings,
 } from '#src/core/approvals/mcpSubjects.js';
 import {
   BUILT_IN_TOOL_ANNOTATIONS,
@@ -61,130 +66,111 @@ function sourceOver(
   });
 }
 
+/** The registered name of `jira`'s `search` tool. */
+const JIRA_SEARCH = mcpToolRegisteredName('jira', 'search');
+
 /** `approvals.mcp` trusting exactly these hints from one named server. */
 const trusting = (hints: ToolAnnotationHint[], server = 'jira'): McpApprovalsConfig => ({
   servers: { [server]: { trustAnnotations: hints } },
 });
 
-/** The whole chain: a registered tool name, the configured servers, and the effective set. */
+/**
+ * Bindings for `(server, tool)` pairs, recorded by the production builder exactly as the resolver
+ * records a server's loaded tools.
+ */
+const bound = (...pairs: [server: string, tool: string][]): McpToolBindings =>
+  bindMcpToolsets(
+    pairs.map(([server, tool]) => [server, [{ name: mcpToolRegisteredName(server, tool) }]])
+  );
+
+/** The whole chain: a registered tool name, the session's bindings, and the effective set. */
 function effectiveFor(
   toolName: string,
-  configuredServers: readonly string[],
+  bindings: McpToolBindings,
   mcp: McpApprovalsConfig | undefined,
   tools: readonly { name?: string; metadata?: unknown }[]
 ): EffectiveToolAnnotations {
-  const subject = approvalSubjectForToolName(toolName, configuredServers);
+  const subject = approvalSubjectForToolName(toolName, bindings);
   return sourceOver(mcp, tools)(subject) as EffectiveToolAnnotations;
 }
 
-describe('approvalSubjectForToolName (EXT-70 §4.7.5) — provenance is decided by the name', () => {
+describe('approvalSubjectForToolName (EXT-70 §4.7.5, EXT-211) — provenance by name, server by binding', () => {
   it('CONTROL: an ordinary tool name is a `tool` subject — the trusted provenance', () => {
-    expect(approvalSubjectForToolName('gth_grep', ['jira'])).toEqual({
+    expect(approvalSubjectForToolName('gth_grep', bound(['jira', 'search']))).toEqual({
       kind: 'tool',
       name: 'gth_grep',
     });
   });
 
-  it('an MCP-namespaced name is an `mcpTool` subject carrying the user’s own config key', () => {
-    expect(approvalSubjectForToolName('mcp__jira__delete_issue', ['jira', 'github'])).toEqual({
-      kind: 'mcpTool',
-      server: 'jira',
-      name: 'delete_issue',
-    });
+  it('a bound MCP name is an `mcpTool` subject carrying the user’s own config key', () => {
+    const bindings = bound(['jira', 'delete_issue'], ['github', 'create_pr']);
+    expect(
+      approvalSubjectForToolName(mcpToolRegisteredName('jira', 'delete_issue'), bindings)
+    ).toEqual({ kind: 'mcpTool', server: 'jira', name: 'delete_issue' });
   });
 
   /**
    * The §2 fail-open, stated as a property: there is NO MCP name for which this returns the trusted
-   * provenance. The rows are the ways resolution can go — clean, unknown, ambiguous, and the two
-   * degenerate names — and the control above is what stops a resolver that answers `mcpTool` for
-   * everything passing.
+   * provenance. The rows are the ways resolution can go — bound, unbound, and the two degenerate
+   * names — and the control above is what stops a resolver that answers `mcpTool` for everything
+   * passing.
    */
   it.each([
-    ['a resolvable name', 'mcp__jira__delete_issue', ['jira'], 'jira', 'delete_issue'],
+    ['a bound name', mcpToolRegisteredName('jira', 'delete_issue'), 'jira', 'delete_issue'],
     [
-      'a name no configured server explains',
+      'a name nothing bound',
       'mcp__unknown__delete_issue',
-      ['jira'],
       UNRESOLVED_MCP_SERVER,
       'mcp__unknown__delete_issue',
     ],
-    ['an ambiguous name', 'mcp__a__b__c', ['a', 'a__b'], UNRESOLVED_MCP_SERVER, 'mcp__a__b__c'],
-    [
-      'a name with an empty tool part',
-      'mcp__jira__',
-      ['jira'],
-      UNRESOLVED_MCP_SERVER,
-      'mcp__jira__',
-    ],
-    ['the bare namespace', 'mcp__', ['jira'], UNRESOLVED_MCP_SERVER, 'mcp__'],
-  ])('%s is never a `tool` subject', (_why, toolName, servers, expectedServer, expectedName) => {
-    // The whole subject, not just its `kind`: asserting `kind` twice over (is `mcpTool`, is not
-    // `tool`) cannot fail in two ways, while the server and name are what the trust lookup and
-    // the declaration lookup are actually keyed by — a resolver that answered `mcpTool` with the
-    // wrong server would pass a `kind`-only check and hand a tool another server's belief.
-    expect(approvalSubjectForToolName(toolName, servers)).toEqual({
+    ['the bare namespace', 'mcp__', UNRESOLVED_MCP_SERVER, 'mcp__'],
+  ])('%s is never a `tool` subject', (_why, toolName, expectedServer, expectedName) => {
+    // The whole subject, not just its `kind`: the server and name are what the trust lookup and
+    // the declaration lookup are keyed by — a resolver that answered `mcpTool` with the wrong
+    // server would pass a `kind`-only check and hand a tool another server's belief.
+    expect(approvalSubjectForToolName(toolName, bound(['jira', 'delete_issue']))).toEqual({
       kind: 'mcpTool',
       server: expectedServer,
       name: expectedName,
     });
   });
 
-  describe('a server key containing the separator resolves to THAT server', () => {
-    it('resolves against the configured key set, not by splitting on the separator', () => {
-      expect(
-        approvalSubjectForToolName('mcp__jira__staging__delete_issue', ['jira__staging'])
-      ).toEqual({ kind: 'mcpTool', server: 'jira__staging', name: 'delete_issue' });
-    });
-
-    it('CONTROL: the same NAME under a shorter configured key resolves to the shorter one', () => {
-      // Same string, different config — so the split cannot be a property of the name alone.
-      expect(approvalSubjectForToolName('mcp__jira__staging__delete_issue', ['jira'])).toEqual({
-        kind: 'mcpTool',
-        server: 'jira',
-        name: 'staging__delete_issue',
-      });
-    });
-
-    it('CONTROL: an ordinary key still resolves alongside a separator-bearing sibling', () => {
-      expect(
-        approvalSubjectForToolName('mcp__github__create_pr', ['jira__staging', 'github'])
-      ).toEqual({ kind: 'mcpTool', server: 'github', name: 'create_pr' });
-    });
-
-    it('two nested keys that both explain the name resolve to NEITHER', () => {
-      // `jira` + `staging__delete_issue` and `jira__staging` + `delete_issue` are both readings.
-      // Picking one would hand a tool the other server's trust.
-      expect(
-        approvalSubjectForToolName('mcp__jira__staging__delete_issue', ['jira', 'jira__staging'])
-      ).toEqual({
-        kind: 'mcpTool',
-        server: UNRESOLVED_MCP_SERVER,
-        name: 'mcp__jira__staging__delete_issue',
-      });
+  it('the server is the binding’s, whatever the name looks like', () => {
+    // A binding for a name whose shape suggests another server: the binding governs, because the
+    // name is never parsed.
+    const bindings = new Map([['mcp__jira__x', { server: 'github', tool: 'jira__x' }]]);
+    expect(approvalSubjectForToolName('mcp__jira__x', bindings)).toEqual({
+      kind: 'mcpTool',
+      server: 'github',
+      name: 'jira__x',
     });
   });
 
-  it('a name no configured server explains fails closed, keeping the whole name as its identity', () => {
-    expect(approvalSubjectForToolName('mcp__ghost__delete_everything', ['jira'])).toEqual({
+  it('an unbound name fails closed even when a configured-looking server prefixes it', () => {
+    expect(approvalSubjectForToolName('mcp__jira__delete_issue', NO_MCP_TOOL_BINDINGS)).toEqual({
       kind: 'mcpTool',
       server: UNRESOLVED_MCP_SERVER,
-      name: 'mcp__ghost__delete_everything',
+      name: 'mcp__jira__delete_issue',
     });
   });
 
-  it('an empty configured key never resolves anything', () => {
+  it('a binding to the empty server never resolves anything', () => {
     // `''` is unnameable under `approvals.mcp.servers` and on an `mcpTool` entry (both `min(1)`),
     // so resolving to it would be indistinguishable from not resolving at all.
-    expect(approvalSubjectForToolName('mcp____delete_issue', [''])).toEqual({
+    const bindings = new Map([['mcp____delete_issue', { server: '', tool: 'delete_issue' }]]);
+    expect(approvalSubjectForToolName('mcp____delete_issue', bindings)).toEqual({
       kind: 'mcpTool',
       server: UNRESOLVED_MCP_SERVER,
       name: 'mcp____delete_issue',
     });
   });
 
-  it('mcpToolRegisteredName round-trips a resolved subject back to the registered name', () => {
-    const registered = 'mcp__jira__staging__delete_issue';
-    const subject = approvalSubjectForToolName(registered, ['jira__staging']);
+  it('mcpToolRegisteredName rebuilds a bound subject back to its registered name', () => {
+    const registered = mcpToolRegisteredName('jira__staging', 'delete_issue');
+    const subject = approvalSubjectForToolName(
+      registered,
+      bound(['jira__staging', 'delete_issue'])
+    );
     expect(subject.kind).toBe('mcpTool');
     if (subject.kind !== 'mcpTool') throw new Error('unreachable');
     expect(mcpToolRegisteredName(subject.server, subject.name)).toBe(registered);
@@ -197,6 +183,55 @@ describe('approvalSubjectForToolName (EXT-70 §4.7.5) — provenance is decided 
     ['mcp_jira__x', false],
   ])('isMcpNamespacedToolName(%s) is %s', (name, expected) => {
     expect(isMcpNamespacedToolName(name)).toBe(expected);
+  });
+});
+
+describe('bindMcpToolsets (EXT-211) — the bindings are recorded per server, never parsed', () => {
+  it('nested server keys each keep their own tools', () => {
+    // `jira` and `jira__staging` both prefix the staging tool's name; the grouping, not the name,
+    // decides whose it is.
+    const bindings = bindMcpToolsets([
+      ['jira', [{ name: mcpToolRegisteredName('jira', 'staging__search') }]],
+      ['jira__staging', [{ name: mcpToolRegisteredName('jira__staging', 'list') }]],
+    ]);
+    expect(bindings.get(mcpToolRegisteredName('jira', 'staging__search'))).toEqual({
+      server: 'jira',
+      tool: 'staging__search',
+    });
+    expect(bindings.get(mcpToolRegisteredName('jira__staging', 'list'))).toEqual({
+      server: 'jira__staging',
+      tool: 'list',
+    });
+  });
+
+  it('a duplicate registered name across servers throws instead of overwriting', () => {
+    // `jira` + `staging__search` and `jira__staging` + `search` register the same name.
+    expect(() =>
+      bindMcpToolsets([
+        ['jira', [{ name: mcpToolRegisteredName('jira', 'staging__search') }]],
+        ['jira__staging', [{ name: mcpToolRegisteredName('jira__staging', 'search') }]],
+      ])
+    ).toThrow(McpToolNameCollisionError);
+  });
+
+  it('CONTROL: the same name listed twice under the same server is recorded once', () => {
+    const name = mcpToolRegisteredName('jira', 'search');
+    const bindings = bindMcpToolsets([['jira', [{ name }, { name }]]]);
+    expect([...bindings]).toEqual([[name, { server: 'jira', tool: 'search' }]]);
+  });
+
+  it('a tool that does not carry its own server’s prefix is left unbound', () => {
+    const bindings = bindMcpToolsets([
+      ['jira', [{ name: 'search' }, { name: mcpToolRegisteredName('github', 'search') }]],
+    ]);
+    expect(bindings.size).toBe(0);
+  });
+
+  it('restrictMcpToolBindings keeps only the names it is given', () => {
+    const bindings = bound(['jira', 'search'], ['github', 'create_pr']);
+    const kept = restrictMcpToolBindings(bindings, [mcpToolRegisteredName('jira', 'search'), 'x']);
+    expect([...kept.keys()]).toEqual([mcpToolRegisteredName('jira', 'search')]);
+    expect(restrictMcpToolBindings(undefined, ['x']).size).toBe(0);
   });
 });
 
@@ -374,7 +409,7 @@ describe('BUILT_IN_TOOL_ANNOTATIONS (EXT-70 §4.7) — what OUR OWN tools declar
 describe('declared MCP annotations (EXT-70 §4.7.1) — read off tools/list, believed by nobody yet', () => {
   it('collects an MCP tool’s declaration, keyed by its registered name', () => {
     const collected = collectDeclaredMcpToolAnnotations([
-      mcpTool('mcp__jira__search', { readOnlyHint: true, openWorldHint: true }),
+      mcpTool(JIRA_SEARCH, { readOnlyHint: true, openWorldHint: true }),
     ]);
     expect(collected.get('mcp__jira__search')).toEqual({
       readOnlyHint: true,
@@ -387,7 +422,7 @@ describe('declared MCP annotations (EXT-70 §4.7.1) — read off tools/list, bel
     // per-hint-trusted path either.
     const collected = collectDeclaredMcpToolAnnotations([
       mcpTool('my_custom_tool', { readOnlyHint: true }),
-      mcpTool('mcp__jira__search', { readOnlyHint: true }),
+      mcpTool(JIRA_SEARCH, { readOnlyHint: true }),
     ]);
     expect(collected.has('my_custom_tool')).toBe(false);
     // CONTROL: the MCP sibling in the same list WAS collected, so this is about the namespace and
@@ -426,25 +461,28 @@ describe('declared MCP annotations (EXT-70 §4.7.1) — read off tools/list, bel
   });
 
   it('a string "true" from a TRUSTED server is still not a true the gate acts on', () => {
-    const effective = effectiveFor('mcp__jira__search', ['jira'], trusting(['readOnlyHint']), [
-      mcpTool('mcp__jira__search', { readOnlyHint: 'true' }),
-    ]);
+    const effective = effectiveFor(
+      JIRA_SEARCH,
+      bound(['jira', 'search']),
+      trusting(['readOnlyHint']),
+      [mcpTool(JIRA_SEARCH, { readOnlyHint: 'true' })]
+    );
     expect(effective.readOnlyHint).toBe(false);
     // CONTROL: the same trusted server, the same hint, an actual boolean — this one comes through.
-    const real = effectiveFor('mcp__jira__search', ['jira'], trusting(['readOnlyHint']), [
-      mcpTool('mcp__jira__search', { readOnlyHint: true }),
+    const real = effectiveFor(JIRA_SEARCH, bound(['jira', 'search']), trusting(['readOnlyHint']), [
+      mcpTool(JIRA_SEARCH, { readOnlyHint: true }),
     ]);
     expect(real.readOnlyHint).toBe(true);
   });
 });
 
 describe('the discriminating pair, RE-PROVED against the real sources (EXT-70 acceptance)', () => {
-  const declaringReadOnly = [mcpTool('mcp__jira__search', DECLARES_READ_ONLY)];
+  const declaringReadOnly = [mcpTool(JIRA_SEARCH, DECLARES_READ_ONLY)];
 
   it('TRUSTED: a real tools/list declaring only readOnlyHint yields destructiveHint false', () => {
     const effective = effectiveFor(
-      'mcp__jira__search',
-      ['jira'],
+      JIRA_SEARCH,
+      bound(['jira', 'search']),
       trusting(['readOnlyHint']),
       declaringReadOnly
     );
@@ -457,8 +495,8 @@ describe('the discriminating pair, RE-PROVED against the real sources (EXT-70 ac
 
   it('UNTRUSTED: the very same declaration yields readOnlyHint false AND destructiveHint true', () => {
     const effective = effectiveFor(
-      'mcp__jira__search',
-      ['jira'],
+      JIRA_SEARCH,
+      bound(['jira', 'search']),
       { servers: { jira: { trustAnnotations: [] } } },
       declaringReadOnly
     );
@@ -470,7 +508,7 @@ describe('the discriminating pair, RE-PROVED against the real sources (EXT-70 ac
   it('OUR OWN tool, the same annotation, is read verbatim with no trust list anywhere', () => {
     // The built-in half of the pair: `read_file`'s authored `readOnlyHint: true` takes effect with
     // no `approvals.mcp` block at all, and the derivation rides on it exactly the same way.
-    const effective = effectiveFor('read_file', ['jira'], undefined, []);
+    const effective = effectiveFor('read_file', NO_MCP_TOOL_BINDINGS, undefined, []);
     expect(effective.readOnlyHint).toBe(true);
     expect(effective.destructiveHint).toBe(false);
   });
@@ -478,8 +516,8 @@ describe('the discriminating pair, RE-PROVED against the real sources (EXT-70 ac
 
 describe('the fail-open this task closes (EXT-70 §4.7.1)', () => {
   it('an UNTRUSTED server declaring readOnlyHint true is NOT read-only', () => {
-    const effective = effectiveFor('mcp__jira__search', ['jira'], undefined, [
-      mcpTool('mcp__jira__search', DECLARES_READ_ONLY),
+    const effective = effectiveFor(JIRA_SEARCH, bound(['jira', 'search']), undefined, [
+      mcpTool(JIRA_SEARCH, DECLARES_READ_ONLY),
     ]);
     expect(effective.readOnlyHint).toBe(false);
   });
@@ -487,44 +525,38 @@ describe('the fail-open this task closes (EXT-70 §4.7.1)', () => {
   it('CONTROL: OUR OWN tool with that same annotation IS read-only', () => {
     // Without this control the assertion above passes on a source that answers fail-closed for
     // everything — a gate that refuses the world, which proves nothing about provenance.
-    expect(effectiveFor('gth_grep', ['jira'], undefined, []).readOnlyHint).toBe(true);
+    expect(effectiveFor('gth_grep', NO_MCP_TOOL_BINDINGS, undefined, []).readOnlyHint).toBe(true);
   });
 
-  it('an unresolvable MCP name cannot pick up a declaration, however permissive the defaults', () => {
-    // Two nested keys both explain `mcp__a__b__search`, so the server is unresolvable — and both
-    // readings rebuild the SAME registered name, so the declaration below is the one a naive
-    // resolver would have handed it. `defaults` trusts all four hints, so nothing but the
-    // unresolvable-server refusal stands between the declaration and the gate.
+  it('an unbound MCP name cannot pick up a declaration, however permissive the defaults', () => {
+    // The declaration is keyed by the very name called, so it is the one a resolver that guessed a
+    // server would have handed it. `defaults` trusts all four hints, so nothing but the missing
+    // binding stands between the declaration and the gate.
     const permissive: McpApprovalsConfig = {
       defaults: {
         trustAnnotations: ['readOnlyHint', 'destructiveHint', 'idempotentHint', 'openWorldHint'],
       },
     };
-    const declarations = [mcpTool('mcp__a__b__search', DECLARES_READ_ONLY)];
-    const effective = effectiveFor('mcp__a__b__search', ['a', 'a__b'], permissive, declarations);
+    const declarations = [mcpTool(JIRA_SEARCH, DECLARES_READ_ONLY)];
+    const effective = effectiveFor(JIRA_SEARCH, NO_MCP_TOOL_BINDINGS, permissive, declarations);
     expect(effective).toEqual(MCP_FAIL_CLOSED_ANNOTATIONS);
   });
 
-  it('CONTROL: with only ONE of those keys configured, the same declaration DOES come through', () => {
+  it('CONTROL: once the name is bound, the same declaration DOES come through', () => {
     const permissive: McpApprovalsConfig = {
       defaults: { trustAnnotations: ['readOnlyHint'] },
     };
-    const effective = effectiveFor('mcp__a__b__search', ['a__b'], permissive, [
-      mcpTool('mcp__a__b__search', DECLARES_READ_ONLY),
+    const effective = effectiveFor(JIRA_SEARCH, bound(['jira', 'search']), permissive, [
+      mcpTool(JIRA_SEARCH, DECLARES_READ_ONLY),
     ]);
     expect(effective.readOnlyHint).toBe(true);
   });
 
-  /**
-   * The unresolvable-server refusal, at the level it lives. Constructed rather than natural: the
-   * declaration is keyed by the exact string the sentinel would rebuild. That is the point — the
-   * guard exists so that fail-closed does not depend on how contrived a collision would have to be.
-   */
   it('the declared-MCP lookup refuses the unresolvable server outright', () => {
     const unresolved = 'mcp__ghost__delete';
     const collided = new Map<string, DeclaredToolAnnotations>([
-      [`mcp____${unresolved}`, DECLARES_READ_ONLY],
-      ['mcp__jira__search', DECLARES_READ_ONLY],
+      [mcpToolRegisteredName(UNRESOLVED_MCP_SERVER, unresolved), DECLARES_READ_ONLY],
+      [JIRA_SEARCH, DECLARES_READ_ONLY],
     ]);
     const lookup = mcpDeclaredAnnotationLookup(collided);
     expect(lookup(UNRESOLVED_MCP_SERVER, unresolved)).toBeUndefined();
@@ -540,16 +572,13 @@ describe('the fail-open this task closes (EXT-70 §4.7.1)', () => {
         github: { trustAnnotations: [] },
       },
     };
-    const servers = ['jira__staging', 'github'];
-    const declared = [
-      mcpTool('mcp__jira__staging__search', DECLARES_READ_ONLY),
-      mcpTool('mcp__github__search', DECLARES_READ_ONLY),
-    ];
-    expect(effectiveFor('mcp__jira__staging__search', servers, mcp, declared).readOnlyHint).toBe(
-      true
-    );
+    const staging = mcpToolRegisteredName('jira__staging', 'search');
+    const github = mcpToolRegisteredName('github', 'search');
+    const bindings = bound(['jira__staging', 'search'], ['github', 'search']);
+    const declared = [mcpTool(staging, DECLARES_READ_ONLY), mcpTool(github, DECLARES_READ_ONLY)];
+    expect(effectiveFor(staging, bindings, mcp, declared).readOnlyHint).toBe(true);
     // CONTROL: the other server's tool, same declaration, takes its own posture and stays
     // collapsed — so the assertion above is about whose trust applied, not about trust at large.
-    expect(effectiveFor('mcp__github__search', servers, mcp, declared).readOnlyHint).toBe(false);
+    expect(effectiveFor(github, bindings, mcp, declared).readOnlyHint).toBe(false);
   });
 });

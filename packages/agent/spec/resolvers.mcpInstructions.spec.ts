@@ -13,13 +13,14 @@ vi.mock('#src/builtInToolsConfig.js', () => ({
   getDefaultTools: vi.fn().mockResolvedValue([]),
 }));
 
-// Fake MultiServerMCPClient: getTools() returns no tools; getClient(name) returns a per-server fake
+// Fake MultiServerMCPClient: per-server discovery returns no tools; getClient(name) returns a per-server fake
 // SDK Client (or throws) so we can drive getInstructions() outcomes per server.
 const getClientMock = vi.fn();
-const getToolsMock = vi.fn().mockResolvedValue([]);
+const listToolsetsMock = vi.fn().mockResolvedValue({});
 class MultiServerMCPClientStub {
   constructor(public _config: unknown) {}
-  getTools = getToolsMock;
+  listToolsets = listToolsetsMock;
+  initializeConnections = listToolsetsMock;
   getClient = getClientMock;
   close = vi.fn().mockResolvedValue(undefined);
 }
@@ -37,7 +38,7 @@ function makeConfig(mcpServers: Record<string, unknown>): GthConfig {
 describe('resolvers MCP instructions capture (EXT-32)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    getToolsMock.mockResolvedValue([]);
+    listToolsetsMock.mockResolvedValue({});
   });
 
   it('captures per-server instructions and omits servers that supply none', async () => {

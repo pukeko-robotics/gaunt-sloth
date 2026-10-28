@@ -38,15 +38,14 @@
  * ## The server name is RESOLVED, never split off the registered name
  *
  * The adapter's template names the server by its `mcpServers` key and the tool by its **bare**
- * name, while the registered name the model calls is `mcp__<server>__<tool>`. A configured key may
- * itself contain `__`, so splitting the registered name on the separator attributes the call to a
- * shorter key that also happens to be configured — and the prefix built from it would be wrong in
- * exactly the case a multi-word server name makes likely. Resolution goes through
- * {@link approvalSubjectForToolName}, which scans the configured keys, so a recovered payload and
- * an approvals decision can never disagree about which server a tool belongs to. A name that
- * resolves to {@link UNRESOLVED_MCP_SERVER} (nothing matched, or two nested keys both did) yields
- * no field: there is no server name to build a prefix from, and guessing one is the thing this
- * refuses to do.
+ * name, while the registered name the model calls carries both behind our namespace. A configured
+ * key may itself contain the server separator, so the registered name does not determine its
+ * server, and a prefix built from a guessed one would be wrong in exactly the case a multi-word
+ * server name makes likely. Resolution goes through {@link approvalSubjectForToolName}, which reads
+ * the bindings recorded when the tools loaded, so a recovered payload and an approvals decision can
+ * never disagree about which server a tool belongs to. A name with no binding resolves to
+ * {@link UNRESOLVED_MCP_SERVER} and yields no field: there is no server name to build a prefix
+ * from, and guessing one is the thing this refuses to do.
  *
  * ## Why this lives at the CAPTURE site, not at the softening middleware
  *
@@ -64,6 +63,7 @@
 import {
   approvalSubjectForToolName,
   UNRESOLVED_MCP_SERVER,
+  type McpToolBindings,
 } from '#src/core/approvals/mcpSubjects.js';
 
 /**
@@ -98,7 +98,7 @@ export interface McpToolErrorPayloadInput {
  *
  * - the result is not an error, or its content is not a plain string (a blocks array is a SUCCESS
  *   shape; the adapter's throw always produces a string);
- * - the name is not MCP-namespaced, or does not resolve to exactly one configured server;
+ * - the name is not MCP-namespaced, or has no binding to a configured server;
  * - the message does not start with the computed prefix (a different adapter message — an invalid
  *   result, an unexpected content type — or an upstream reword);
  * - the remainder is not JSON, which is simply a server that formats its errors as prose;
@@ -116,20 +116,20 @@ export interface McpToolErrorPayloadInput {
  * other site had already cut, or drop one it had kept, for any payload outside ASCII.
  *
  * @param result The captured result: registered name, error status, and the untouched content.
- * @param configuredMcpServers `Object.keys(config.mcpServers)` — the user's own keys, and the only
- *   thing consulted when resolving which server this tool belongs to.
+ * @param mcpToolBindings The bindings recorded when this session's tools loaded — the only thing
+ *   consulted when resolving which server this tool belongs to.
  * @param maxBytes The same cap the observed payload is held to, in UTF-8 bytes. A body whose
  *   encoded size is over it is dropped whole rather than cut — see the contract above.
  */
 export function mcpToolErrorPayload(
   result: McpToolErrorPayloadInput,
-  configuredMcpServers: Iterable<string>,
+  mcpToolBindings: McpToolBindings,
   maxBytes: number
 ): string | undefined {
   if (!result.isError) return undefined;
   if (typeof result.content !== 'string') return undefined;
 
-  const subject = approvalSubjectForToolName(result.name, configuredMcpServers);
+  const subject = approvalSubjectForToolName(result.name, mcpToolBindings);
   if (subject.kind !== 'mcpTool') return undefined;
   if (subject.server === UNRESOLVED_MCP_SERVER) return undefined;
 

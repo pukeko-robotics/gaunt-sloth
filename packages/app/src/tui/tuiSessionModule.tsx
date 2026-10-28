@@ -246,13 +246,13 @@ function createDebugBridge(config: GthConfig, resolvers: AgentResolvers) {
     },
     capture: {
       onRequest: (messages: BaseMessage[], extras?: DebugRequestExtras) => {
-        const { servers, instructions, failures } = collectMcpOverview(config, resolvers);
+        const { servers, instructions, failures, bindings } = collectMcpOverview(config, resolvers);
         emit({
           kind: 'request',
           text: renderHistory(messages),
           system: renderSystemDetails(extras),
           tools: renderToolDetails(extras),
-          mcp: renderMcpDetails(extras, servers, instructions, failures),
+          mcp: renderMcpDetails(extras, servers, instructions, failures, bindings),
         });
       },
       onResponse: (response: unknown) => emit({ kind: 'response', text: renderResponse(response) }),

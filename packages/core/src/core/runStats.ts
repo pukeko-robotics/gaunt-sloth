@@ -11,6 +11,7 @@
  * Nothing here may throw into a run — a missing/odd field just means that datum is skipped.
  */
 import { mcpToolErrorPayload } from '#src/core/mcpErrorPayload.js';
+import { NO_MCP_TOOL_BINDINGS, type McpToolBindings } from '#src/core/approvals/mcpSubjects.js';
 import type { GthRunStats, GthToolCall, GthToolResult } from '#src/core/types.js';
 
 /**
@@ -323,10 +324,11 @@ export function accumulatePromotedToolCalls(
  * - (BATCH-21) a per-`ToolMessage` result record — `name` + `isError` (from `.status`) + capped
  *   `content` — into `acc.toolResults`, so tool-RESULT assertions can grade what a tool returned.
  *
- * `configuredMcpServers` is `Object.keys(config.mcpServers)`, used only to resolve which server an
- * errored MCP tool belongs to (BATCH-43; see the record's `errorPayload`). It is passed per fold
- * rather than held on the accumulator so this never depends on the accumulator being re-created
- * after the config is known — the default leaves every non-MCP capture exactly as it was.
+ * `mcpToolBindings` is the agent's record of which configured server each MCP tool was loaded
+ * under, used only to resolve which server an errored MCP tool belongs to (BATCH-43; see the
+ * record's `errorPayload`). It is passed per fold rather than held on the accumulator so this never
+ * depends on the accumulator being re-created after the tools are known — the default leaves every
+ * non-MCP capture exactly as it was.
  *
  * `captureMaxBytes` is the same kind of argument, for the same reason (BATCH-49): the cap is a
  * config value (`toolResultCaptureMaxBytes`, defaulted at the read site), and holding it on the
@@ -337,7 +339,7 @@ export function accumulatePromotedToolCalls(
 export function accumulateMessage(
   acc: RunStatsAccumulator,
   message: unknown,
-  configuredMcpServers: Iterable<string> = [],
+  mcpToolBindings: McpToolBindings = NO_MCP_TOOL_BINDINGS,
   captureMaxBytes: number = TOOL_RESULT_CONTENT_CAP
 ): void {
   try {
@@ -380,7 +382,7 @@ export function accumulateMessage(
       const isError = m.status === 'error';
       const errorPayload = mcpToolErrorPayload(
         { name: m.name, isError, content: m.content },
-        configuredMcpServers,
+        mcpToolBindings,
         captureMaxBytes
       );
       // BATCH-49 — the truncation fact rides the record, recorded at this capture rather than
@@ -436,13 +438,13 @@ export function finalizeRunStats(
  */
 export function extractRunStats(
   messages: unknown,
-  configuredMcpServers: Iterable<string> = [],
+  mcpToolBindings: McpToolBindings = NO_MCP_TOOL_BINDINGS,
   captureMaxBytes: number = TOOL_RESULT_CONTENT_CAP
 ): GthRunStats {
   const acc = createRunStatsAccumulator();
   try {
     if (Array.isArray(messages)) {
-      for (const m of messages) accumulateMessage(acc, m, configuredMcpServers, captureMaxBytes);
+      for (const m of messages) accumulateMessage(acc, m, mcpToolBindings, captureMaxBytes);
     }
   } catch {
     /* fail-soft */

@@ -945,6 +945,8 @@ export class GthLangChainAgent extends GthAbstractAgent {
         ? await this.resolvers.resolveTools(this.config, command)
         : [];
     debugLog(`Resolved tools loaded: ${resolvedTools.length}`);
+    // EXT-211 — which server each MCP tool was loaded under, kept only for the tools resolved now.
+    this.recordMcpToolBindings(resolvedTools);
 
     // Get user config tools
     const flattenedConfigTools = toolsDisabled
@@ -1576,15 +1578,14 @@ export class GthLangChainAgent extends GthAbstractAgent {
    * coverage report keyed on names must not silently start reporting everything as filtered-out if
    * some future step maps or wraps a tool on its way through.
    *
-   * ## Attribution is resolved against the CONFIGURED server keys, never by splitting the name
+   * ## Attribution comes from the bindings recorded at tool load, never from the name
    *
-   * An MCP tool is registered as `mcp__<server>__<tool>`, but a configured `mcpServers` key may
-   * itself contain the separator, so splitting on it attributes such a tool to a shorter key that
-   * also happens to be configured — one server's tool reported under another server's name. This
-   * delegates to `approvalSubjectForToolName`, which scans the configured keys instead and yields
-   * `UNRESOLVED_MCP_SERVER` where zero or two of them explain a name. That is the same resolution
-   * the approvals gate uses, so a per-server coverage breakdown and a per-server trust decision can
-   * never disagree about which server a tool belongs to.
+   * A configured `mcpServers` key may contain the adapter's server separator, so a registered MCP
+   * tool name does not determine its server, and splitting it can report one server's tool under
+   * another server's name. This delegates to `approvalSubjectForToolName`, which reads
+   * {@link getMcpToolBindings} and yields `UNRESOLVED_MCP_SERVER` for a name with no binding. That
+   * is the same resolution the approvals gate uses, so a per-server coverage breakdown and a
+   * per-server trust decision can never disagree about which server a tool belongs to.
    *
    * ## Nameless tools are counted, not listed
    *
@@ -1597,9 +1598,9 @@ export class GthLangChainAgent extends GthAbstractAgent {
     advertised: readonly { name?: string }[],
     retained: readonly { name?: string }[]
   ): GthAdvertisedTools {
-    const configuredMcpServers = Object.keys(this.config?.mcpServers ?? {});
+    const bindings = this.getMcpToolBindings();
     const describe = (name: string): GthAdvertisedTool => {
-      const subject = approvalSubjectForToolName(name, configuredMcpServers);
+      const subject = approvalSubjectForToolName(name, bindings);
       return subject.kind === 'mcpTool' ? { name, server: subject.server } : { name };
     };
 

@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StructuredToolInterface } from '@langchain/core/tools';
 import type { GthConfig } from '#src/config.js';
+import { mcpToolRegisteredName } from '@gaunt-sloth/core/core/approvals/mcpSubjects.js';
+import { MCP_SERVER_SEPARATOR } from '@gaunt-sloth/core/constants.js';
 
 /**
  * EXT-48 — resource-tool synthesis: for each connected MCP server that advertises the `resources`
@@ -17,16 +19,17 @@ vi.mock('#src/builtInToolsConfig.js', () => ({
   getDefaultTools: vi.fn().mockResolvedValue([]),
 }));
 
-// Fake MultiServerMCPClient: getTools() returns no tools; getClient(name) returns a per-server fake
+// Fake MultiServerMCPClient: per-server discovery returns no tools; getClient(name) returns a per-server fake
 // SDK Client (or throws) so we drive getServerCapabilities() per server; listResources/readResource
 // back the synthesized tools' func when invoked.
 const getClientMock = vi.fn();
-const getToolsMock = vi.fn().mockResolvedValue([]);
+const listToolsetsMock = vi.fn().mockResolvedValue({});
 const listResourcesMock = vi.fn();
 const readResourceMock = vi.fn();
 class MultiServerMCPClientStub {
   constructor(public _config: unknown) {}
-  getTools = getToolsMock;
+  listToolsets = listToolsetsMock;
+  initializeConnections = listToolsetsMock;
   getClient = getClientMock;
   listResources = listResourcesMock;
   readResource = readResourceMock;
@@ -64,7 +67,7 @@ async function resolve(config: GthConfig): Promise<StructuredToolInterface[]> {
 describe('resolvers MCP resource tools synthesis (EXT-48)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    getToolsMock.mockResolvedValue([]);
+    listToolsetsMock.mockResolvedValue({});
   });
 
   it('synthesizes list_resources + read_resource for a resources-capable server (namespaced mcp__<server>__)', async () => {
@@ -174,5 +177,92 @@ describe('resolvers MCP resource tools synthesis (EXT-48)', () => {
     const tools = await resolve(makeConfig({}));
     expect(toolNames(tools).filter((n) => n.startsWith('mcp__'))).toEqual([]);
     expect(getClientMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * EXT-211 — the bindings the resolver records for approval-subject resolution: every MCP tool,
+ * adapter-loaded and synthesized alike, under the server it was loaded for. The server key below
+ * nests another key, which is the case a registered name cannot settle on its own.
+ */
+describe('resolvers MCP tool bindings (EXT-211)', () => {
+  const nested = `files${MCP_SERVER_SEPARATOR}archive`;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  async function resolveWithBindings(config: GthConfig) {
+    const { createResolvers } = await import('#src/resolvers.js');
+    const resolvers = createResolvers();
+    const tools = await resolvers.resolveTools!(config);
+    return { tools, bindings: resolvers.getMcpToolBindings!() };
+  }
+
+  it('binds adapter tools and synthesized resource tools to the server each loaded for', async () => {
+    const search = mcpToolRegisteredName('files', 'search');
+    const fetchTool = mcpToolRegisteredName(nested, 'fetch');
+    listToolsetsMock.mockResolvedValue({
+      files: [{ name: search }],
+      [nested]: [{ name: fetchTool }],
+    });
+    getClientMock.mockImplementation(async (name: string) =>
+      name === nested ? fakeClient({ resources: true }) : fakeClient()
+    );
+
+    const { bindings } = await resolveWithBindings(
+      makeConfig({
+        files: { url: 'https://a.example/mcp' },
+        [nested]: { url: 'https://b.example' },
+      })
+    );
+
+    expect(Object.fromEntries(bindings)).toEqual({
+      [search]: { server: 'files', tool: 'search' },
+      [fetchTool]: { server: nested, tool: 'fetch' },
+      [mcpToolRegisteredName(nested, 'list_resources')]: { server: nested, tool: 'list_resources' },
+      [mcpToolRegisteredName(nested, 'read_resource')]: { server: nested, tool: 'read_resource' },
+    });
+  });
+
+  it('a server tool colliding with another server’s synthesized resource tool drops every MCP tool', async () => {
+    // `files` lists a tool whose registered name is exactly the nested server's synthesized
+    // list_resources. Keeping either would attribute one server's tool to the other.
+    const colliding = mcpToolRegisteredName(nested, 'list_resources');
+    listToolsetsMock.mockResolvedValue({
+      files: [{ name: colliding }, { name: mcpToolRegisteredName('files', 'search') }],
+    });
+    getClientMock.mockImplementation(async (name: string) =>
+      name === nested ? fakeClient({ resources: true }) : fakeClient()
+    );
+
+    const { tools, bindings } = await resolveWithBindings(
+      makeConfig({
+        files: { url: 'https://a.example/mcp' },
+        [nested]: { url: 'https://b.example' },
+      })
+    );
+
+    expect(toolNames(tools).filter((n) => n.startsWith('mcp__'))).toEqual([]);
+    expect(bindings.size).toBe(0);
+  });
+
+  it('CONTROL: without the collision the same servers keep their tools', async () => {
+    listToolsetsMock.mockResolvedValue({
+      files: [{ name: mcpToolRegisteredName('files', 'search') }],
+    });
+    getClientMock.mockImplementation(async (name: string) =>
+      name === nested ? fakeClient({ resources: true }) : fakeClient()
+    );
+
+    const { tools, bindings } = await resolveWithBindings(
+      makeConfig({
+        files: { url: 'https://a.example/mcp' },
+        [nested]: { url: 'https://b.example' },
+      })
+    );
+
+    expect(toolNames(tools).filter((n) => n.startsWith('mcp__'))).toHaveLength(3);
+    expect(bindings.size).toBe(3);
   });
 });

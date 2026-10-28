@@ -145,7 +145,10 @@ import {
   createEffectiveToolAnnotationSource,
   trustedAnnotationHints,
 } from '#src/core/approvals/annotations.js';
-import { approvalSubjectForToolName } from '#src/core/approvals/mcpSubjects.js';
+import {
+  approvalSubjectForToolName,
+  NO_MCP_TOOL_BINDINGS,
+} from '#src/core/approvals/mcpSubjects.js';
 import { toolCallHosts } from '#src/core/approvals/toolHost.js';
 import {
   builtInToolAnnotations,
@@ -1683,8 +1686,9 @@ export class GthAgentRunner {
    * the TRUSTED provenance, read verbatim, so an MCP tool arriving as one would be asking the
    * trusted path for a third party's annotations — a gate any server can opt itself out of. Every
    * MCP-namespaced name therefore becomes an `mcpTool` subject carrying the user's own `mcpServers`
-   * key, and one whose server cannot be resolved stays an `mcpTool` subject under an unnameable
-   * server rather than falling back to `tool` (see `approvalSubjectForToolName`).
+   * key — read from the agent's tool-load bindings, because a registered name does not determine
+   * its server — and one with no binding stays an `mcpTool` subject under an unnameable server
+   * rather than falling back to `tool` (see `approvalSubjectForToolName`).
    *
    * **The host (§4.7.4)** is attached here, so the one subject the whole decision runs on carries
    * it: the rule matcher treats a `host` on an entry as an additional exact-match condition, and a
@@ -1702,7 +1706,10 @@ export class GthAgentRunner {
     hosts: readonly string[]
   ): ApprovalSubject {
     if (tool.name === SHELL_TOOL_NAME && command !== null) return { kind: 'shell', command };
-    const subject = approvalSubjectForToolName(tool.name, this.configuredMcpServerKeys());
+    const subject = approvalSubjectForToolName(
+      tool.name,
+      this.agent?.getMcpToolBindings?.() ?? NO_MCP_TOOL_BINDINGS
+    );
     return hosts.length === 1 ? { ...subject, host: hosts[0] } : subject;
   }
 

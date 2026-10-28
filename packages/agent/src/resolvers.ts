@@ -16,7 +16,12 @@ import type {
   McpServerInstruction,
   McpConnectionFailure,
 } from '@gaunt-sloth/core/core/types.js';
-import type { StructuredToolInterface } from '@langchain/core/tools';
+import type { DynamicStructuredTool, StructuredToolInterface } from '@langchain/core/tools';
+import {
+  bindMcpToolsets,
+  NO_MCP_TOOL_BINDINGS,
+  type McpToolBindings,
+} from '@gaunt-sloth/core/core/approvals/mcpSubjects.js';
 import { debugLog } from '@gaunt-sloth/core/utils/debugUtils.js';
 import { displayInfo, displayWarning } from '@gaunt-sloth/core/utils/consoleUtils.js';
 import { createA2AAgentTool } from '#src/tools/A2AAgentTool.js';
@@ -47,6 +52,9 @@ export function createResolvers(): AgentResolvers {
   // print once via displayWarning and scroll out of sight the moment Ink repaints — both as a
   // persistent chrome notice and as a per-server line in the /debug MCP tab.
   let mcpConnectionFailures: McpConnectionFailure[] = [];
+  // EXT-211: registered MCP tool name → the configured server it was loaded under, from the most
+  // recent resolveTools. The only source of server attribution for an MCP tool name.
+  let mcpToolBindings: McpToolBindings = NO_MCP_TOOL_BINDINGS;
   // Record a failure by server name; dedup so a retry (or the getTools backstop firing after
   // onConnectionError already recorded) can't list the same server twice.
   const recordMcpFailure = (server: string, error: unknown): void => {
@@ -61,9 +69,12 @@ export function createResolvers(): AgentResolvers {
     command?: GthCommand
   ): Promise<StructuredToolInterface[]> => {
     const tools: StructuredToolInterface[] = [];
+    // Each MCP tool, grouped under the configured server it was loaded for (EXT-211, step 2c).
+    const mcpToolsets: [string, readonly StructuredToolInterface[]][] = [];
     // Fresh capture per resolution; a stale value must never leak across re-inits.
     mcpServerInstructions = [];
     mcpConnectionFailures = [];
+    mcpToolBindings = NO_MCP_TOOL_BINDINGS;
 
     // 1. Get built-in tools (filesystem, devTools, customTools, etc.)
     try {
@@ -80,7 +91,15 @@ export function createResolvers(): AgentResolvers {
     try {
       mcpClientInstance = await getMcpClient(config, recordMcpFailure, fetchErrors);
       if (mcpClientInstance) {
-        const rawMcpTools = await mcpClientInstance.getTools();
+        // EXT-211: one discovery that keeps the adapter's per-server grouping. The grouping is the
+        // only moment a tool's server is known exactly, so the bindings are recorded from it below;
+        // a flat list would leave nothing but the registered name, which cannot be parsed back.
+        const catalog = await mcpClientInstance.initializeConnections();
+        const rawMcpTools: DynamicStructuredTool[] = [];
+        for (const [serverName, serverTools] of Object.entries(catalog)) {
+          mcpToolsets.push([serverName, serverTools]);
+          rawMcpTools.push(...serverTools);
+        }
         // Use a simple status callback for prepareMcpTools
         const statusCallback: StatusUpdateCallback = (level: StatusLevel, message: string) => {
           displayInfo(message);
@@ -141,13 +160,39 @@ export function createResolvers(): AgentResolvers {
           // that lacks resources or throws on capability/synthesis contributes no resource tools
           // and does not abort the rest.
           if (client?.getServerCapabilities()?.resources) {
-            tools.push(...createMcpResourceTools(activeClient, serverName));
+            const resourceTools = createMcpResourceTools(activeClient, serverName);
+            mcpToolsets.push([serverName, resourceTools]);
+            tools.push(...resourceTools);
           }
         } catch (error) {
           debugLog(`MCP instructions capture error for '${serverName}': ${error}`);
         }
       }
       debugLog(`MCP servers with instructions: ${mcpServerInstructions.length}`);
+    }
+
+    // 2c. EXT-211: record which configured server each MCP tool was loaded under — the adapter's
+    // tools and our synthesized resource tools alike. Approval subjects, BATCH-43's payload
+    // recovery, the advertised inventory and the TUI MCP tab all attribute a tool through this map,
+    // because a server key may contain the adapter's separator and a registered name therefore does
+    // not determine its server. Two tools registered under one name would make the map ambiguous,
+    // so a collision drops every MCP tool, exactly as the adapter's own cross-server collision
+    // check does, rather than letting one binding overwrite the other.
+    try {
+      mcpToolBindings = bindMcpToolsets(mcpToolsets);
+    } catch (error) {
+      // By name, not identity: prepareMcpTools may hand back rebuilt tool objects.
+      const dropped = new Set(
+        mcpToolsets.flatMap(([, serverTools]) => serverTools.map((tool) => tool.name))
+      );
+      const kept = tools.filter((tool) => !dropped.has(tool.name));
+      tools.length = 0;
+      tools.push(...kept);
+      displayWarning(
+        `MCP integration tools could not be fully loaded; continuing without them. ` +
+          `Underlying error: ${error}`
+      );
+      for (const [serverName] of mcpToolsets) recordMcpFailure(serverName, error);
     }
 
     // 3. Get A2A tools
@@ -197,6 +242,9 @@ export function createResolvers(): AgentResolvers {
   // (or when every configured server connected). Read by the TUI notice bar and the /debug MCP tab.
   const getMcpConnectionFailures = (): McpConnectionFailure[] => [...mcpConnectionFailures];
 
+  // Read-only by type, and replaced (never mutated) on each resolution.
+  const getMcpToolBindings = (): McpToolBindings => mcpToolBindings;
+
   return {
     resolveTools,
     cleanupTools,
@@ -204,6 +252,7 @@ export function createResolvers(): AgentResolvers {
     cleanupMiddleware,
     getMcpServerInstructions,
     getMcpConnectionFailures,
+    getMcpToolBindings,
   };
 }
 

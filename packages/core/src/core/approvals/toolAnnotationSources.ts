@@ -258,13 +258,13 @@ export function declaredToolAnnotationsFrom(
 }
 
 /**
- * §4.7.1 — collect what the connected MCP servers declared, keyed by the **registered tool name**
- * (`mcp__<server>__<tool>`).
+ * §4.7.1 — collect what the connected MCP servers declared, keyed by the **registered tool name**.
  *
- * Keying by the registered name rather than by a parsed `(server, tool)` pair is what makes the
- * lookup immune to the `__`-in-a-server-key hazard: the reader rebuilds the same string with
- * `mcpToolRegisteredName` from a server key it has already resolved against the configured set, so
- * nothing is ever split apart and re-joined differently.
+ * Keying by the registered name rather than by a parsed `(server, tool)` pair is what keeps the
+ * lookup off string parsing: the reader rebuilds the key with `mcpToolRegisteredName` from the
+ * `(server, tool)` a binding recorded for that very name (`bindMcpToolsets` stores exactly the
+ * server prefix and the remainder of the name), so the rebuilt string is the name the binding was
+ * recorded under, and nothing is ever split apart.
  *
  * Only MCP-namespaced names are collected. Our own tools' annotations come from
  * {@link BUILT_IN_TOOL_ANNOTATIONS} and must not be reachable through the per-hint-trusted MCP
@@ -298,6 +298,10 @@ export function collectDeclaredMcpToolAnnotations(
  *
  * There is one lookup rather than one per call site so the guard cannot be present in the runner
  * and absent in the next consumer.
+ *
+ * `mcpToolRegisteredName` is not injective, so this rebuild is sound only for a `(server, tool)`
+ * that came from a binding — which is the only way a subject carries a resolved server. A pair
+ * from anywhere else could rebuild to another server's tool's name.
  */
 export function mcpDeclaredAnnotationLookup(
   declared: ReadonlyMap<string, DeclaredToolAnnotations> | undefined

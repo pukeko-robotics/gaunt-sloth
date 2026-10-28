@@ -6,7 +6,13 @@ import { HumanMessage } from '@langchain/core/messages';
 import type { GthConfig } from '#src/config.js';
 import type { PendingToolInterrupt, StatusUpdateCallback } from '#src/core/types.js';
 import { approvalPromptHeader } from '#src/core/approvals/promptHeader.js';
-import { UNRESOLVED_MCP_SERVER } from '#src/core/approvals/mcpSubjects.js';
+import {
+  bindMcpToolsets,
+  mcpToolRegisteredName,
+  NO_MCP_TOOL_BINDINGS,
+  UNRESOLVED_MCP_SERVER,
+  type McpToolBindings,
+} from '#src/core/approvals/mcpSubjects.js';
 import { peekProjectDir, setProjectDir } from '#src/utils/systemUtils.js';
 import { SHELL_ALLOWLIST_FILE } from '#src/constants.js';
 
@@ -37,6 +43,7 @@ const mockAgent = {
   stream: vi.fn(),
   streamWithEvents: vi.fn(),
   cleanup: vi.fn(),
+  getMcpToolBindings: vi.fn((): McpToolBindings => NO_MCP_TOOL_BINDINGS),
 };
 
 vi.mock('#src/core/GthLangChainAgent.js', () => ({
@@ -230,9 +237,11 @@ describe('GthAgentRunner — the subject travels to the approval surface', () =>
   /** Drive one gated call to the human and hand back the interrupt the prompt was given. */
   const shownFor = async (
     call: { name: string; args: Record<string, unknown> },
-    mcpServers?: Record<string, unknown>
+    mcpServers?: Record<string, unknown>,
+    bindings: McpToolBindings = NO_MCP_TOOL_BINDINGS
   ): Promise<PendingToolInterrupt> => {
     const runner = new GthAgentRunner(statusUpdateCallback);
+    mockAgent.getMcpToolBindings.mockReturnValue(bindings);
     mockAgent.stream.mockResolvedValue(streamOf('working'));
     const getPending = vi.fn();
     getPending.mockResolvedValueOnce([call]);
@@ -282,10 +291,12 @@ describe('GthAgentRunner — the subject travels to the approval surface', () =>
    * whose server cannot be attributed has neither a grant nor a deny entry and would then arrive
    * subject-less.
    */
-  it('hands the mcpTool subject, with the server resolved against the configured keys', async () => {
+  it('hands the mcpTool subject, with the server resolved from the tool-load bindings', async () => {
+    const registered = mcpToolRegisteredName('jira', 'create_issue');
     const pending = await shownFor(
-      { name: 'mcp__jira__create_issue', args: { summary: 'x' } },
-      { jira: { command: 'x' } }
+      { name: registered, args: { summary: 'x' } },
+      { jira: { command: 'x' } },
+      bindMcpToolsets([['jira', [{ name: registered }]]])
     );
     expect(pending.subject).toMatchObject({
       kind: 'mcpTool',
@@ -293,7 +304,7 @@ describe('GthAgentRunner — the subject travels to the approval surface', () =>
       name: 'create_issue',
     });
     expect(approvalPromptHeader(pending)).toBe(
-      'The agent wants to call create_issue on the MCP server jira, via mcp__jira__create_issue'
+      `The agent wants to call create_issue on the MCP server jira, via ${registered}`
     );
   });
 

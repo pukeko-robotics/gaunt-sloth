@@ -507,6 +507,16 @@
       "arity": 0
     },
     {
+      "name": "McpToolBinding",
+      "file": "core/approvals/mcpSubjects.d.ts",
+      "arity": 0
+    },
+    {
+      "name": "McpToolBindings",
+      "file": "core/approvals/mcpSubjects.d.ts",
+      "arity": 0
+    },
+    {
       "name": "Message",
       "file": "core/types.d.ts",
       "arity": 0

@@ -17,6 +17,7 @@ import {
   finalizeRunStats,
 } from '#src/core/runStats.js';
 import { PROVIDER_ERROR_METADATA_SEPARATOR } from '#src/core/providerErrorNotice.js';
+import { bindMcpToolsets, mcpToolRegisteredName } from '#src/core/approvals/mcpSubjects.js';
 
 const systemUtilsMock = {
   getCurrentWorkDir: vi.fn(),
@@ -842,17 +843,24 @@ describe('GthLangChainAgent', () => {
         ]);
       });
 
-      it('BATCH-32: attributes an MCP tool to its configured server key, and a built-in to none', async () => {
+      it('BATCH-32: attributes an MCP tool to the server it was loaded under, and a built-in to none', async () => {
+        const jira = mcpToolRegisteredName('jira', 'getJiraIssue');
+        const unimarket = mcpToolRegisteredName('unimarket', 'buy');
         const resolveTools = vi
           .fn()
           .mockResolvedValue([
-            { name: 'mcp__jira__getJiraIssue' },
-            { name: 'mcp__unimarket__buy' },
+            { name: jira },
+            { name: unimarket },
             { name: 'read_file' },
           ] as StructuredToolInterface[]);
         const agent = new GthLangChainAgent(statusUpdateCallback, {
           resolveTools,
           resolveMiddleware: async (m) => m ?? [],
+          getMcpToolBindings: () =>
+            bindMcpToolsets([
+              ['jira', [{ name: jira }]],
+              ['unimarket', [{ name: unimarket }]],
+            ]),
         });
 
         const config = {
@@ -863,13 +871,33 @@ describe('GthLangChainAgent', () => {
         await agent.init(undefined, config, new MemorySaver());
 
         expect(agent.getAdvertisedTools()?.tools).toEqual([
-          { name: 'mcp__jira__getJiraIssue', server: 'jira' },
-          { name: 'mcp__unimarket__buy', server: 'unimarket' },
+          { name: jira, server: 'jira' },
+          { name: unimarket, server: 'unimarket' },
           { name: 'read_file' },
         ]);
       });
 
-      it('BATCH-32: an MCP-named tool no configured key explains is left unattributed, not guessed', async () => {
+      it('EXT-211: keeps only the bindings for tools resolved at this init', async () => {
+        // The resolver still holds a binding for a tool this init did not resolve: the agent must
+        // not keep it, or a stale map could attribute a name nothing loaded.
+        const jira = mcpToolRegisteredName('jira', 'getJiraIssue');
+        const stale = mcpToolRegisteredName('jira', 'gone');
+        const agent = new GthLangChainAgent(statusUpdateCallback, {
+          resolveTools: vi.fn().mockResolvedValue([{ name: jira }] as StructuredToolInterface[]),
+          resolveMiddleware: async (m) => m ?? [],
+          getMcpToolBindings: () => bindMcpToolsets([['jira', [{ name: jira }, { name: stale }]]]),
+        });
+
+        await agent.init(
+          undefined,
+          { ...mockConfig, mcpServers: { jira: {} } } as unknown as GthConfig,
+          new MemorySaver()
+        );
+
+        expect([...agent.getMcpToolBindings().keys()]).toEqual([jira]);
+      });
+
+      it('BATCH-32: an MCP-named tool with no binding is left unattributed, not guessed', async () => {
         const resolveTools = vi
           .fn()
           .mockResolvedValue([{ name: 'mcp__ghost__vanish' }] as StructuredToolInterface[]);
