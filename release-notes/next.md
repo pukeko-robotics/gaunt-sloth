@@ -9,6 +9,7 @@
 
 ## Improvements
 
+- A revoked or expired MCP OAuth sign-in now reopens the browser login instead of failing until the server's token file under `~/.gsloth/.gsloth-auth/` is deleted by hand.
 - A failed MCP tool call now reaches the model as the server's own error text, without the `MCP tool '…' on server '…' returned an error:` prefix, and the trace records it the same way.
 - `gth eval` can grade an MCP error the server sent as `structuredContent`, including one with no text at all: `tool_result_json_path` reads the structured body when there is one. A successful result with `structuredContent` and no text is now gradable too, at `structuredContent.…` paths like any other.
 - Long file paths in tool-call summaries (the tool row and the `Requested tools:` line) are now shortened from the start, so the file name stays visible: `…/providers/geminiSchemaSanitizer.ts` instead of `packages/core/src/providers/geminiSchemaSanitiz...`.

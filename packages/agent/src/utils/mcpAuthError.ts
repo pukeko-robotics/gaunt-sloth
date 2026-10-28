@@ -133,7 +133,7 @@ export function formatMcpConnectFailureMessage(
 
   if (kind === 'auth') {
     const reAuth = options.oauth
-      ? 'complete the OAuth login flow again (clear the stored token first if needed)'
+      ? 'complete the OAuth login flow again'
       : 'refresh its API token or key (the apiKeyEnvironmentVariable or authorization header it uses)';
     return (
       `Integration ${name} authentication failed: its credentials appear expired or invalid ` +
