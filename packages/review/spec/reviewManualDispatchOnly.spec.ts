@@ -187,12 +187,13 @@ describe('review.yml runs by hand against a PR number', () => {
    * An allowlist rather than a search of `run:` and `script:` bodies: an expression naming either
    * number may sit in the run name or as the whole value of an `env:` entry, and nowhere else. That
    * leaves no shape of script body to get wrong. The two exact entries are asserted first, so an
-   * empty match cannot pass.
+   * empty match cannot pass. The match ignores case because GitHub expressions do:
+   * `inputs.PR_NUMBER` reads the same input.
    */
   it('never writes either number into a script body as an expression', () => {
     const interpolated = readWorkflow(REVIEW_WORKFLOW)
       .split('\n')
-      .filter((line) => /\$\{\{[^}]*(?:pr_number|issue_number)[^}]*\}\}/.test(line))
+      .filter((line) => /\$\{\{[^}]*(?:pr_number|issue_number)[^}]*\}\}/i.test(line))
       .map((line) => line.trim())
       .filter((line) => !line.startsWith('run-name:'));
 
