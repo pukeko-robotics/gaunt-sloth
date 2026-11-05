@@ -235,7 +235,7 @@ error before any case runs, and no cell is graded.
   differently.
 
 **In CI:** `evals.yml`, dispatch-only plus the release call. It holds more provider keys than any
-other job in this repository, which is why it is never triggered by `pull_request_target`.
+other job in this repository, which is why no PR-triggered workflow may ever run it.
 
 ```bash
 gh workflow run evals.yml --ref <branch>                      # the default subset

@@ -211,7 +211,7 @@ export async function review(
       await runner.processMessages(messages);
     } catch (error) {
       // REL-24 — the run failed, so the PROCESS says it failed. Reporting a failure is not the
-      // same as signalling one: `_review-shared.yml` keys its "Check review step result" step on
+      // same as signalling one: `review.yml` keys its "Check review step result" step on
       // the review step's OUTCOME, so a review that printed a provider error and exited 0 posted
       // what reads as a verdict on a build CI called green.
       //

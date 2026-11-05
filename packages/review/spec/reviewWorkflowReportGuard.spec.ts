@@ -20,7 +20,7 @@ import { readFileSync } from 'node:fs';
  * type-checks it, and no code path references it, so a refactor can drop either half with no
  * signal at all. Same reasoning as `core/spec/docsRenderGateWired.spec.ts`.
  */
-const WORKFLOW = new URL('../../../.github/workflows/_review-shared.yml', import.meta.url);
+const WORKFLOW = new URL('../../../.github/workflows/review.yml', import.meta.url);
 
 const REPORT_GUARD = "if: hashFiles('review.md') != ''";
 const REVIEW_STEP_ID = 'id: review';
@@ -51,7 +51,7 @@ function stepNamed(name: string): string {
   return found[0];
 }
 
-describe('_review-shared.yml guards the report file', () => {
+describe('review.yml guards the report file', () => {
   it('does not run the comment step when no report file was produced', () => {
     expect(stepThatReadsTheReport()).toContain(REPORT_GUARD);
   });

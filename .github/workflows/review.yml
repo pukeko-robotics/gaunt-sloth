@@ -1,75 +1,164 @@
 name: AI PR Review
 
-# The pull_request_target is an important feature. It is running on files from `main`.
-# This is important to avoid changes which would execute code from the PR.
-# See postmortem here https://github.com/pukeko-robotics/gaunt-sloth/discussions/304
-#
-# Flow:
-#   concierge       - classifies the PR author (internal vs external).
-#   internal-review - runs automatically for OWNER/MEMBER/COLLABORATOR,
-#                     and re-checks the association internally (defense in depth).
-#   review          - runs for external contributors under the `review` environment,
-#                     which has Required reviewers configured, so a maintainer must
-#                     approve the deployment before the review executes.
-# The two review paths share the same code via _review-shared.yml.
-on:
-  pull_request_target:
-    types: [opened, synchronize, reopened]
-    branches:
-      - 'main'
+# Quoted because an unquoted ` #` would start a YAML comment and silently cut the number off.
+run-name: 'AI PR Review #${{ inputs.pr_number }}'
 
-# Least-privilege default: jobs get no GITHUB_TOKEN permissions unless they
-# opt in explicitly below. The concierge job needs none (it only writes to
-# $GITHUB_OUTPUT); the review jobs declare exactly what they require.
+# Runs by hand, against a PR number: gh workflow run review.yml -f pr_number=<number>
+# Nothing in this repository starts on a PR event, because scanners look for workflows that do and
+# open malicious PRs against them.
+#
+# Dispatching requires write access, so the dispatch is the approval. That is why there is no
+# author routing and no required-reviewers environment: the job needs an environment to read the
+# provider keys, and one with required reviewers would only have the dispatcher approve themselves.
+#
+# The PR head is never checked out: this runs files from the dispatched ref, and the review reads
+# the PR through the GitHub API. This is important to avoid executing code from the PR.
+# See postmortem here https://github.com/pukeko-robotics/gaunt-sloth/discussions/304
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Number of the pull request to review.'
+        type: number
+        required: true
+
+# Least-privilege default: the job below declares exactly what it requires.
 permissions: {}
 
 jobs:
-  concierge:
+  ai-code-review:
+    environment: review-internal
     runs-on: ubuntu-latest
-    # Dependabot pull requests are reviewed too, and on the external path: a bot has
-    # no meaningful author association, so it falls through the case below to
-    # internal=false. That is deliberate — the conservative branch is the right one
-    # for a machine-authored change. It matters most for actions: everything under
-    # .github/workflows is pinned by moving major tag, so the only update Dependabot
-    # can raise for one is a major bump, which is precisely the class of change CI
-    # itself depends on. There is therefore no head-ref exemption on this job. When a
-    # run raised by Dependabot cannot read the review's provider key, _review-shared.yml
-    # skips the review with a message rather than failing it; for every other author a
-    # missing key still fails the run. See OPS-134.
-    outputs:
-      internal: ${{ steps.classify.outputs.internal }}
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    # Every step reads the number from here. It is never interpolated into a script body.
+    env:
+      PR_NUMBER: ${{ inputs.pr_number }}
+
     steps:
-      - name: Classify author association
-        id: classify
-        env:
-          ASSOC: ${{ github.event.pull_request.author_association }}
+      - name: Validate PR number
         run: |
-          case "$ASSOC" in
-            OWNER|MEMBER|COLLABORATOR) echo "internal=true" >> "$GITHUB_OUTPUT" ;;
-            *) echo "internal=false" >> "$GITHUB_OUTPUT" ;;
-          esac
+          if ! [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error title=Invalid PR number::pr_number must be a positive whole number."
+            exit 1
+          fi
 
-  internal-review:
-    needs: concierge
-    if: ${{ needs.concierge.outputs.internal == 'true' }}
-    permissions:
-      contents: read
-      pull-requests: write
-      issues: write
-    uses: ./.github/workflows/_review-shared.yml
-    with:
-      environment: review-internal
-      enforce_internal: true
-    secrets: inherit
+      - uses: actions/checkout@v7
 
-  review:
-    needs: concierge
-    if: ${{ needs.concierge.outputs.internal == 'false' }}
-    permissions:
-      contents: read
-      pull-requests: write
-      issues: write
-    uses: ./.github/workflows/_review-shared.yml
-    with:
-      environment: review
-    secrets: inherit
+      - name: Use Node.js 24.x
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+
+      # Install the PUBLISHED review CLI globally. Keep this on npm, not pnpm:
+      # `pnpm add -g` drops bins in pnpm's global bin dir, which is not on PATH
+      # without `pnpm setup` (not run on CI runners) — so `gaunt-sloth-review`
+      # was not found post-OPS-6. npm's global bin is on PATH by default. There
+      # is no repo/workspace install here (published package only), so corepack
+      # and the pnpm cache are unnecessary.
+      - name: Install gaunt-sloth-review
+        run: npm i -g @gaunt-sloth/review@2.0.0-beta.16 @langchain/google@0.2.7 && gaunt-sloth-review --version
+
+      - name: Extract issue number from PR title
+        id: extract_issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_TITLE=$(gh pr view "$PR_NUMBER" --repo ${{ github.repository }} --json title --jq '.title')
+          ISSUE_NUMBER=$(echo "$PR_TITLE" | grep -oE '^[0-9]{2,5} ' | tr -d ' ' || true)
+          echo "issue_number=$ISSUE_NUMBER" >> $GITHUB_OUTPUT
+
+      - name: Perform code review
+        id: review
+        continue-on-error: true
+        run: |
+          if [ -z "$ISSUE_NUMBER" ]; then
+            gaunt-sloth-review "$PR_NUMBER"
+            # Prepend tip about linking issues when no issue number was found
+            { echo 'ℹ️ **Tip:** To link this PR to an issue, start your PR title with the issue number followed by a space (e.g., "123 Fix authentication bug")'
+              echo ""
+              cat review.md
+            } > review.tmp && mv review.tmp review.md
+          else
+            gaunt-sloth-review "$PR_NUMBER" "$ISSUE_NUMBER"
+          fi
+        env:
+          ISSUE_NUMBER: ${{ steps.extract_issue.outputs.issue_number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GSLOTH_IDENTITY_PROFILE: review
+          OPEN_ROUTER_API_KEY: ${{ secrets.OPEN_ROUTER_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+
+      # REL-20 — only post when there is something to post. The product writes the report even when
+      # a run fails before inference, so the usual failure now arrives here as a file explaining
+      # itself; this guard covers what is left, where no file was produced at all. Without it the
+      # step dies inside github-script on `ENOENT ... 'review.md'`, which reports a missing file
+      # several steps away from the reason there is one. The run still fails either way — "Check
+      # review step result" below fails it on the review step's own outcome, which is the result
+      # worth reading.
+      - name: Hide older AI review comments and post new one
+        if: hashFiles('review.md') != ''
+        uses: actions/github-script@v9
+        with:
+          github-token: ${{secrets.GITHUB_TOKEN}}
+          script: |
+            const fs = require('fs');
+            const review = fs.readFileSync('review.md', 'utf8');
+
+            // A dispatched run has no PR in its event payload, so the number comes from the input.
+            const prNumber = Number(process.env.PR_NUMBER);
+
+            // Define a unique identifier for AI review comments
+            const AI_REVIEW_IDENTIFIER = '<!-- AI-PR-REVIEW-BOT -->';
+            const PREVIOUS_AI_REVIEW_SUMMARY = '<summary>🤖 Previous AI Review (Click to expand)</summary>';
+
+            // Get all comments on this PR
+            const comments = await github.rest.issues.listComments({
+              issue_number: prNumber,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100,
+            });
+
+            // Find and hide older AI review comments
+            const aiComments = comments.data.filter(comment =>
+              comment.user.login === 'github-actions[bot]' &&
+              comment.body.includes(AI_REVIEW_IDENTIFIER) &&
+              !comment.body.includes(PREVIOUS_AI_REVIEW_SUMMARY)
+            );
+
+            // Hide older comments by wrapping them in a collapsible section
+            for (const comment of aiComments) {
+              const hiddenBody = `<details>
+            ${PREVIOUS_AI_REVIEW_SUMMARY}
+
+            ${comment.body}
+            </details>`;
+
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: comment.id,
+                body: hiddenBody
+              });
+            }
+
+            // Create new comment with the identifier
+            const newCommentBody = `${AI_REVIEW_IDENTIFIER}
+
+            ${review}`;
+
+            await github.rest.issues.createComment({
+              issue_number: prNumber,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: newCommentBody
+            });
+
+      - name: Check review step result
+        if: steps.review.outcome == 'failure'
+        run: |
+          echo "Code review step failed with exit code 1"
+          exit 1

@@ -151,7 +151,7 @@ describe('a review that fails before inference still writes its report (e2e)', (
   });
 
   // Entry point 2 of 2 — the standalone bin CI installs, which has its own catch and its own
-  // source label, and is what `_review-shared.yml` actually runs.
+  // source label, and is what `review.yml` actually runs.
   it('gaunt-sloth-review writes the promised report, headed and naming the 406, and still exits 1', () => {
     const { status, output } = run(reviewBin, ['427']);
 

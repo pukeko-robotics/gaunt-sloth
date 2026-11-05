@@ -582,8 +582,8 @@ Example usage in GitHub Actions:
 
 ## Continuous integration
 
-Example GitHub workflows integration can be found in [.github/workflows/review.yml](https://github.com/pukeko-robotics/gaunt-sloth/blob/main/.github/workflows/review.yml)
-this example workflow performs AI review on any pushes to Pull Request, resulting in a comment left by,
-GitHub actions bot.
+Example GitHub workflows integration can be found in [.github/workflows/review.yml](https://github.com/pukeko-robotics/gaunt-sloth/blob/main/.github/workflows/review.yml).
+This example workflow is started by hand against a pull request number, and leaves the AI review as
+a comment from the GitHub Actions bot.
 
 For the CI review workflow itself see [Review code and pull requests](../guides/review-code-and-prs.md).

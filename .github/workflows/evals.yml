@@ -14,9 +14,9 @@ name: Evals
 # file's `identities:` key — there is deliberately no --identities flag. So a narrower run means a
 # narrower suite file, which is why the input below is a path.
 #
-# SECRETS: workflow_dispatch and release ONLY — never pull_request_target. This job holds more
-# provider keys than any other in the repo, and a `pull_request_target` trigger would expose every
-# one of them to a fork's code. Not negotiable (see gaunt-sloth discussion #304).
+# SECRETS: workflow_dispatch and release ONLY. This job holds more provider keys than any other in
+# the repo, so no PR-triggered workflow may ever run it: that would expose every one of them to a
+# fork's code. Not negotiable (see gaunt-sloth discussion #304).
 #
 # ollama-* IDENTITIES ARE EXCLUDED FROM EVERY CI SUITE, DELIBERATELY. They need a local GPU and a
 # running ollama daemon; a GitHub runner has neither, so those cells cannot pass here and would only

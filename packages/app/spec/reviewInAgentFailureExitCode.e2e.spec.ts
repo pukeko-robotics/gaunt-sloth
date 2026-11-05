@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
  *
  * **Why that has to be a spawned process.** The defect is a property of the process, not of a
  * function call: the console output was already correct, and a mock cannot observe an exit code at
- * all. `_review-shared.yml` keys its "Check review step result" step on the review step's OUTCOME,
+ * all. `review.yml` keys its "Check review step result" step on the review step's OUTCOME,
  * so a review that exited 0 posted a failure comment on a run CI called green — the same failure
  * the console said had happened.
  *
@@ -123,7 +123,7 @@ describe('a review that fails inside the agent exits non-zero (e2e)', () => {
     expect(readFileSync(reportPath(), 'utf8')).toContain(AGENT_FAILED);
   });
 
-  // Entry point 2 of 2 — the standalone bin `_review-shared.yml` actually runs. It reaches its
+  // Entry point 2 of 2 — the standalone bin `review.yml` actually runs. It reaches its
   // exit code by DRAINING `process.exitCode`, not through its phase-2 catch: `review()` handles
   // the agent failure itself and returns normally, so that catch never fires for this case.
   it('gaunt-sloth-review reports the provider failure and exits 1', () => {
