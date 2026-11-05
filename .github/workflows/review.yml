@@ -59,7 +59,7 @@ jobs:
       # is no repo/workspace install here (published package only), so corepack
       # and the pnpm cache are unnecessary.
       - name: Install gaunt-sloth-review
-        run: npm i -g @gaunt-sloth/review@2.0.0-beta.16 @langchain/google@0.2.7 && gaunt-sloth-review --version
+        run: npm i -g @gaunt-sloth/review@2.4.0 @langchain/google@0.2.12 && gaunt-sloth-review --version
 
       - name: Extract issue number from PR title
         id: extract_issue
