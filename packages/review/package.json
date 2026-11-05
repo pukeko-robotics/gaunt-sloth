@@ -35,9 +35,9 @@
   },
   "dependencies": {
     "@gaunt-sloth/core": "workspace:*",
-    "@langchain/core": "^1.3.0",
-    "@langchain/langgraph": "1.5.2",
-    "langchain": "1.5.19",
+    "@langchain/core": "^1.3.2",
+    "@langchain/langgraph": "1.6.0",
+    "langchain": "1.6.0",
     "zod": "^4.6.7"
   },
   "files": [
