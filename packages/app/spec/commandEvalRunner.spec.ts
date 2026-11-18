@@ -166,6 +166,67 @@ describe('command target — grading the replayed Claude Code transcript', () =>
     expect(summary.cases[0].toolCalls?.[0].id).toBe('toolu_01EYU97VVHhPAj5syhGKt11e');
   });
 
+  it('caps call arguments at the same capture size and records the cut, as core does', async () => {
+    const suite = commandSuite(
+      fakeRun('replay', CAPTURE),
+      `
+  - id: capped-args
+    prompt: "anything"
+    must_call: [Read]
+`
+    );
+    const runCell = buildCommandRunCell(targetOf(suite), suite, decodeClaudeStreamJson, {
+      recordToolCallArgs: true,
+      captureMaxBytes: 10,
+    });
+    const summary = await runEvalSuite(suite, { runCell });
+    expect(summary.cases[0].toolCalls?.[0]).toEqual({
+      name: 'Read',
+      id: 'toolu_01EYU97VVHhPAj5syhGKt11e',
+      args: '{"file_pat',
+      argsTruncated: true,
+      argsOriginalBytes: '{"file_path":"/workspace/missing.txt"}'.length,
+    });
+  });
+
+  it("puts the tools that produced results in `tools`, as core's set does", async () => {
+    // The built-in decoder names a result after its call, so only a decoder that reports a result
+    // with no matching call can show whether result names reach `tools`.
+    const suite = commandSuite(
+      fakeRun('replay', CAPTURE),
+      `
+  - id: result-only-tool
+    prompt: "anything"
+    must_call: [server_side_search]
+`
+    );
+    const decoder = () => ({
+      answer: 'ok',
+      toolCalls: [{ name: 'Read', args: '{}' }],
+      toolResults: [
+        { name: 'Read', isError: false },
+        { name: 'server_side_search', isError: false },
+      ],
+    });
+    const runCell = buildCommandRunCell(targetOf(suite), suite, decoder);
+    const summary = await runEvalSuite(suite, { runCell });
+    expect(summary.cases[0].tools).toEqual(['Read', 'server_side_search']);
+    expect(summary.cases[0].verdict).toBe('PASS');
+  });
+
+  it('closes stdin when the prompt goes as an argument, so a CLI that reads it does not wait', async () => {
+    const result = await runCommandProcess({
+      argv: [process.execPath, FAKE_CLI, 'drain-stdin', CAPTURE],
+      prompt: 'anything',
+      promptDelivery: 'arg',
+      timeoutMs: 5_000,
+      cwd: scratch,
+      env: process.env,
+    });
+    expect(result.timedOut).toBe(false);
+    expect(result.exitCode).toBe(0);
+  }, 15_000);
+
   it('caps result payloads at the configured capture size and records the cut', async () => {
     const suite = commandSuite(
       fakeRun('replay', CAPTURE),

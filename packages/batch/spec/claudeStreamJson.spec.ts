@@ -188,6 +188,15 @@ describe('decodeClaudeStreamJson — edges', () => {
     );
   });
 
+  it('takes the answer from the result line even when it differs from the last assistant text', () => {
+    // In the capture the two are byte-identical, so only a transcript where they differ can tell
+    // which one the decoder reads.
+    const all = lines();
+    const result = { ...all.at(-1), result: 'the result line says this' };
+    const decoded = decodeClaudeStreamJson(join([...all.slice(0, -1), result]));
+    expect(decoded.answer).toBe('the result line says this');
+  });
+
   it('falls back to the last assistant text when the result line carries none', () => {
     const all = lines();
     const result = { ...all.at(-1) };

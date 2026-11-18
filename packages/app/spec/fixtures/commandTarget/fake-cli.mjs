@@ -3,7 +3,8 @@
 //
 //   fake-cli.mjs replay <transcript>               print the transcript, exit 0
 //   fake-cli.mjs exit <code> <transcript>          print the transcript and some stderr, exit <code>
-//   fake-cli.mjs garbage                           print text that is not a transcript, exit 0
+//   fake-cli.mjs drain-stdin <transcript>          read stdin to its end, then replay
+//   fake-cli.mjs garbage                          print text that is not a transcript, exit 0
 //   fake-cli.mjs hang <pidfile>                    start a grandchild, write its pid, never exit
 //   fake-cli.mjs hang-holding-pipes <pidfile>      the same, but the grandchild leads its own
 //                                                  process group and holds stdout/stderr open
@@ -33,6 +34,10 @@ if (mode === 'replay') {
   replay(rest[1]);
   process.stderr.write('fake-cli: failing on purpose\n');
   process.exitCode = Number(rest[0]);
+} else if (mode === 'drain-stdin') {
+  // Read stdin to its end before replaying: an open, never-closed pipe would hang here.
+  await readStdin();
+  replay(rest[0]);
 } else if (mode === 'garbage') {
   process.stdout.write('this is not a transcript\n{"type":"assistant"\n');
 } else if (mode === 'hang') {
