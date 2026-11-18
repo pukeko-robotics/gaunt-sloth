@@ -7,8 +7,10 @@ import { parseEvalSuite } from '@gaunt-sloth/batch/evalSuite.js';
 import { classifyEvalExit, runEvalSuite } from '@gaunt-sloth/batch/evalRunner.js';
 import { decodeClaudeStreamJson } from '@gaunt-sloth/batch/transcripts/claudeStreamJson.js';
 import type { CommandTarget, EvalSuite } from '@gaunt-sloth/batch';
+import { spawn } from 'node:child_process';
 import {
   buildCommandRunCell,
+  killLiveCommandChildren,
   loadTranscriptDecoder,
   runCommandProcess,
 } from '#src/commands/commandEvalRunner.js';
@@ -299,6 +301,89 @@ describe('command target — harness errors', () => {
     expect(summary.cases[0].sutOk).toBe(false);
     expect(summary.cases[0].reasons[0]).toMatch(/could not start "gth-eval-no-such-command-57"/);
   });
+});
+
+/** Wait until `pid` is gone, up to ~5 s. Returns whether it went. */
+async function gone(pid: number): Promise<boolean> {
+  for (let i = 0; i < 50; i += 1) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return false;
+}
+
+/** Best-effort cleanup so a red run does not leave processes behind. */
+function reap(...pids: number[]): void {
+  for (const pid of pids) {
+    try {
+      if (pid > 0) process.kill(pid, 'SIGKILL');
+    } catch {
+      // Already gone.
+    }
+  }
+}
+
+async function waitForFile(file: string): Promise<void> {
+  for (let i = 0; i < 150 && !existsSync(file); i += 1) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
+describe('command target — an interrupted gth eval leaves no agent running', () => {
+  it("kills every live command's tree from the 'exit' listener, and the run settles", async () => {
+    const pidFile = join(scratch, 'exit-hook.pid');
+    const run = runCommandProcess({
+      argv: [process.execPath, FAKE_CLI, 'hang', pidFile],
+      prompt: 'anything',
+      promptDelivery: 'arg',
+      timeoutMs: 120_000,
+      cwd: scratch,
+      env: process.env,
+    });
+    await waitForFile(pidFile);
+    const grandchild = Number(readFileSync(pidFile, 'utf8'));
+    const child = Number(readFileSync(`${pidFile}.self`, 'utf8'));
+    try {
+      expect(process.listeners('exit')).toContain(killLiveCommandChildren);
+      killLiveCommandChildren();
+      expect((await run).exitCode).not.toBe(0);
+      expect(await gone(child)).toBe(true);
+      expect(await gone(grandchild)).toBe(true);
+    } finally {
+      reap(child, grandchild);
+    }
+  }, 20_000);
+
+  it('leaves no child running when the process running the eval is interrupted', async () => {
+    // A real separate process through the BUILT runner, interrupted the way core's SIGINT handler
+    // ends a run (see the driver). Needs the app build, like the other process-level specs.
+    const runner = resolve(HERE, '../dist/commands/commandEvalRunner.js');
+    const driver = resolve(HERE, 'fixtures/commandTarget/interrupt-driver.mjs');
+    const pidFile = join(scratch, 'interrupted.pid');
+    const proc = spawn(process.execPath, [driver, runner, FAKE_CLI, pidFile], {
+      cwd: scratch,
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    let stderr = '';
+    proc.stderr?.on('data', (chunk) => (stderr += String(chunk)));
+    const code = await new Promise<number | null>((r) => proc.on('close', r));
+    const grandchild = existsSync(pidFile) ? Number(readFileSync(pidFile, 'utf8')) : 0;
+    const child = existsSync(`${pidFile}.self`)
+      ? Number(readFileSync(`${pidFile}.self`, 'utf8'))
+      : 0;
+    try {
+      expect(code, stderr).toBe(0);
+      expect(child > 0 && grandchild > 0).toBe(true);
+      expect(await gone(child)).toBe(true);
+      expect(await gone(grandchild)).toBe(true);
+    } finally {
+      reap(child, grandchild);
+    }
+  }, 30_000);
 });
 
 describe('command target — the prompt is never interpreted', () => {

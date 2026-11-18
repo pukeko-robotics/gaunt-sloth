@@ -39,6 +39,8 @@ if (mode === 'replay') {
   const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
     stdio: 'ignore',
   });
+  // Our own pid first, so a reader that finds the grandchild's file can rely on this one.
+  writeFileSync(`${rest[0]}.self`, String(process.pid));
   writeFileSync(rest[0], String(grandchild.pid));
   setInterval(() => {}, 1000);
 } else if (mode === 'hang-holding-pipes') {

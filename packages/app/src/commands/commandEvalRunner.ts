@@ -42,7 +42,7 @@
  *
  * @module
  */
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type {
@@ -98,6 +98,49 @@ export interface CommandRunResult {
 export type CommandSpawnFn = (request: CommandSpawnRequest) => Promise<CommandRunResult>;
 
 /**
+ * The commands this process has started and not yet settled.
+ *
+ * ## Why gth's exit kills them
+ *
+ * On POSIX each command leads its own process group (that is what lets the timeout kill the whole
+ * tree), so the terminal's Ctrl+C, which signals only the FOREGROUND group, never reaches it. Core's
+ * SIGINT and SIGTERM handlers (`systemUtils.ts`) end in `process.exit(0)`, and the per-case timeout
+ * timers die with gth. Without this hook an interrupted `gth eval` would leave the agent CLI running
+ * with no deadline at all, still editing the directory and still spending tokens.
+ *
+ * So the first spawn installs ONE `'exit'` listener, and nothing else. `'exit'` runs on every way
+ * the process ends that can run code — core's signal handlers calling `process.exit`, an explicit
+ * exit, an uncaught exception, a normal end — so this catches Ctrl+C without adding a second
+ * SIGINT handler or changing what core's does, and a command that never starts a `command` target
+ * never gets the listener. An `'exit'` listener must be synchronous, and `killProcessGroup` is
+ * (`process.kill` on POSIX, `spawnSync('taskkill')` on Windows). It sends SIGKILL, because nothing
+ * survives gth to escalate a SIGTERM that the agent chose to ignore.
+ *
+ * A child leaves the set when its run settles, not when it exits: a timed-out run whose grandchild
+ * outlived the kill is still worth a last attempt.
+ *
+ * Limits: a SIGKILL of gth itself runs no code, so it cannot reach the children. On Windows, a child
+ * spawned without `detached` shares gth's console, so a console Ctrl+C reaches it directly; an
+ * external `TerminateProcess` of gth runs no code there either.
+ */
+const liveChildren = new Set<ChildProcess>();
+let exitHookInstalled = false;
+
+/** Kill every live command's process tree. The `'exit'` listener; exported for its spec. */
+export function killLiveCommandChildren(): void {
+  for (const child of liveChildren) killProcessGroup(child, 'SIGKILL');
+  liveChildren.clear();
+}
+
+function trackLiveChild(child: ChildProcess): void {
+  liveChildren.add(child);
+  if (!exitHookInstalled) {
+    exitHookInstalled = true;
+    process.on('exit', killLiveCommandChildren);
+  }
+}
+
+/**
  * Start the command once and collect its output. Rejects only when the process cannot be started
  * (an unknown command, for one); every other outcome resolves, timed out or not.
  */
@@ -118,6 +161,7 @@ export function runCommandProcess(request: CommandSpawnRequest): Promise<Command
       detached: process.platform !== 'win32',
       windowsHide: true,
     });
+    trackLiveChild(child);
 
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
@@ -128,6 +172,7 @@ export function runCommandProcess(request: CommandSpawnRequest): Promise<Command
     const finish = (exitCode: number | null): void => {
       if (settled) return;
       settled = true;
+      liveChildren.delete(child);
       for (const timer of timers) clearTimeout(timer);
       resolvePromise({
         stdout: Buffer.concat(stdout).toString('utf8'),
@@ -142,6 +187,7 @@ export function runCommandProcess(request: CommandSpawnRequest): Promise<Command
     child.on('error', (error) => {
       if (settled) return;
       settled = true;
+      liveChildren.delete(child);
       for (const timer of timers) clearTimeout(timer);
       rejectPromise(new Error(`could not start "${command}": ${error.message}`));
     });
