@@ -850,7 +850,7 @@ Put the block under `defaults` for every case, or on one case. **A case's `works
 
 A case with a workspace can check what the agent left in it, after its command finishes and before the workspace is removed.
 
-Say the agent should fix a typo in one comment and touch nothing else. With `src/greet.mjs` and a `notes/` directory in the template, and the git `setup` from the example above:
+Say the agent should fix a typo in one comment and touch nothing else. With `src/greet.mjs` in the template, and the git `setup` from the example above:
 
 ```yaml
 cases:
@@ -862,7 +862,7 @@ cases:
       - { run: "git status --porcelain -- . ':!src/greet.mjs'", equals: "" }
 ```
 
-The case fails if `src/greet.mjs` does not say `welcome banner`, if anything is left in `notes/`, or if git reports a change to any other file.
+The case fails if `src/greet.mjs` does not say `welcome banner`, if the agent wrote anything under `notes/`, or if git reports a change to any other file.
 
 | Key | Meaning |
 |-----|---------|
@@ -872,7 +872,7 @@ The case fails if `src/greet.mjs` does not say `welcome banner`, if anything is 
 
 Paths and globs are relative to the workspace and written with `/`, on Windows too. An absolute path, a `..` segment, a drive letter or a backslash is rejected when the suite loads. `file_contains` does not read a file that a symbolic link leads outside the workspace; that file fails the case instead.
 
-In a glob, `*` matches any characters within one path segment, `?` matches one character, and `**` as a whole segment matches any number of segments, none included. `*` and `?` also match a leading dot, so `notes/*` catches `notes/.hidden`. `notes/**` matches `notes` itself and everything under it. Matching is case-sensitive. `[`, `]`, `{`, `}` and a leading `!` are rejected, because this dialect has no character classes, alternatives or negation.
+In a glob, `*` matches any characters within one path segment, `?` matches one character, and `**` as a whole segment matches any number of segments, none included. `*` and `?` also match a leading dot, so `notes/*` catches `notes/.hidden`, and a glob also sees what the template and `setup` put there, such as `.git`. `notes/**` matches `notes` itself and everything under it. Matching is case-sensitive. `[`, `]`, `{`, `}` and a leading `!` are rejected, because this dialect has no character classes, alternatives or negation.
 
 An `after` step is started the way a `setup` step is: split into arguments with no shell, with the case's `env`, the same tokens, and the case's `timeout_ms`. Standard output is trimmed before it is compared, so `equals: ""` means it printed nothing. With `equals` or `contains`, a step that exits non-zero fails the case whatever it printed, and the reason gives its exit code and the end of its standard error. A step that does not match fails the case, and every step still runs, so one run reports every check that failed. A step that cannot start, or runs past the timeout, fails the case as a harness error, and the steps after it do not run.
 

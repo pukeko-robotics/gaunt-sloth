@@ -229,7 +229,8 @@ describe('after', () => {
   ${afterStep('equals: "from-suite"', 'print-env', 'GTH_B59_MARK')}
   ${afterStep(`equals: ${JSON.stringify(`x${delimiter}y`)}`, 'print', 'x{{path_delimiter}}y')}
   ${afterStep('contains: "MARK"', 'print-file', 'marker.txt')}
-  ${afterStep('exit_code: 3', 'print', 'anything', '3')}`,
+  ${afterStep('exit_code: 3', 'print', 'anything', '3')}
+  ${afterStep('equals: "line one\\nline two"', 'print', 'line one\r\nline two\r\n')}`,
         '    env: { GTH_B59_MARK: "from-suite" }'
       )
     );
