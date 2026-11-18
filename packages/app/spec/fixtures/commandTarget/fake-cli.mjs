@@ -24,6 +24,8 @@
 //   fake-cli.mjs cat <file> <prompt>               answer with <file>'s content
 //   fake-cli.mjs env-var <name> <prompt>           answer with the variable's value
 //   fake-cli.mjs write <file> <content>            write <content> to <file> (a setup step)
+//   fake-cli.mjs argv-dump <file> [args...]        write its arguments and GTH_B58_SETUP_MARK to
+//                                                  <file> as JSON (a setup step)
 import { spawn, spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
@@ -49,13 +51,15 @@ function answer(text) {
 }
 
 // Wait until `count` files ending in `.<stage>` exist in `dir`, having added our own. Bounded, so
-// a case that never meets its partner still finishes (and the spec then fails on what it saw).
+// a case that never meets its partner still finishes; giving up writes `<me>.<stage>.timedout`, so
+// the spec can tell a real meeting from a wait that ran out.
 async function barrier(dir, me, stage, count) {
   writeFileSync(join(dir, `${me}.${stage}`), '');
   for (let i = 0; i < 200; i += 1) {
     if (readdirSync(dir).filter((f) => f.endsWith(`.${stage}`)).length >= count) return;
     await new Promise((r) => setTimeout(r, 50));
   }
+  writeFileSync(join(dir, `${me}.${stage}.timedout`), '');
 }
 
 if (mode === 'edit-shared') {
@@ -85,6 +89,11 @@ if (mode === 'edit-shared') {
   answer(process.env[rest[0]] ?? '(unset)');
 } else if (mode === 'write') {
   writeFileSync(rest[0], rest[1]);
+} else if (mode === 'argv-dump') {
+  // A setup step that records what it was given: every argument after <file>, and the marker
+  // variable, written to <file> (relative paths land in the step's cwd).
+  const [file, ...args] = rest;
+  writeFileSync(file, JSON.stringify({ args, mark: process.env.GTH_B58_SETUP_MARK ?? null }));
 } else if (mode === 'replay') {
   replay(rest[0]);
 } else if (mode === 'exit') {

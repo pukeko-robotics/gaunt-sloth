@@ -6,8 +6,11 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  readlinkSync,
+  realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -95,12 +98,6 @@ function hashTree(dir: string): string {
   return hash.digest('hex');
 }
 
-/** The workspace directories of case `caseId` currently in the temp directory. Keyed by case id
- * because other spec files run in parallel and make workspaces of their own. */
-function workspaceDirsOf(caseId: string): string[] {
-  return readdirSync(tmpdir()).filter((name) => name.startsWith(`gth-eval-${caseId}-`));
-}
-
 describe('command workspace — isolation', () => {
   it('gives two concurrent cases their own copy of the fixture, and leaves the fixture alone', async () => {
     const dir = suiteDir('isolation');
@@ -125,7 +122,8 @@ cases:
     const runCell = buildCommandRunCell(targetOf(suite), suite, decodeClaudeStreamJson);
     const summary = await runEvalSuite(suite, { runCell, concurrency: 2 });
 
-    // Both cases met at the barrier, so they really did run at the same time.
+    // Both cases met at both barriers, so they really did run at the same time: a barrier that
+    // gave up waiting writes a `.timedout` file, which would appear in this listing.
     expect(readdirSync(barrierDir).sort()).toEqual([
       'A.ready',
       'A.written',
@@ -304,6 +302,7 @@ describe('command workspace — setup failures', () => {
     const dir = suiteDir('setup-fails');
     const commandMarker = join(scratch, 'command-ran.txt');
     const laterStepMarker = join(scratch, 'later-step-ran.txt');
+    const wsPathFile = join(scratch, 'broken-setup-ws.path');
     const suite = commandSuite(
       dir,
       fakeLine('record', commandMarker, CAPTURE),
@@ -311,10 +310,11 @@ describe('command workspace — setup failures', () => {
 defaults:
   workspace:
     setup:
+      - ${JSON.stringify(fakeLine('write', wsPathFile, '{{workspace}}'))}
       - ${JSON.stringify(fakeLine('exit', '5', CAPTURE))}
       - ${JSON.stringify(fakeLine('write', laterStepMarker, 'ran'))}
 cases:
-  - { id: broken-setup-58, prompt: "x", must_call: [Read] }
+  - { id: broken, prompt: "x", must_call: [Read] }
 `
     );
     const runCell = buildCommandRunCell(targetOf(suite), suite, decodeClaudeStreamJson);
@@ -322,13 +322,15 @@ cases:
     const [result] = summary.cases;
     expect(result.sutOk).toBe(false);
     expect(result.reasons[0]).toMatch(
-      /workspace setup step 1 of 2 \(".*exit.*"\) exited with code 5; the case's command was not started; stderr: fake-cli: failing on purpose/
+      /workspace setup step 2 of 3 \(".*exit.*"\) exited with code 5; the case's command was not started; stderr: fake-cli: failing on purpose/
     );
     expect(existsSync(laterStepMarker)).toBe(false);
     expect(existsSync(commandMarker)).toBe(false);
     expect(classifyEvalExit(summary)).toBe(2);
-    // The failed case's workspace was removed too.
-    expect(workspaceDirsOf('broken-setup-58')).toEqual([]);
+    // The failed case's own workspace, named by the run itself, was removed too.
+    const workspace = readFileSync(wsPathFile, 'utf8');
+    expect(workspace).toMatch(/gth-eval-broken-/);
+    expect(existsSync(workspace)).toBe(false);
   });
 
   it('grades a setup step that cannot start as a harness error', async () => {
@@ -373,7 +375,113 @@ cases:
   }, 20_000);
 });
 
+describe('command workspace — how a setup step is started', () => {
+  it('runs a setup step in the workspace, with the workspace env and no prompt', async () => {
+    const dir = suiteDir('setup-start');
+    // A RELATIVE output path: where it lands is decided by the step's cwd alone.
+    const relativeFile = `setup-dump-${process.pid}-${Date.now()}.json`;
+    const leaked = resolve(getCurrentWorkDir(), relativeFile);
+    const suite = commandSuite(
+      dir,
+      fakeLine('cat', relativeFile),
+      `
+defaults:
+  workspace:
+    setup:
+      - ${JSON.stringify(fakeLine('argv-dump', relativeFile, 'fixed-arg'))}
+    env: { GTH_B58_SETUP_MARK: "mark-{{path_delimiter}}" }
+cases:
+  - { id: setup-start, prompt: "THE-CASE-PROMPT", must_contain: [fixed-arg] }
+`
+    );
+    const runCell = buildCommandRunCell(targetOf(suite), suite, decodeClaudeStreamJson);
+    try {
+      const summary = await runEvalSuite(suite, { runCell });
+      // The case's command found the file in ITS cwd, the workspace, so setup wrote it there.
+      expect(summary.cases[0].sutOk).toBe(true);
+      const dump = JSON.parse(summary.cases[0].answer!);
+      // The prompt is not appended to a setup step: only the step's own argument arrived.
+      expect(dump.args).toEqual(['fixed-arg']);
+      // The step saw the workspace env, expanded.
+      expect(dump.mark).toBe(`mark-${delimiter}`);
+      // And nothing was written where gth was started.
+      expect(existsSync(leaked)).toBe(false);
+    } finally {
+      rmSync(leaked, { force: true });
+    }
+  });
+
+  it('copies a relative symlink in the template as relative, so it cannot point back into the fixture', async (ctx) => {
+    const dir = suiteDir('symlink');
+    mkdirSync(join(dir, 'fixture'));
+    writeFileSync(join(dir, 'fixture', 'real.txt'), 'fixture bytes\n');
+    try {
+      symlinkSync('real.txt', join(dir, 'fixture', 'link.txt'), 'file');
+    } catch (error) {
+      // Windows needs the create-symlink privilege (or Developer Mode) for this; without it there
+      // is nothing to copy, so the case is skipped there and only there.
+      if (process.platform === 'win32' && (error as NodeJS.ErrnoException).code === 'EPERM') {
+        ctx.skip();
+      }
+      throw error;
+    }
+    const suite = commandSuite(
+      dir,
+      fakeLine('cwd'),
+      `
+cases:
+  - { id: symlink, prompt: "x", must_contain: [gth-eval-], workspace: { template: fixture } }
+`
+    );
+    let seen: { target: string; resolved: string; inside: string } | undefined;
+    const runCell = buildCommandRunCell(targetOf(suite), suite, decodeClaudeStreamJson, {
+      inspectWorkspace: (workspace, outcome) => {
+        const link = join(workspace.dir, 'link.txt');
+        seen = {
+          target: readlinkSync(link),
+          resolved: realpathSync(link),
+          inside: realpathSync(join(workspace.dir, 'real.txt')),
+        };
+        return outcome;
+      },
+    });
+    await runEvalSuite(suite, { runCell });
+    expect(seen?.target).toBe('real.txt');
+    expect(seen!.resolved).toBe(seen!.inside);
+  });
+});
+
 describe('command workspace — an interrupted run', () => {
+  it('keeps a kept workspace out of the exit hook, so an interrupt keeps it too', async () => {
+    const dir = suiteDir('kept-interrupted');
+    const pidFile = join(scratch, 'kept-interrupted.pid');
+    const suite = commandSuite(
+      dir,
+      fakeLine('hang', pidFile),
+      `
+cases:
+  - { id: kept-hang, prompt: "x", must_contain: [x], workspace: {} }
+`
+    );
+    const kept: string[] = [];
+    const runCell = buildCommandRunCell(targetOf(suite), suite, decodeClaudeStreamJson, {
+      keepWorkspaces: true,
+      onWorkspaceKept: (_caseId, keptDir) => kept.push(keptDir),
+    });
+    const run = runEvalSuite(suite, { runCell });
+    try {
+      for (let i = 0; i < 150 && !existsSync(pidFile); i += 1) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      expect(kept).toHaveLength(1);
+      killLiveCommandChildren();
+      await run;
+      expect(existsSync(kept[0])).toBe(true);
+    } finally {
+      for (const keptDir of kept) rmSync(keptDir, { recursive: true, force: true });
+    }
+  }, 20_000);
+
   it("removes a live workspace from the 'exit' listener, after killing its command", async () => {
     const dir = suiteDir('interrupted');
     const pidFile = join(scratch, 'interrupted-ws.pid');
