@@ -219,6 +219,38 @@ describe('command target — harness errors', () => {
     expect(alive).toBe(false);
   }, 20_000);
 
+  it("settles a timed-out case even when a surviving grandchild holds the pipes and 'close' never fires", async () => {
+    // The EXT-15 shape: a descendant the tree kill cannot reach keeps stdout open, so waiting for
+    // 'close' would hang the suite. On POSIX the grandchild leads its own process group, which the
+    // negative-pid kill misses, so this exercises the settle-after-SIGKILL path: timeout + the 3 s
+    // grace + the 1 s settle, about 4.3 s. On Windows `taskkill /T` reaches it and 'close' fires.
+    const pidFile = join(scratch, 'pipe-holder.pid');
+    const started = Date.now();
+    let grandchild = 0;
+    try {
+      const result = await runCommandProcess({
+        argv: [process.execPath, FAKE_CLI, 'hang-holding-pipes', pidFile],
+        prompt: 'anything',
+        promptDelivery: 'arg',
+        timeoutMs: 300,
+        cwd: scratch,
+        env: process.env,
+      });
+      grandchild = Number(readFileSync(pidFile, 'utf8'));
+      expect(result.timedOut).toBe(true);
+      expect(Date.now() - started).toBeLessThan(10_000);
+    } finally {
+      grandchild ||= Number(existsSync(pidFile) ? readFileSync(pidFile, 'utf8') : 0);
+      if (grandchild > 0) {
+        try {
+          process.kill(grandchild, 'SIGKILL');
+        } catch {
+          // Already gone (Windows, where the tree kill reached it).
+        }
+      }
+    }
+  }, 15_000);
+
   it('grades a non-zero exit as a harness error, quoting stderr', async () => {
     const suite = commandSuite(
       fakeRun('exit', '3', CAPTURE),

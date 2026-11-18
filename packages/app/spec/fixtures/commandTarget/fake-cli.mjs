@@ -5,6 +5,8 @@
 //   fake-cli.mjs exit <code> <transcript>          print the transcript and some stderr, exit <code>
 //   fake-cli.mjs garbage                           print text that is not a transcript, exit 0
 //   fake-cli.mjs hang <pidfile>                    start a grandchild, write its pid, never exit
+//   fake-cli.mjs hang-holding-pipes <pidfile>      the same, but the grandchild leads its own
+//                                                  process group and holds stdout/stderr open
 //   fake-cli.mjs record <outfile> <transcript> [prompt]
 //                                                  write the prompt it received (the trailing
 //                                                  argument, else stdin) to <outfile>, then replay
@@ -37,6 +39,16 @@ if (mode === 'replay') {
   const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
     stdio: 'ignore',
   });
+  writeFileSync(rest[0], String(grandchild.pid));
+  setInterval(() => {}, 1000);
+} else if (mode === 'hang-holding-pipes') {
+  // A grandchild in its OWN process group that inherits our stdout and stderr: the tree kill's
+  // negative pid does not reach it, it keeps the pipes open, and the runner never sees 'close'.
+  const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    stdio: ['ignore', 'inherit', 'inherit'],
+    detached: true,
+  });
+  grandchild.unref();
   writeFileSync(rest[0], String(grandchild.pid));
   setInterval(() => {}, 1000);
 } else if (mode === 'record') {
