@@ -72,6 +72,41 @@ describe('decodeClaudeStreamJson — the captured transcript', () => {
 });
 
 describe('decodeClaudeStreamJson — edges', () => {
+  it('names each result by its tool_use_id when parallel calls to DIFFERENT tools answer in reverse', () => {
+    // The capture's parallel pair is two Reads, so a result named by position would still read
+    // "Read". Here the calls differ in tool and the errored one answers last: a positional name
+    // would file the error under Read and the success under Bash, and must_error would grade the
+    // wrong call.
+    const transcript = join([
+      { type: 'system', subtype: 'init' },
+      {
+        type: 'assistant',
+        message: { content: [{ type: 'tool_use', id: 'call_bash', name: 'Bash', input: {} }] },
+      },
+      {
+        type: 'assistant',
+        message: { content: [{ type: 'tool_use', id: 'call_read', name: 'Read', input: {} }] },
+      },
+      {
+        type: 'user',
+        message: { content: [{ type: 'tool_result', tool_use_id: 'call_read', content: 'y' }] },
+      },
+      {
+        type: 'user',
+        message: {
+          content: [
+            { type: 'tool_result', tool_use_id: 'call_bash', content: 'x', is_error: true },
+          ],
+        },
+      },
+      { type: 'result', subtype: 'success', is_error: false, result: 'done' },
+    ]);
+    expect(decodeClaudeStreamJson(transcript).toolResults).toEqual([
+      { name: 'Read', isError: false, content: 'y' },
+      { name: 'Bash', isError: true, content: 'x' },
+    ]);
+  });
+
   it('pairs results that arrive in the opposite order to their calls', () => {
     const all = lines();
     const swapped = [all[0], all[1], all[2], all[4], all[3], ...all.slice(5)];
