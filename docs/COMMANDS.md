@@ -527,9 +527,9 @@ A suite is a single YAML document with these top-level keys:
 
 | Key | Required | Meaning |
 |-----|----------|---------|
-| `target` | yes | The system under test. `type` is `gth-agent` (the in-process agent, the default choice; `profile` is optional and, if set, must be `default`), `adk-agent` (an external Google ADK agent over A2A; requires `url`), `ag-ui` (an external agent over the AG-UI protocol; requires `url` and `agent_id`), or `rater` (gth's own approvals rater, graded as a classifier; requires `rung` — see [The rater target](#the-rater-target)). |
+| `target` | yes | The system under test. `type` is `gth-agent` (the in-process agent, the default choice; `profile` is optional and, if set, must be `default`), `adk-agent` (an external Google ADK agent over A2A; requires `url`), `ag-ui` (an external agent over the AG-UI protocol; requires `url` and `agent_id`), `rater` (gth's own approvals rater, graded as a classifier; requires `rung` — see [The rater target](#the-rater-target)), or `command` (a command-line agent such as Claude Code, started once per case; requires `run` and `transcript` — see [The command target](#the-command-target)). |
 | `cases` | yes | A non-empty list of cases (below). |
-| `defaults` | no | Suite-wide defaults. `defaults.pass_threshold` (0–10) is the judge score gate applied to any case that doesn't set its own; the built-in default is `6`. |
+| `defaults` | no | Suite-wide defaults. `defaults.pass_threshold` (0–10) is the judge score gate applied to any case that doesn't set its own; the built-in default is `6`. `defaults.timeout_ms` is the per-case time limit of a `command` target. |
 | `description` | no | Free text describing the suite. Documentation only; it does not affect grading. |
 | `judge_profile` | no | Identity profile whose model grades `judge:` rubrics. See [Judging](#judging) below. |
 | `identities` | no | The identity matrix — run every case once per listed profile. See [Identity matrix](#identity-matrix) below. |
@@ -615,7 +615,7 @@ The two result keys grade different things. `must_error` reads the result's erro
 
 A failed MCP call reaches the trace as the server's own text, recorded unchanged because it is what the model observed, so a server whose error text is JSON is graded directly — which is how the `code: forbidden` entry above passes. When the server also sent MCP `structuredContent` with the error, `tool_result_json_path` grades that instead, and a `path` addresses it from its root; an error whose detail is only in `structuredContent` is graded the same way, although the model saw only a stock sentence in its place. A call whose tool was not loaded from a configured `mcpServers` entry has no structured error body to grade.
 
-Tool-result assertions read the in-process tool trace, so they require `target.type: gth-agent`; a suite using them with an `ag-ui` or `adk-agent` target is rejected before anything runs (exit `2`). Result payloads are recorded up to [`toolResultCaptureMaxBytes`](configuration/output.md#recorded-tool-result-size-toolresultcapturemaxbytes) (8192 UTF-8 bytes unless you set it). A longer payload is cut on a character boundary, and `tool_result_json_path` then fails it with a reason that names `toolResultCaptureMaxBytes` and the size the tool actually returned — a different reason from the one a payload that was never JSON gets, so a cut and a prose answer do not read as the same failure. An MCP error body over that size is not recovered at all rather than recovered half-cut, and the threshold moves with the key.
+Tool-result assertions need the tool results, which the in-process `gth-agent` target and a `command` target's transcript carry; a suite using them with an `ag-ui` or `adk-agent` target is rejected before anything runs (exit `2`). Result payloads are recorded up to [`toolResultCaptureMaxBytes`](configuration/output.md#recorded-tool-result-size-toolresultcapturemaxbytes) (8192 UTF-8 bytes unless you set it). A longer payload is cut on a character boundary, and `tool_result_json_path` then fails it with a reason that names `toolResultCaptureMaxBytes` and the size the tool actually returned — a different reason from the one a payload that was never JSON gets, so a cut and a prose answer do not read as the same failure. An MCP error body over that size is not recovered at all rather than recovered half-cut, and the threshold moves with the key.
 
 #### Tool-call argument assertions
 
@@ -680,7 +680,7 @@ Without the setting, the entries carry only `name` and, when the provider sent o
 
 A suite that uses `tool_call_json_path` in a run without `evalToolCallArgs` is refused before anything runs (exit `2`), with an error naming the key. Arguments the model sent as invalid JSON fail the entry with `arguments are not JSON`, and arguments longer than [`toolResultCaptureMaxBytes`](configuration/output.md#recorded-tool-result-size-toolresultcapturemaxbytes) fail with a reason naming that key, the same way a cut tool result does.
 
-`tool_call_json_path` works with the `gth-agent` and `ag-ui` targets (the AG-UI stream carries each call's arguments). It is rejected before anything runs for `adk-agent`, whose A2A stream carries no tool calls, and for `rater`.
+`tool_call_json_path` works with the `gth-agent`, `ag-ui` and `command` targets (the AG-UI stream and a command's transcript carry each call's arguments). It is rejected before anything runs for `adk-agent`, whose A2A stream carries no tool calls, and for `rater`.
 
 #### Tool-call order assertions
 
@@ -707,7 +707,82 @@ Each pattern stands for one call, so listing `mcp__shop_get_order` twice needs t
 
 A failing case shows the expected list against the calls made. With `strict: true` it also names the first position where they differ: `tool_trajectory (strict): differs at position 2: expected "mcp__shop_update_order", called "mcp__shop_delete_order"; expected exactly [...], calls were [...]`. Without it, the reason names the first pattern that had no matching call in order. A run with no tool calls fails any trajectory.
 
-`calls` must list at least one pattern, and each pattern must be a non-empty string. `tool_trajectory` needs no `evalToolCallArgs`: it reads the call names in `toolCalls`, which every run records. It works with the `gth-agent` and `ag-ui` targets and is rejected before anything runs (exit `2`) for `adk-agent`, whose A2A stream carries no tool calls, and for `rater`.
+`calls` must list at least one pattern, and each pattern must be a non-empty string. `tool_trajectory` needs no `evalToolCallArgs`: it reads the call names in `toolCalls`, which every run records. It works with the `gth-agent`, `ag-ui` and `command` targets and is rejected before anything runs (exit `2`) for `adk-agent`, whose A2A stream carries no tool calls, and for `rater`.
+
+### The command target
+
+The `command` target grades an agent that is a program, such as Claude Code. `gth eval` starts the command once per case with the case's prompt, reads what it prints, and grades the answer and the tool calls the same way it grades the in-process agent. Every tool assertion works, including `must_error` and `tool_result_json_path`.
+
+Say your team keeps a skill that reviews pull requests, and you want to know that Claude Code loads it when asked for a review and leaves it alone otherwise. Create `eval/claude-skills.yaml`:
+
+```yaml
+target:
+  type: command
+  run: claude -p --output-format stream-json --verbose --max-turns 8
+  transcript: claude-stream-json
+defaults: { timeout_ms: 300000 }
+cases:
+  - id: loads-the-review-skill
+    prompt: "Can you review pull request 1101?"
+    must_call: [Skill]
+    tool_call_json_path:
+      - { tool: Skill, path: skill, equals: review-pr }
+  - id: plain-question-loads-no-skill
+    prompt: "What does the outbox library do?"
+    must_not_call: [Skill]
+```
+
+Run it from the directory the agent should work in:
+
+```bash
+gth eval eval/claude-skills.yaml
+```
+
+**Running a suite runs its commands.** A suite is trusted the way a Makefile or a `package.json` script is: `gth eval` starts `run` for every case without asking, and the command can do anything you could do from that shell. Before the first case, the run prints the command line it is about to execute. Read a suite before you run one you did not write.
+
+| Key | Required | Meaning |
+|-----|----------|---------|
+| `target.run` | yes | The command line to start for each case. |
+| `target.transcript` | yes | How to read the command's output: `claude-stream-json`, or a path to a decoder module (below). |
+| `target.prompt` | no | How the prompt reaches the command: `arg` (the default) appends it as one final argument; `stdin` writes it to the command's standard input. |
+| `defaults.timeout_ms` | no | How long a case may run, in milliseconds. The built-in default is `600000` (ten minutes). |
+| `timeout_ms` (on a case) | no | Overrides `defaults.timeout_ms` for that case. |
+
+**`run` is not given to a shell.** It is split into arguments on whitespace, single and double quotes group words, and a backslash is an ordinary character, so a Windows path needs no escaping. Nothing is expanded: an unquoted `$`, backtick, `|`, `&`, `;`, `<`, `>`, `(` or `)` is refused when the suite loads, because a shell would treat it specially and this does not. Quote it to pass it literally, or put the shell logic in a script and run the script. The prompt is never inserted into `run` and never passes through a shell, so quotes, `$(...)` and backticks in a prompt reach the agent exactly as written. On Windows, name the program itself, such as `node path/to/cli.js`, rather than an npm `.cmd` shim, which cannot be started without a shell.
+
+The command runs in the directory `gth eval` was started in, with gth's environment. With `-j` above `1`, cases run at the same time in that directory, so an agent that edits files should stay at `-j 1`.
+
+`claude-stream-json` reads `claude -p --output-format stream-json --verbose`. The answer is the text of the final `result` line. Each `tool_use` is a call, in the order the agent made it, and each `tool_result` is a result, matched to its call by id, with the agent's error flag. Calls made by subagents are included. `tool_call_json_path` reads a call's `input`, and needs [`evalToolCallArgs`](configuration/output.md#recorded-tool-call-arguments-evaltoolcallargs) like every other target. Results and arguments are recorded up to [`toolResultCaptureMaxBytes`](configuration/output.md#recorded-tool-result-size-toolresultcapturemaxbytes).
+
+A case fails as a harness error (`SUT run failed`, and exit `2` when every case fails this way) when the command:
+
+- runs past its timeout. The command and every process it started are killed;
+- cannot be started;
+- exits with a non-zero code;
+- prints a transcript with no final `result` line, or one that reports an error, such as `error_max_turns`.
+
+A run that did not finish is not graded, so a turn limit that is too low shows up as a harness error, not as an assertion the agent failed.
+
+A `command` suite cannot use `identities`, `sweep`, `tool_coverage` or multi-turn `turns:` cases. The agent reads its own configuration rather than a gth profile, and its transcript does not list the tools it loaded. Each of these is rejected when the suite loads. Write one case per prompt.
+
+To read another agent's output, point `transcript` at a JavaScript module, resolved from the suite file's directory. Its default export takes the command's whole standard output and returns `{ answer, toolCalls, toolResults }`. Each call is `{ name, id?, args }` with `args` as JSON text, and each result is `{ name, isError, content? }`. It may also return `tokensInput` and `tokensOutput`. Throw when the output does not describe a finished run; the message becomes the case's harness-error reason.
+
+```js
+// eval/my-agent-decoder.mjs
+export default function decode(stdout) {
+  const run = JSON.parse(stdout);
+  if (!run.done) throw new Error('the agent did not finish');
+  return { answer: run.answer, toolCalls: [], toolResults: [] };
+}
+```
+
+```yaml
+target:
+  type: command
+  run: my-agent --json
+  transcript: ./my-agent-decoder.mjs
+  prompt: stdin
+```
 
 ### Identity matrix
 
@@ -825,9 +900,9 @@ TOOL COVERAGE GATE FAILED — evalToolCoverage.min 13% from profile mcp-eval-roo
 - **The denominator** is the union's own — a tool waived in one suite but counted in another stays counted, and a tool every suite waived is already out — **minus `evalToolCoverage.waive`**. A suite's waiver does not shrink the run's denominator; only the run-level list does, so one list covers the built-ins [`allowedTools`](configuration/tools.md) removed instead of a copy in every suite.
 - **The two floors are independent.** A suite's `min` is graded against that suite, the run's against the union, and both must hold. A breach names the floor it came from.
 - **One value per run, from the config the run was started with** — the `-i` profile if given, otherwise the project config. Never from an identity's config: with only [identity-matrix](#identity-matrix) suites and no base config, the run has no floor and prints that it has none.
-- **Every run that sets it is graded**, one suite or many, and prints the `TOOL COVERAGE RUN:` line naming the threshold and its source. A `min` over a run where no suite produced a coverage report (every target was `ag-ui`, `adk-agent` or `rater`) fails, for the reason below.
+- **Every run that sets it is graded**, one suite or many, and prints the `TOOL COVERAGE RUN:` line naming the threshold and its source. A `min` over a run where no suite produced a coverage report (every target was `ag-ui`, `adk-agent`, `rater` or `command`) fails, for the reason below.
 
-`tool_coverage` needs the in-process `gth-agent` target and is a parse error on any other: `ag-ui` streams the tools that were *called* but never the list the agent loaded, `adk-agent` exposes neither over A2A, and `rater` runs no agent at all. That is a refusal rather than a silently-ignored block, because a `min: 80` that is quietly skipped reports green forever over a target it never measured.
+`tool_coverage` needs the in-process `gth-agent` target and is a parse error on any other: `ag-ui` and a `command` transcript show the tools that were *called* but never the list the agent loaded, `adk-agent` exposes neither over A2A, and `rater` runs no agent at all. That is a refusal rather than a silently-ignored block, because a `min: 80` that is quietly skipped reports green forever over a target it never measured.
 
 ### Classifier suites
 
@@ -1130,7 +1205,7 @@ sweep:
 
 **Sweeping `model:` moves the judge too.** By default `judge:` rubrics are graded by the SUT's own model, so a model axis changes the grader along with the thing graded and the comparison's `pass rate` row is no longer comparable across cells. Set `judge_profile:` (or `--judge`) to pin the grader to one model whenever you sweep `model:` on a suite that uses rubrics.
 
-Each cell writes into its own `<output>/<axis-value>__<axis-value>/` subdir. The comparison table has one row per metric (plus per-tag rows) and one column per cell, and marks any cell where a gate failed. A sweep is not supported for `adk-agent`/`ag-ui` targets — those agents run out of process, so gth config overrides would change nothing about them.
+Each cell writes into its own `<output>/<axis-value>__<axis-value>/` subdir. The comparison table has one row per metric (plus per-tag rows) and one column per cell, and marks any cell where a gate failed. A sweep is not supported for `adk-agent`, `ag-ui` or `command` targets — those agents run out of process, so gth config overrides would change nothing about them.
 
 A `rung` axis is written as a `config:` override (as above) rather than as a target field, because a sweep cell overrides the config, not the `target:` block. On a `rater` suite that is what makes the rung × model comparison work: each cell re-rates the whole corpus at its own rung, and the action layer is genuinely re-scored rather than assumed, because the same label maps to a different action per rung.
 
@@ -1241,7 +1316,7 @@ gth eval eval/ -o eval/out --reporter junit           # every suite in a directo
 |------|---------|
 | `0` | Every case (in a matrix, every cell) passed. |
 | `1` | The suite ran and produced gradeable answers, but at least one case, cell, or turn failed an assertion or fell below its judge threshold — **or** a declared metric breached a `gate: fail` threshold, **or** a [`tool_coverage`](#tool-coverage) floor or `require` entry went unmet, any of which can happen with every case passing. A real **product** signal. |
-| `2` | A precondition or harness error: the suite file failed to load or parse, a declared identity or judge profile didn't resolve, a `(case × identity)` had no applicable block, or the agent produced no output to grade at all. An **environment** signal — nothing was meaningfully evaluated. |
+| `2` | A precondition or harness error: the suite file failed to load or parse, a declared identity or judge profile didn't resolve, a `(case × identity)` had no applicable block, or the agent produced no output to grade at all (for a `command` target, every case timed out, failed to start, exited non-zero or printed no usable transcript). An **environment** signal — nothing was meaningfully evaluated. |
 
 CI should treat `1` and `2` differently: `1` means your agent regressed; `2` means the harness or environment is broken.
 

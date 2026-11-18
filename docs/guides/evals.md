@@ -71,21 +71,36 @@ target: { type: ag-ui, url: http://localhost:3000, agent_id: support }
 target: { type: adk-agent, url: http://localhost:8080 }
 ```
 
+An agent that is a command-line program, such as Claude Code, is started once per case and graded
+from the transcript it prints. Running the suite runs that command; see
+[The command target](../COMMANDS.md#the-command-target).
+
+```yaml
+# Claude Code, started once per case with the prompt as its last argument
+target:
+  type: command
+  run: claude -p --output-format stream-json --verbose
+  transcript: claude-stream-json
+```
+
 The external agent keeps its own model, tools and credentials, and the `judge` grades with the
 model from your local gth config (or the judge profile, below). What each target can check depends
 on what its protocol carries:
 
-| Suite feature | `gth-agent` | `ag-ui` | `adk-agent` |
-|---|---|---|---|
-| Answer assertions (`must_contain`, `must_match`, …) and `judge` | yes | yes | yes |
-| `must_call`, `must_not_call`, `tool_call_json_path`, `tool_trajectory` | yes | yes | no |
-| `must_error`, `tool_result_json_path`, `tool_coverage` | yes | no | no |
-| `identities` matrix, `sweep` | yes | no | no |
+| Suite feature | `gth-agent` | `ag-ui` | `adk-agent` | `command` |
+|---|---|---|---|---|
+| Answer assertions (`must_contain`, `must_match`, …) and `judge` | yes | yes | yes | yes |
+| `must_call`, `must_not_call`, `tool_call_json_path`, `tool_trajectory` | yes | yes | no | yes |
+| `must_error`, `tool_result_json_path` | yes | no | no | yes |
+| `tool_coverage` | yes | no | no | no |
+| `identities` matrix, `sweep` | yes | no | no | no |
+| Multi-turn `turns:` cases | yes | yes | yes | no |
 
-AG-UI streams the agent's tool calls but not their results, and A2A carries neither. A suite that
-uses a key its target cannot grade is refused before anything runs (exit `2`), rather than passing
-without checking. `identities` and `sweep` switch gth's own config, which an external agent does not
-read.
+AG-UI streams the agent's tool calls but not their results, and A2A carries neither. A command's
+transcript carries both, but not the list of tools the agent loaded, which `tool_coverage` needs. A
+suite that uses a key its target cannot grade is refused before anything runs (exit `2`), rather
+than passing without checking. `identities` and `sweep` switch gth's own config, which an external
+agent does not read.
 
 ## Choose a separate judge
 
