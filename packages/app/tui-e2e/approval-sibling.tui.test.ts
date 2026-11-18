@@ -11,27 +11,33 @@ import { removeTmpHome, settleSessionsAfterEach } from './fixtures/tmpHome.mjs';
 settleSessionsAfterEach(test);
 
 /**
- * [[TUI-C100]] PTY e2e: **a call held at the approval gate must not render as done.**
+ * [[TUI-C100]] PTY e2e: **a call held at the approval gate must not render as done, and every row
+ * ends on what actually happened to its call.**
  *
  * Read off a real terminal, because that is where the claim is made. A row saying `✓ … [done]` one
  * line above `Approve? [o]nce …` invites two readings and both are harmful — approve carelessly
  * because it evidently already happened, or deny and believe the damage is already done — and it is
  * the one thing this screen must never get wrong.
  *
- * The round is two calls in one assistant message, and what that shape actually establishes is
- * **measured here rather than assumed**: the HITL middleware suspends the whole round before any of
- * its calls is dispatched, so the granted `list_directory` has not run either while the prompt is
- * open. Both rows are therefore unfinished at that moment, and neither may claim otherwise — which
- * makes this the stronger case, not a weaker one: a build that ended calls per round would tick
- * two rows here, and a build that ended nothing would leave both stuck, which the approval case
- * below is what catches.
+ * The round is two calls in one assistant message: a `list_directory` the rung allows and a
+ * `run_shell_command` it escalates. Two rules govern it, and the cases below hold the screen to
+ * both:
+ *
+ * - **While the prompt is open, nothing in the round has run.** The HITL middleware suspends the
+ *   whole round before any of its calls is dispatched, so both rows are unfinished and neither may
+ *   claim otherwise.
+ * - **Refusing one call refuses that call only.** The refused call ends as an error carrying the
+ *   refusal, and its allowed sibling is dispatched and runs, so its row ends on `done`. Every call
+ *   on the assistant message gets its own result; the round-level rule is pinned in the unit spec
+ *   `packages/core/spec/GthLeanRejectedSiblingRound.spec.ts`.
  *
  * The whole seam is real: no `GTH_TUI_E2E_FIXTURE`, so the actual GthAgentRunner →
  * GthLangChainAgent → createAgent graph runs, with only the model scripted
  * (`fixtures/approval-sibling.gsloth.config.mjs`) so the run stays hermetic and key-free.
  *
- * **The command is always refused**, so nothing is executed; its output marker is asserted absent
- * throughout, which is the independent check that the row's claim and the world agree.
+ * The shell command prints a marker that is not a substring of the command text. Where the command
+ * is refused, that marker is asserted absent throughout, which is the independent check that the
+ * row's claim and the world agree.
  */
 
 // The runner runs the suite with this folder as process.cwd(); the cli lives one level up.
@@ -117,8 +123,7 @@ test.describe('gth code TUI — [[TUI-C100]] a gated call with a returning sibli
       terminal.getByText('approval-sibling-out-marker', { strict: false })
     ).not.toBeVisible();
 
-    // Refuse it. The refused call is already distinct today (✗ / error, with the refusal text), and
-    // that must stay true — the fix is about the window BEFORE a result, not about the result.
+    // Refuse it. The refused call ends as an error with the refusal text.
     terminal.write('n');
     await expect(terminal.getByText('rejected by you', { strict: false })).toBeVisible();
     await expect(
@@ -132,15 +137,15 @@ test.describe('gth code TUI — [[TUI-C100]] a gated call with a returning sibli
       terminal.getByText('approval-sibling-out-marker', { strict: false })
     ).not.toBeVisible();
 
-    // **And the sibling the refusal took down with it.** Rejecting any call in a round makes the
-    // HITL middleware jump straight back to the model, so the tool node is skipped entirely and the
-    // granted listing is never dispatched either — it produces no output and no result. A row that
-    // ticks it *done* tells the human a directory was read because they refused a clone, which is
-    // the same false claim the refused row is no longer allowed to make.
+    // **And the sibling ran.** Refusing the shell call refuses that call only: the allowed listing
+    // is dispatched after the decision, so its row ends on its real outcome, a finished call, and
+    // never on the refusal or the running state it held while the prompt was open.
     const settledReadRows = await toolRowsFor(terminal, 'list_directory');
     expect(settledReadRows.length).toBeGreaterThan(0);
-    expect(settledReadRows.filter((row) => row.includes('[done]'))).toEqual([]);
-    expect(settledReadRows.filter((row) => row.includes('✓'))).toEqual([]);
+    expect(settledReadRows.filter((row) => row.includes('[done]')).length).toBeGreaterThan(0);
+    expect(settledReadRows.filter((row) => row.includes('✓')).length).toBeGreaterThan(0);
+    expect(settledReadRows.filter((row) => row.includes('[running]'))).toEqual([]);
+    expect(settledReadRows.filter((row) => row.includes('[error]'))).toEqual([]);
   });
 });
 
