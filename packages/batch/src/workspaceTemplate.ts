@@ -23,15 +23,17 @@
  * `{{suite-dir}}` left in place would reach the agent as a literal path that does not exist, which
  * reads as the agent's failure.
  *
- * ## Why a stray `{{` or `}}` is a parse error too
+ * ## Why a stray `{{` or `}}` in a `setup` argument is a parse error too
  *
  * A token is only recognised inside ONE `setup` argument, because expansion runs after the split.
  * Whitespace inside the braces is trimmed, so `"{{ workspace }}"` QUOTED is one argument and
  * expands; unquoted, `{{ workspace }}` is split into `{{`, `workspace` and `}}`, none of which is a
- * token, and the step would receive those three literals. So any `{{` or `}}` left over once the
- * complete tokens are taken out ({@link findStrayTokenBrace}) is refused at parse, in `setup`
- * arguments and in `env` values alike. Single braces (`{`, `}`) are ordinary text.
- * {@link expandWorkspaceTemplate} itself leaves such text alone; the parser is what refuses it.
+ * token, and the step would receive those three literals. So in a `setup` argument any `{{` or `}}`
+ * left over once the complete tokens are taken out ({@link findStrayTokenBrace}) is refused at
+ * parse. An `env` value is never split, so it cannot lose a token that way, and a stray brace in
+ * one (compact JSON such as `{"a":{"b":1}}`) passes through literally. Single braces are always
+ * ordinary text. {@link expandWorkspaceTemplate} itself leaves stray braces alone; the parser is
+ * what refuses them.
  *
  * `{{path_delimiter}}` exists because `PATH` composition differs per platform: a suite that writes
  * `{{suite_dir}}/stubs{{path_delimiter}}{{env.PATH}}` works on every OS, where a literal `:` breaks

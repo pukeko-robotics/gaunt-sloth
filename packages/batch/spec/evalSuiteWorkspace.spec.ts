@@ -177,27 +177,26 @@ cases:
     expect(suite.cases[0].workspace?.setup[0].argv).toEqual(['git', 'init', '{{ workspace }}']);
   });
 
-  it('refuses a half token in an env value, and accepts single braces', () => {
-    expect(() =>
-      parse(`${TARGET}
-defaults: { workspace: { env: { HOME: "{{workspace}/home" } } }
-cases:
-  - { id: a, prompt: "x", must_contain: [ok] }
-`)
-    ).toThrow(/defaults.workspace: env.HOME has a "\{\{" that is not part of a complete token/);
-    expect(() =>
-      parse(`${TARGET}
-defaults: { workspace: { env: { X: "a}}" } } }
-cases:
-  - { id: a, prompt: "x", must_contain: [ok] }
-`)
-    ).toThrow(/env.X has a "\}\}"/);
+  it('keeps stray braces in an env value as written, since env is never split, but still refuses an unknown token', () => {
     const suite = parse(`${TARGET}
-defaults: { workspace: { env: { JSONISH: '{"a": {"b": 1} }' } } }
+defaults:
+  workspace:
+    env: { SETTINGS: '{"a":{"b":1}}', OPEN: "{{workspace}/home", CLOSE: "a}}" }
 cases:
   - { id: a, prompt: "x", must_contain: [ok] }
 `);
-    expect(suite.cases[0].workspace?.env.JSONISH).toBe('{"a": {"b": 1} }');
+    expect(suite.cases[0].workspace?.env).toStrictEqual({
+      SETTINGS: '{"a":{"b":1}}',
+      OPEN: '{{workspace}/home',
+      CLOSE: 'a}}',
+    });
+    expect(() =>
+      parse(`${TARGET}
+defaults: { workspace: { env: { SETTINGS: '{"a":{"b":1}} {{nope}}' } } }
+cases:
+  - { id: a, prompt: "x", must_contain: [ok] }
+`)
+    ).toThrow(/defaults.workspace: env.SETTINGS uses the unknown token \{\{nope\}\}/);
   });
 
   it('refuses a token in target.run, where tokens never expand', () => {

@@ -278,6 +278,24 @@ cases:
     expect(summary.cases[0].answer).toBe(`from a value; with spaces via ${dir}`);
   });
 
+  it('passes compact JSON in an env value to the child unchanged', async () => {
+    const json = '{"a":{"b":1},"c":[{"d":"}}"}]}';
+    const suite = commandSuite(
+      suiteDir('env-json'),
+      fakeLine('env-var', 'GTH_B58_JSON'),
+      `
+cases:
+  - id: env-json
+    prompt: "x"
+    must_contain: ['"a"']
+    workspace: { env: { GTH_B58_JSON: ${JSON.stringify(json)} } }
+`
+    );
+    const runCell = buildCommandRunCell(targetOf(suite), suite, decodeClaudeStreamJson);
+    const summary = await runEvalSuite(suite, { runCell });
+    expect(summary.cases[0].answer).toBe(json);
+  });
+
   it('sets the case env over the inherited one', async () => {
     const dir = suiteDir('env');
     const suite = commandSuite(

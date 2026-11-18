@@ -1458,8 +1458,13 @@ function buildCommandWorkspace(
   const fail = (message: string): never => {
     throw new Error(`Invalid eval suite${suffix}: ${where}: ${message}`);
   };
-  // `inSetup`: the text is one argv element of a split `setup` line, where a stray brace almost
-  // always means a token with spaces that the split cut apart, so the message points at quoting.
+  // An unknown COMPLETE token is refused wherever tokens expand.
+  //
+  // A stray `{{` or `}}` is refused only in a `setup` argument (`inSetup`). There it almost always
+  // means a token with spaces that the argv split cut apart, which would reach the step as three
+  // literal arguments, so the message points at quoting. An `env` value is never split, so that
+  // failure cannot happen in one, and refusing its braces would reject ordinary compact JSON such
+  // as `{"a":{"b":1}}`; a stray brace there passes through literally.
   const checkTokens = (text: string, field: string, inSetup: boolean): void => {
     const unknown = findUnknownWorkspaceToken(text);
     if (unknown !== undefined) {
@@ -1468,16 +1473,14 @@ function buildCommandWorkspace(
           `${WORKSPACE_TEMPLATE_TOKENS.join(', ')}.`
       );
     }
+    if (!inSetup) return;
     const stray = findStrayTokenBrace(text);
     if (stray !== undefined) {
       fail(
-        inSetup
-          ? `${field} has the argument "${text}", where "${stray}" is not part of a complete ` +
-              'token. A setup line is split on spaces before tokens expand, so a token with ' +
-              'spaces inside the braces must be quoted, as in "{{ workspace }}", or written ' +
-              'without the spaces.'
-          : `${field} has a "${stray}" that is not part of a complete token such as ` +
-              '{{workspace}}.'
+        `${field} has the argument "${text}", where "${stray}" is not part of a complete ` +
+          'token. A setup line is split on spaces before tokens expand, so a token with ' +
+          'spaces inside the braces must be quoted, as in "{{ workspace }}", or written ' +
+          'without the spaces.'
       );
     }
   };
