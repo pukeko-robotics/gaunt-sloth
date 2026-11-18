@@ -713,7 +713,13 @@ A failing case shows the expected list against the calls made. With `strict: tru
 
 The `command` target grades an agent that is a program, such as Claude Code. `gth eval` starts the command once per case with the case's prompt, reads what it prints, and grades the answer and the tool calls the same way it grades the in-process agent. Every tool assertion works, including `must_error` and `tool_result_json_path`.
 
-Say your team keeps a skill that reviews pull requests, and you want to know that Claude Code loads it when asked for a review and leaves it alone otherwise. Create `eval/claude-skills.yaml`:
+Say your team keeps a skill that reviews pull requests, and you want to know that Claude Code loads it when asked for a review and leaves it alone otherwise. The first case checks the skill's name in the call's arguments, so turn on [`evalToolCallArgs`](configuration/output.md#recorded-tool-call-arguments-evaltoolcallargs) in the project config the run starts with:
+
+```json
+{ "evalToolCallArgs": true }
+```
+
+Then create `eval/claude-skills.yaml`:
 
 ```yaml
 target:
@@ -744,19 +750,19 @@ gth eval eval/claude-skills.yaml
 |-----|----------|---------|
 | `target.run` | yes | The command line to start for each case. |
 | `target.transcript` | yes | How to read the command's output: `claude-stream-json`, or a path to a decoder module (below). |
-| `target.prompt` | no | How the prompt reaches the command: `arg` (the default) appends it as one final argument; `stdin` writes it to the command's standard input. With `arg`, end `run` with an option that takes no value: after an option that takes a list, such as Claude Code's `--allowedTools`, the prompt would be read as one more list item. |
+| `target.prompt` | no | How the prompt reaches the command: `arg` (the default) appends it as one final argument; `stdin` writes it to the command's standard input. With `arg`, end `run` with an option that takes no value: after an option that takes a list, such as Claude Code's `--allowedTools`, the prompt would be read as one more list item. A prompt that begins with `-`, such as `--help`, is read by the agent as an option; use `stdin` for such prompts. |
 | `defaults.timeout_ms` | no | How long a case may run, in milliseconds. The built-in default is `600000` (ten minutes). |
 | `timeout_ms` (on a case) | no | Overrides `defaults.timeout_ms` for that case. |
 
-**`run` is not given to a shell.** It is split into arguments on whitespace, single and double quotes group words, and a backslash is an ordinary character, so a Windows path needs no escaping. Nothing is expanded: an unquoted `$`, backtick, `|`, `&`, `;`, `<`, `>`, `(` or `)` is refused when the suite loads, because a shell would treat it specially and this does not. Quote it to pass it literally, or put the shell logic in a script and run the script. The prompt is never inserted into `run` and never passes through a shell, so quotes, `$(...)` and backticks in a prompt reach the agent exactly as written. On Windows, name the program itself, such as `node path/to/cli.js`, rather than an npm `.cmd` shim, which cannot be started without a shell.
+**`run` is not given to a shell.** It is split into arguments on whitespace, single and double quotes group words, and a backslash is an ordinary character, so a Windows path needs no escaping. Nothing is expanded: an unquoted `$`, backtick, `|`, `&`, `;`, `<`, `>`, `(` or `)` is refused when the suite loads, because a shell would treat it specially and this does not. Quote it to pass it literally, or put the shell logic in a script and run the script. Everything else is passed as written, with no shell to interpret it: `#` does not start a comment, `~` is not your home directory, `*`, `?` and `{a,b}` are not expanded, and a backslash does not escape the next character. The prompt is never inserted into `run` and never passes through a shell, so quotes, `$(...)` and backticks in a prompt reach the agent exactly as written. On Windows, name the program itself, such as `node path/to/cli.js`, rather than an npm `.cmd` shim, which cannot be started without a shell.
 
-The command runs in the directory `gth eval` was started in, with gth's environment. With `-j` above `1`, cases run at the same time in that directory, so an agent that edits files should stay at `-j 1`.
+The command runs in the directory `gth eval` was started in, with gth's environment. With `-j` above `1`, cases run at the same time in that directory, so an agent that edits files should stay at `-j 1`. Stopping `gth eval` with Ctrl+C, or ending it with SIGTERM, also stops the commands it started.
 
 `claude-stream-json` reads `claude -p --output-format stream-json --verbose`. The answer is the text of the final `result` line. Each `tool_use` is a call, in the order the agent made it, and each `tool_result` is a result, matched to its call by id, with the agent's error flag. Calls made by subagents are included. `tool_call_json_path` reads a call's `input`, and needs [`evalToolCallArgs`](configuration/output.md#recorded-tool-call-arguments-evaltoolcallargs) like every other target. Results and arguments are recorded up to [`toolResultCaptureMaxBytes`](configuration/output.md#recorded-tool-result-size-toolresultcapturemaxbytes).
 
 A case fails as a harness error (`SUT run failed`, and exit `2` when every case fails this way) when the command:
 
-- runs past its timeout. The command and every process it started are killed;
+- runs past its timeout. The command is killed together with the processes it started. A process that puts itself in a new session or process group, as `setsid` does, is outside that tree on macOS and Linux and can keep running, but the case still ends;
 - cannot be started;
 - exits with a non-zero code;
 - prints a transcript with no final `result` line, or one that reports an error, such as `error_max_turns`.
