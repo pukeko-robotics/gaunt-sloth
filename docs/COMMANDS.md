@@ -480,6 +480,7 @@ Guide-shaped walkthrough: [Evaluate your agent](guides/evals.md) — and for tes
 
 ### Options
 - `-j, --concurrency <n>` - Maximum cases run in parallel (default: `1` — cases run one at a time). Parallelism is opt-in: concurrent generations thrash a local single-GPU backend and burn a cloud key's rate limit, so raise `-j` only when you know the backend has the headroom. A multi-case run with no `-j` says so at the end.
+- `--keep-workspaces` - Keep each `command` case's [workspace](#workspaces) after the case instead of removing it, and print its path.
 - `-o, --output <dir>` - Directory to write structured per-case JSON plus a `results.json` summary to (default: a timestamped `gth_<date>_EVAL` directory alongside other reports)
 - `--judge <profile>` - Identity profile whose model grades `judge:` rubrics. Overrides the suite's `judge_profile`; omit both to judge with the SUT's own model.
 - `--export-blind <file>` - Write the suite's cases — `id`, input(s) and `tags` only, **no expected labels, actions, rationales or rubrics** — to `<file>` as JSON, then exit without running anything. See [Blind relabel](#blind-relabel).
@@ -529,7 +530,7 @@ A suite is a single YAML document with these top-level keys:
 |-----|----------|---------|
 | `target` | yes | The system under test. `type` is `gth-agent` (the in-process agent, the default choice; `profile` is optional and, if set, must be `default`), `adk-agent` (an external Google ADK agent over A2A; requires `url`), `ag-ui` (an external agent over the AG-UI protocol; requires `url` and `agent_id`), `rater` (gth's own approvals rater, graded as a classifier; requires `rung` — see [The rater target](#the-rater-target)), or `command` (a command-line agent such as Claude Code, started once per case; requires `run` and `transcript` — see [The command target](#the-command-target)). |
 | `cases` | yes | A non-empty list of cases (below). |
-| `defaults` | no | Suite-wide defaults. `defaults.pass_threshold` (0–10) is the judge score gate applied to any case that doesn't set its own; the built-in default is `6`. `defaults.timeout_ms` is the per-case time limit of a `command` target. |
+| `defaults` | no | Suite-wide defaults. `defaults.pass_threshold` (0–10) is the judge score gate applied to any case that doesn't set its own; the built-in default is `6`. `defaults.timeout_ms` is the per-case time limit of a `command` target, and `defaults.workspace` its per-case [workspace](#workspaces). |
 | `description` | no | Free text describing the suite. Documentation only; it does not affect grading. |
 | `judge_profile` | no | Identity profile whose model grades `judge:` rubrics. See [Judging](#judging) below. |
 | `identities` | no | The identity matrix — run every case once per listed profile. See [Identity matrix](#identity-matrix) below. |
@@ -744,7 +745,7 @@ Run it from the directory the agent should work in:
 gth eval eval/claude-skills.yaml
 ```
 
-**Running a suite runs its commands.** A suite is trusted the way a Makefile or a `package.json` script is: `gth eval` starts `run` for every case without asking, and the command can do anything you could do from that shell. Before the first case, the run prints the command line it is about to execute. Read a suite before you run one you did not write.
+**Running a suite runs its commands.** A suite is trusted the way a Makefile or a `package.json` script is: `gth eval` starts `run`, and every [workspace](#workspaces) `setup` step, for every case without asking, and they can do anything you could do from that shell. Before the first case, the run prints the command line and the setup steps it is about to execute. Read a suite before you run one you did not write.
 
 | Key | Required | Meaning |
 |-----|----------|---------|
@@ -756,7 +757,7 @@ gth eval eval/claude-skills.yaml
 
 **`run` is not given to a shell.** It is split into arguments on whitespace, single and double quotes group words, and a backslash is an ordinary character, so a Windows path needs no escaping. Nothing is expanded: an unquoted `$`, backtick, `|`, `&`, `;`, `<`, `>`, `(` or `)` is refused when the suite loads, because a shell would treat it specially and this does not. Quote it to pass it literally, or put the shell logic in a script and run the script. Everything else is passed as written, with no shell to interpret it: `#` does not start a comment, `~` is not your home directory, `*`, `?` and `{a,b}` are not expanded, and a backslash does not escape the next character. The prompt is never inserted into `run` and never passes through a shell, so quotes, `$(...)` and backticks in a prompt reach the agent exactly as written. On Windows, name the program itself, such as `node path/to/cli.js`, rather than an npm `.cmd` shim, which cannot be started without a shell.
 
-The command runs in the directory `gth eval` was started in, with gth's environment. With `-j` above `1`, cases run at the same time in that directory, so an agent that edits files should stay at `-j 1`. Stopping `gth eval` with Ctrl+C, or ending it with SIGTERM, also stops the commands it started.
+Without a [workspace](#workspaces), the command runs in the directory `gth eval` was started in, with gth's environment. With `-j` above `1`, cases run at the same time in that directory, so an agent that edits files needs a workspace or `-j 1`. Stopping `gth eval` with Ctrl+C, or ending it with SIGTERM, also stops the commands it started.
 
 `claude-stream-json` reads `claude -p --output-format stream-json --verbose`. The answer is the text of the final `result` line. Each `tool_use` is a call, in the order the agent made it, and each `tool_result` is a result, matched to its call by id, with the agent's error flag. Calls made by subagents are included. `tool_call_json_path` reads a call's `input`, and needs [`evalToolCallArgs`](configuration/output.md#recorded-tool-call-arguments-evaltoolcallargs) like every other target. Results and arguments are recorded up to [`toolResultCaptureMaxBytes`](configuration/output.md#recorded-tool-result-size-toolresultcapturemaxbytes).
 
@@ -789,6 +790,61 @@ target:
   transcript: ./my-agent-decoder.mjs
   prompt: stdin
 ```
+
+#### Workspaces
+
+A `workspace` gives each case of a `command` suite its own fresh directory, so an agent that edits files starts from the same fixture every time, and cases run with `-j` cannot see each other's edits.
+
+Say you want to check that Claude Code fixes a failing test in a small repository and commits the fix, without letting it reach the real GitHub. Keep the repository's files in `eval/fixtures/tiny-repo/`, and a stand-in `gh` in `eval/stubs/`. Then in `eval/claude-fixes.yaml`:
+
+```yaml
+target:
+  type: command
+  run: claude -p --output-format stream-json --verbose --max-turns 20
+  transcript: claude-stream-json
+defaults:
+  timeout_ms: 600000
+  workspace:
+    template: fixtures/tiny-repo
+    setup:
+      - git init -q
+      - git add -A
+      - git -c user.name=eval -c user.email=eval@example.com commit -qm init
+    env:
+      PATH: "{{suite_dir}}/stubs{{path_delimiter}}{{env.PATH}}"
+cases:
+  - id: fixes-the-failing-test
+    prompt: "The test in sum.test.js fails. Fix the code, not the test, and commit."
+    must_call: [Edit, Bash]
+  - id: answers-without-editing
+    prompt: "What does sum.js export?"
+    must_not_call: [Edit, Write]
+```
+
+```bash
+gth eval eval/claude-fixes.yaml -j 2
+```
+
+Before each case, `gth eval` copies `template` into a new directory under the system temp directory, runs each `setup` step there in order, then starts `run` there with `env` set over the environment `gth eval` was started with. The directory is removed when the case ends, or when `gth eval` is stopped with Ctrl+C. `--keep-workspaces` keeps each one and prints its path, for looking at what the agent left behind. Edits made in the workspace do not reach the template.
+
+| Key | Meaning |
+|-----|---------|
+| `template` | A directory, resolved from the suite file's directory, copied into the workspace. It must exist when the suite loads. Without it the workspace starts empty. |
+| `setup` | Commands run in the workspace before the case's command, in order. |
+| `env` | Variables set for the setup steps and the command, over the inherited environment. |
+
+Put the block under `defaults` for every case, or on one case. **A case's `workspace` replaces the default as a whole:** nothing is merged, so a case that sets only `setup` gets no `template` and no `env` from the default. `workspace: false` on a case runs that case without one. `workspace` is rejected on every target other than `command`, because the in-process agent shares one working directory with every case running beside it.
+
+`setup` steps follow the same rule as `run`: each is split into arguments and started without a shell. A step that needs a pipe or `&&` is two steps, or a script kept in the template and run as a step. A step that cannot start, exits non-zero or runs past the case's `timeout_ms` (each step gets the whole budget) fails the case as a harness error naming the step, and the case's command does not start.
+
+`env` values and `setup` arguments can use these tokens. A token is expanded inside the one argument it was written in, so a value with spaces never becomes two arguments. Any other `{{...}}` is rejected when the suite loads.
+
+| Token | Expands to |
+|-------|------------|
+| `{{suite_dir}}` | The suite file's directory. |
+| `{{workspace}}` | The case's workspace directory. |
+| `{{env.NAME}}` | `NAME` from the environment `gth eval` was started with, or nothing when it is unset. |
+| `{{path_delimiter}}` | The `PATH` separator: `:`, or `;` on Windows. |
 
 ### Identity matrix
 

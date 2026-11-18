@@ -73,7 +73,9 @@ target: { type: adk-agent, url: http://localhost:8080 }
 
 An agent that is a command-line program, such as Claude Code, is started once per case and graded
 from the transcript it prints. Running the suite runs that command; see
-[The command target](../COMMANDS.md#the-command-target).
+[The command target](../COMMANDS.md#the-command-target). An agent that edits files gets a
+[workspace](../COMMANDS.md#workspaces) per case: a fresh copy of a fixture directory, with `setup`
+steps and `env` of your choosing, removed when the case ends.
 
 ```yaml
 # Claude Code, started once per case with the prompt as its last argument
@@ -95,6 +97,7 @@ on what its protocol carries:
 | `tool_coverage` | yes | no | no | no |
 | `identities` matrix, `sweep` | yes | no | no | no |
 | Multi-turn `turns:` cases | yes | yes | yes | no |
+| A fresh `workspace` per case | no | no | no | yes |
 
 AG-UI streams the agent's tool calls but not their results, and A2A carries neither. A command's
 transcript carries both, but not the list of tools the agent loaded, which `tool_coverage` needs. A

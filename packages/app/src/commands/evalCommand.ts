@@ -674,6 +674,7 @@ export function evalCommand(
         '  $ gth eval eval/ -o eval/out --reporter junit           # a whole directory\n' +
         '  $ gth eval eval/js-basics.yaml --reporter junit\n' +
         '  $ gth eval eval/js-basics.yaml --reporter text,junit\n' +
+        "  $ gth eval eval/claude-fixes.yaml -j 2 --keep-workspaces  # keep each case's workspace\n" +
         '\n' +
         'Classifier suites (BATCH-25):\n' +
         '  A suite that declares `classification: { labels: [...] }` grades `expect_label` /\n' +
