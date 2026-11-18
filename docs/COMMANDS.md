@@ -744,7 +744,7 @@ gth eval eval/claude-skills.yaml
 |-----|----------|---------|
 | `target.run` | yes | The command line to start for each case. |
 | `target.transcript` | yes | How to read the command's output: `claude-stream-json`, or a path to a decoder module (below). |
-| `target.prompt` | no | How the prompt reaches the command: `arg` (the default) appends it as one final argument; `stdin` writes it to the command's standard input. |
+| `target.prompt` | no | How the prompt reaches the command: `arg` (the default) appends it as one final argument; `stdin` writes it to the command's standard input. With `arg`, end `run` with an option that takes no value: after an option that takes a list, such as Claude Code's `--allowedTools`, the prompt would be read as one more list item. |
 | `defaults.timeout_ms` | no | How long a case may run, in milliseconds. The built-in default is `600000` (ten minutes). |
 | `timeout_ms` (on a case) | no | Overrides `defaults.timeout_ms` for that case. |
 
