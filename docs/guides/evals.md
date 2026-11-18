@@ -75,7 +75,19 @@ An agent that is a command-line program, such as Claude Code, is started once pe
 from the transcript it prints. Running the suite runs that command; see
 [The command target](../COMMANDS.md#the-command-target). An agent that edits files gets a
 [workspace](../COMMANDS.md#workspaces) per case: a fresh copy of a fixture directory, with `setup`
-steps and `env` of your choosing, removed when the case ends.
+steps and `env` of your choosing, removed when the case ends. A case can then
+[check what the agent left there](../COMMANDS.md#workspace-assertions): a file's text, files that
+must not exist, and `after` commands such as `git status` whose output must match. `after` commands
+run without asking, as `setup` steps do.
+
+```yaml
+- id: fixes-the-typo-and-nothing-else
+  prompt: "Fix the typo in the comment at the top of src/greet.mjs"
+  file_contains: { "src/greet.mjs": "welcome banner" }
+  must_not_exist: ["notes/*"]
+  after:
+    - { run: "git status --porcelain -- . ':!src/greet.mjs'", equals: "" }
+```
 
 ```yaml
 # Claude Code, started once per case with the prompt as its last argument
@@ -98,6 +110,7 @@ on what its protocol carries:
 | `identities` matrix, `sweep` | yes | no | no | no |
 | Multi-turn `turns:` cases | yes | yes | yes | no |
 | A fresh `workspace` per case | no | no | no | yes |
+| `file_contains`, `must_not_exist`, `after` | no | no | no | yes |
 
 AG-UI streams the agent's tool calls but not their results, and A2A carries neither. A command's
 transcript carries both, but not the list of tools the agent loaded, which `tool_coverage` needs. A

@@ -745,7 +745,7 @@ Run it from the directory the agent should work in:
 gth eval eval/claude-skills.yaml
 ```
 
-**Running a suite runs its commands.** A suite is trusted the way a Makefile or a `package.json` script is: `gth eval` starts `run`, and every [workspace](#workspaces) `setup` step, for every case without asking, and they can do anything you could do from that shell. Before the first case, the run prints the command line and the setup steps it is about to execute. Read a suite before you run one you did not write.
+**Running a suite runs its commands.** A suite is trusted the way a Makefile or a `package.json` script is: `gth eval` starts `run`, every [workspace](#workspaces) `setup` step and every [`after`](#workspace-assertions) step, for every case without asking, and they can do anything you could do from that shell. Before the first case, the run prints the command line, the setup steps and the `after` steps it is about to execute. Read a suite before you run one you did not write.
 
 | Key | Required | Meaning |
 |-----|----------|---------|
@@ -845,6 +845,38 @@ Put the block under `defaults` for every case, or on one case. **A case's `works
 | `{{workspace}}` | The case's workspace directory. |
 | `{{env.NAME}}` | `NAME` from the environment `gth eval` was started with, or nothing when it is unset. |
 | `{{path_delimiter}}` | The `PATH` separator: `:`, or `;` on Windows. |
+
+#### Workspace assertions
+
+A case with a workspace can check what the agent left in it, after its command finishes and before the workspace is removed.
+
+Say the agent should fix a typo in one comment and touch nothing else. With `src/greet.mjs` and a `notes/` directory in the template, and the git `setup` from the example above:
+
+```yaml
+cases:
+  - id: fixes-the-typo-and-nothing-else
+    prompt: "Fix the typo in the comment at the top of src/greet.mjs"
+    file_contains: { "src/greet.mjs": "welcome banner" }
+    must_not_exist: ["notes/*"]
+    after:
+      - { run: "git status --porcelain -- . ':!src/greet.mjs'", equals: "" }
+```
+
+The case fails if `src/greet.mjs` does not say `welcome banner`, if anything is left in `notes/`, or if git reports a change to any other file.
+
+| Key | Meaning |
+|-----|---------|
+| `file_contains` | A map from a file to a string, or a list of strings, that the file must contain. A file that does not exist fails with its own reason. |
+| `must_not_exist` | Globs. The case fails when anything in the workspace matches one: a file, a directory or a symbolic link. |
+| `after` | Commands run in the workspace, in order. Each sets exactly one of `equals` or `contains`, compared with its standard output, or `exit_code`. |
+
+Paths and globs are relative to the workspace and written with `/`, on Windows too. An absolute path, a `..` segment, a drive letter or a backslash is rejected when the suite loads. `file_contains` does not read a file that a symbolic link leads outside the workspace; that file fails the case instead.
+
+In a glob, `*` matches any characters within one path segment, `?` matches one character, and `**` as a whole segment matches any number of segments, none included. `*` and `?` also match a leading dot, so `notes/*` catches `notes/.hidden`. `notes/**` matches `notes` itself and everything under it. Matching is case-sensitive. `[`, `]`, `{`, `}` and a leading `!` are rejected, because this dialect has no character classes, alternatives or negation.
+
+An `after` step is started the way a `setup` step is: split into arguments with no shell, with the case's `env`, the same tokens, and the case's `timeout_ms`. Standard output is trimmed before it is compared, so `equals: ""` means it printed nothing. With `equals` or `contains`, a step that exits non-zero fails the case whatever it printed, and the reason gives its exit code and the end of its standard error. A step that does not match fails the case, and every step still runs, so one run reports every check that failed. A step that cannot start, or runs past the timeout, fails the case as a harness error, and the steps after it do not run.
+
+These keys need a workspace: they are rejected on a case without one, including one with `workspace: false`, and on every target other than `command`. They are case keys, not part of an `expect:` block. Each of them counts as a check, so a case may have no other assertions. Nothing is checked when the case's command itself failed: that is already a harness error.
 
 ### Identity matrix
 
