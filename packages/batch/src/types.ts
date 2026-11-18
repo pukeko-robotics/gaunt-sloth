@@ -125,10 +125,11 @@ export interface CellRunOutcome {
   tools?: string[];
   /** BATCH-21 — per-tool-call result records for the run, when available; parallel to
    * {@link tools} but un-deduped and carrying each result's error status + payload. Only the
-   * in-process `gth-agent` runner can populate this (external adk-agent/ag-ui targets never do). */
+   * in-process `gth-agent` runner and the `command` runner (from its transcript) populate this;
+   * the adk-agent and ag-ui targets never do. */
   toolResults?: ToolResultRecord[];
   /** BATCH-52 / BATCH-54 — the run's requested tool calls, in request order. Set on every
-   * `gth eval` run by the `gth-agent` and `ag-ui` runners; each entry carries `args` only when the
+   * `gth eval` run by the `gth-agent`, `ag-ui` and `command` runners; each entry carries `args` only when the
    * run opted in with `evalToolCallArgs`. Never set by `gth batch`. */
   toolCalls?: ToolCallRecord[];
   /**

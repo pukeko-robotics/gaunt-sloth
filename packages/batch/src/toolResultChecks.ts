@@ -39,8 +39,8 @@ import type { ToolResultRecord } from '#src/types.js';
  *   plain-argument prefix — and otherwise the
  *   observed `content`, which is left exactly as the model saw it in either case.
  *
- * The runner only ever calls this with expectation blocks a `gth-agent` suite produced — the suite
- * parser rejects tool-result assertions against `ag-ui`/`adk-agent` targets, whose wire carries no
+ * The runner only ever calls this with expectation blocks a `gth-agent` or `command` suite produced
+ * — the suite parser rejects tool-result assertions against `ag-ui`/`adk-agent` targets, whose wire carries no
  * result payloads (see `#src/evalSuite.js`), so an empty `toolResults` here means "no tool
  * returned anything", not "the target can't report results".
  */

@@ -359,8 +359,9 @@ export interface JsonPathCheck {
  * - `equals` — the resolved value must deep-equal this (any JSON value, incl. `null`);
  * - `contains` — the resolved value must be a string containing this substring.
  * The assertion passes when AT LEAST ONE matching tool result satisfies it; a non-JSON payload is a
- * deterministic FAIL for that result, never a throw. Requires the `gth-agent` target (rejected at
- * parse time otherwise — only the in-process agent surfaces tool results).
+ * deterministic FAIL for that result, never a throw. Requires the `gth-agent` or `command` target
+ * (rejected at parse time otherwise — only the in-process agent and a command's transcript surface
+ * tool results).
  */
 export interface ToolResultJsonPathCheck {
   /** Tool-name pattern (exact or glob) selecting which tool's result(s) to check. */
@@ -373,7 +374,7 @@ export interface ToolResultJsonPathCheck {
 /**
  * One `tool_call_json_path` assertion (BATCH-52): the {@link ToolResultJsonPathCheck} shape, read
  * against the ARGUMENTS a matching tool was called with instead of what it returned. Requires
- * `evalToolCallArgs` in the run-level config and a `gth-agent` or `ag-ui` target.
+ * `evalToolCallArgs` in the run-level config and a `gth-agent`, `ag-ui` or `command` target.
  *
  * At most one of `equals`/`contains`/`matches` is set (enforced in `evalSuite.js`'s parse). By
  * default the entry passes when at least one matching call satisfies it.
@@ -433,13 +434,16 @@ export interface EvalExpectation {
   jsonPath: JsonPathCheck[];
   /** BATCH-21 tool-RESULT assertion: for each tool-name pattern (exact/glob, `must_call`'s
    * matcher), at least one called tool matching it returned an ERROR (`isError: true`). Grades the
-   * captured tool results, so it requires the `gth-agent` target (parse-rejected otherwise). */
+   * captured tool results, so it requires the `gth-agent` or `command` target (parse-rejected
+   * otherwise). */
   mustError: string[];
   /** BATCH-21 minimal JSON-path assertions over a matching tool result's payload — see
-   * {@link ToolResultJsonPathCheck}. `gth-agent` target only (parse-rejected otherwise). */
+   * {@link ToolResultJsonPathCheck}. `gth-agent` and `command` targets only (parse-rejected
+   * otherwise). */
   toolResultJsonPath: ToolResultJsonPathCheck[];
   /** BATCH-52 minimal JSON-path assertions over a matching tool call's ARGUMENTS — see
-   * {@link ToolCallJsonPathCheck}. Opt-in (`evalToolCallArgs`); `gth-agent` / `ag-ui` targets only. */
+   * {@link ToolCallJsonPathCheck}. Opt-in (`evalToolCallArgs`); `gth-agent` / `ag-ui` / `command`
+   * targets only. */
   toolCallJsonPath: ToolCallJsonPathCheck[];
   /** BATCH-54 call-ORDER assertion — see {@link ToolTrajectoryCheck}. `undefined` = this block
    * asserts no trajectory. Optional (not defaulted) because it is one object, not a list. */
@@ -568,7 +572,8 @@ export interface TurnRunOutcome {
   tokensOutput?: number;
   tools?: string[];
   /** BATCH-21 — this turn's per-tool-call result records (parallel to {@link tools}; a per-turn
-   * delta like everything else here). Only the in-process `gth-agent` runner populates it. */
+   * delta like everything else here). Only the in-process `gth-agent` runner populates it; a
+   * `command` target is single-turn and fills the single-shot outcome's instead. */
   toolResults?: ToolResultRecord[];
   /** BATCH-52 / BATCH-54 — this turn's requested tool calls (a per-turn delta); each carries its
    * arguments only under `evalToolCallArgs`. */
