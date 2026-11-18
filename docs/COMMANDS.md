@@ -837,7 +837,7 @@ Put the block under `defaults` for every case, or on one case. **A case's `works
 
 `setup` steps follow the same rule as `run`: each is split into arguments and started without a shell. A step that needs a pipe or `&&` is two steps, or a script kept in the template and run as a step. A step that cannot start, exits non-zero or runs past the case's `timeout_ms` (each step gets the whole limit, as the command does) fails the case as a harness error naming the step, and the case's command does not start.
 
-`env` values and `setup` arguments can use these tokens. A token is expanded inside the one argument it was written in, so a value with spaces never becomes two arguments. Any other `{{...}}` is rejected when the suite loads.
+`env` values and `setup` arguments can use these tokens. A `setup` line is split into arguments first, and each token is expanded inside the one argument it was written in, so a value with spaces never becomes two arguments. Write a token without spaces inside the braces, or quote it: unquoted, `{{ workspace }}` would be split into three arguments. An unknown token, a `{{` or `}}` that is not part of a whole token, and any token in `target.run` are rejected when the suite loads. `run` is never expanded; the command already runs in the workspace, so use `.` for it.
 
 | Token | Expands to |
 |-------|------------|

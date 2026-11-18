@@ -158,6 +158,63 @@ cases:
     ).toThrow(/defaults.workspace: env.HOME uses the unknown token \{\{home\}\}/);
   });
 
+  it('refuses an unquoted spaced token in setup, pointing at quoting, and accepts the quoted one', () => {
+    expect(() =>
+      parse(`${TARGET}
+cases:
+  - { id: a, prompt: "x", must_contain: [ok], workspace: { setup: ["git init {{ workspace }}"] } }
+`)
+    ).toThrow(
+      /setup\[0\] \("git init \{\{ workspace \}\}"\) has the argument "\{\{", where "\{\{" is not part of a complete token\. .*must be quoted, as in "\{\{ workspace \}\}"/
+    );
+    const suite = parse(`${TARGET}
+cases:
+  - id: a
+    prompt: "x"
+    must_contain: [ok]
+    workspace: { setup: ['git init "{{ workspace }}"'] }
+`);
+    expect(suite.cases[0].workspace?.setup[0].argv).toEqual(['git', 'init', '{{ workspace }}']);
+  });
+
+  it('refuses a half token in an env value, and accepts single braces', () => {
+    expect(() =>
+      parse(`${TARGET}
+defaults: { workspace: { env: { HOME: "{{workspace}/home" } } }
+cases:
+  - { id: a, prompt: "x", must_contain: [ok] }
+`)
+    ).toThrow(/defaults.workspace: env.HOME has a "\{\{" that is not part of a complete token/);
+    expect(() =>
+      parse(`${TARGET}
+defaults: { workspace: { env: { X: "a}}" } } }
+cases:
+  - { id: a, prompt: "x", must_contain: [ok] }
+`)
+    ).toThrow(/env.X has a "\}\}"/);
+    const suite = parse(`${TARGET}
+defaults: { workspace: { env: { JSONISH: '{"a": {"b": 1} }' } } }
+cases:
+  - { id: a, prompt: "x", must_contain: [ok] }
+`);
+    expect(suite.cases[0].workspace?.env.JSONISH).toBe('{"a": {"b": 1} }');
+  });
+
+  it('refuses a token in target.run, where tokens never expand', () => {
+    expect(() =>
+      parse(`
+target:
+  type: command
+  run: claude -p --add-dir {{workspace}}
+  transcript: claude-stream-json
+cases:
+  - { id: a, prompt: "x", must_contain: [ok] }
+`)
+    ).toThrow(
+      /target.run contains a \{\{\.\.\.\}\} token, but tokens expand only in a workspace's `env` values and `setup` steps/
+    );
+  });
+
   it('refuses a setup line the splitter refuses, since setup has no shell either', () => {
     expect(() =>
       parse(`${TARGET}

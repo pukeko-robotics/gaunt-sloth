@@ -9,7 +9,12 @@ import { APPROVAL_RUNGS, isApprovalRung } from '@gaunt-sloth/core/config/shell-p
 import { RATER_ACTIONS, RATER_OUTCOMES } from '@gaunt-sloth/core/core/shell/raterVocabulary.js';
 
 import { splitCommandLine } from '#src/commandArgv.js';
-import { findUnknownWorkspaceToken, WORKSPACE_TEMPLATE_TOKENS } from '#src/workspaceTemplate.js';
+import {
+  containsWorkspaceToken,
+  findStrayTokenBrace,
+  findUnknownWorkspaceToken,
+  WORKSPACE_TEMPLATE_TOKENS,
+} from '#src/workspaceTemplate.js';
 import {
   builtInTranscriptDecoderNames,
   isTranscriptDecoderModulePath,
@@ -480,8 +485,9 @@ type RawAssertions = z.infer<typeof RawAssertionsSchema>;
  *   tool assertion, including `must_error`/`tool_result_json_path`, IS supported for `command`.
  * - `workspace` (BATCH-58, in `defaults` or on a case) on any target but `command`; a workspace
  *   `template` that does not exist as a directory (resolved against the suite's directory); a
- *   `setup` line that does not split into argv; an unknown `{{…}}` token in a `setup` argument or
- *   an `env` value.
+ *   `setup` line that does not split into argv; an unknown `{{…}}` token, or a `{{`/`}}` that is
+ *   not part of a complete token, in a `setup` argument or an `env` value; a `{{…}}` token in
+ *   `target.run`, where tokens never expand.
  * - `target.profile` set to anything other than `"default"`/absent — a single suite-wide profile
  *   switch is the `--identities` direction, replaced by the suite-level `identities` list.
  * - A `"adk-agent"` (BATCH-14) target missing its `url`; an `adk-agent` suite that ALSO uses the
@@ -1361,6 +1367,18 @@ function buildCommandTarget(
       `Invalid eval suite${suffix}: target.run: ${error instanceof Error ? error.message : String(error)}`
     );
   }
+  // BATCH-58 — workspace tokens expand only in a workspace's `env` values and `setup` arguments.
+  // `run` is the same for every case and is never expanded, so a token in it would reach the agent
+  // as the literal text `{{workspace}}`. Refused rather than expanded: the command already runs with
+  // the case's workspace as its cwd (so `.` names it), and the suite's `env` reaches it too.
+  if (containsWorkspaceToken(run)) {
+    throw new Error(
+      `Invalid eval suite${suffix}: target.run contains a {{...}} token, but tokens expand only in ` +
+        "a workspace's `env` values and `setup` steps. The command already runs with the case's " +
+        'workspace as its working directory, so refer to it as `.`, or pass a value through the ' +
+        "workspace's `env`."
+    );
+  }
   const transcript = raw.transcript?.trim();
   if (!transcript) {
     throw new Error(
@@ -1440,12 +1458,26 @@ function buildCommandWorkspace(
   const fail = (message: string): never => {
     throw new Error(`Invalid eval suite${suffix}: ${where}: ${message}`);
   };
-  const checkTokens = (text: string, field: string): void => {
+  // `inSetup`: the text is one argv element of a split `setup` line, where a stray brace almost
+  // always means a token with spaces that the split cut apart, so the message points at quoting.
+  const checkTokens = (text: string, field: string, inSetup: boolean): void => {
     const unknown = findUnknownWorkspaceToken(text);
     if (unknown !== undefined) {
       fail(
         `${field} uses the unknown token ${unknown} — the tokens are ` +
           `${WORKSPACE_TEMPLATE_TOKENS.join(', ')}.`
+      );
+    }
+    const stray = findStrayTokenBrace(text);
+    if (stray !== undefined) {
+      fail(
+        inSetup
+          ? `${field} has the argument "${text}", where "${stray}" is not part of a complete ` +
+              'token. A setup line is split on spaces before tokens expand, so a token with ' +
+              'spaces inside the braces must be quoted, as in "{{ workspace }}", or written ' +
+              'without the spaces.'
+          : `${field} has a "${stray}" that is not part of a complete token such as ` +
+              '{{workspace}}.'
       );
     }
   };
@@ -1479,7 +1511,7 @@ function buildCommandWorkspace(
         `setup[${index}] ("${run}"): ${error instanceof Error ? error.message : String(error)}`
       );
     }
-    for (const arg of argv) checkTokens(arg, `setup[${index}] ("${run}")`);
+    for (const arg of argv) checkTokens(arg, `setup[${index}] ("${run}")`, true);
     return { run, argv };
   });
 
@@ -1488,7 +1520,7 @@ function buildCommandWorkspace(
     if (name === '' || name.includes('=')) {
       fail(`env name "${name}" is not a valid environment variable name.`);
     }
-    checkTokens(value, `env.${name}`);
+    checkTokens(value, `env.${name}`, false);
     env[name] = value;
   }
 

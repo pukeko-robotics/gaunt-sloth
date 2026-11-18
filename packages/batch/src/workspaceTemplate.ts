@@ -21,8 +21,17 @@
  *
  * Nothing else in a suite is allowed to be silently ignored (BATCH-56), and a misspelt
  * `{{suite-dir}}` left in place would reach the agent as a literal path that does not exist, which
- * reads as the agent's failure. Whitespace inside the braces is trimmed (`{{ workspace }}` is fine).
- * Text that is not `{{…}}` with no braces inside is not a token and passes through unchanged.
+ * reads as the agent's failure.
+ *
+ * ## Why a stray `{{` or `}}` is a parse error too
+ *
+ * A token is only recognised inside ONE `setup` argument, because expansion runs after the split.
+ * Whitespace inside the braces is trimmed, so `"{{ workspace }}"` QUOTED is one argument and
+ * expands; unquoted, `{{ workspace }}` is split into `{{`, `workspace` and `}}`, none of which is a
+ * token, and the step would receive those three literals. So any `{{` or `}}` left over once the
+ * complete tokens are taken out ({@link findStrayTokenBrace}) is refused at parse, in `setup`
+ * arguments and in `env` values alike. Single braces (`{`, `}`) are ordinary text.
+ * {@link expandWorkspaceTemplate} itself leaves such text alone; the parser is what refuses it.
  *
  * `{{path_delimiter}}` exists because `PATH` composition differs per platform: a suite that writes
  * `{{suite_dir}}/stubs{{path_delimiter}}{{env.PATH}}` works on every OS, where a literal `:` breaks
@@ -71,6 +80,22 @@ export function findUnknownWorkspaceToken(text: string): string | undefined {
     if (classify(match[1]) === null) return match[0];
   }
   return undefined;
+}
+
+/**
+ * A `{{` or `}}` in `text` that is not part of a complete `{{…}}` token, or `undefined` when there
+ * is none. A complete token, known or not, is {@link findUnknownWorkspaceToken}'s business.
+ */
+export function findStrayTokenBrace(text: string): '{{' | '}}' | undefined {
+  const rest = text.replace(TOKEN_RE, '');
+  if (rest.includes('{{')) return '{{';
+  if (rest.includes('}}')) return '}}';
+  return undefined;
+}
+
+/** Whether `text` holds a complete `{{…}}` token of any name. */
+export function containsWorkspaceToken(text: string): boolean {
+  return new RegExp(TOKEN_RE.source).test(text);
 }
 
 /**
