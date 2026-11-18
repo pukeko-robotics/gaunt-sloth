@@ -863,6 +863,32 @@ export function evalCommand(
             const agUiOptions = { recordToolCallArgs: runCellOptions.recordToolCallArgs };
             runCell = buildAgUiRunCell(parsedSuite.target, undefined, agUiOptions);
             runConversation = buildAgUiRunConversation(parsedSuite.target, undefined, agUiOptions);
+          } else if (parsedSuite.target.type === 'command') {
+            // BATCH-57: start a command-line agent once per case and decode its transcript. Like
+            // the other external targets it has no gth config of its own (`identities`, `sweep` and
+            // multi-turn cases are rejected at parse), so no runConversation is built; the judge
+            // grades from the local config. The decoder is loaded BEFORE anything runs, so a broken
+            // custom decoder is this suite's harness error with no case started.
+            baseConfig = await initConfigForCell(commandLineConfigOverrides, sweepCell);
+            const { buildCommandRunCell, loadTranscriptDecoder } =
+              await import('#src/commands/commandEvalRunner.js');
+            const { resolveToolResultCaptureMaxBytes } =
+              await import('@gaunt-sloth/core/config/toolResultCapture.js');
+            const decoder = await loadTranscriptDecoder(
+              parsedSuite.target.transcript,
+              suite.readPath
+            );
+            // Andrew's 2026-11-19 ruling: a suite is trusted like a Makefile, and runs its command
+            // without asking. What it runs is printed first, so nobody is surprised by it.
+            displayInfo(
+              `eval: ${suite.readPath} runs this command once per case ` +
+                `(prompt by ${parsedSuite.target.prompt === 'arg' ? 'argument' : 'stdin'}): ` +
+                parsedSuite.target.run
+            );
+            runCell = buildCommandRunCell(parsedSuite.target, parsedSuite, decoder, {
+              recordToolCallArgs: runCellOptions.recordToolCallArgs,
+              captureMaxBytes: resolveToolResultCaptureMaxBytes(baseConfig),
+            });
           } else if (parsedSuite.target.type === 'rater') {
             // BATCH-25 Half B: grade gth's OWN approvals rater. Nothing is run through an agent —
             // each case is a command the rater rates — so this branch builds the `classify` seam

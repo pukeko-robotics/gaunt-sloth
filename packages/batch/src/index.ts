@@ -31,6 +31,8 @@ export { writeEvalOutput } from '#src/evalOutput.js';
 export type {
   AdkAgentTarget,
   AgUiAgentTarget,
+  CommandPromptDelivery,
+  CommandTarget,
   DeterministicCheckResult,
   EvalCase,
   EvalCaseResult,
@@ -171,6 +173,14 @@ export type {
   EvalRunContext,
   NamedReporter,
 } from '#src/reporters/reporterTypes.js';
+// BATCH-57 — the transcript-decoder seam of the `command` target, so a custom decoder module can
+// type its default export against one import. Types only: the registry is reached by subpath.
+export type {
+  DecodedToolCall,
+  DecodedToolResult,
+  DecodedTranscript,
+  TranscriptDecoder,
+} from '#src/transcripts/transcriptTypes.js';
 
 // BATCH-3 — the `gth workflow` host: runs a local JS orchestration script that drives one or more
 // LLM calls through a small WorkflowContext.

@@ -303,12 +303,42 @@ export interface RaterTarget {
   rung: ApprovalRung;
 }
 
+/** How a {@link CommandTarget} hands the case's prompt to the command it starts. */
+export type CommandPromptDelivery = 'arg' | 'stdin';
+
+/**
+ * BATCH-57 — a command-line agent (Claude Code, for one), graded by starting a command once per
+ * case and decoding what it prints into the answer, the tool calls and the tool results.
+ *
+ * `run` is split into an argument vector at parse time ({@link argv}) and started WITHOUT a shell,
+ * and the prompt travels as one more argument or on stdin, never inside `run`. A prompt is author
+ * text full of quotes and `$`, and splicing it into a shell line would be command injection by
+ * construction; with no shell anywhere, nothing in either the command or the prompt is expanded.
+ *
+ * The decoder named by {@link transcript} turns stdout into the same `answer` / `tools` /
+ * `toolCalls` / `toolResults` the `gth-agent` target produces, so every tool assertion grades a
+ * command target unchanged, including the tool-RESULT assertions the AG-UI target cannot carry.
+ */
+export interface CommandTarget {
+  type: 'command';
+  /** The command as the suite wrote it, for display. */
+  run: string;
+  /** {@link run} split into the argument vector that is actually spawned. Never empty. */
+  argv: string[];
+  /** The decoder: a built-in name (`claude-stream-json`) or a module path, as written. */
+  transcript: string;
+  /** How the prompt reaches the command; `arg` (one trailing argument) unless the suite says `stdin`. */
+  prompt: CommandPromptDelivery;
+}
+
 /** One suite's target — the in-process gth agent (default), an external ADK agent over A2A
- * (BATCH-14), an external AG-UI agent over HTTP/SSE (BATCH-15), or the in-process approvals rater
- * graded as a classifier (BATCH-25 Half B). Discriminated by `type`; the runner is target-agnostic
- * (it consumes an injected `RunCellFn`/`RunConversationFn`, or a `RunClassifyFn` for a classifier
- * target), so the target only changes which runner the command builds. */
-export type EvalTarget = GthAgentTarget | AdkAgentTarget | AgUiAgentTarget | RaterTarget;
+ * (BATCH-14), an external AG-UI agent over HTTP/SSE (BATCH-15), the in-process approvals rater
+ * graded as a classifier (BATCH-25 Half B), or a command-line agent started per case (BATCH-57).
+ * Discriminated by `type`; the runner is target-agnostic (it consumes an injected
+ * `RunCellFn`/`RunConversationFn`, or a `RunClassifyFn` for a classifier target), so the target only
+ * changes which runner the command builds. */
+export type EvalTarget =
+  GthAgentTarget | AdkAgentTarget | AgUiAgentTarget | RaterTarget | CommandTarget;
 
 /** One `json_path` assertion (BATCH-10): resolve `path` against the answer-parsed-as-JSON and check
  * it. Exactly one of `equals`/`contains` is set (enforced in `evalSuite.js`'s parse):
@@ -770,7 +800,21 @@ export interface EvalCase {
    * its own `modelCalls`. The runner FAILS the case when a model-free case reports `modelCalls > 0`.
    */
   modelFree: boolean;
+  /**
+   * BATCH-57 — how long the case's command may run before its process tree is killed and the case
+   * is graded as a harness error, in milliseconds: the case's `timeout_ms`, else the suite's
+   * `defaults.timeout_ms`, else {@link COMMAND_TARGET_DEFAULT_TIMEOUT_MS}. Set only on a `command`
+   * suite, so every other suite's parsed cases keep their exact shape.
+   */
+  timeoutMs?: number;
 }
+
+/**
+ * BATCH-57 — a command case's timeout when neither the case nor the suite's `defaults` sets one.
+ * Ten minutes: a coding agent working through a task routinely takes minutes, and the timeout exists
+ * to stop a hung session, not to grade speed.
+ */
+export const COMMAND_TARGET_DEFAULT_TIMEOUT_MS = 600_000;
 
 /** A fully parsed and validated suite — see `evalSuite.js`'s `parseEvalSuite`. */
 export interface EvalSuite {

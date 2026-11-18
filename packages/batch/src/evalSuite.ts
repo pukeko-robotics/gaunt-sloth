@@ -6,7 +6,13 @@ import { APPROVAL_RUNGS, isApprovalRung } from '@gaunt-sloth/core/config/shell-p
 // which would pull the model layer in behind it.
 import { RATER_ACTIONS, RATER_OUTCOMES } from '@gaunt-sloth/core/core/shell/raterVocabulary.js';
 
+import { splitCommandLine } from '#src/commandArgv.js';
 import {
+  builtInTranscriptDecoderNames,
+  isTranscriptDecoderModulePath,
+} from '#src/transcripts/registry.js';
+import {
+  COMMAND_TARGET_DEFAULT_TIMEOUT_MS,
   DEFAULT_EVAL_PASS_THRESHOLD,
   FORCED_BY_ASSERTIONS,
   FORCED_BY_MECHANISMS,
@@ -250,6 +256,8 @@ const RawCaseSchema = RawAssertionsSchema.extend({
   // is redundant there rather than load-bearing. It stays REQUIRED for the deterministic families
   // the floor does not cover, which is what it was added for.
   model_free: z.boolean().optional(),
+  // BATCH-57: this case's command timeout, overriding `defaults.timeout_ms`. `command` target only.
+  timeout_ms: z.number().int().positive('timeout_ms must be a positive number of ms').optional(),
   // BATCH-34: accepted at case level ONLY so a misplaced one is an error instead of a silence.
   // Negotiation context is per-round and belongs on a `turns:` entry — see the guard in the parse.
   justification: z.string().optional(),
@@ -358,6 +366,12 @@ const RawSuiteSchema = suiteObject({
     // BATCH-25 Half B: the approvals rung a `rater` target rates at (required for that target,
     // validated below against the declared ladder; ignored by every other target).
     rung: z.string().optional(),
+    // BATCH-57: the `command` target. `run` is the command line (split into argv, never given to a
+    // shell), `transcript` the decoder for its stdout, `prompt` how the case's prompt reaches it.
+    // All three are rejected on every other target, validated below.
+    run: z.string().optional(),
+    transcript: z.string().optional(),
+    prompt: z.enum(['arg', 'stdin']).optional(),
   }),
   // BATCH-10 Task 2: optional identity profile whose model judges the cases. A top-level sibling of
   // `target`/`defaults`/`cases`, and distinct from `target.profile` (which selects the SUT and is
@@ -373,6 +387,8 @@ const RawSuiteSchema = suiteObject({
   identities: z.array(z.string()).optional(),
   defaults: suiteObject({
     pass_threshold: z.number().min(0).max(10).optional(),
+    // BATCH-57: the suite's default command timeout. `command` target only.
+    timeout_ms: z.number().int().positive('timeout_ms must be a positive number of ms').optional(),
   }).optional(),
   // BATCH-25: the classifier layer. All three are optional and inert when absent, so every #405-era
   // suite parses to exactly the same `EvalSuite` it did before.
@@ -434,8 +450,13 @@ type RawAssertions = z.infer<typeof RawAssertionsSchema>;
  * - A suite shape that doesn't match `RawSuiteSchema` (missing/wrong-typed fields).
  * - A key the schema does not declare, at any level of the suite (other than inside a sweep value's
  *   The message lists each accepted-key set once and reports at most 10 issues.
- * - `target.type` other than `"gth-agent"`, `"adk-agent"`, `"ag-ui"`, or `"rater"` — other pluggable
- *   CLI/HTTP targets are out of scope.
+ * - `target.type` other than `"gth-agent"`, `"adk-agent"`, `"ag-ui"`, `"rater"` or `"command"`.
+ * - A `"command"` (BATCH-57) target missing `run` or `transcript`, with a `run` that does not split
+ *   into argv (an unterminated quote, an unquoted shell character), with a `transcript` that is
+ *   neither a built-in decoder nor a module path, or carrying `profile`/`url`/`agent_id`/`rung`; a
+ *   `command` suite using `identities`, a `sweep`, `tool_coverage` or a multi-turn `turns:` case.
+ *   `run`/`transcript`/`prompt` and `timeout_ms` (case or `defaults`) on any other target. Every
+ *   tool assertion, including `must_error`/`tool_result_json_path`, IS supported for `command`.
  * - `target.profile` set to anything other than `"default"`/absent — a single suite-wide profile
  *   switch is the `--identities` direction, replaced by the suite-level `identities` list.
  * - A `"adk-agent"` (BATCH-14) target missing its `url`; an `adk-agent` suite that ALSO uses the
@@ -644,14 +665,39 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
       );
     }
     target = { type: 'rater', rung };
+  } else if (data.target.type === 'command') {
+    target = buildCommandTarget(data.target, suffix);
   } else {
     throw new Error(
       `Invalid eval suite${suffix}: unsupported target.type "${data.target.type}" — this version ` +
         'of `gth eval` supports "gth-agent" (in-process), "adk-agent" (an external Google ADK ' +
-        'agent over A2A), "ag-ui" (an external agent over the AG-UI protocol), and "rater" (gth\'s ' +
-        'own approvals rater, graded as a classifier); other pluggable CLI/HTTP targets are future ' +
-        'scope.'
+        'agent over A2A), "ag-ui" (an external agent over the AG-UI protocol), "rater" (gth\'s ' +
+        'own approvals rater, graded as a classifier), and "command" (a command-line agent started ' +
+        'once per case, such as Claude Code).'
     );
+  }
+
+  // BATCH-57 — the command target's keys mean nothing to any other target, and an ignored key is the
+  // failure this parser is written against: a `gth-agent` suite carrying a stray `run:` would run
+  // the in-process agent and look as if it had run the command.
+  if (target.type !== 'command') {
+    const stray = (['run', 'transcript', 'prompt'] as const).filter(
+      (key) => data.target[key] !== undefined
+    );
+    const strayTimeouts = [
+      ...(data.defaults?.timeout_ms !== undefined ? ['defaults.timeout_ms'] : []),
+      ...data.cases
+        .filter((rawCase) => rawCase.timeout_ms !== undefined)
+        .map((rawCase) => `case "${rawCase.id}" timeout_ms`),
+    ];
+    if (stray.length > 0 || strayTimeouts.length > 0) {
+      const named = [...stray.map((key) => `target.${key}`), ...strayTimeouts];
+      throw new Error(
+        `Invalid eval suite${suffix}: ${named.join(', ')} ${named.length === 1 ? 'is' : 'are'} ` +
+          `only read by a "command" target, and this suite's target is "${target.type}". Remove ` +
+          'them, or set `target.type: command`.'
+      );
+    }
   }
 
   // Suite-level identity matrix (BATCH-12). Validate the names here (plain, path-safe, unique) so
@@ -711,6 +757,17 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
     );
   }
 
+  // BATCH-57: the same honest boundary for the command target. An identity profile selects a gth
+  // config, and the command's agent reads its own configuration, so every identity would run the
+  // same command and report identical columns as if they were evidence.
+  if (target.type === 'command' && identities !== undefined) {
+    throw new Error(
+      `Invalid eval suite${suffix}: the \`identities\` matrix is not supported for a "command" ` +
+        'target — identity profiles select per-identity gth configs, and the command runs its own ' +
+        'agent with its own configuration. Remove `identities`, or write one suite per variant.'
+    );
+  }
+
   // BATCH-25 Half B — the same honest boundary for the `rater` target. The `identities` matrix runs
   // each case once per identity, and the classifier seam (`RunClassifyFn`) takes no identity: one
   // classifier is built from ONE config, so a matrix would run every identity through the same
@@ -757,8 +814,11 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
   // sweep: the overrides would silently apply to the judge alone and the comparison table would
   // report cells that differ in nothing. Reject it, the same way the `identities` matrix is
   // rejected for those targets and for the same reason — a false-scope suite is a bug, not
-  // something to run half of.
-  if (sweep !== undefined && (target.type === 'adk-agent' || target.type === 'ag-ui')) {
+  // something to run half of. BATCH-57: a `command` target is out of process in the same way.
+  if (
+    sweep !== undefined &&
+    (target.type === 'adk-agent' || target.type === 'ag-ui' || target.type === 'command')
+  ) {
     throw new Error(
       `Invalid eval suite${suffix}: a \`sweep\` is not supported for a "${target.type}" target — ` +
         'the agent runs out-of-process with its own config, so config overrides would change ' +
@@ -806,6 +866,19 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
       throw new Error(
         `Invalid eval suite${suffix}: case "${rawCase.id}" (index ${index}) declares BOTH \`prompt\` ` +
           'and `turns:` — a case is single-turn (`prompt`) or multi-turn (`turns:`), not both.'
+      );
+    }
+
+    // BATCH-57 — a `command` case is single-turn. Continuing a conversation would mean resuming the
+    // agent's own session (`claude --resume <session_id>`), which is a different command line per
+    // agent and per turn, and the decoder seam has no say over the command. Refusing here keeps a
+    // multi-turn case from running only its first turn, or running every turn as an unrelated fresh
+    // session, and still reporting turn-by-turn results.
+    if (target.type === 'command' && rawCase.turns !== undefined) {
+      throw new Error(
+        `Invalid eval suite${suffix}: case "${rawCase.id}" (index ${index}) declares \`turns:\`, ` +
+          'which a "command" target does not support — each case starts the command once with one ' +
+          'prompt. Write the turns as separate cases, or use a single `prompt`.'
       );
     }
 
@@ -997,6 +1070,12 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
       passThreshold: rawCase.pass_threshold ?? suiteDefaultThreshold,
       tags,
       modelFree,
+      ...(target.type === 'command'
+        ? {
+            timeoutMs:
+              rawCase.timeout_ms ?? data.defaults?.timeout_ms ?? COMMAND_TARGET_DEFAULT_TIMEOUT_MS,
+          }
+        : {}),
     };
   });
 
@@ -1031,6 +1110,9 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
   // tool-result assertion against either would be ungradeable, and an ungradeable assertion that
   // silently PASSES is the worst outcome for an eval tool — reject it at parse time, naming the
   // offending case (→ the eval command's catch → exit 2), exactly like the adk `must_call` guard.
+  // BATCH-57: the `command` target is deliberately NOT in this guard. A CLI transcript carries each
+  // tool result with its error flag and payload, so the decoder fills `toolResults` exactly as the
+  // in-process agent does and both assertions grade there.
   if (target.type === 'adk-agent' || target.type === 'ag-ui') {
     for (const evalCase of cases) {
       for (const turn of evalCase.turns) {
@@ -1039,11 +1121,12 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
             throw new Error(
               `Invalid eval suite${suffix}: case "${evalCase.id}" uses \`must_error\`/` +
                 '`tool_result_json_path` — tool-result assertions require target.type: gth-agent ' +
-                `(only the in-process agent surfaces tool results; ${
+                `or command (only those targets surface tool results; ${
                   target.type === 'ag-ui'
                     ? 'the AG-UI wire streams tool-call names only, with no result payload'
                     : "A2A does not expose the agent's tool trace at all"
-                }). Use content assertions, or a \`gth-agent\` target for tool-result grading.`
+                }). Use content assertions, or a \`gth-agent\` or \`command\` target for tool-result ` +
+                'grading.'
             );
           }
         }
@@ -1062,7 +1145,7 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
             throw new Error(
               `Invalid eval suite${suffix}: case "${evalCase.id}" uses \`tool_call_json_path\`, ` +
                 "which needs the agent's tool calls — A2A does not expose them. Use a " +
-                '`gth-agent` or `ag-ui` target for tool-call argument grading.'
+                '`gth-agent`, `ag-ui` or `command` target for tool-call argument grading.'
             );
           }
         }
@@ -1081,7 +1164,7 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
             throw new Error(
               `Invalid eval suite${suffix}: case "${evalCase.id}" uses \`tool_trajectory\`, ` +
                 "which needs the agent's tool calls — A2A does not expose them. Use a " +
-                '`gth-agent` or `ag-ui` target for call-order grading.'
+                '`gth-agent`, `ag-ui` or `command` target for call-order grading.'
             );
           }
         }
@@ -1170,6 +1253,67 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
 }
 
 /**
+ * BATCH-57 — build a `command` target from the raw `target:` block.
+ *
+ * `run` is split into argv here, at parse time, so a malformed command line (an unterminated quote,
+ * an unquoted pipe that would not do what it says) fails before anything runs rather than once per
+ * case. `transcript` is checked to be a built-in name or a module path; the module itself is loaded
+ * by the command at run start, because loading code is not a parser's job.
+ *
+ * The connection keys of the other targets are refused: a `profile` would select a gth identity the
+ * command never reads, and `url`/`agent_id`/`rung` configure targets this is not.
+ */
+function buildCommandTarget(
+  raw: z.infer<typeof RawSuiteSchema>['target'],
+  suffix: string
+): EvalTarget {
+  const foreign = (['profile', 'url', 'agent_id', 'rung'] as const).filter(
+    (key) => raw[key] !== undefined
+  );
+  if (foreign.length > 0) {
+    throw new Error(
+      `Invalid eval suite${suffix}: a "command" target does not take ` +
+        `${foreign.map((key) => `\`${key}\``).join(', ')} — the command runs its own agent with its ` +
+        'own configuration. It takes `run`, `transcript` and `prompt`.'
+    );
+  }
+  const run = raw.run?.trim();
+  if (!run) {
+    throw new Error(
+      `Invalid eval suite${suffix}: a "command" target requires \`run\` — the command line to start ` +
+        'for each case (e.g. `run: claude -p --output-format stream-json --verbose`).'
+    );
+  }
+  let argv: string[];
+  try {
+    argv = splitCommandLine(run);
+  } catch (error) {
+    throw new Error(
+      `Invalid eval suite${suffix}: target.run: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+  const transcript = raw.transcript?.trim();
+  if (!transcript) {
+    throw new Error(
+      `Invalid eval suite${suffix}: a "command" target requires \`transcript\` — the decoder for the ` +
+        `command's output: ${builtInTranscriptDecoderNames().join(', ')}, or a path to a decoder ` +
+        'module.'
+    );
+  }
+  if (
+    !builtInTranscriptDecoderNames().includes(transcript) &&
+    !isTranscriptDecoderModulePath(transcript)
+  ) {
+    throw new Error(
+      `Invalid eval suite${suffix}: unknown target.transcript "${transcript}" — use a built-in ` +
+        `decoder (${builtInTranscriptDecoderNames().join(', ')}) or a path to a decoder module, ` +
+        'such as ./my-decoder.mjs.'
+    );
+  }
+  return { type: 'command', run, argv, transcript, prompt: raw.prompt ?? 'arg' };
+}
+
+/**
  * BATCH-32 — normalize the suite's `tool_coverage:` block, and refuse it on a target that cannot
  * produce the figure it configures.
  *
@@ -1206,7 +1350,10 @@ function buildToolCoverageSpec(
         : targetType === 'ag-ui'
           ? 'the AG-UI wire streams the tools that were CALLED but never the list the agent ' +
             'loaded, so there is no denominator to measure against'
-          : 'a "rater" target runs no agent and is offered no tools, so there is nothing to cover';
+          : targetType === 'command'
+            ? "a transcript decoder reports the tools a run CALLED, not the agent's loaded tool " +
+              'list, so there is no denominator to measure against'
+            : 'a "rater" target runs no agent and is offered no tools, so there is nothing to cover';
     throw new Error(
       `Invalid eval suite${suffix}: \`tool_coverage\` is not supported for a "${targetType}" ` +
         `target — ${because}. Coverage needs the in-process \`gth-agent\` target, which is the ` +
