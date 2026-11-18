@@ -18,11 +18,13 @@ packages:
 # type clash ("ChatXAI is not assignable to BaseChatModel"). Deduping core alone
 # is enough — the provider copies then all build against the same core type.
 overrides:
-  '@langchain/core': ^1.3.0
+  '@langchain/core': ^1.4.1
 
-  # OPS-120 — there is deliberately NO `minimatch` override. The tree holds a single minimatch line,
-  # 10.x, for eslint, typescript-eslint and typedoc, and the ReDoS advisories against minimatch are
-  # fixed on it. An override would hold nothing down that the tree does not already resolve to.
+  # OPS-120 — there is deliberately NO `minimatch` override. The tree holds two minimatch lines:
+  # 11.x for eslint and typescript-eslint, which carries the ReDoS fixes, and 10.x for typedoc,
+  # which declares `^10` and has no patched 10.x to move to. The 10.x copy runs only in the docs
+  # build, over this repo's own globs. An override would force typedoc onto a major it does not
+  # declare; take the fix when typedoc itself moves to minimatch 11.
 
 # Install scripts: exactly one package may run one, and the `allowBuilds` map at the end of this
 # file names it. `koffi` is the FFI library the PTY harness, @microsoft/tui-test, uses to load its
