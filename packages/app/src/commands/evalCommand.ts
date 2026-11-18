@@ -910,6 +910,21 @@ export function evalCommand(
                   `workspace, as its workspace declares them: ${setupLines.join(' ; ')}`
               );
             }
+            // BATCH-59 — and each case's `after` steps, which run in the workspace once the
+            // command has finished.
+            const afterLines = [
+              ...new Set(
+                parsedSuite.cases.flatMap(
+                  (evalCase) => evalCase.workspaceChecks?.after.map((step) => step.run) ?? []
+                )
+              ),
+            ];
+            if (afterLines.length > 0) {
+              displayInfo(
+                `eval: ${suite.readPath} then runs these after commands in each case's ` +
+                  `workspace, as its case declares them: ${afterLines.join(' ; ')}`
+              );
+            }
             runCell = buildCommandRunCell(parsedSuite.target, parsedSuite, decoder, {
               recordToolCallArgs: runCellOptions.recordToolCallArgs,
               captureMaxBytes: resolveToolResultCaptureMaxBytes(baseConfig),

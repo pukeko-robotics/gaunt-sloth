@@ -819,6 +819,59 @@ export interface EvalCase {
    * that declares no workspace parses to exactly the shape it did before.
    */
   workspace?: CommandWorkspace;
+  /**
+   * BATCH-59 — what the case asserts about its workspace after the command ran: `file_contains`,
+   * `must_not_exist` and `after`. Set only on a `command` case that declares at least one of them,
+   * and only when the case has a {@link workspace}, so every other case keeps its exact shape.
+   */
+  workspaceChecks?: WorkspaceChecks;
+}
+
+/**
+ * BATCH-59 — one `file_contains` entry: a file, relative to the workspace, and the strings that
+ * must ALL appear in it.
+ */
+export interface WorkspaceFileContainsCheck {
+  /** The path as the suite wrote it: relative, forward slashes, no `..`. */
+  path: string;
+  /** Every one must be a substring of the file's text. Never empty, and no entry is `''`. */
+  substrings: string[];
+}
+
+/**
+ * BATCH-59 — one `must_not_exist` glob, compiled at parse time by `workspaceChecks.ts`. Nothing in
+ * the workspace may match it, whether a file, a directory or a symbolic link.
+ */
+export interface WorkspaceMustNotExistCheck {
+  /** The glob as the suite wrote it. */
+  pattern: string;
+  /** One matcher per `/`-separated segment; `'**'` matches zero or more whole segments. */
+  segments: Array<RegExp | '**'>;
+}
+
+/** BATCH-59 — what an `after` step's result is compared with. Exactly one per step. */
+export type WorkspaceAfterExpectation =
+  | { kind: 'equals'; value: string }
+  | { kind: 'contains'; value: string }
+  | { kind: 'exit_code'; code: number };
+
+/**
+ * BATCH-59 — one `after` step: a command run in the workspace once the case's command has finished,
+ * started exactly the way a {@link CommandWorkspaceSetupStep} is.
+ */
+export interface WorkspaceAfterStep {
+  /** The step as the suite wrote it, for display and reasons. */
+  run: string;
+  /** {@link run} split into argv at parse time; elements may hold `{{…}}` tokens. */
+  argv: string[];
+  expect: WorkspaceAfterExpectation;
+}
+
+/** BATCH-59 — a case's workspace assertions. Each list may be empty, but not all three. */
+export interface WorkspaceChecks {
+  fileContains: WorkspaceFileContainsCheck[];
+  mustNotExist: WorkspaceMustNotExistCheck[];
+  after: WorkspaceAfterStep[];
 }
 
 /** BATCH-58 — one `setup` step of a {@link CommandWorkspace}. */

@@ -57,7 +57,16 @@ defaults:
     template: fixtures/tiny-repo
     setup: ["git init -q", "git add -A"]
 cases:
-  - { id: edits, prompt: "fix it", must_contain: [ok] }
+  - id: edits
+    prompt: "fix it"
+    must_contain: [ok]
+    after:
+      - { run: "git status --porcelain", equals: "" }
+      - { run: "git diff --stat", equals: "" }
+  - id: also
+    prompt: "again"
+    after:
+      - { run: "git status --porcelain", equals: "" }
 `;
 
 describe('gth eval — command workspace wiring', () => {
@@ -126,6 +135,16 @@ describe('gth eval — command workspace wiring', () => {
       `eval: ${join('eval', 'suite.yaml')} first runs these setup commands in each case's ` +
         'workspace, as its workspace declares them: git init -q ; git add -A'
     );
+  });
+
+  it('prints the after commands before the run too, each once, and hands them to the runner', async () => {
+    await runEval();
+    expect(consoleUtilsMock.displayInfo).toHaveBeenCalledWith(
+      `eval: ${join('eval', 'suite.yaml')} then runs these after commands in each case's ` +
+        'workspace, as its case declares them: git status --porcelain ; git diff --stat'
+    );
+    const suite = runnerMock.buildCommandRunCell.mock.calls[0][1];
+    expect(suite.cases[0].workspaceChecks.after).toHaveLength(2);
   });
 
   it('passes --keep-workspaces to the runner, and only when given', async () => {

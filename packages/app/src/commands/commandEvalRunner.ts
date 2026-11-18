@@ -41,8 +41,11 @@
  * the directory gth was started in, with gth's own environment object, exactly as before. A case
  * with one gets, per run: a fresh directory (`commandWorkspace.ts`), its `setup` steps started in
  * order through the same spawn seam as the command (no shell, the case's timeout per step, the
- * same tree kill and exit hook), then the command, then the BATCH-59 inspection seam
- * ({@link CommandRunnerOptions.inspectWorkspace}), and the directory is removed last. A step that
+ * same tree kill and exit hook), then the command, then the case's BATCH-59 workspace assertions
+ * (`file_contains`, `must_not_exist`, then the `after` steps; see `gradeWorkspace` below), then the
+ * test seam {@link CommandRunnerOptions.inspectWorkspace}, and the directory is removed last. The
+ * assertions are built in rather than passed through that option, so no caller can build a runner
+ * that silently skips them. A step that
  * cannot start, exits non-zero or times out is a harness error naming the step, and the command
  * does not run: grading an agent in a half-built fixture would charge the fixture's failure to the
  * agent.
@@ -61,6 +64,8 @@ import type {
   RunCellFn,
   ToolCallRecord,
   ToolResultRecord,
+  WorkspaceAfterStep,
+  WorkspaceChecks,
 } from '@gaunt-sloth/batch';
 import type { DecodedTranscript, TranscriptDecoder } from '@gaunt-sloth/batch';
 import {
@@ -80,6 +85,7 @@ import {
   removeWorkspaceDir,
   resolveSuiteDir,
 } from '#src/commands/commandWorkspace.js';
+import { checkFileContains, checkMustNotExist } from '#src/commands/commandWorkspaceChecks.js';
 
 /** How long a SIGTERM'd tree gets before SIGKILL, matching the shell tool's ladder. */
 const KILL_GRACE_MS = 3_000;
@@ -324,10 +330,11 @@ export interface CommandRunnerOptions {
   /** Called when a workspace could not be removed; the case's result stands. */
   onWorkspaceRemoveFailed?: (caseId: string, dir: string, reason: string) => void;
   /**
-   * The seam BATCH-59's workspace assertions hang on: called after the case's command finished and
-   * its outcome was decoded, while the workspace still exists, and before it is removed. It returns
-   * the outcome to report, so an inspection can turn a run into a harness error or add to it.
-   * Not called for a case without a workspace, or when setup failed.
+   * A look at the workspace after the case's command finished, its outcome was decoded and the
+   * case's own workspace assertions were graded, while the workspace still exists and before it is
+   * removed. It returns the outcome to report, so an inspection can turn a run into a harness error
+   * or add to it. Not called for a case without a workspace, or when setup failed. Production
+   * passes none: the suite's assertions are graded by the runner itself.
    */
   inspectWorkspace?: (
     workspace: { caseId: string; dir: string },
@@ -402,6 +409,13 @@ export function buildCommandRunCell(
   const workspaces = new Map(
     suite.cases.flatMap((evalCase) =>
       evalCase.workspace !== undefined ? [[evalCase.id, evalCase.workspace] as const] : []
+    )
+  );
+  const checks = new Map(
+    suite.cases.flatMap((evalCase) =>
+      evalCase.workspaceChecks !== undefined
+        ? [[evalCase.id, evalCase.workspaceChecks] as const]
+        : []
     )
   );
 
@@ -501,7 +515,16 @@ export function buildCommandRunCell(
       const childEnv = buildWorkspaceEnv(spec, dir, baseEnv);
       const setupError = await runWorkspaceSetup(spec, dir, baseEnv, childEnv, timeoutMs);
       if (setupError !== undefined) return { ok: false, error: setupError };
-      const outcome = await runAndDecode(cell, timeoutMs, dir, childEnv);
+      const ran = await runAndDecode(cell, timeoutMs, dir, childEnv);
+      const outcome = await gradeWorkspace(
+        checks.get(cell.id),
+        spec,
+        dir,
+        baseEnv,
+        childEnv,
+        timeoutMs,
+        ran
+      );
       return options.inspectWorkspace
         ? await options.inspectWorkspace({ caseId: cell.id, dir }, outcome)
         : outcome;
@@ -560,4 +583,145 @@ export function buildCommandRunCell(
     }
     return undefined;
   }
+
+  /**
+   * BATCH-59 — grade the case's workspace assertions while the workspace still exists, and return
+   * the outcome to report.
+   *
+   * ## The order, and what each result becomes
+   *
+   * - **Nothing is graded on a run that failed.** An `ok: false` outcome (the command timed out,
+   *   exited non-zero, or printed no transcript) is already a harness error, and what it left on
+   *   disk is a half-finished run.
+   * - **`file_contains`, then `must_not_exist`, then the `after` steps, in order.** The file checks
+   *   go first because an `after` step can change the tree (a build, a formatter); they grade what
+   *   the AGENT left.
+   * - **A check that does not hold is an assertion failure:** its reason goes on
+   *   `workspaceFailures`, the outcome stays `ok: true`, and the eval runner adds it to the cell's
+   *   `reasons`, so the cell FAILs (exit 1).
+   * - **An `after` step that cannot start, or outlives the case's timeout, is a harness error**
+   *   (`ok: false`, exit 2), exactly as a `setup` step is: the check never ran, so there is no
+   *   result to grade, and reporting the case as failed would charge the harness's trouble to the
+   *   agent. Later steps are not run.
+   *
+   * Every step runs even when an earlier one did not match, so one run reports every check that
+   * did not hold.
+   */
+  async function gradeWorkspace(
+    caseChecks: WorkspaceChecks | undefined,
+    spec: CommandWorkspace,
+    dir: string,
+    baseEnv: NodeJS.ProcessEnv,
+    childEnv: NodeJS.ProcessEnv,
+    timeoutMs: number,
+    outcome: CellRunOutcome
+  ): Promise<CellRunOutcome> {
+    if (caseChecks === undefined || !outcome.ok) return outcome;
+    const failures = [
+      ...checkFileContains(dir, caseChecks.fileContains),
+      ...checkMustNotExist(dir, caseChecks.mustNotExist),
+    ];
+    for (const [index, step] of caseChecks.after.entries()) {
+      const result = await runAfterStep(step, index, caseChecks.after.length, spec, dir, {
+        baseEnv,
+        childEnv,
+        timeoutMs,
+      });
+      if (result.harnessError !== undefined) return { ok: false, error: result.harnessError };
+      if (result.failure !== undefined) failures.push(result.failure);
+    }
+    return failures.length > 0 ? { ...outcome, workspaceFailures: failures } : outcome;
+  }
+
+  /**
+   * BATCH-59 — run one `after` step and compare its result.
+   *
+   * It is started exactly as a `setup` step is: its parse-time argv with the tokens expanded per
+   * element, through the same spawn seam (no shell, the same tree kill and exit hook), with the
+   * workspace as its cwd, the workspace's `env`, no prompt, and the case's own timeout.
+   *
+   * ## A crashed check must never pass on its output
+   *
+   * Under `equals` or `contains`, a step that exits non-zero FAILS, naming the exit code and the
+   * tail of its stderr, and its stdout is not compared. `git status --porcelain` run outside a
+   * repository prints nothing to stdout and exits 128; compared on its output alone, that is
+   * exactly `equals: ""`, the "nothing changed" assertion, and it would pass on a workspace where
+   * git never looked. Only `exit_code` reads the exit code as the answer.
+   *
+   * stdout is compared trimmed, with Windows line endings read as `\n`, so a check written once
+   * reads the same output on every platform.
+   */
+  async function runAfterStep(
+    step: WorkspaceAfterStep,
+    index: number,
+    count: number,
+    spec: CommandWorkspace,
+    dir: string,
+    envs: { baseEnv: NodeJS.ProcessEnv; childEnv: NodeJS.ProcessEnv; timeoutMs: number }
+  ): Promise<{ harnessError?: string; failure?: string }> {
+    const name = `after step ${index + 1} of ${count} ("${step.run}")`;
+    let run: CommandRunResult;
+    try {
+      run = await spawnCommand({
+        argv: expandSetupArgv(step.argv, spec, dir, envs.baseEnv),
+        prompt: '',
+        promptDelivery: 'none',
+        timeoutMs: envs.timeoutMs,
+        cwd: dir,
+        env: envs.childEnv,
+      });
+    } catch (error) {
+      return {
+        harnessError: `${name} ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    const stderrTail = tail(run.stderr);
+    const withStderr = (reason: string): string =>
+      stderrTail ? `${reason}; stderr: ${stderrTail}` : reason;
+    if (run.timedOut) {
+      return {
+        harnessError: withStderr(
+          `${name} did not finish within the case's ${envs.timeoutMs}ms timeout and its process ` +
+            'tree was killed'
+        ),
+      };
+    }
+    const expectation = step.expect;
+    if (expectation.kind === 'exit_code') {
+      return run.exitCode === expectation.code
+        ? {}
+        : {
+            failure: withStderr(
+              `${name}: expected exit code ${expectation.code}, got ` +
+                (run.exitCode === null ? 'none (it was killed by a signal)' : `${run.exitCode}`)
+            ),
+          };
+    }
+    if (run.exitCode !== 0) {
+      return {
+        failure: withStderr(
+          `${name} exited with code ${run.exitCode === null ? 'none (killed by a signal)' : run.exitCode}, ` +
+            `so its output was not compared (${expectation.kind})`
+        ),
+      };
+    }
+    const stdout = run.stdout.replace(/\r\n/g, '\n').trim();
+    if (expectation.kind === 'equals') {
+      return stdout === expectation.value
+        ? {}
+        : {
+            failure: `${name}: expected stdout ${JSON.stringify(expectation.value)}, got ${JSON.stringify(clip(stdout))}`,
+          };
+    }
+    return stdout.includes(expectation.value)
+      ? {}
+      : {
+          failure: `${name}: stdout does not contain ${JSON.stringify(expectation.value)}; it was ${JSON.stringify(clip(stdout))}`,
+        };
+  }
+}
+
+/** At most {@link STDERR_TAIL_CHARS} characters of `text`, from its start, for a reason. */
+function clip(text: string): string {
+  return text.length > STDERR_TAIL_CHARS ? `${text.slice(0, STDERR_TAIL_CHARS)}…` : text;
 }

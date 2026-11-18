@@ -141,6 +141,15 @@ export interface CellRunOutcome {
   advertisedTools?: AdvertisedToolInventory;
   /** A human-readable failure reason, set when `ok` is `false`. */
   error?: string;
+  /**
+   * BATCH-59 — the case's workspace assertions that did not hold (`file_contains`,
+   * `must_not_exist`, `after`), one reason each, set only by the `command` runner and only on an
+   * `ok: true` outcome. The eval runner adds them to the cell's `reasons`, so they FAIL the cell
+   * (exit 1) exactly as an answer assertion does. They ride an `ok: true` outcome on purpose: an
+   * `ok: false` one is a harness error, eligible for exit 2, and is re-run under `--retry`, and a
+   * workspace the agent left wrong is the agent's result, not the harness's.
+   */
+  workspaceFailures?: string[];
 }
 
 /**

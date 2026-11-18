@@ -52,6 +52,11 @@ export type {
   ToolCallJsonPathCheck,
   ToolTrajectoryCheck,
   TurnRunOutcome,
+  WorkspaceAfterExpectation,
+  WorkspaceAfterStep,
+  WorkspaceChecks,
+  WorkspaceFileContainsCheck,
+  WorkspaceMustNotExistCheck,
 } from '#src/evalTypes.js';
 export type { RunEvalSuiteOptions } from '#src/evalRunner.js';
 export { DEFAULT_EVAL_PASS_THRESHOLD } from '#src/evalTypes.js';

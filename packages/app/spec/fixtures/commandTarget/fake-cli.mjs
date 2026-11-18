@@ -26,6 +26,13 @@
 //   fake-cli.mjs write <file> <content>            write <content> to <file> (a setup step)
 //   fake-cli.mjs argv-dump <file> [args...]        write its arguments and GTH_B58_SETUP_MARK to
 //                                                  <file> as JSON (a setup step)
+//
+// BATCH-59 `after`-step modes. They print plain text, not a transcript, and take no prompt.
+//   fake-cli.mjs print <text> [code]               print <text> to stdout and "fake-cli: stderr
+//                                                  tail" to stderr, exit <code> (default 0)
+//   fake-cli.mjs print-file <file>                 print <file>'s content (relative to the cwd);
+//                                                  exit 66 when it cannot be read
+//   fake-cli.mjs print-env <name>                  print the variable's value, or nothing; exit 0
 import { spawn, spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
@@ -94,6 +101,19 @@ if (mode === 'edit-shared') {
   // variable, written to <file> (relative paths land in the step's cwd).
   const [file, ...args] = rest;
   writeFileSync(file, JSON.stringify({ args, mark: process.env.GTH_B58_SETUP_MARK ?? null }));
+} else if (mode === 'print') {
+  process.stdout.write(rest[0] ?? '');
+  process.stderr.write('fake-cli: stderr tail\n');
+  process.exitCode = Number(rest[1] ?? 0);
+} else if (mode === 'print-file') {
+  try {
+    process.stdout.write(readFileSync(rest[0], 'utf8'));
+  } catch (error) {
+    process.stderr.write(`fake-cli: cannot read ${rest[0]}: ${error.message}\n`);
+    process.exitCode = 66;
+  }
+} else if (mode === 'print-env') {
+  process.stdout.write(process.env[rest[0]] ?? '');
 } else if (mode === 'replay') {
   replay(rest[0]);
 } else if (mode === 'exit') {

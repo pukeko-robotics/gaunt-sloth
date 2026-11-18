@@ -832,6 +832,10 @@ async function gradeUnit(
     classification
   );
   reasons.push(...gradeModelFree(evalCase, classification));
+  // BATCH-59 — the workspace assertions were graded by the `command` runner while the workspace
+  // still existed (it is removed before this runs); their failures join the same `reasons`, so they
+  // drive the same PASS/FAIL/exit contract as every other assertion.
+  reasons.push(...(cellResult.workspaceFailures ?? []));
 
   // A cell PASSES iff nothing was recorded against it: every applicable block's deterministic
   // checks, tool-trace checks, and judge all passed (a passing judge appends no reason). For a

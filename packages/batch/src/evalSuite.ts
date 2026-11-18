@@ -25,8 +25,14 @@ import {
   FORCED_BY_ASSERTIONS,
   FORCED_BY_MECHANISMS,
 } from '#src/evalTypes.js';
+import { compileWorkspaceGlob, findWorkspacePathProblem } from '#src/workspaceChecks.js';
 import type {
   CommandWorkspace,
+  WorkspaceAfterExpectation,
+  WorkspaceAfterStep,
+  WorkspaceChecks,
+  WorkspaceFileContainsCheck,
+  WorkspaceMustNotExistCheck,
   EvalCase,
   EvalExpectation,
   EvalSuite,
@@ -242,6 +248,17 @@ const RawWorkspaceSchema = suiteObject({
   env: z.record(z.string(), z.string()).optional(),
 });
 
+/**
+ * BATCH-59 — one `after` step as authored. `equals`/`contains`/`exit_code` are all optional here;
+ * exactly one is required, enforced in code so the message can say which step.
+ */
+const RawAfterStepSchema = suiteObject({
+  run: z.string(),
+  equals: z.string().optional(),
+  contains: z.string().optional(),
+  exit_code: z.number().int('after exit_code must be an integer').optional(),
+});
+
 const RawCaseSchema = RawAssertionsSchema.extend({
   id: z
     .string()
@@ -281,6 +298,12 @@ const RawCaseSchema = RawAssertionsSchema.extend({
   // BATCH-58: this case's workspace, REPLACING `defaults.workspace` wholesale; `false` opts out of
   // the default. `command` target only.
   workspace: z.union([RawWorkspaceSchema, z.literal(false)]).optional(),
+  // BATCH-59: what the case asserts about its workspace after the command ran. `command` target and
+  // a workspace only. CASE-level keys, deliberately not in `RawAssertionsSchema`: see
+  // `buildWorkspaceChecks` for why they are not part of an `expect:` block.
+  file_contains: z.record(z.string(), z.union([z.string(), z.array(z.string())])).optional(),
+  must_not_exist: z.array(z.string()).optional(),
+  after: z.array(RawAfterStepSchema).optional(),
   // BATCH-34: accepted at case level ONLY so a misplaced one is an error instead of a silence.
   // Negotiation context is per-round and belongs on a `turns:` entry — see the guard in the parse.
   justification: z.string().optional(),
@@ -457,6 +480,11 @@ const FLAT_ASSERTION_KEYS = [
   'judge',
 ] as const;
 
+/** BATCH-59 — the case-level workspace assertion keys. Not in {@link FLAT_ASSERTION_KEYS}: they are
+ * not sugar for an expectation block, so the flat-vs-`expect:` exclusivity does not apply to them
+ * (see `buildWorkspaceChecks`). */
+const WORKSPACE_CHECK_KEYS = ['file_contains', 'must_not_exist', 'after'] as const;
+
 /** A plain profile-name pattern — same as a case id: alphanumerics, dashes, underscores, dots. This
  * both blocks path traversal (`..`, separators) and keeps identity names safe as output-filename
  * components (`<id>__<identity>.json`). */
@@ -488,6 +516,10 @@ type RawAssertions = z.infer<typeof RawAssertionsSchema>;
  *   `setup` line that does not split into argv; an unknown `{{…}}` token, or a `{{`/`}}` that is
  *   not part of a complete token, in a `setup` argument or an `env` value; a `{{…}}` token in
  *   `target.run`, where tokens never expand.
+ * - `file_contains` / `must_not_exist` / `after` (BATCH-59) on any target but `command`, or on a
+ *   case with no workspace; an empty one; a path or glob that is absolute, has a `..` segment, a
+ *   drive letter or a backslash; unsupported glob syntax; an `after` step without exactly one of
+ *   `equals`/`contains`/`exit_code`. See `buildWorkspaceChecks`.
  * - `target.profile` set to anything other than `"default"`/absent — a single suite-wide profile
  *   switch is the `--identities` direction, replaced by the suite-level `identities` list.
  * - A `"adk-agent"` (BATCH-14) target missing its `url`; an `adk-agent` suite that ALSO uses the
@@ -743,11 +775,18 @@ export function parseEvalSuite(
       ...data.cases.flatMap((rawCase) => [
         ...(rawCase.timeout_ms !== undefined ? [`case "${rawCase.id}" timeout_ms`] : []),
         ...(rawCase.workspace !== undefined ? [`case "${rawCase.id}" workspace`] : []),
+        // BATCH-59 — the workspace assertions need a workspace, so they are refused wherever one
+        // is, and for the same reason.
+        ...WORKSPACE_CHECK_KEYS.filter((key) => rawCase[key] !== undefined).map(
+          (key) => `case "${rawCase.id}" ${key}`
+        ),
       ]),
     ];
     if (stray.length > 0 || strayCaseKeys.length > 0) {
       const named = [...stray.map((key) => `target.${key}`), ...strayCaseKeys];
-      const workspaceWhy = named.some((key) => key.endsWith('workspace'))
+      const workspaceWhy = named.some(
+        (key) => key.endsWith('workspace') || WORKSPACE_CHECK_KEYS.some((k) => key.endsWith(k))
+      )
         ? ' A workspace needs a process of its own to run in; the in-process agent shares one ' +
           'working directory with every case running beside it.'
         : '';
@@ -971,6 +1010,24 @@ export function parseEvalSuite(
       );
     }
 
+    // BATCH-59 — the workspace assertions, validated before the turns are built because they count
+    // as the case's checks for the no-silent-pass guard in `buildExpectation`. The target and
+    // `turns:` were refused above, so here the target is `command` and the case is single-turn.
+    const caseWorkspace = resolveCaseWorkspace(
+      rawCase,
+      defaultWorkspace,
+      suiteDir,
+      templateChecks,
+      suffix
+    );
+    const workspaceChecks = buildWorkspaceChecks(
+      rawCase,
+      `case "${rawCase.id}" (index ${index})`,
+      caseWorkspace.workspace !== undefined,
+      rawCase.workspace === false,
+      suffix
+    );
+
     let turns: EvalTurn[];
     if (rawCase.turns !== undefined) {
       // Multi-turn: assertions live on each turn, so case-level assertions/`expect:` are rejected
@@ -1068,6 +1125,7 @@ export function parseEvalSuite(
             identities,
             classification,
             targetType: target.type,
+            caseHasWorkspaceChecks: workspaceChecks !== undefined,
           }),
         },
       ];
@@ -1150,7 +1208,8 @@ export function parseEvalSuite(
               rawCase.timeout_ms ?? data.defaults?.timeout_ms ?? COMMAND_TARGET_DEFAULT_TIMEOUT_MS,
           }
         : {}),
-      ...resolveCaseWorkspace(rawCase, defaultWorkspace, suiteDir, templateChecks, suffix),
+      ...caseWorkspace,
+      ...(workspaceChecks !== undefined ? { workspaceChecks } : {}),
     };
   });
 
@@ -1434,6 +1493,181 @@ function resolveCaseWorkspace(
 }
 
 /**
+ * BATCH-58 — refuse a bad `{{…}}` token in one unit that tokens expand in.
+ *
+ * An unknown COMPLETE token is refused wherever tokens expand.
+ *
+ * A stray `{{` or `}}` is refused only in an argv element (`inArgv`: a `setup` or BATCH-59 `after`
+ * argument). There it almost always means a token with spaces that the argv split cut apart, which
+ * would reach the step as three literal arguments, so the message points at quoting. An `env` value
+ * is never split, so that failure cannot happen in one, and refusing its braces would reject
+ * ordinary compact JSON such as `{"a":{"b":1}}`; a stray brace there passes through literally.
+ */
+function checkWorkspaceTokens(
+  text: string,
+  field: string,
+  inArgv: boolean,
+  fail: (message: string) => never
+): void {
+  const unknown = findUnknownWorkspaceToken(text);
+  if (unknown !== undefined) {
+    fail(
+      `${field} uses the unknown token ${unknown} — the tokens are ` +
+        `${WORKSPACE_TEMPLATE_TOKENS.join(', ')}.`
+    );
+  }
+  if (!inArgv) return;
+  const stray = findStrayTokenBrace(text);
+  if (stray !== undefined) {
+    fail(
+      `${field} has the argument "${text}", where "${stray}" is not part of a complete ` +
+        'token. A command line is split on spaces before tokens expand, so a token with ' +
+        'spaces inside the braces must be quoted, as in "{{ workspace }}", or written ' +
+        'without the spaces.'
+    );
+  }
+}
+
+/**
+ * BATCH-59 — validate and normalize a case's workspace assertions, or `undefined` when it declares
+ * none. `where` names the case; `hasWorkspace` is whether it has an effective workspace (its own or
+ * the suite default), and `optedOut` whether it said `workspace: false`.
+ *
+ * ## Where these keys live, and why not in `expect:`
+ *
+ * They are flat CASE keys only, like `workspace` and `timeout_ms`, and are not part of the
+ * assertion bundle, so an `expect:` block or a `turns:` entry carrying one is an unknown key. An
+ * `expect:` block exists to scope assertions per identity, and a `command` suite has no identities:
+ * the block would scope nothing. The workspace also belongs to the case, not to one block. So the
+ * BATCH-10 flat-vs-`expect:` exclusivity, which stops two descriptions of the SAME block, does not
+ * apply: a case may carry `expect:` blocks and these keys together, and both are graded.
+ *
+ * ## Rejected here, each because it would otherwise pass without checking anything
+ *
+ * - **Without a workspace.** The case would run where gth was started, and a `file_contains` there
+ *   reads the user's own project, which says nothing about the agent's run (and an `after` step
+ *   would run in it). `workspace: false` is named in the message, since it is the usual cause.
+ * - **An empty map or list,** and an empty list of strings for one `file_contains` file. The key
+ *   would be declared, count as the case's check, and assert nothing.
+ * - **A `file_contains` string that is `""`, or an `after` `contains: ""`.** Every text contains
+ *   the empty string.
+ * - **An `after` `equals` with whitespace at either end.** stdout is trimmed before it is compared,
+ *   so the step could never pass.
+ * - **An `after` step with none, or more than one, of `equals`/`contains`/`exit_code`.** None
+ *   would assert nothing; two would leave the reader guessing which one decides. Presence is
+ *   `!== undefined`, because `equals: ""` (nothing changed) and `exit_code: 0` are the two most
+ *   useful values and both are falsy.
+ * - **A path or glob that could leave the workspace** (`workspaceChecks.ts`), and glob syntax
+ *   this dialect does not support.
+ * - **An `after` line that does not split, or a bad token in it,** exactly as for `setup`.
+ */
+function buildWorkspaceChecks(
+  rawCase: z.infer<typeof RawCaseSchema>,
+  where: string,
+  hasWorkspace: boolean,
+  optedOut: boolean,
+  suffix: string
+): WorkspaceChecks | undefined {
+  const declared = WORKSPACE_CHECK_KEYS.filter((key) => rawCase[key] !== undefined);
+  if (declared.length === 0) return undefined;
+  const fail = (message: string): never => {
+    throw new Error(`Invalid eval suite${suffix}: ${where}: ${message}`);
+  };
+  if (!hasWorkspace) {
+    fail(
+      `${declared.join(', ')} ${declared.length === 1 ? 'needs' : 'need'} a workspace, and this ` +
+        `case has none${optedOut ? ' (it sets `workspace: false`)' : ''}. These assertions read the ` +
+        "case's own fresh directory after the command ran; without one they would read, or run " +
+        'in, the directory gth was started in. Give the case a `workspace`, or set ' +
+        '`defaults.workspace`.'
+    );
+  }
+
+  const fileContains: WorkspaceFileContainsCheck[] = [];
+  if (rawCase.file_contains !== undefined) {
+    const entries = Object.entries(rawCase.file_contains);
+    if (entries.length === 0) fail('file_contains is empty — name at least one file.');
+    for (const [path, value] of entries) {
+      const problem = findWorkspacePathProblem(path);
+      if (problem !== undefined) {
+        fail(`file_contains path "${path}" ${problem}. Paths are relative to the workspace.`);
+      }
+      const substrings = typeof value === 'string' ? [value] : value;
+      if (substrings.length === 0) {
+        fail(`file_contains "${path}" lists no strings — name at least one.`);
+      }
+      if (substrings.some((text) => text.length === 0)) {
+        fail(`file_contains "${path}" has an empty string, which every file contains.`);
+      }
+      fileContains.push({ path, substrings: [...substrings] });
+    }
+  }
+
+  const mustNotExist: WorkspaceMustNotExistCheck[] = [];
+  if (rawCase.must_not_exist !== undefined) {
+    if (rawCase.must_not_exist.length === 0) {
+      fail('must_not_exist is empty — name at least one glob.');
+    }
+    for (const pattern of rawCase.must_not_exist) {
+      let segments: Array<RegExp | '**'>;
+      try {
+        segments = compileWorkspaceGlob(pattern);
+      } catch (error) {
+        return fail(
+          `must_not_exist glob "${pattern}" ${error instanceof Error ? error.message : String(error)}. ` +
+            'Globs are relative to the workspace.'
+        );
+      }
+      mustNotExist.push({ pattern, segments });
+    }
+  }
+
+  const after: WorkspaceAfterStep[] = [];
+  if (rawCase.after !== undefined) {
+    if (rawCase.after.length === 0) fail('after is empty — list at least one step.');
+    for (const [index, step] of rawCase.after.entries()) {
+      const field = `after[${index}] ("${step.run}")`;
+      let argv: string[];
+      try {
+        argv = splitCommandLine(step.run);
+      } catch (error) {
+        return fail(`${field}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      for (const arg of argv) checkWorkspaceTokens(arg, field, true, fail);
+      const given = (['equals', 'contains', 'exit_code'] as const).filter(
+        (key) => step[key] !== undefined
+      );
+      if (given.length !== 1) {
+        fail(
+          `${field} must set exactly one of equals, contains or exit_code` +
+            (given.length === 0 ? ', or it asserts nothing.' : `; it sets ${given.join(' and ')}.`)
+        );
+      }
+      let expect: WorkspaceAfterExpectation;
+      if (step.equals !== undefined) {
+        if (step.equals !== step.equals.trim()) {
+          fail(
+            `${field} equals a value with whitespace at its start or end. The step's stdout is ` +
+              'trimmed before it is compared, so it could never be equal.'
+          );
+        }
+        expect = { kind: 'equals', value: step.equals };
+      } else if (step.contains !== undefined) {
+        if (step.contains.length === 0) {
+          fail(`${field} contains "", which every output contains.`);
+        }
+        expect = { kind: 'contains', value: step.contains };
+      } else {
+        expect = { kind: 'exit_code', code: step.exit_code! };
+      }
+      after.push({ run: step.run, argv, expect });
+    }
+  }
+
+  return { fileContains, mustNotExist, after };
+}
+
+/**
  * BATCH-58 — validate and normalize one authored `workspace` block.
  *
  * - **`template` must exist, as a directory, at parse time.** It resolves against the suite's
@@ -1458,32 +1692,8 @@ function buildCommandWorkspace(
   const fail = (message: string): never => {
     throw new Error(`Invalid eval suite${suffix}: ${where}: ${message}`);
   };
-  // An unknown COMPLETE token is refused wherever tokens expand.
-  //
-  // A stray `{{` or `}}` is refused only in a `setup` argument (`inSetup`). There it almost always
-  // means a token with spaces that the argv split cut apart, which would reach the step as three
-  // literal arguments, so the message points at quoting. An `env` value is never split, so that
-  // failure cannot happen in one, and refusing its braces would reject ordinary compact JSON such
-  // as `{"a":{"b":1}}`; a stray brace there passes through literally.
-  const checkTokens = (text: string, field: string, inSetup: boolean): void => {
-    const unknown = findUnknownWorkspaceToken(text);
-    if (unknown !== undefined) {
-      fail(
-        `${field} uses the unknown token ${unknown} — the tokens are ` +
-          `${WORKSPACE_TEMPLATE_TOKENS.join(', ')}.`
-      );
-    }
-    if (!inSetup) return;
-    const stray = findStrayTokenBrace(text);
-    if (stray !== undefined) {
-      fail(
-        `${field} has the argument "${text}", where "${stray}" is not part of a complete ` +
-          'token. A setup line is split on spaces before tokens expand, so a token with ' +
-          'spaces inside the braces must be quoted, as in "{{ workspace }}", or written ' +
-          'without the spaces.'
-      );
-    }
-  };
+  const checkTokens = (text: string, field: string, inSetup: boolean): void =>
+    checkWorkspaceTokens(text, field, inSetup, fail);
 
   let template: string | undefined;
   if (raw.template !== undefined) {
@@ -1969,6 +2179,11 @@ interface TurnContext {
   classification: EvalClassificationSpec | undefined;
   /** BATCH-25 Half B — the suite's target type, for `forced_by` (a `rater`-only assertion). */
   targetType: EvalTarget['type'];
+  /**
+   * BATCH-59 — the case declares workspace assertions, so its FLAT block may hold no answer checks
+   * of its own. Never set for a `turns:` entry (a `command` case is single-turn).
+   */
+  caseHasWorkspaceChecks?: boolean;
 }
 
 /**
@@ -2029,6 +2244,7 @@ function buildTurnExpectations(raw: RawTurnAssertions, ctx: TurnContext): EvalEx
         declaredIdentities: ctx.declaredIdentities,
         classification: ctx.classification,
         targetType: ctx.targetType,
+        caseHasWorkspaceChecks: ctx.caseHasWorkspaceChecks,
       }),
     ];
   }
@@ -2070,6 +2286,8 @@ interface ExpectationContext {
   classification: EvalClassificationSpec | undefined;
   /** BATCH-25 Half B — the suite's target type, for `forced_by` (a `rater`-only assertion). */
   targetType: EvalTarget['type'];
+  /** BATCH-59 — see {@link TurnContext.caseHasWorkspaceChecks}; set only for the flat block. */
+  caseHasWorkspaceChecks?: boolean;
 }
 
 /**
@@ -2402,7 +2620,12 @@ function buildExpectation(
   const judgeRubric = raw.judge?.trim();
   const hasJudge = !!judgeRubric;
 
-  if (!hasChecks && !hasJudge) {
+  // BATCH-59 — a case whose only assertions are about its workspace is graded, by those: the
+  // `command` runner checks them and the eval runner adds their failures to the cell's reasons. So
+  // its flat block may be empty. Only the flat block: an `expect:` block that asserts nothing is
+  // still an error, because the workspace checks would not make THAT block mean anything.
+  const gradedByWorkspace = ctx.blockIndex === undefined && ctx.caseHasWorkspaceChecks === true;
+  if (!hasChecks && !hasJudge && !gradedByWorkspace) {
     throw new Error(
       `Invalid eval suite${ctx.suffix}: ${where} has no checks and no judge rubric — it must ` +
         'declare at least one of must_contain / must_not_contain / should_contain_any / must_call ' +
@@ -2410,7 +2633,8 @@ function buildExpectation(
         'tool_result_json_path / tool_call_json_path / tool_trajectory / expect_label / ' +
         'expect_action / ' +
         'expect_rated / forced_by, or a ' +
-        'judge rubric.'
+        'judge rubric (or, on a "command" case with a workspace, file_contains / must_not_exist / ' +
+        'after).'
     );
   }
 
