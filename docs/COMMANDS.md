@@ -752,7 +752,7 @@ gth eval eval/claude-skills.yaml
 | `target.run` | yes | The command line to start for each case. |
 | `target.transcript` | yes | How to read the command's output: `claude-stream-json`, or a path to a decoder module (below). |
 | `target.prompt` | no | How the prompt reaches the command: `arg` (the default) appends it as one final argument; `stdin` writes it to the command's standard input. With `arg`, end `run` with an option that takes no value: after an option that takes a list, such as Claude Code's `--allowedTools`, the prompt would be read as one more list item. A prompt that begins with `-`, such as `--help`, is read by the agent as an option; use `stdin` for such prompts. |
-| `defaults.timeout_ms` | no | How long a case may run, in milliseconds. The built-in default is `600000` (ten minutes). |
+| `defaults.timeout_ms` | no | How long the case's command may run, in milliseconds. Each [workspace](#workspaces) `setup` step gets the same limit of its own. The built-in default is `600000` (ten minutes). |
 | `timeout_ms` (on a case) | no | Overrides `defaults.timeout_ms` for that case. |
 
 **`run` is not given to a shell.** It is split into arguments on whitespace, single and double quotes group words, and a backslash is an ordinary character, so a Windows path needs no escaping. Nothing is expanded: an unquoted `$`, backtick, `|`, `&`, `;`, `<`, `>`, `(` or `)` is refused when the suite loads, because a shell would treat it specially and this does not. Quote it to pass it literally, or put the shell logic in a script and run the script. Everything else is passed as written, with no shell to interpret it: `#` does not start a comment, `~` is not your home directory, `*`, `?` and `{a,b}` are not expanded, and a backslash does not escape the next character. The prompt is never inserted into `run` and never passes through a shell, so quotes, `$(...)` and backticks in a prompt reach the agent exactly as written. On Windows, name the program itself, such as `node path/to/cli.js`, rather than an npm `.cmd` shim, which cannot be started without a shell.
@@ -825,7 +825,7 @@ cases:
 gth eval eval/claude-fixes.yaml -j 2
 ```
 
-Before each case, `gth eval` copies `template` into a new directory under the system temp directory, runs each `setup` step there in order, then starts `run` there with `env` set over the environment `gth eval` was started with. The directory is removed when the case ends, or when `gth eval` is stopped with Ctrl+C. `--keep-workspaces` keeps each one and prints its path, for looking at what the agent left behind. Edits made in the workspace do not reach the template.
+Before each case, `gth eval` copies `template` into a new directory under the system temp directory, runs each `setup` step there in order, then starts `run` there with `env` set over the environment `gth eval` was started with. The directory is removed when the case ends, or when `gth eval` is stopped with Ctrl+C. `--keep-workspaces` keeps each one and prints its path as the case starts, for looking at what the agent left behind. The agent works on the copy; symbolic links are copied as links, so one with an absolute target still points where it did.
 
 | Key | Meaning |
 |-----|---------|
@@ -835,7 +835,7 @@ Before each case, `gth eval` copies `template` into a new directory under the sy
 
 Put the block under `defaults` for every case, or on one case. **A case's `workspace` replaces the default as a whole:** nothing is merged, so a case that sets only `setup` gets no `template` and no `env` from the default. `workspace: false` on a case runs that case without one. `workspace` is rejected on every target other than `command`, because the in-process agent shares one working directory with every case running beside it.
 
-`setup` steps follow the same rule as `run`: each is split into arguments and started without a shell. A step that needs a pipe or `&&` is two steps, or a script kept in the template and run as a step. A step that cannot start, exits non-zero or runs past the case's `timeout_ms` (each step gets the whole budget) fails the case as a harness error naming the step, and the case's command does not start.
+`setup` steps follow the same rule as `run`: each is split into arguments and started without a shell. A step that needs a pipe or `&&` is two steps, or a script kept in the template and run as a step. A step that cannot start, exits non-zero or runs past the case's `timeout_ms` (each step gets the whole limit, as the command does) fails the case as a harness error naming the step, and the case's command does not start.
 
 `env` values and `setup` arguments can use these tokens. A token is expanded inside the one argument it was written in, so a value with spaces never becomes two arguments. Any other `{{...}}` is rejected when the suite loads.
 

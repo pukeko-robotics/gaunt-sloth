@@ -17,13 +17,17 @@ import { parseEvalSuite } from '@gaunt-sloth/batch/evalSuite.js';
 import { classifyEvalExit, runEvalSuite } from '@gaunt-sloth/batch/evalRunner.js';
 import { decodeClaudeStreamJson } from '@gaunt-sloth/batch/transcripts/claudeStreamJson.js';
 import type { CommandTarget, EvalSuite } from '@gaunt-sloth/batch';
-import { getCurrentWorkDir } from '@gaunt-sloth/core/utils/systemUtils.js';
+import {
+  getCurrentWorkDir,
+  peekProjectDir,
+  setProjectDir,
+} from '@gaunt-sloth/core/utils/systemUtils.js';
 import {
   buildCommandRunCell,
   killLiveCommandChildren,
   type CommandSpawnRequest,
 } from '#src/commands/commandEvalRunner.js';
-import { mergeWorkspaceEnv, readEnvVar } from '#src/commands/commandWorkspace.js';
+import { mergeWorkspaceEnv, readEnvVar, resolveSuiteDir } from '#src/commands/commandWorkspace.js';
 
 // BATCH-58 — a `command` case's workspace end to end: the REAL parser (with a real suite directory
 // and template), the REAL runner spawning the fake CLI, and runEvalSuite. Paths are compared with
@@ -152,7 +156,7 @@ cases:
     expect(existsSync(workspace)).toBe(false);
   });
 
-  it('keeps the workspace with keepWorkspaces, and reports its path', async () => {
+  it('keeps the workspace with keepWorkspaces, and reports its path before the command runs', async () => {
     const dir = suiteDir('keep');
     const suite = commandSuite(
       dir,
@@ -163,12 +167,22 @@ cases:
 `
     );
     const kept: Array<[string, string]> = [];
+    const events: string[] = [];
     const runCell = buildCommandRunCell(targetOf(suite), suite, decodeClaudeStreamJson, {
       keepWorkspaces: true,
-      onWorkspaceKept: (caseId, keptDir) => kept.push([caseId, keptDir]),
+      onWorkspaceKept: (caseId, keptDir) => {
+        kept.push([caseId, keptDir]);
+        events.push('kept');
+      },
+      inspectWorkspace: (_workspace, outcome) => {
+        events.push('ran');
+        return outcome;
+      },
     });
     const summary = await runEvalSuite(suite, { runCell });
     try {
+      // Reported as the case starts, so an interrupted case's path is still printed.
+      expect(events).toEqual(['kept', 'ran']);
       expect(kept).toHaveLength(1);
       expect(kept[0][0]).toBe('kept');
       expect(resolve(kept[0][1])).toBe(resolve(summary.cases[0].answer!));
@@ -439,5 +453,18 @@ describe('workspace env helpers', () => {
     });
     expect(readEnvVar(base, 'PATH', 'win32')).toBe('inherited');
     expect(readEnvVar(base, 'PATH', 'linux')).toBeUndefined();
+  });
+});
+
+describe('resolveSuiteDir', () => {
+  it('resolves against the project directory, not the process cwd', () => {
+    const project = join(scratch, 'project-root');
+    const previous = peekProjectDir();
+    setProjectDir(project);
+    try {
+      expect(resolveSuiteDir(join('eval', 'suite.yaml'))).toBe(resolve(project, 'eval'));
+    } finally {
+      setProjectDir(previous);
+    }
   });
 });

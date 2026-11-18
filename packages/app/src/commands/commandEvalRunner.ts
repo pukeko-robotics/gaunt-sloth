@@ -319,7 +319,7 @@ export interface CommandRunnerOptions {
    * clean-up) and report its path through {@link onWorkspaceKept}.
    */
   keepWorkspaces?: boolean;
-  /** Called with each kept workspace's case id and path. */
+  /** Called with each kept workspace's case id and path, as soon as the directory exists. */
   onWorkspaceKept?: (caseId: string, dir: string) => void;
   /** Called when a workspace could not be removed; the case's result stands. */
   onWorkspaceRemoveFailed?: (caseId: string, dir: string, reason: string) => void;
@@ -489,7 +489,11 @@ export function buildCommandRunCell(
       };
     }
     const keep = options.keepWorkspaces === true;
-    if (!keep) {
+    if (keep) {
+      // Reported as the case starts, not when it ends: a case that hangs and is interrupted never
+      // reaches `finally`, and that is the run whose workspace is most worth looking at.
+      options.onWorkspaceKept?.(cell.id, dir);
+    } else {
       liveWorkspaces.add(dir);
       installExitHook();
     }
@@ -502,9 +506,7 @@ export function buildCommandRunCell(
         ? await options.inspectWorkspace({ caseId: cell.id, dir }, outcome)
         : outcome;
     } finally {
-      if (keep) {
-        options.onWorkspaceKept?.(cell.id, dir);
-      } else {
+      if (!keep) {
         liveWorkspaces.delete(dir);
         try {
           removeWorkspaceDir(dir);
