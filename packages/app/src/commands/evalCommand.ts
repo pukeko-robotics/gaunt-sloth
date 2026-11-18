@@ -16,6 +16,7 @@ import {
   buildProductionRunConversation,
 } from '#src/commands/batchCommand.js';
 import { parseIntOption } from '#src/commands/cliOptionParsers.js';
+import { resolveSuiteDir } from '#src/commands/commandWorkspace.js';
 import {
   display,
   displayError,
@@ -53,6 +54,9 @@ import type {
 interface EvalCommandOptions {
   /** `-j/--concurrency <n>` — max in-flight cases. */
   concurrency?: number;
+  /** BATCH-58 `--keep-workspaces` — leave each `command` case's workspace on disk and print its
+   * path, instead of removing it after the case. */
+  keepWorkspaces?: boolean;
   /** `-o/--output <dir>` — where structured per-case + summary output is written. */
   output?: string;
   /** `--judge <profile>` — identity profile whose model judges the cases (BATCH-10 Task 2).
@@ -601,6 +605,11 @@ export function evalCommand(
       parseIntOption
     )
     .option(
+      '--keep-workspaces',
+      "Keep each command-target case's workspace directory after the case instead of removing " +
+        'it, and print its path (for debugging a fixture or a setup step)'
+    )
+    .option(
       '-o, --output <dir>',
       'Directory to write structured per-case JSON + results.json summary to ' +
         '(default: a timestamped dir alongside other gth reports)'
@@ -885,9 +894,31 @@ export function evalCommand(
                 `(prompt by ${parsedSuite.target.prompt === 'arg' ? 'argument' : 'stdin'}): ` +
                 parsedSuite.target.run
             );
+            // BATCH-58 — the same ruling covers each workspace's `setup` steps: they run before
+            // the command, so they are printed with it.
+            const setupLines = [
+              ...new Set(
+                parsedSuite.cases.flatMap(
+                  (evalCase) => evalCase.workspace?.setup.map((step) => step.run) ?? []
+                )
+              ),
+            ];
+            if (setupLines.length > 0) {
+              displayInfo(
+                `eval: ${suite.readPath} first runs these setup commands in each case's ` +
+                  `workspace, as its workspace declares them: ${setupLines.join(' ; ')}`
+              );
+            }
             runCell = buildCommandRunCell(parsedSuite.target, parsedSuite, decoder, {
               recordToolCallArgs: runCellOptions.recordToolCallArgs,
               captureMaxBytes: resolveToolResultCaptureMaxBytes(baseConfig),
+              keepWorkspaces: options.keepWorkspaces === true,
+              onWorkspaceKept: (caseId, dir) =>
+                displayInfo(`eval: kept the workspace of case "${caseId}": ${dir}`),
+              onWorkspaceRemoveFailed: (caseId, dir, reason) =>
+                displayWarning(
+                  `eval: could not remove the workspace of case "${caseId}" (${dir}): ${reason}`
+                ),
             });
           } else if (parsedSuite.target.type === 'rater') {
             // BATCH-25 Half B: grade gth's OWN approvals rater. Nothing is run through an agent —
@@ -1050,9 +1081,12 @@ export function evalCommand(
           try {
             // Parse ONCE per suite, here, so the sweep expansion, the blind export and the relabel
             // diff all read the same parsed suite the run does.
+            // BATCH-58 — the suite's directory goes in so a workspace `template` is checked to
+            // exist at parse time, against the same directory a custom decoder resolves against.
             const parsedSuite = parseEvalSuite(
               readFileFromProjectDir(suite.readPath),
-              suite.readPath
+              suite.readPath,
+              { suiteDir: resolveSuiteDir(suite.readPath) }
             );
 
             // BATCH-25 — the two operations that do NOT run the suite. They short-circuit before any

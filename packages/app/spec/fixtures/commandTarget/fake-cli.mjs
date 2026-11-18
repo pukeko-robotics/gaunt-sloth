@@ -11,8 +11,22 @@
 //   fake-cli.mjs record <outfile> <transcript> [prompt]
 //                                                  write the prompt it received (the trailing
 //                                                  argument, else stdin) to <outfile>, then replay
-import { spawn } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+//
+// BATCH-58 workspace modes. Each answers with a one-line `result` transcript; the trailing argument
+// is the case's prompt.
+//   fake-cli.mjs edit-shared <barrierdir> <file> <prompt>
+//                                                  append the prompt as a line to <file> in the cwd,
+//                                                  meeting the other case at a barrier before and
+//                                                  after, then answer with the file's content
+//   fake-cli.mjs call-stub <name> <prompt>         run the first <name>.mjs on PATH with node,
+//                                                  passing the prompt, and answer with its stdout
+//   fake-cli.mjs cwd <prompt>                      answer with the working directory
+//   fake-cli.mjs cat <file> <prompt>               answer with <file>'s content
+//   fake-cli.mjs env-var <name> <prompt>           answer with the variable's value
+//   fake-cli.mjs write <file> <content>            write <content> to <file> (a setup step)
+import { spawn, spawnSync } from 'node:child_process';
+import { appendFileSync, existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { delimiter, join } from 'node:path';
 
 const [mode, ...rest] = process.argv.slice(2);
 
@@ -28,7 +42,50 @@ function readStdin() {
   });
 }
 
-if (mode === 'replay') {
+function answer(text) {
+  process.stdout.write(
+    JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: text }) + '\n'
+  );
+}
+
+// Wait until `count` files ending in `.<stage>` exist in `dir`, having added our own. Bounded, so
+// a case that never meets its partner still finishes (and the spec then fails on what it saw).
+async function barrier(dir, me, stage, count) {
+  writeFileSync(join(dir, `${me}.${stage}`), '');
+  for (let i = 0; i < 200; i += 1) {
+    if (readdirSync(dir).filter((f) => f.endsWith(`.${stage}`)).length >= count) return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+
+if (mode === 'edit-shared') {
+  const [barrierDir, file, prompt] = rest;
+  await barrier(barrierDir, prompt, 'ready', 2);
+  appendFileSync(file, `${prompt}\n`);
+  await barrier(barrierDir, prompt, 'written', 2);
+  answer(readFileSync(file, 'utf8'));
+} else if (mode === 'call-stub') {
+  const [name, prompt] = rest;
+  const dir = (process.env.PATH ?? '')
+    .split(delimiter)
+    .find((entry) => entry && existsSync(join(entry, `${name}.mjs`)));
+  if (dir === undefined) {
+    answer(`no ${name}.mjs on PATH`);
+  } else {
+    const ran = spawnSync(process.execPath, [join(dir, `${name}.mjs`), prompt], {
+      encoding: 'utf8',
+    });
+    answer(ran.stdout.trim());
+  }
+} else if (mode === 'cwd') {
+  answer(process.cwd());
+} else if (mode === 'cat') {
+  answer(readFileSync(rest[0], 'utf8'));
+} else if (mode === 'env-var') {
+  answer(process.env[rest[0]] ?? '(unset)');
+} else if (mode === 'write') {
+  writeFileSync(rest[0], rest[1]);
+} else if (mode === 'replay') {
   replay(rest[0]);
 } else if (mode === 'exit') {
   replay(rest[1]);

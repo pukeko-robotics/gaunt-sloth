@@ -1,3 +1,5 @@
+import { statSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import * as z from 'zod';
 import { APPROVAL_RUNGS, isApprovalRung } from '@gaunt-sloth/core/config/shell-policy.js';
@@ -7,6 +9,7 @@ import { APPROVAL_RUNGS, isApprovalRung } from '@gaunt-sloth/core/config/shell-p
 import { RATER_ACTIONS, RATER_OUTCOMES } from '@gaunt-sloth/core/core/shell/raterVocabulary.js';
 
 import { splitCommandLine } from '#src/commandArgv.js';
+import { findUnknownWorkspaceToken, WORKSPACE_TEMPLATE_TOKENS } from '#src/workspaceTemplate.js';
 import {
   builtInTranscriptDecoderNames,
   isTranscriptDecoderModulePath,
@@ -18,6 +21,7 @@ import {
   FORCED_BY_MECHANISMS,
 } from '#src/evalTypes.js';
 import type {
+  CommandWorkspace,
   EvalCase,
   EvalExpectation,
   EvalSuite,
@@ -222,6 +226,17 @@ const RawTurnSchema = RawAssertionsSchema.extend({
   user_messages: z.array(z.string()).optional(),
 });
 
+/**
+ * BATCH-58 — a `command` case's workspace as authored. `template` is a directory resolved against
+ * the suite file's directory; `setup` lines are split like `target.run`; `env` values may use the
+ * tokens of `workspaceTemplate.ts`. All three are optional: `workspace: {}` is an empty directory.
+ */
+const RawWorkspaceSchema = suiteObject({
+  template: z.string().min(1, 'workspace.template must name a directory').optional(),
+  setup: z.array(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
+});
+
 const RawCaseSchema = RawAssertionsSchema.extend({
   id: z
     .string()
@@ -258,6 +273,9 @@ const RawCaseSchema = RawAssertionsSchema.extend({
   model_free: z.boolean().optional(),
   // BATCH-57: this case's command timeout, overriding `defaults.timeout_ms`. `command` target only.
   timeout_ms: z.number().int().positive('timeout_ms must be a positive number of ms').optional(),
+  // BATCH-58: this case's workspace, REPLACING `defaults.workspace` wholesale; `false` opts out of
+  // the default. `command` target only.
+  workspace: z.union([RawWorkspaceSchema, z.literal(false)]).optional(),
   // BATCH-34: accepted at case level ONLY so a misplaced one is an error instead of a silence.
   // Negotiation context is per-round and belongs on a `turns:` entry — see the guard in the parse.
   justification: z.string().optional(),
@@ -389,6 +407,9 @@ const RawSuiteSchema = suiteObject({
     pass_threshold: z.number().min(0).max(10).optional(),
     // BATCH-57: the suite's default command timeout. `command` target only.
     timeout_ms: z.number().int().positive('timeout_ms must be a positive number of ms').optional(),
+    // BATCH-58: every case's workspace unless the case declares its own. `command` target only.
+    // `false` is a case-level opt-out and means nothing here, so only the object is accepted.
+    workspace: RawWorkspaceSchema.optional(),
   }).optional(),
   // BATCH-25: the classifier layer. All three are optional and inert when absent, so every #405-era
   // suite parses to exactly the same `EvalSuite` it did before.
@@ -457,6 +478,10 @@ type RawAssertions = z.infer<typeof RawAssertionsSchema>;
  *   `command` suite using `identities`, a `sweep`, `tool_coverage` or a multi-turn `turns:` case.
  *   `run`/`transcript`/`prompt` and `timeout_ms` (case or `defaults`) on any other target. Every
  *   tool assertion, including `must_error`/`tool_result_json_path`, IS supported for `command`.
+ * - `workspace` (BATCH-58, in `defaults` or on a case) on any target but `command`; a workspace
+ *   `template` that does not exist as a directory (resolved against the suite's directory); a
+ *   `setup` line that does not split into argv; an unknown `{{…}}` token in a `setup` argument or
+ *   an `env` value.
  * - `target.profile` set to anything other than `"default"`/absent — a single suite-wide profile
  *   switch is the `--identities` direction, replaced by the suite-level `identities` list.
  * - A `"adk-agent"` (BATCH-14) target missing its `url`; an `adk-agent` suite that ALSO uses the
@@ -553,7 +578,22 @@ function abbreviateRepeatedKeyList(message: string, printed: Set<string>): strin
   return message;
 }
 
-export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite {
+/** BATCH-58 — what {@link parseEvalSuite} needs to know about where the suite lives. */
+export interface ParseEvalSuiteOptions {
+  /**
+   * The suite file's directory, absolute. A `workspace.template` resolves against it, is checked to
+   * exist against it, and it is what `{{suite_dir}}` expands to. `gth eval` always passes it,
+   * resolved the same way the custom transcript decoder's path is. A caller that omits it gets the
+   * directory of `sourcePath` resolved against the process cwd, or the cwd itself.
+   */
+  suiteDir?: string;
+}
+
+export function parseEvalSuite(
+  yamlText: string,
+  sourcePath?: string,
+  options: ParseEvalSuiteOptions = {}
+): EvalSuite {
   const suffix = sourcePath ? ` (${sourcePath})` : '';
 
   let raw: unknown;
@@ -680,25 +720,53 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
   // BATCH-57 — the command target's keys mean nothing to any other target, and an ignored key is the
   // failure this parser is written against: a `gth-agent` suite carrying a stray `run:` would run
   // the in-process agent and look as if it had run the command.
+  //
+  // BATCH-58 — `workspace` (in `defaults` or on a case) is refused here too, and for a reason beyond
+  // "unused". The `gth-agent` target runs IN this process, so the only way to give one case its own
+  // working directory is `process.chdir`, which is process-wide: under `-j` two cases would change
+  // each other's directory mid-run, and every other in-flight read of the cwd would move with them.
+  // The out-of-process targets run their agent somewhere gth cannot point at a directory at all.
+  // Only the `command` target starts a process per case, which takes a `cwd` of its own.
   if (target.type !== 'command') {
     const stray = (['run', 'transcript', 'prompt'] as const).filter(
       (key) => data.target[key] !== undefined
     );
-    const strayTimeouts = [
+    const strayCaseKeys = [
       ...(data.defaults?.timeout_ms !== undefined ? ['defaults.timeout_ms'] : []),
-      ...data.cases
-        .filter((rawCase) => rawCase.timeout_ms !== undefined)
-        .map((rawCase) => `case "${rawCase.id}" timeout_ms`),
+      ...(data.defaults?.workspace !== undefined ? ['defaults.workspace'] : []),
+      ...data.cases.flatMap((rawCase) => [
+        ...(rawCase.timeout_ms !== undefined ? [`case "${rawCase.id}" timeout_ms`] : []),
+        ...(rawCase.workspace !== undefined ? [`case "${rawCase.id}" workspace`] : []),
+      ]),
     ];
-    if (stray.length > 0 || strayTimeouts.length > 0) {
-      const named = [...stray.map((key) => `target.${key}`), ...strayTimeouts];
+    if (stray.length > 0 || strayCaseKeys.length > 0) {
+      const named = [...stray.map((key) => `target.${key}`), ...strayCaseKeys];
+      const workspaceWhy = named.some((key) => key.endsWith('workspace'))
+        ? ' A workspace needs a process of its own to run in; the in-process agent shares one ' +
+          'working directory with every case running beside it.'
+        : '';
       throw new Error(
         `Invalid eval suite${suffix}: ${named.join(', ')} ${named.length === 1 ? 'is' : 'are'} ` +
           `only read by a "command" target, and this suite's target is "${target.type}". Remove ` +
-          'them, or set `target.type: command`.'
+          `them, or set \`target.type: command\`.${workspaceWhy}`
       );
     }
   }
+
+  // BATCH-58 — the suite's default workspace, normalized once (and validated even when every case
+  // overrides it: a broken block is a broken suite whether or not it happens to be used).
+  const suiteDir = options.suiteDir ?? dirname(resolve(sourcePath ?? 'suite.yaml'));
+  const templateChecks = new Map<string, string>();
+  const defaultWorkspace =
+    target.type === 'command' && data.defaults?.workspace !== undefined
+      ? buildCommandWorkspace(
+          data.defaults.workspace,
+          'defaults.workspace',
+          suiteDir,
+          templateChecks,
+          suffix
+        )
+      : undefined;
 
   // Suite-level identity matrix (BATCH-12). Validate the names here (plain, path-safe, unique) so
   // later stages — output filenames, the `expect:` identity-membership check, the command's
@@ -1076,6 +1144,7 @@ export function parseEvalSuite(yamlText: string, sourcePath?: string): EvalSuite
               rawCase.timeout_ms ?? data.defaults?.timeout_ms ?? COMMAND_TARGET_DEFAULT_TIMEOUT_MS,
           }
         : {}),
+      ...resolveCaseWorkspace(rawCase, defaultWorkspace, suiteDir, templateChecks, suffix),
     };
   });
 
@@ -1311,6 +1380,119 @@ function buildCommandTarget(
     );
   }
   return { type: 'command', run, argv, transcript, prompt: raw.prompt ?? 'arg' };
+}
+
+/**
+ * BATCH-58 — the case's workspace: its own block, else the suite default, else none.
+ *
+ * **A case's block replaces the default wholesale.** There is no deep merge: a case that declares
+ * `workspace: { setup: [...] }` gets that setup and NO template or env from the default. Merging
+ * would leave the author guessing which half of a list or map survived, and a case that needs the
+ * default's template can repeat it (or share it with a YAML anchor). `workspace: false` opts the
+ * case out of the default and runs it where gth was started, as a suite without workspaces does.
+ *
+ * Spread into the case, so a case with no workspace has no `workspace` key at all.
+ */
+function resolveCaseWorkspace(
+  rawCase: z.infer<typeof RawCaseSchema>,
+  defaultWorkspace: CommandWorkspace | undefined,
+  suiteDir: string,
+  templateChecks: Map<string, string>,
+  suffix: string
+): { workspace?: CommandWorkspace } {
+  if (rawCase.workspace === false) return {};
+  if (rawCase.workspace !== undefined) {
+    return {
+      workspace: buildCommandWorkspace(
+        rawCase.workspace,
+        `case "${rawCase.id}" workspace`,
+        suiteDir,
+        templateChecks,
+        suffix
+      ),
+    };
+  }
+  return defaultWorkspace !== undefined ? { workspace: defaultWorkspace } : {};
+}
+
+/**
+ * BATCH-58 — validate and normalize one authored `workspace` block.
+ *
+ * - **`template` must exist, as a directory, at parse time.** It resolves against the suite's
+ *   directory, the way a custom decoder's path does, because the fixture belongs to the suite. A
+ *   missing one would otherwise surface once per case, mid-run, as a harness error naming a temp
+ *   directory; here it fails before anything runs and names the path it looked at. The check is
+ *   one `stat` per distinct path (`templateChecks` caches the verdict across cases).
+ * - **`setup` is split into argv now, by the same splitter as `target.run`,** and started at run
+ *   time with no shell. The trust is the same either way (a suite runs what it names); this keeps
+ *   one quoting rule and keeps `cmd.exe` out of the Windows path. A step that needs a pipe or `&&`
+ *   is written as two steps, or as a script in the fixture.
+ * - **Every `{{…}}` must be a known token** (see `workspaceTemplate.ts`), checked per argv element
+ *   and per env value — the units it will be expanded in.
+ */
+function buildCommandWorkspace(
+  raw: z.infer<typeof RawWorkspaceSchema>,
+  where: string,
+  suiteDir: string,
+  templateChecks: Map<string, string>,
+  suffix: string
+): CommandWorkspace {
+  const fail = (message: string): never => {
+    throw new Error(`Invalid eval suite${suffix}: ${where}: ${message}`);
+  };
+  const checkTokens = (text: string, field: string): void => {
+    const unknown = findUnknownWorkspaceToken(text);
+    if (unknown !== undefined) {
+      fail(
+        `${field} uses the unknown token ${unknown} — the tokens are ` +
+          `${WORKSPACE_TEMPLATE_TOKENS.join(', ')}.`
+      );
+    }
+  };
+
+  let template: string | undefined;
+  if (raw.template !== undefined) {
+    template = resolve(suiteDir, raw.template);
+    let problem = templateChecks.get(template);
+    if (problem === undefined) {
+      try {
+        problem = statSync(template).isDirectory() ? '' : 'is not a directory';
+      } catch {
+        problem = 'does not exist';
+      }
+      templateChecks.set(template, problem);
+    }
+    if (problem) {
+      fail(
+        `template "${raw.template}" resolves to "${template}", which ${problem}. A template is ` +
+          "resolved against the suite file's directory."
+      );
+    }
+  }
+
+  const setup = (raw.setup ?? []).map((run, index) => {
+    let argv: string[];
+    try {
+      argv = splitCommandLine(run);
+    } catch (error) {
+      return fail(
+        `setup[${index}] ("${run}"): ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+    for (const arg of argv) checkTokens(arg, `setup[${index}] ("${run}")`);
+    return { run, argv };
+  });
+
+  const env: Record<string, string> = {};
+  for (const [name, value] of Object.entries(raw.env ?? {})) {
+    if (name === '' || name.includes('=')) {
+      fail(`env name "${name}" is not a valid environment variable name.`);
+    }
+    checkTokens(value, `env.${name}`);
+    env[name] = value;
+  }
+
+  return { suiteDir, ...(template !== undefined ? { template } : {}), setup, env };
 }
 
 /**

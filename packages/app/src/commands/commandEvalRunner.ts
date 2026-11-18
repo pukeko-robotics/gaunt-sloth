@@ -35,19 +35,29 @@
  * way exits 2. Grading a run that did not finish would turn the harness's limit into an assertion
  * failure that reads as the agent's choice.
  *
- * ## What BATCH-58 needs from here
+ * ## Workspaces (BATCH-58)
  *
- * {@link CommandSpawnRequest} carries `cwd` and `env` per call, so a per-case workspace only has to
- * supply them; nothing here assumes one directory for the whole suite.
+ * {@link CommandSpawnRequest} carries `cwd` and `env` per call. A case with no `workspace` runs in
+ * the directory gth was started in, with gth's own environment object, exactly as before. A case
+ * with one gets, per run: a fresh directory (`commandWorkspace.ts`), its `setup` steps started in
+ * order through the same spawn seam as the command (no shell, the case's timeout per step, the
+ * same tree kill and exit hook), then the command, then the BATCH-59 inspection seam
+ * ({@link CommandRunnerOptions.inspectWorkspace}), and the directory is removed last. A step that
+ * cannot start, exits non-zero or times out is a harness error naming the step, and the command
+ * does not run: grading an agent in a half-built fixture would charge the fixture's failure to the
+ * agent.
  *
  * @module
  */
 import { spawn, type ChildProcess } from 'node:child_process';
-import { dirname, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type {
+  CellRunOutcome,
   CommandTarget,
+  CommandWorkspace,
   EvalSuite,
+  MatrixCell,
   RunCellFn,
   ToolCallRecord,
   ToolResultRecord,
@@ -61,8 +71,15 @@ import { COMMAND_TARGET_DEFAULT_TIMEOUT_MS } from '@gaunt-sloth/batch/evalTypes.
 import { killProcessGroup } from '@gaunt-sloth/agent/tools/GthDevToolkit.js';
 import { capToolResultText, TOOL_RESULT_CONTENT_CAP } from '@gaunt-sloth/core/core/runStats.js';
 import { importExternalFile } from '@gaunt-sloth/core/utils/fileUtils.js';
-import { env, getCurrentWorkDir, getProjectDir } from '@gaunt-sloth/core/utils/systemUtils.js';
+import { env, getCurrentWorkDir } from '@gaunt-sloth/core/utils/systemUtils.js';
 import { evalToolCallRecords } from '#src/commands/evalToolCallRecords.js';
+import {
+  buildWorkspaceEnv,
+  createWorkspaceDir,
+  expandSetupArgv,
+  removeWorkspaceDir,
+  resolveSuiteDir,
+} from '#src/commands/commandWorkspace.js';
 
 /** How long a SIGTERM'd tree gets before SIGKILL, matching the shell tool's ladder. */
 const KILL_GRACE_MS = 3_000;
@@ -76,7 +93,11 @@ export interface CommandSpawnRequest {
   /** The argv to spawn, from the parsed target. */
   argv: string[];
   prompt: string;
-  promptDelivery: CommandTarget['prompt'];
+  /**
+   * How {@link prompt} reaches the child. `none` (a workspace `setup` step) passes no prompt and
+   * closes stdin: appending the case's prompt to `git init` would make it a directory name.
+   */
+  promptDelivery: CommandTarget['prompt'] | 'none';
   timeoutMs: number;
   /** The working directory for the child. */
   cwd: string;
@@ -122,22 +143,44 @@ export type CommandSpawnFn = (request: CommandSpawnRequest) => Promise<CommandRu
  * Limits: a SIGKILL of gth itself runs no code, so it cannot reach the children. On Windows, a child
  * spawned without `detached` shares gth's console, so a console Ctrl+C reaches it directly; an
  * external `TerminateProcess` of gth runs no code there either.
+ *
+ * BATCH-58 — the same listener removes every live case workspace, AFTER the kills: on Windows a
+ * directory is busy while a process still has it as its cwd. `removeWorkspaceDir` is synchronous
+ * and retries a busy directory, which is what an `'exit'` listener can afford. A removal that still
+ * fails is left behind silently, because there is no run left to report it to. A workspace kept
+ * with `--keep-workspaces` is never registered here, so an interrupt keeps it too.
  */
 const liveChildren = new Set<ChildProcess>();
+const liveWorkspaces = new Set<string>();
 let exitHookInstalled = false;
 
-/** Kill every live command's process tree. The `'exit'` listener; exported for its spec. */
+/**
+ * Kill every live command's process tree, then remove every live case workspace. The `'exit'`
+ * listener; exported for its spec.
+ */
 export function killLiveCommandChildren(): void {
   for (const child of liveChildren) killProcessGroup(child, 'SIGKILL');
   liveChildren.clear();
+  for (const dir of liveWorkspaces) {
+    try {
+      removeWorkspaceDir(dir);
+    } catch {
+      // Nothing is left to report to; see the docblock above.
+    }
+  }
+  liveWorkspaces.clear();
 }
 
-function trackLiveChild(child: ChildProcess): void {
-  liveChildren.add(child);
+function installExitHook(): void {
   if (!exitHookInstalled) {
     exitHookInstalled = true;
     process.on('exit', killLiveCommandChildren);
   }
+}
+
+function trackLiveChild(child: ChildProcess): void {
+  liveChildren.add(child);
+  installExitHook();
 }
 
 /**
@@ -147,6 +190,7 @@ function trackLiveChild(child: ChildProcess): void {
 export function runCommandProcess(request: CommandSpawnRequest): Promise<CommandRunResult> {
   const [command, ...baseArgs] = request.argv;
   const viaArg = request.promptDelivery === 'arg';
+  const viaStdin = request.promptDelivery === 'stdin';
   const args = viaArg ? [...baseArgs, request.prompt] : baseArgs;
 
   return new Promise((resolvePromise, rejectPromise) => {
@@ -154,8 +198,9 @@ export function runCommandProcess(request: CommandSpawnRequest): Promise<Command
       shell: false,
       cwd: request.cwd,
       env: request.env,
-      // With `arg`, stdin is closed: a `-p` CLI that finds an open pipe may wait on it forever.
-      stdio: [viaArg ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+      // Unless the prompt goes on stdin, stdin is closed: a `-p` CLI that finds an open pipe may
+      // wait on it forever.
+      stdio: [viaStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       // POSIX: lead a process group so the timeout can signal the whole tree. Windows has no
       // groups; `killProcessGroup` uses `taskkill /T` there instead.
       detached: process.platform !== 'win32',
@@ -193,7 +238,7 @@ export function runCommandProcess(request: CommandSpawnRequest): Promise<Command
     });
     child.on('close', (code) => finish(code));
 
-    if (!viaArg && child.stdin) {
+    if (viaStdin && child.stdin) {
       // A child that exits without reading its stdin makes the write fail with EPIPE; that is the
       // child's business, and its exit status says what happened.
       child.stdin.on('error', () => undefined);
@@ -235,7 +280,7 @@ export async function loadTranscriptDecoder(
   if (!isTranscriptDecoderModulePath(spec)) return resolveTranscriptDecoder(spec);
   const modulePath = spec.startsWith('file:')
     ? fileURLToPath(spec)
-    : resolve(getProjectDir(), dirname(suiteReadPath), spec);
+    : resolve(resolveSuiteDir(suiteReadPath), spec);
   let mod: Record<string, unknown>;
   try {
     mod = await importExternalFile(modulePath);
@@ -264,8 +309,30 @@ export interface CommandRunnerOptions {
   spawnCommand?: CommandSpawnFn;
   /** The child's working directory; the directory gth was started in unless set. */
   cwd?: string;
-  /** The child's environment; gth's own unless set. */
+  /**
+   * The child's environment; gth's own unless set. For a case with a workspace this is also the
+   * INHERITED environment that the workspace's `env` is merged over and `{{env.NAME}}` reads.
+   */
   env?: NodeJS.ProcessEnv;
+  /**
+   * BATCH-58 `--keep-workspaces`: leave each case's workspace on disk (and out of the exit hook's
+   * clean-up) and report its path through {@link onWorkspaceKept}.
+   */
+  keepWorkspaces?: boolean;
+  /** Called with each kept workspace's case id and path. */
+  onWorkspaceKept?: (caseId: string, dir: string) => void;
+  /** Called when a workspace could not be removed; the case's result stands. */
+  onWorkspaceRemoveFailed?: (caseId: string, dir: string, reason: string) => void;
+  /**
+   * The seam BATCH-59's workspace assertions hang on: called after the case's command finished and
+   * its outcome was decoded, while the workspace still exists, and before it is removed. It returns
+   * the outcome to report, so an inspection can turn a run into a harness error or add to it.
+   * Not called for a case without a workspace, or when setup failed.
+   */
+  inspectWorkspace?: (
+    workspace: { caseId: string; dir: string },
+    outcome: CellRunOutcome
+  ) => CellRunOutcome | Promise<CellRunOutcome>;
 }
 
 function tail(text: string): string {
@@ -332,8 +399,18 @@ export function buildCommandRunCell(
   const spawnCommand = options.spawnCommand ?? runCommandProcess;
   const captureMaxBytes = options.captureMaxBytes ?? TOOL_RESULT_CONTENT_CAP;
 
-  return async (cell) => {
-    const timeoutMs = timeouts.get(cell.id) ?? COMMAND_TARGET_DEFAULT_TIMEOUT_MS;
+  const workspaces = new Map(
+    suite.cases.flatMap((evalCase) =>
+      evalCase.workspace !== undefined ? [[evalCase.id, evalCase.workspace] as const] : []
+    )
+  );
+
+  const runAndDecode = async (
+    cell: MatrixCell,
+    timeoutMs: number,
+    cwd: string,
+    childEnv: NodeJS.ProcessEnv
+  ): Promise<CellRunOutcome> => {
     let run: CommandRunResult;
     try {
       run = await spawnCommand({
@@ -341,8 +418,8 @@ export function buildCommandRunCell(
         prompt: cell.content,
         promptDelivery: target.prompt,
         timeoutMs,
-        cwd: options.cwd ?? getCurrentWorkDir(),
-        env: options.env ?? env,
+        cwd,
+        env: childEnv,
       });
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -392,4 +469,93 @@ export function buildCommandRunCell(
       ...shapeOutcome(decoded, captureMaxBytes, options.recordToolCallArgs === true),
     };
   };
+
+  return async (cell) => {
+    const timeoutMs = timeouts.get(cell.id) ?? COMMAND_TARGET_DEFAULT_TIMEOUT_MS;
+    const baseEnv = options.env ?? env;
+    const spec = workspaces.get(cell.id);
+    // No workspace: the directory gth was started in and gth's own environment object, unchanged.
+    if (spec === undefined) {
+      return runAndDecode(cell, timeoutMs, options.cwd ?? getCurrentWorkDir(), baseEnv);
+    }
+
+    let dir: string;
+    try {
+      dir = createWorkspaceDir(cell.id, spec);
+    } catch (error) {
+      return {
+        ok: false,
+        error: `the workspace could not be prepared: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    const keep = options.keepWorkspaces === true;
+    if (!keep) {
+      liveWorkspaces.add(dir);
+      installExitHook();
+    }
+    try {
+      const childEnv = buildWorkspaceEnv(spec, dir, baseEnv);
+      const setupError = await runWorkspaceSetup(spec, dir, baseEnv, childEnv, timeoutMs);
+      if (setupError !== undefined) return { ok: false, error: setupError };
+      const outcome = await runAndDecode(cell, timeoutMs, dir, childEnv);
+      return options.inspectWorkspace
+        ? await options.inspectWorkspace({ caseId: cell.id, dir }, outcome)
+        : outcome;
+    } finally {
+      if (keep) {
+        options.onWorkspaceKept?.(cell.id, dir);
+      } else {
+        liveWorkspaces.delete(dir);
+        try {
+          removeWorkspaceDir(dir);
+        } catch (error) {
+          options.onWorkspaceRemoveFailed?.(
+            cell.id,
+            dir,
+            error instanceof Error ? error.message : String(error)
+          );
+        }
+      }
+    }
+  };
+
+  /**
+   * Run the workspace's `setup` steps in order. Returns the harness-error reason of the first step
+   * that cannot start, exits non-zero or times out, or `undefined` when every step succeeded.
+   */
+  async function runWorkspaceSetup(
+    spec: CommandWorkspace,
+    dir: string,
+    baseEnv: NodeJS.ProcessEnv,
+    childEnv: NodeJS.ProcessEnv,
+    timeoutMs: number
+  ): Promise<string | undefined> {
+    for (const [index, step] of spec.setup.entries()) {
+      const name = `workspace setup step ${index + 1} of ${spec.setup.length} ("${step.run}")`;
+      let run: CommandRunResult;
+      try {
+        run = await spawnCommand({
+          argv: expandSetupArgv(step.argv, spec, dir, baseEnv),
+          prompt: '',
+          promptDelivery: 'none',
+          timeoutMs,
+          cwd: dir,
+          env: childEnv,
+        });
+      } catch (error) {
+        return `${name} ${error instanceof Error ? error.message : String(error)}; the case's command was not started`;
+      }
+      const stderrTail = tail(run.stderr);
+      const withStderr = (reason: string): string =>
+        `${reason}; the case's command was not started${stderrTail ? `; stderr: ${stderrTail}` : ''}`;
+      if (run.timedOut) {
+        return withStderr(
+          `${name} did not finish within the case's ${timeoutMs}ms timeout and its process tree ` +
+            'was killed'
+        );
+      }
+      if (run.exitCode !== 0) return withStderr(`${name} exited with code ${run.exitCode}`);
+    }
+    return undefined;
+  }
 }

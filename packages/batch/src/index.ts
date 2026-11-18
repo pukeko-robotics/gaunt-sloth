@@ -33,6 +33,8 @@ export type {
   AgUiAgentTarget,
   CommandPromptDelivery,
   CommandTarget,
+  CommandWorkspace,
+  CommandWorkspaceSetupStep,
   DeterministicCheckResult,
   EvalCase,
   EvalCaseResult,

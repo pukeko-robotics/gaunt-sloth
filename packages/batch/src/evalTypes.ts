@@ -812,6 +812,40 @@ export interface EvalCase {
    * suite, so every other suite's parsed cases keep their exact shape.
    */
   timeoutMs?: number;
+  /**
+   * BATCH-58 — the fresh directory this case's command runs in: the case's `workspace`, else the
+   * suite's `defaults.workspace` (a case's block replaces the default wholesale, and
+   * `workspace: false` opts the case out). Set only on a `command` case that has one, so a suite
+   * that declares no workspace parses to exactly the shape it did before.
+   */
+  workspace?: CommandWorkspace;
+}
+
+/** BATCH-58 — one `setup` step of a {@link CommandWorkspace}. */
+export interface CommandWorkspaceSetupStep {
+  /** The step as the suite wrote it, for display and error messages. */
+  run: string;
+  /**
+   * {@link run} split into argv at parse time (the same splitter and the same no-shell rule as the
+   * target's `run`). Its elements may still hold `{{…}}` tokens, expanded per case at run time.
+   */
+  argv: string[];
+}
+
+/**
+ * BATCH-58 — a `command` case's workspace, resolved at parse time. The runner copies
+ * {@link template} into a fresh temporary directory, runs each {@link setup} step there in order,
+ * then starts the case's command there with {@link env} merged over the inherited environment, and
+ * removes the directory afterwards. See `commandWorkspace.ts` in the app package.
+ */
+export interface CommandWorkspace {
+  /** The suite file's directory, absolute: what `{{suite_dir}}` expands to. */
+  suiteDir: string;
+  /** The template directory, absolute (resolved against {@link suiteDir}); absent = start empty. */
+  template?: string;
+  setup: CommandWorkspaceSetupStep[];
+  /** Variables set over the inherited environment. Values may hold `{{…}}` tokens. */
+  env: Record<string, string>;
 }
 
 /**
