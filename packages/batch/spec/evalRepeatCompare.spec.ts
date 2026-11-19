@@ -45,6 +45,49 @@ describe('BATCH-60 — --compare-to tells flaky from broke', () => {
     expect(rendered).not.toContain('  no change.');
   });
 
+  it('prints a FLAKY-only diff (verdict PASS on both sides) without "no change."', async () => {
+    const { diffRuns, renderRunDiff } = await import('#src/evalCompare.js');
+    // 3/3 → 2/3 at 0.67: the case still passes, so nothing is REGRESSED. The FLAKY list is the
+    // only thing that can keep "no change." off the page.
+    const before = repeated('a', 3, 3);
+    const after = repeated('a', 2, 3);
+    expect([before.verdict, after.verdict]).toEqual(['PASS', 'PASS']);
+    const diff = diffRuns(summary([before]), summary([after]));
+    expect(diff.regressed).toEqual([]);
+    const rendered = renderRunDiff(diff);
+    expect(rendered).toContain('  FLAKY (1):');
+    expect(rendered).toContain('    a: 3/3 (100%) → 2/3 (67%)');
+    expect(rendered).not.toContain('  no change.');
+  });
+
+  it('lists no reclassification when a classified single run is compared with a repeated one', async () => {
+    const { diffRuns } = await import('#src/evalCompare.js');
+    const classified: EvalCaseResult = {
+      ...single('a', 'PASS'),
+      classification: { expectedLabel: 'safe', actualLabel: 'safe' },
+    };
+    const diff = diffRuns(summary([classified]), summary([repeated('a', 3, 3)]));
+    expect(diff.reclassified).toEqual([]);
+    // The control: two single runs whose labels differ ARE listed, so the empty list above is the
+    // gate at work and not a fixture that could never reclassify.
+    const moved: EvalCaseResult = {
+      ...single('a', 'PASS'),
+      classification: { expectedLabel: 'safe', actualLabel: 'risky' },
+    };
+    expect(diffRuns(summary([classified]), summary([moved])).reclassified).toEqual([
+      { id: 'a', before: 'safe', after: 'risky' },
+    ]);
+  });
+
+  it('renders a RunDiff that predates flaky and broke', async () => {
+    const { diffRuns, renderRunDiff } = await import('#src/evalCompare.js');
+    const diff = diffRuns(summary([single('a', 'PASS')]), summary([single('a', 'PASS')]));
+    const older = { ...diff } as Partial<typeof diff>;
+    delete older.flaky;
+    delete older.broke;
+    expect(renderRunDiff(older as typeof diff)).toContain('  no change.');
+  });
+
   it('classifies a rate that fell to zero as broke', async () => {
     const { diffRuns, renderRunDiff } = await import('#src/evalCompare.js');
     const diff = diffRuns(summary([repeated('a', 2, 3)]), summary([repeated('a', 0, 3)]));

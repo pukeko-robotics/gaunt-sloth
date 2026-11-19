@@ -713,6 +713,12 @@ function describeClassification(
 
 /** Render a {@link RunDiff} as plain lines. */
 export function renderRunDiff(diff: RunDiff): string[] {
+  // BATCH-60 — `flaky` and `broke` stay REQUIRED on `RunDiff`, so every producer (`diffRuns`) must
+  // fill them. The renderer alone tolerates their absence, because a `RunDiff` can also reach it
+  // from outside this package — built by a caller, or read back from an older shape — and a diff
+  // that predates repeats has nothing to say about them rather than something to crash on.
+  const flaky = (diff as Partial<RunDiff>).flaky ?? [];
+  const broke = (diff as Partial<RunDiff>).broke ?? [];
   const lines: string[] = ['', 'RUN-OVER-RUN DIFF'];
   lines.push(`  compared: ${diff.compared} case(s)`);
   for (const warning of diff.warnings) lines.push(`  ! ${warning}`);
@@ -724,8 +730,8 @@ export function renderRunDiff(diff: RunDiff): string[] {
   };
   list('REGRESSED', diff.regressed);
   // BATCH-60 — upper case like REGRESSED, since both are bad news a reader must not skim past.
-  list('BROKE', diff.broke);
-  list('FLAKY', diff.flaky);
+  list('BROKE', broke);
+  list('FLAKY', flaky);
   list('fixed', diff.fixed);
   list('reclassified', diff.reclassified);
 
@@ -782,8 +788,8 @@ export function renderRunDiff(diff: RunDiff): string[] {
     diff.regressed.length === 0 &&
     diff.fixed.length === 0 &&
     diff.reclassified.length === 0 &&
-    diff.flaky.length === 0 &&
-    diff.broke.length === 0 &&
+    flaky.length === 0 &&
+    broke.length === 0 &&
     diff.metricDeltas.every((delta) => delta.delta === 0) &&
     // BATCH-33 — drift has to count here too, or a run that printed a JUDGE DRIFT section would
     // print "no change." underneath it and contradict itself.
