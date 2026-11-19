@@ -298,6 +298,145 @@ describe('runToolCallArgChecks — tool_call_json_path (BATCH-52)', () => {
       ).toEqual([]);
     });
   });
+
+  // BATCH-64 — the negative form: no call to a matching tool may satisfy the entry.
+  describe('none: true', () => {
+    const bash = (command: string, id?: string): ToolCallRecord => ({
+      name: 'Bash',
+      args: JSON.stringify({ command }),
+      ...(id ? { id } : {}),
+    });
+    const absoluteGh = {
+      tool: 'Bash',
+      path: 'command',
+      matches: /(^|[\s;&|])\/\S*\/gh\b/,
+      none: true as const,
+    };
+    const label = 'tool_call_json_path "command" (tool "Bash", none)';
+
+    it('passes when the tool was never called, even with other calls present', async () => {
+      const { runToolCallArgChecks } = await import('#src/toolChecks.js');
+      expect(runToolCallArgChecks([], { toolCallJsonPath: [absoluteGh] })).toEqual([]);
+      expect(
+        runToolCallArgChecks([{ name: 'Read', args: '{"command":"/usr/bin/gh"}' }], {
+          toolCallJsonPath: [absoluteGh],
+        })
+      ).toEqual([]);
+    });
+
+    it('passes when every call to the tool is clean', async () => {
+      const { runToolCallArgChecks } = await import('#src/toolChecks.js');
+      expect(
+        runToolCallArgChecks([bash('gh pr list'), bash('ls -la'), bash('echo /usr/bin/ghost')], {
+          toolCallJsonPath: [absoluteGh],
+        })
+      ).toEqual([]);
+    });
+
+    it('fails on one matching call among several, naming its position, id and value', async () => {
+      const { runToolCallArgChecks } = await import('#src/toolChecks.js');
+      expect(
+        runToolCallArgChecks(
+          [
+            bash('ls', 't1'),
+            { name: 'Read', args: '{}' },
+            bash('cd x && /usr/bin/gh pr list', 't3'),
+          ],
+          { toolCallJsonPath: [absoluteGh] }
+        )
+      ).toEqual([
+        `${label}: call 3 to "Bash" (id "t3") matched with "cd x && /usr/bin/gh pr list"`,
+      ]);
+    });
+
+    it('names every offending call, up to three, and counts the rest', async () => {
+      const { runToolCallArgChecks } = await import('#src/toolChecks.js');
+      const calls = ['ls', '/a/gh 1', '/b/gh 2', 'pwd', '/c/gh 3', '/d/gh 4', '/e/gh 5'].map((c) =>
+        bash(c)
+      );
+      expect(runToolCallArgChecks(calls, { toolCallJsonPath: [absoluteGh] })).toEqual([
+        `${label}: call 2 to "Bash" matched with "/a/gh 1"; call 3 to "Bash" matched with ` +
+          '"/b/gh 2"; call 5 to "Bash" matched with "/c/gh 3"; and 2 more',
+      ]);
+    });
+
+    it('works with equals, contains and bare existence', async () => {
+      const { runToolCallArgChecks } = await import('#src/toolChecks.js');
+      const calls = [search('{"page":1}'), search('{"page":2,"query":"laptop bags"}')];
+      const grade = (check: Record<string, unknown>) =>
+        runToolCallArgChecks(calls, {
+          toolCallJsonPath: [{ tool: 'mcp__shop_search', none: true, ...check } as never],
+        });
+      expect(grade({ path: 'page', equals: 3 })).toEqual([]);
+      expect(grade({ path: 'page', equals: 2 })).toEqual([
+        'tool_call_json_path "page" (tool "mcp__shop_search", none): call 2 to "mcp__shop_search" matched with 2',
+      ]);
+      expect(grade({ path: 'query', contains: 'phone' })).toEqual([]);
+      expect(grade({ path: 'query', contains: 'laptop' })).toEqual([
+        'tool_call_json_path "query" (tool "mcp__shop_search", none): call 2 to "mcp__shop_search" matched with "laptop bags"',
+      ]);
+      expect(grade({ path: 'filters' })).toEqual([]);
+      expect(grade({ path: 'query' })).toEqual([
+        'tool_call_json_path "query" (tool "mcp__shop_search", none): call 2 to "mcp__shop_search" matched with "laptop bags"',
+      ]);
+    });
+
+    it('cannot pass when the arguments were not recorded', async () => {
+      const { runToolCallArgChecks } = await import('#src/toolChecks.js');
+      // What a run without evalToolCallArgs records: names and ids, no `args` key.
+      expect(
+        runToolCallArgChecks([{ name: 'Bash', id: 't1' }, bash('ls')], {
+          toolCallJsonPath: [absoluteGh],
+        })
+      ).toEqual([
+        `${label}: call 1 to "Bash" (id "t1") has no recorded arguments; set evalToolCallArgs ` +
+          'so they are recorded',
+      ]);
+    });
+
+    it('cannot pass when the run recorded no call list at all', async () => {
+      const { runToolCallArgChecks } = await import('#src/toolChecks.js');
+      expect(runToolCallArgChecks(undefined, { toolCallJsonPath: [absoluteGh] })).toEqual([
+        `${label}: no tool calls were recorded for this run, so it cannot show that none matched`,
+      ]);
+    });
+
+    it('cannot pass on truncated or non-JSON arguments', async () => {
+      const { runToolCallArgChecks } = await import('#src/toolChecks.js');
+      expect(
+        runToolCallArgChecks(
+          [
+            {
+              name: 'Bash',
+              args: '{"command":"ls"}',
+              argsTruncated: true,
+              argsOriginalBytes: 9000,
+            },
+          ],
+          { toolCallJsonPath: [absoluteGh] }
+        )
+      ).toEqual([
+        `${label}: call 1 to "Bash" has arguments truncated at toolResultCaptureMaxBytes, so the ` +
+          'cut part cannot be checked; raise toolResultCaptureMaxBytes to capture them whole',
+      ]);
+      expect(
+        runToolCallArgChecks([{ name: 'Bash', args: '{"command":' }], {
+          toolCallJsonPath: [absoluteGh],
+        })
+      ).toEqual([
+        `${label}: call 1 to "Bash" has arguments that are not JSON, so the path cannot be checked`,
+      ]);
+    });
+
+    it('leaves a positive entry unchanged when the call list is undefined', async () => {
+      const { runToolCallArgChecks } = await import('#src/toolChecks.js');
+      expect(
+        runToolCallArgChecks(undefined, {
+          toolCallJsonPath: [{ tool: 'Bash', path: 'command', contains: 'gh' }],
+        })
+      ).toEqual(['tool_call_json_path "command" (tool "Bash"): no call to a matching tool']);
+    });
+  });
 });
 
 describe('runToolTrajectoryChecks — tool_trajectory (BATCH-54)', () => {

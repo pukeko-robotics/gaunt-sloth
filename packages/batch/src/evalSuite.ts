@@ -130,6 +130,7 @@ function suiteObject<T extends z.ZodRawShape>(shape: T) {
  *       - { tool: "mcp__unimarket_*", path: "code", equals: "ACCESS_DENIED" }
  *     tool_call_json_path:                      # BATCH-52: over a matching call's ARGUMENTS (opt-in)
  *       - { tool: "mcp__unimarket_search", path: "status", equals: "open" }
+ *       - { tool: "Bash", path: "command", matches: "/gh\\b", none: true }   # BATCH-64: no call matches
  *     tool_trajectory:                          # BATCH-54: the ORDER of the calls (glob supported)
  *       calls: [ "mcp__unimarket_search", "mcp__unimarket_buy" ]
  *       strict: false                           # default: an ordered subsequence; true = exact
@@ -174,6 +175,8 @@ const RawToolCallJsonPathCheckSchema = suiteObject({
   matches: z.string().optional(),
   present: z.boolean().optional(),
   all_calls: z.boolean().optional(),
+  // BATCH-64 — the negative form; its combinations are checked in code.
+  none: z.boolean().optional(),
 });
 
 /** BATCH-54 — the `tool_trajectory` object: a non-empty, ordered list of non-blank call patterns
@@ -586,7 +589,8 @@ type RawAssertions = z.infer<typeof RawAssertionsSchema>;
  *   `adk-agent` OR `ag-ui` target — tool results exist only on the in-process `gth-agent` target
  *   (the AG-UI wire streams call names but no result payloads; A2A exposes no tool trace at all).
  * - A `tool_call_json_path` (BATCH-52) entry setting more than one of `equals`/`contains`/`matches`,
- *   an invalid `matches` pattern, `present: false` together with any of the three, or used against
+ *   an invalid `matches` pattern, `present: false` together with any of the three, `none: true`
+ *   together with `all_calls: true` or `present: false` (BATCH-64), or used against
  *   an `adk-agent` target (A2A exposes no tool calls). The `evalToolCallArgs` opt-in is checked by
  *   the command ({@link suiteUsesToolCallArgs}), since it is run-level config, not suite content.
  * - A `tool_trajectory` (BATCH-54) with an empty `calls` list, a blank pattern, or used against an
@@ -2609,8 +2613,26 @@ function buildExpectation(
         );
       }
     }
+    // BATCH-64 — `none: true` already says "no call satisfies this", so a second quantifier or
+    // negation on the same entry would give it a meaning nobody chose: with `all_calls` it asks
+    // for every call and no call at once, and with `present: false` it becomes "no call lacks the
+    // path", a double negative that `all_calls` says plainly. Refuse both rather than guess.
+    if (entry.none === true && entry.all_calls === true) {
+      throw new Error(
+        `Invalid eval suite${ctx.suffix}: ${entryLabel} sets none: true, which cannot be ` +
+          'combined with all_calls (none already covers every call).'
+      );
+    }
+    if (entry.none === true && entry.present === false) {
+      throw new Error(
+        `Invalid eval suite${ctx.suffix}: ${entryLabel} sets none: true, which cannot be ` +
+          'combined with present: false. To require the path in every call, use all_calls: true ' +
+          'without none; to forbid it, use none: true without present.'
+      );
+    }
     if (entry.present === false) check.present = false;
     if (entry.all_calls === true) check.allCalls = true;
+    if (entry.none === true) check.none = true;
     return check;
   });
 

@@ -1184,6 +1184,68 @@ describe('runEvalSuite tool-call argument assertions (BATCH-52)', () => {
   });
 });
 
+describe('runEvalSuite tool_call_json_path none (BATCH-64)', () => {
+  const noGh = () =>
+    makeCase({
+      toolCallJsonPath: [{ tool: 'Bash', path: 'command', contains: '/usr/bin/gh', none: true }],
+    });
+
+  it('PASSes when no Bash call sent the forbidden value', async () => {
+    const { runEvalSuite, classifyEvalExit } = await import('#src/evalRunner.js');
+    const runCell = runCellReturning({
+      'case-1': {
+        ok: true,
+        answer: 'done',
+        tools: ['Bash'],
+        toolCalls: [{ name: 'Bash', args: '{"command":"gh pr list"}' }],
+      },
+    });
+    const summary = await runEvalSuite(makeSuite([noGh()]), { runCell });
+    expect(summary.cases[0]).toMatchObject({ verdict: 'PASS', reasons: [] });
+    expect(classifyEvalExit(summary)).toBe(0);
+  });
+
+  it('FAILs a cell whose runner recorded no call list, rather than reading it as no calls', async () => {
+    const { runEvalSuite, classifyEvalExit } = await import('#src/evalRunner.js');
+    const runCell = runCellReturning({ 'case-1': { ok: true, answer: 'done' } });
+    const summary = await runEvalSuite(makeSuite([noGh()]), { runCell });
+    expect(summary.cases[0].reasons).toEqual([
+      'tool_call_json_path "command" (tool "Bash", none): no tool calls were recorded for this ' +
+        'run, so it cannot show that none matched',
+    ]);
+    expect(classifyEvalExit(summary)).toBe(1);
+  });
+
+  it('FAILs a turn whose runner recorded no call list', async () => {
+    const { runEvalSuite } = await import('#src/evalRunner.js');
+    const evalCase: EvalCase = {
+      id: 'conv-1',
+      passThreshold: 6,
+      turns: [
+        { user: 'hi', expectations: [makeExpectation({ mustContain: ['ok'] })] },
+        {
+          user: 'run it',
+          expectations: [
+            makeExpectation({
+              toolCallJsonPath: [{ tool: 'Bash', path: 'command', contains: 'gh', none: true }],
+            }),
+          ],
+        },
+      ],
+    };
+    const runConversation: RunConversationFn = async () => [
+      { ok: true, answer: 'ok' },
+      { ok: true, answer: 'ok' },
+    ];
+    const summary = await runEvalSuite(makeSuite([evalCase]), { runConversation });
+    expect(summary.cases[0].verdict).toBe('FAIL');
+    expect(summary.cases[0].reasons).toEqual([
+      'turn 2: tool_call_json_path "command" (tool "Bash", none): no tool calls were recorded ' +
+        'for this run, so it cannot show that none matched',
+    ]);
+  });
+});
+
 describe('runEvalSuite call-order assertions (BATCH-54)', () => {
   it('grades against toolCalls, not tools: a repeat the de-duplicated name set hides still counts', async () => {
     const { runEvalSuite, classifyEvalExit } = await import('#src/evalRunner.js');

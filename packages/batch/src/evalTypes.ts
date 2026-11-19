@@ -387,6 +387,9 @@ export interface ToolCallJsonPathCheck extends ToolResultJsonPathCheck {
   present?: false;
   /** `true` = every call to a matching tool must satisfy the entry, not just one. */
   allCalls?: true;
+  /** BATCH-64 — `true` = NO call to a matching tool may satisfy the entry; a tool never called
+   * passes. Never combined with `present` or `allCalls`. Absent = the positive form. */
+  none?: true;
 }
 
 /**

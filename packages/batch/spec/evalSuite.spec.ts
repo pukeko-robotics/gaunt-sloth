@@ -1371,6 +1371,90 @@ cases:
     });
   });
 
+  // BATCH-64: the negative form of tool_call_json_path.
+  describe('BATCH-64 tool_call_json_path none', () => {
+    it('keeps none only when true, leaving none: false and an absent none exactly as before', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    prompt: "p"
+    tool_call_json_path:
+      - { tool: "Bash", path: "command", matches: "/gh\\\\b", none: true }
+      - { tool: "search", path: "query", equals: "x", none: false }
+      - { tool: "search", path: "query", equals: "x" }
+      - { tool: "search", path: "filters", none: true }
+`);
+      // toStrictEqual: a `none: undefined` key on the positive entries would fail it.
+      expect(suite.cases[0].turns[0].expectations[0].toolCallJsonPath).toStrictEqual([
+        { tool: 'Bash', path: 'command', matches: /\/gh\b/, none: true },
+        { tool: 'search', path: 'query', equals: 'x' },
+        { tool: 'search', path: 'query', equals: 'x' },
+        { tool: 'search', path: 'filters', none: true },
+      ]);
+    });
+
+    it('counts a suite whose only argument assertion is a none entry as needing evalToolCallArgs', async () => {
+      const { parseEvalSuite, suiteUsesToolCallArgs } = await import('#src/evalSuite.js');
+      const suite = parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    prompt: "p"
+    tool_call_json_path:
+      - { tool: "Bash", path: "command", contains: "gh", none: true }
+`);
+      expect(suiteUsesToolCallArgs(suite)).toBe(true);
+    });
+
+    it('rejects none: true combined with all_calls: true', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    prompt: "p"
+    tool_call_json_path:
+      - { tool: "t", path: "a.b", contains: "x", none: true, all_calls: true }
+`)
+      ).toThrow(
+        /tool_call_json_path entry for "a\.b" sets none: true, which cannot be combined with all_calls/
+      );
+    });
+
+    it('rejects none: true combined with present: false', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: gth-agent }
+cases:
+  - id: c1
+    prompt: "p"
+    tool_call_json_path:
+      - { tool: "t", path: "a.b", none: true, present: false }
+`)
+      ).toThrow(
+        /tool_call_json_path entry for "a\.b" sets none: true, which cannot be combined with present: false/
+      );
+    });
+
+    it('still rejects a none entry on an adk-agent target', async () => {
+      const { parseEvalSuite } = await import('#src/evalSuite.js');
+      expect(() =>
+        parseEvalSuite(`
+target: { type: adk-agent, url: "http://localhost:8080" }
+cases:
+  - id: searched
+    prompt: "p"
+    tool_call_json_path:
+      - { tool: "search", path: "query", none: true }
+`)
+      ).toThrow(/case "searched" uses `tool_call_json_path`/);
+    });
+  });
+
   // BATCH-54: the call-ORDER assertion — `must_call`'s placement rules, `strict` defaulted to false,
   // counts as a check on its own, rejected where no tool calls are visible.
   describe('BATCH-54 tool_trajectory', () => {

@@ -734,7 +734,7 @@ async function gradeApplicableBlocks(
   answer: string,
   tools: string[],
   toolResults: ToolResultRecord[],
-  toolCalls: ToolCallRecord[],
+  toolCalls: ToolCallRecord[] | undefined,
   applicable: EvalExpectation[],
   passThreshold: number,
   judge: JudgeFn | undefined,
@@ -758,11 +758,13 @@ async function gradeApplicableBlocks(
     // same `reasons` so they drive the same PASS/FAIL/exit contract.
     const toolResultFailures = runToolResultChecks(toolResults, block);
     // BATCH-52 tool-call ARGUMENT assertions read the captured calls' arguments — recorded only
-    // when the run opted in, which the command checks before any suite using them runs.
+    // when the run opted in, which the command checks before any suite using them runs. Passed
+    // as recorded, `undefined` included: BATCH-64's `none` form must not read "no call list" as
+    // "no calls" (see runToolCallArgChecks).
     const toolCallArgFailures = runToolCallArgChecks(toolCalls, block);
     // BATCH-54 call-ORDER assertions read the same calls' names, in request order (recorded on
     // every eval run; see runToolTrajectoryChecks for why `toolCalls` and not `tools`).
-    const toolTrajectoryFailures = runToolTrajectoryChecks(toolCalls, block);
+    const toolTrajectoryFailures = runToolTrajectoryChecks(toolCalls ?? [], block);
     // BATCH-25 classification assertions read the cell's CLASSIFICATION (a fourth input kind,
     // beside the answer, the tool trace and the tool results), so they are graded by their own
     // checker and merged into the same `reasons` — the same PASS/FAIL/exit contract as every other
@@ -865,7 +867,7 @@ async function gradeUnit(
   const answer = cellResult.answer ?? '';
   const tools = cellResult.tools ?? [];
   const toolResults = cellResult.toolResults ?? [];
-  const toolCalls = cellResult.toolCalls ?? [];
+  const toolCalls = cellResult.toolCalls;
   const { reasons, deterministicFailures, judgeOutcome } = await gradeApplicableBlocks(
     answer,
     tools,
@@ -973,7 +975,7 @@ async function gradeConversationUnit(
     const answer = outcome.answer ?? '';
     const tools = outcome.tools ?? [];
     const toolResults = outcome.toolResults ?? [];
-    const toolCalls = outcome.toolCalls ?? [];
+    const toolCalls = outcome.toolCalls;
     const { reasons, deterministicFailures, judgeOutcome } = await gradeApplicableBlocks(
       answer,
       tools,

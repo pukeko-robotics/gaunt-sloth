@@ -67,21 +67,102 @@ export function runToolCallChecks(
  * iff **every** matching call does; otherwise ONE failure line names the path, the pattern and the
  * distinct per-call reasons. No matching call at all always fails. Arguments cut at the capture
  * cap fail with a reason naming `toolResultCaptureMaxBytes` rather than being graded as a prefix.
+ *
+ * BATCH-64 — `none` inverts the whole entry: it passes iff NO call to a matching tool satisfies
+ * the rest of it, including when the tool was never called (see `checkNoCallMatches` below).
+ *
+ * `toolCalls` is `undefined` when the runner recorded no call list at all. A positive entry grades
+ * that as an empty list (it fails: no call to a matching tool); a `none` entry refuses it, because
+ * "no record" is not evidence of "no call".
  */
 export function runToolCallArgChecks(
-  toolCalls: ToolCallRecord[],
+  toolCalls: readonly ToolCallRecord[] | undefined,
   expectation: Pick<EvalExpectation, 'toolCallJsonPath'>
 ): string[] {
   const failures: string[] = [];
   for (const check of expectation.toolCallJsonPath) {
-    const failure = checkToolCallJsonPath(toolCalls, check);
+    const failure = check.none
+      ? checkNoCallMatches(toolCalls, check)
+      : checkToolCallJsonPath(toolCalls ?? [], check);
     if (failure !== undefined) failures.push(failure);
   }
   return failures;
 }
 
+/** BATCH-64 — at most this many offending calls are named in one `none` failure line; the rest are
+ * counted (`and N more`), like the suite parser's issue list. Each named value is already bounded
+ * by the capture cap (`toolResultCaptureMaxBytes`); batch has no separate cap on reason length. */
+const MAX_NAMED_OFFENDING_CALLS = 3;
+
+/**
+ * BATCH-64 — the negative form of `tool_call_json_path` (`none: true`): no call to a tool matching
+ * `tool` may satisfy the entry's `path` and matcher (`equals` / `contains` / `matches`, or bare
+ * existence). A tool that was never called passes: that is the point of the form, e.g. "no `Bash`
+ * call ran `gh` by absolute path".
+ *
+ * **No vacuous pass.** A negative assertion is only as good as the evidence that it looked, so
+ * every call it cannot actually grade FAILS the entry instead of counting as clean:
+ * - no call list recorded at all (`toolCalls` undefined);
+ * - a call whose arguments were not recorded (`args` absent: every runner sets it, possibly empty,
+ *   when the run opts in with `evalToolCallArgs`, and strips the key when it does not). The command
+ *   already refuses such a suite before it runs; this is the grader's own backstop, so a future
+ *   path that skips that refusal cannot turn "not captured" into PASS;
+ * - arguments cut at the capture cap: the cut-off tail could hold the forbidden value;
+ * - arguments that are not JSON: the path cannot be evaluated, so absence cannot be shown.
+ *
+ * A failure names each offending call by its 1-based position in the run's calls, its id when the
+ * provider sent one, and the value it sent.
+ */
+function checkNoCallMatches(
+  toolCalls: readonly ToolCallRecord[] | undefined,
+  check: ToolCallJsonPathCheck
+): string | undefined {
+  const label = `tool_call_json_path "${check.path}" (tool "${check.tool}", none)`;
+  if (toolCalls === undefined) {
+    return `${label}: no tool calls were recorded for this run, so it cannot show that none matched`;
+  }
+  const offending: string[] = [];
+  toolCalls.forEach((call, index) => {
+    if (!toolNameMatchesPattern(call.name, check.tool)) return;
+    const where = `call ${index + 1} to "${call.name}"${call.id ? ` (id "${call.id}")` : ''}`;
+    const finding = findOffendingValue(call, check);
+    if (finding !== undefined) offending.push(`${where} ${finding}`);
+  });
+  if (offending.length === 0) return undefined;
+  const named = offending.slice(0, MAX_NAMED_OFFENDING_CALLS);
+  const omitted = offending.length - named.length;
+  return `${label}: ${named.join('; ')}${omitted > 0 ? `; and ${omitted} more` : ''}`;
+}
+
+/** BATCH-64 — why `call` breaks a `none` entry (it satisfies the entry, or cannot be graded), or
+ * `undefined` when it is clean. */
+function findOffendingValue(
+  call: ToolCallRecord,
+  check: ToolCallJsonPathCheck
+): string | undefined {
+  if (call.args === undefined) {
+    return 'has no recorded arguments; set evalToolCallArgs so they are recorded';
+  }
+  if (call.argsTruncated) {
+    return (
+      'has arguments truncated at toolResultCaptureMaxBytes, so the cut part cannot be checked; ' +
+      'raise toolResultCaptureMaxBytes to capture them whole'
+    );
+  }
+  const text = call.args.trim() || '{}';
+  let root: unknown;
+  try {
+    root = JSON.parse(text);
+  } catch {
+    return 'has arguments that are not JSON, so the path cannot be checked';
+  }
+  if (gradeJsonPathValue(root, check) !== undefined) return undefined;
+  const { value } = resolveJsonPath(root, check.path);
+  return `matched with ${JSON.stringify(value)}`;
+}
+
 function checkToolCallJsonPath(
-  toolCalls: ToolCallRecord[],
+  toolCalls: readonly ToolCallRecord[],
   check: ToolCallJsonPathCheck
 ): string | undefined {
   const label = `tool_call_json_path "${check.path}" (tool "${check.tool}")`;
