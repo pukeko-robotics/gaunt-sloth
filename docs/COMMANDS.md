@@ -770,6 +770,8 @@ gth eval eval/claude-skills.yaml
 | `target.prompt` | no | How the prompt reaches the command: `arg` (the default) appends it as one final argument; `stdin` writes it to the command's standard input. With `arg`, end `run` with an option that takes no value: after an option that takes a list, such as Claude Code's `--allowedTools`, the prompt would be read as one more list item. A prompt that begins with `-`, such as `--help`, is read by the agent as an option; use `stdin` for such prompts. |
 | `defaults.timeout_ms` | no | How long the case's command may run, in milliseconds. Each [workspace](#workspaces) `setup` step gets the same limit of its own. The built-in default is `600000` (ten minutes). |
 | `timeout_ms` (on a case) | no | Overrides `defaults.timeout_ms` for that case. |
+| `target.grade_when` | no | Run endings to grade instead of reporting as a harness error, such as `[error_max_turns]`. See [Grading a run that hit a limit](#grading-a-run-that-hit-a-limit). |
+| `grade_when` (on a case) | no | Replaces `target.grade_when` for that case. `grade_when: []` restores the default for that case. |
 
 **`run` is not given to a shell.** It is split into arguments on whitespace, single and double quotes group words, and a backslash is an ordinary character, so a Windows path needs no escaping. Nothing is expanded: an unquoted `$`, backtick, `|`, `&`, `;`, `<`, `>`, `(` or `)` is refused when the suite loads, because a shell would treat it specially and this does not. Quote it to pass it literally, or put the shell logic in a script and run the script. Everything else is passed as written, with no shell to interpret it: `#` does not start a comment, `~` is not your home directory, `*`, `?` and `{a,b}` are not expanded, and a backslash does not escape the next character. The prompt is never inserted into `run` and never passes through a shell, so quotes, `$(...)` and backticks in a prompt reach the agent exactly as written. On Windows, name the program itself, such as `node path/to/cli.js`, rather than an npm `.cmd` shim, which cannot be started without a shell.
 
@@ -784,11 +786,41 @@ A case fails as a harness error (`SUT run failed`, and exit `2` when every case 
 - exits with a non-zero code;
 - prints a transcript with no final `result` line, or one that reports an error, such as `error_max_turns`.
 
-A run that did not finish is not graded, so a turn limit that is too low shows up as a harness error, not as an assertion the agent failed.
+A run that did not finish is not graded, so a turn limit that is too low shows up as a harness error, not as an assertion the agent failed. A suite can opt out of that for the limits it sets on purpose, with `grade_when`.
+
+#### Grading a run that hit a limit
+
+Some cases only need the agent's first turns. Whether Claude Code loads the right skill is decided by its first tool call, so a run capped with `--max-turns 3` answers the question for a fraction of the tokens a run that finishes costs. Claude Code ends such a run with the result `error_max_turns` and exit code `1`, which is a harness error by default. List that result in `grade_when` and the case is graded on the transcript the run produced:
+
+```yaml
+target:
+  type: command
+  run: claude -p --output-format stream-json --verbose --max-turns 3
+  transcript: claude-stream-json
+  grade_when: [error_max_turns]
+cases:
+  - id: loads-the-review-skill
+    prompt: "Can you review pull request 1101?"
+    must_call: [Skill]
+  - id: fixes-the-failing-test
+    prompt: "Make the failing test pass."
+    grade_when: []
+    must_call: [Bash]
+```
+
+The first case is graded whether the agent finished or stopped at its third turn. The second sets `grade_when: []`, so a capped run is still a harness error there: a behaviour case that stopped halfway says nothing about whether the agent finishes the job.
+
+- A listed run is graded whatever its exit code. Each entry is a result name exactly as `claude-stream-json` reads it from the `result` line, such as `error_max_turns` or `error_max_budget_usd`; any result Claude Code prints other than `success` can be listed.
+- A result that is not listed is still a harness error, with the same reason as without the key.
+- These are never graded, whatever the list says: a transcript with no `result` line, output the decoder cannot read, a `success` result flagged as an error, a run killed by a signal, a run past its timeout, and a `success` transcript with a non-zero exit code.
+- A case's `grade_when` replaces the target's rather than adding to it. The key is refused on any target but `command`, and so are `success`, an empty entry and an entry that is not a string.
+- A graded run that did not end in `success` says so. Its `<id>.json` and its entry in `results.json` carry `"outcome": "error_max_turns"` after `sutOk`, and its console row reads `PASS  loads-the-review-skill (ended on error_max_turns)`. On a [repeated case](#repeated-cases) the outcome is on each run that had one, and the runs row reads `1: PASS (ended on error_max_turns)`. A run that finished has no `outcome`, so a suite without `grade_when` writes exactly the output it did before.
+- With `repeat`, each run is graded on its own ending, and the pass rate counts capped runs that were graded like any other. On a case with a [workspace](#workspaces), `file_contains`, `must_not_exist` and the `after` steps run on a graded run as on a finished one.
+- `--retry` does not re-run a graded run, because it is not a harness error.
 
 A `command` suite cannot use `identities`, `sweep`, `tool_coverage` or multi-turn `turns:` cases. The agent reads its own configuration rather than a gth profile, and its transcript does not list the tools it loaded. Each of these is rejected when the suite loads. Write one case per prompt.
 
-To read another agent's output, point `transcript` at a JavaScript module, resolved from the suite file's directory. Its default export takes the command's whole standard output and returns `{ answer, toolCalls, toolResults }`. Each call is `{ name, id?, args }` with `args` as JSON text, and each result is `{ name, isError, content? }`. It may also return `tokensInput` and `tokensOutput`. Throw when the output does not describe a finished run; the message becomes the case's harness-error reason.
+To read another agent's output, point `transcript` at a JavaScript module, resolved from the suite file's directory. Its default export takes the command's whole standard output and returns `{ answer, toolCalls, toolResults }`. Each call is `{ name, id?, args }` with `args` as JSON text, and each result is `{ name, isError, content? }`. It may also return `tokensInput` and `tokensOutput`. Throw when the output does not describe a finished run; the message becomes the case's harness-error reason. A decoder that can tell a run stopped at a limit returns the transcript with `outcome` set to the name of that ending, and `outcomeReason` set to the sentence to report when the case does not list it in [`grade_when`](#grading-a-run-that-hit-a-limit). A thrown error is never graded.
 
 ```js
 // eval/my-agent-decoder.mjs

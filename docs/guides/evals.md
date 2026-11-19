@@ -113,6 +113,21 @@ target:
   transcript: claude-stream-json
 ```
 
+A run that stops at a limit, such as Claude Code's `--max-turns`, is a harness error, because an
+unfinished run is not evidence. When the first turns are all a case needs, such as whether the agent
+loads the right skill, cap the run and list the ending with `grade_when`. The case is then graded on
+what the agent did before the cap, and its result says `ended on error_max_turns`:
+
+```yaml
+target:
+  type: command
+  run: claude -p --output-format stream-json --verbose --max-turns 3
+  transcript: claude-stream-json
+  grade_when: [error_max_turns]
+```
+
+See [Grading a run that hit a limit](../COMMANDS.md#grading-a-run-that-hit-a-limit).
+
 The external agent keeps its own model, tools and credentials, and the `judge` grades with the
 model from your local gth config (or the judge profile, below). What each target can check depends
 on what its protocol carries:
