@@ -401,6 +401,30 @@ describe('runToolCallArgChecks — tool_call_json_path (BATCH-52)', () => {
       ]);
     });
 
+    it('grades a call with empty arguments as an empty object, so it is clean', async () => {
+      const { runToolCallArgChecks } = await import('#src/toolChecks.js');
+      // An AG-UI call with no TOOL_CALL_ARGS is recorded with `args: ''`.
+      expect(
+        runToolCallArgChecks([{ name: 'Bash', args: '' }], { toolCallJsonPath: [absoluteGh] })
+      ).toEqual([]);
+    });
+
+    it('selects calls with a glob tool pattern', async () => {
+      const { runToolCallArgChecks } = await import('#src/toolChecks.js');
+      const check = { tool: 'mcp__shop_*', path: 'query', contains: 'laptop', none: true as const };
+      expect(
+        runToolCallArgChecks([search('{"query":"laptop bags"}')], { toolCallJsonPath: [check] })
+      ).toEqual([
+        'tool_call_json_path "query" (tool "mcp__shop_*", none): call 1 to "mcp__shop_search" ' +
+          'matched with "laptop bags"',
+      ]);
+      expect(
+        runToolCallArgChecks([{ name: 'read_file', args: '{"query":"laptop bags"}' }], {
+          toolCallJsonPath: [check],
+        })
+      ).toEqual([]);
+    });
+
     it('cannot pass on truncated or non-JSON arguments', async () => {
       const { runToolCallArgChecks } = await import('#src/toolChecks.js');
       expect(
