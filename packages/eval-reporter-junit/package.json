@@ -1,6 +1,6 @@
 {
   "name": "@gaunt-sloth/eval-reporter-junit",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "JUnit XML (Ant-JUnit flavor) reporter for `gth eval` — the first member of the @gaunt-sloth/eval-reporter-* plugin family",
   "license": "MIT",
   "author": "Andrew Kondratev",
