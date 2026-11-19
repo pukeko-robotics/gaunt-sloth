@@ -1,0 +1,10 @@
+{
+  "id": "finished-exit-1",
+  "passThreshold": 6,
+  "durationMs": 0,
+  "verdict": "FAIL",
+  "sutOk": false,
+  "reasons": [
+    "SUT run failed: the command exited with code 1; stderr: fake: failing on purpose"
+  ]
+}

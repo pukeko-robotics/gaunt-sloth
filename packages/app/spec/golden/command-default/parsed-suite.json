@@ -1,0 +1,226 @@
+{
+  "target": {
+    "type": "command",
+    "run": "fake-agent -p --output-format stream-json --verbose --max-turns 3",
+    "argv": [
+      "fake-agent",
+      "-p",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--max-turns",
+      "3"
+    ],
+    "transcript": "claude-stream-json",
+    "prompt": "arg"
+  },
+  "metrics": [],
+  "cases": [
+    {
+      "id": "finished",
+      "turns": [
+        {
+          "user": "finished",
+          "expectations": [
+            {
+              "mustContain": [],
+              "mustNotContain": [],
+              "shouldContainAny": [],
+              "mustCall": [
+                "Read",
+                "Bash"
+              ],
+              "mustNotCall": [],
+              "mustMatch": [],
+              "mustNotMatch": [],
+              "jsonPath": [],
+              "mustError": [],
+              "toolResultJsonPath": [],
+              "toolCallJsonPath": []
+            }
+          ]
+        }
+      ],
+      "passThreshold": 6,
+      "tags": [],
+      "modelFree": false,
+      "timeoutMs": 600000
+    },
+    {
+      "id": "capped-exit-1",
+      "turns": [
+        {
+          "user": "capped-exit-1",
+          "expectations": [
+            {
+              "mustContain": [],
+              "mustNotContain": [],
+              "shouldContainAny": [],
+              "mustCall": [
+                "Read"
+              ],
+              "mustNotCall": [],
+              "mustMatch": [],
+              "mustNotMatch": [],
+              "jsonPath": [],
+              "mustError": [],
+              "toolResultJsonPath": [],
+              "toolCallJsonPath": []
+            }
+          ]
+        }
+      ],
+      "passThreshold": 6,
+      "tags": [],
+      "modelFree": false,
+      "timeoutMs": 600000
+    },
+    {
+      "id": "capped-exit-0",
+      "turns": [
+        {
+          "user": "capped-exit-0",
+          "expectations": [
+            {
+              "mustContain": [],
+              "mustNotContain": [],
+              "shouldContainAny": [],
+              "mustCall": [
+                "Read"
+              ],
+              "mustNotCall": [],
+              "mustMatch": [],
+              "mustNotMatch": [],
+              "jsonPath": [],
+              "mustError": [],
+              "toolResultJsonPath": [],
+              "toolCallJsonPath": []
+            }
+          ]
+        }
+      ],
+      "passThreshold": 6,
+      "tags": [],
+      "modelFree": false,
+      "timeoutMs": 600000
+    },
+    {
+      "id": "finished-exit-1",
+      "turns": [
+        {
+          "user": "finished-exit-1",
+          "expectations": [
+            {
+              "mustContain": [],
+              "mustNotContain": [],
+              "shouldContainAny": [],
+              "mustCall": [
+                "Read"
+              ],
+              "mustNotCall": [],
+              "mustMatch": [],
+              "mustNotMatch": [],
+              "jsonPath": [],
+              "mustError": [],
+              "toolResultJsonPath": [],
+              "toolCallJsonPath": []
+            }
+          ]
+        }
+      ],
+      "passThreshold": 6,
+      "tags": [],
+      "modelFree": false,
+      "timeoutMs": 600000
+    },
+    {
+      "id": "garbage",
+      "turns": [
+        {
+          "user": "garbage",
+          "expectations": [
+            {
+              "mustContain": [],
+              "mustNotContain": [],
+              "shouldContainAny": [],
+              "mustCall": [
+                "Read"
+              ],
+              "mustNotCall": [],
+              "mustMatch": [],
+              "mustNotMatch": [],
+              "jsonPath": [],
+              "mustError": [],
+              "toolResultJsonPath": [],
+              "toolCallJsonPath": []
+            }
+          ]
+        }
+      ],
+      "passThreshold": 6,
+      "tags": [],
+      "modelFree": false,
+      "timeoutMs": 600000
+    },
+    {
+      "id": "killed",
+      "turns": [
+        {
+          "user": "killed",
+          "expectations": [
+            {
+              "mustContain": [],
+              "mustNotContain": [],
+              "shouldContainAny": [],
+              "mustCall": [
+                "Read"
+              ],
+              "mustNotCall": [],
+              "mustMatch": [],
+              "mustNotMatch": [],
+              "jsonPath": [],
+              "mustError": [],
+              "toolResultJsonPath": [],
+              "toolCallJsonPath": []
+            }
+          ]
+        }
+      ],
+      "passThreshold": 6,
+      "tags": [],
+      "modelFree": false,
+      "timeoutMs": 600000
+    },
+    {
+      "id": "repeated",
+      "turns": [
+        {
+          "user": "finished",
+          "expectations": [
+            {
+              "mustContain": [],
+              "mustNotContain": [],
+              "shouldContainAny": [],
+              "mustCall": [
+                "Bash"
+              ],
+              "mustNotCall": [],
+              "mustMatch": [],
+              "mustNotMatch": [],
+              "jsonPath": [],
+              "mustError": [],
+              "toolResultJsonPath": [],
+              "toolCallJsonPath": []
+            }
+          ]
+        }
+      ],
+      "passThreshold": 6,
+      "tags": [],
+      "modelFree": false,
+      "timeoutMs": 600000,
+      "repeat": 2,
+      "passRate": 1
+    }
+  ]
+}

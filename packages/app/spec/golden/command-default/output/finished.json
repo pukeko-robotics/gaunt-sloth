@@ -1,0 +1,50 @@
+{
+  "id": "finished",
+  "passThreshold": 6,
+  "answer": "`present.txt` contains the single line \"hello from the fixture\"; `missing.txt` doesn't exist, and `ls` shows `present.txt` is the only file in the directory.",
+  "tokensInput": 99458,
+  "tokensOutput": 342,
+  "tools": [
+    "Read",
+    "Bash"
+  ],
+  "toolResults": [
+    {
+      "name": "Read",
+      "isError": true,
+      "content": "File does not exist. Note: your current working directory is /workspace."
+    },
+    {
+      "name": "Read",
+      "isError": false,
+      "content": "1\thello from the fixture\n2\t"
+    },
+    {
+      "name": "Bash",
+      "isError": false,
+      "content": "present.txt"
+    }
+  ],
+  "toolCalls": [
+    {
+      "name": "Read",
+      "id": "toolu_01EYU97VVHhPAj5syhGKt11e"
+    },
+    {
+      "name": "Read",
+      "id": "toolu_01RHaSDTtNEWKTumPnPzrCpV"
+    },
+    {
+      "name": "Bash",
+      "id": "toolu_018fHeu3bqBwj121qiQPRjci"
+    }
+  ],
+  "durationMs": 0,
+  "verdict": "PASS",
+  "sutOk": true,
+  "checks": {
+    "passed": true,
+    "failures": []
+  },
+  "reasons": []
+}

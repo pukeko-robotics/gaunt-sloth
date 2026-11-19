@@ -1,0 +1,10 @@
+{
+  "id": "killed",
+  "passThreshold": 6,
+  "durationMs": 0,
+  "verdict": "FAIL",
+  "sutOk": false,
+  "reasons": [
+    "SUT run failed: the command exited with code null; transcript \"claude-stream-json\": Claude Code ended the run with result \"error_max_turns\""
+  ]
+}

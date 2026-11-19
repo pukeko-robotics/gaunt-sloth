@@ -1,0 +1,10 @@
+{
+  "id": "capped-exit-0",
+  "passThreshold": 6,
+  "durationMs": 0,
+  "verdict": "FAIL",
+  "sutOk": false,
+  "reasons": [
+    "SUT run failed: transcript \"claude-stream-json\" could not be decoded: Claude Code ended the run with result \"error_max_turns\""
+  ]
+}

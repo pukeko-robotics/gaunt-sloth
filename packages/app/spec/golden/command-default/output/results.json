@@ -1,0 +1,226 @@
+{
+  "total": 7,
+  "passed": 2,
+  "failed": 5,
+  "cases": [
+    {
+      "id": "finished",
+      "passThreshold": 6,
+      "answer": "`present.txt` contains the single line \"hello from the fixture\"; `missing.txt` doesn't exist, and `ls` shows `present.txt` is the only file in the directory.",
+      "tokensInput": 99458,
+      "tokensOutput": 342,
+      "tools": [
+        "Read",
+        "Bash"
+      ],
+      "toolResults": [
+        {
+          "name": "Read",
+          "isError": true,
+          "content": "File does not exist. Note: your current working directory is /workspace."
+        },
+        {
+          "name": "Read",
+          "isError": false,
+          "content": "1\thello from the fixture\n2\t"
+        },
+        {
+          "name": "Bash",
+          "isError": false,
+          "content": "present.txt"
+        }
+      ],
+      "toolCalls": [
+        {
+          "name": "Read",
+          "id": "toolu_01EYU97VVHhPAj5syhGKt11e"
+        },
+        {
+          "name": "Read",
+          "id": "toolu_01RHaSDTtNEWKTumPnPzrCpV"
+        },
+        {
+          "name": "Bash",
+          "id": "toolu_018fHeu3bqBwj121qiQPRjci"
+        }
+      ],
+      "durationMs": 0,
+      "verdict": "PASS",
+      "sutOk": true,
+      "checks": {
+        "passed": true,
+        "failures": []
+      },
+      "reasons": []
+    },
+    {
+      "id": "capped-exit-1",
+      "passThreshold": 6,
+      "durationMs": 0,
+      "verdict": "FAIL",
+      "sutOk": false,
+      "reasons": [
+        "SUT run failed: the command exited with code 1; transcript \"claude-stream-json\": Claude Code ended the run with result \"error_max_turns\"; stderr: fake: stopped at the turn limit"
+      ]
+    },
+    {
+      "id": "capped-exit-0",
+      "passThreshold": 6,
+      "durationMs": 0,
+      "verdict": "FAIL",
+      "sutOk": false,
+      "reasons": [
+        "SUT run failed: transcript \"claude-stream-json\" could not be decoded: Claude Code ended the run with result \"error_max_turns\""
+      ]
+    },
+    {
+      "id": "finished-exit-1",
+      "passThreshold": 6,
+      "durationMs": 0,
+      "verdict": "FAIL",
+      "sutOk": false,
+      "reasons": [
+        "SUT run failed: the command exited with code 1; stderr: fake: failing on purpose"
+      ]
+    },
+    {
+      "id": "garbage",
+      "passThreshold": 6,
+      "durationMs": 0,
+      "verdict": "FAIL",
+      "sutOk": false,
+      "reasons": [
+        "SUT run failed: transcript \"claude-stream-json\" could not be decoded: the transcript has no final \"result\" line, so the run did not complete (it was cut off, or the command does not print `--output-format stream-json --verbose`)."
+      ]
+    },
+    {
+      "id": "killed",
+      "passThreshold": 6,
+      "durationMs": 0,
+      "verdict": "FAIL",
+      "sutOk": false,
+      "reasons": [
+        "SUT run failed: the command exited with code null; transcript \"claude-stream-json\": Claude Code ended the run with result \"error_max_turns\""
+      ]
+    },
+    {
+      "id": "repeated",
+      "passThreshold": 6,
+      "durationMs": 0,
+      "verdict": "PASS",
+      "sutOk": true,
+      "reasons": [],
+      "repeat": {
+        "runs": 2,
+        "passed": 2,
+        "ratePercent": 100,
+        "passRate": 1,
+        "requiredPercent": 100
+      },
+      "runs": [
+        {
+          "id": "repeated",
+          "run": 1,
+          "passThreshold": 6,
+          "answer": "`present.txt` contains the single line \"hello from the fixture\"; `missing.txt` doesn't exist, and `ls` shows `present.txt` is the only file in the directory.",
+          "tokensInput": 99458,
+          "tokensOutput": 342,
+          "tools": [
+            "Read",
+            "Bash"
+          ],
+          "toolResults": [
+            {
+              "name": "Read",
+              "isError": true,
+              "content": "File does not exist. Note: your current working directory is /workspace."
+            },
+            {
+              "name": "Read",
+              "isError": false,
+              "content": "1\thello from the fixture\n2\t"
+            },
+            {
+              "name": "Bash",
+              "isError": false,
+              "content": "present.txt"
+            }
+          ],
+          "toolCalls": [
+            {
+              "name": "Read",
+              "id": "toolu_01EYU97VVHhPAj5syhGKt11e"
+            },
+            {
+              "name": "Read",
+              "id": "toolu_01RHaSDTtNEWKTumPnPzrCpV"
+            },
+            {
+              "name": "Bash",
+              "id": "toolu_018fHeu3bqBwj121qiQPRjci"
+            }
+          ],
+          "durationMs": 0,
+          "verdict": "PASS",
+          "sutOk": true,
+          "checks": {
+            "passed": true,
+            "failures": []
+          },
+          "reasons": []
+        },
+        {
+          "id": "repeated",
+          "run": 2,
+          "passThreshold": 6,
+          "answer": "`present.txt` contains the single line \"hello from the fixture\"; `missing.txt` doesn't exist, and `ls` shows `present.txt` is the only file in the directory.",
+          "tokensInput": 99458,
+          "tokensOutput": 342,
+          "tools": [
+            "Read",
+            "Bash"
+          ],
+          "toolResults": [
+            {
+              "name": "Read",
+              "isError": true,
+              "content": "File does not exist. Note: your current working directory is /workspace."
+            },
+            {
+              "name": "Read",
+              "isError": false,
+              "content": "1\thello from the fixture\n2\t"
+            },
+            {
+              "name": "Bash",
+              "isError": false,
+              "content": "present.txt"
+            }
+          ],
+          "toolCalls": [
+            {
+              "name": "Read",
+              "id": "toolu_01EYU97VVHhPAj5syhGKt11e"
+            },
+            {
+              "name": "Read",
+              "id": "toolu_01RHaSDTtNEWKTumPnPzrCpV"
+            },
+            {
+              "name": "Bash",
+              "id": "toolu_018fHeu3bqBwj121qiQPRjci"
+            }
+          ],
+          "durationMs": 0,
+          "verdict": "PASS",
+          "sutOk": true,
+          "checks": {
+            "passed": true,
+            "failures": []
+          },
+          "reasons": []
+        }
+      ]
+    }
+  ]
+}

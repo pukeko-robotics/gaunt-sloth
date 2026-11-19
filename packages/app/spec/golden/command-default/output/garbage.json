@@ -1,0 +1,10 @@
+{
+  "id": "garbage",
+  "passThreshold": 6,
+  "durationMs": 0,
+  "verdict": "FAIL",
+  "sutOk": false,
+  "reasons": [
+    "SUT run failed: transcript \"claude-stream-json\" could not be decoded: the transcript has no final \"result\" line, so the run did not complete (it was cut off, or the command does not print `--output-format stream-json --verbose`)."
+  ]
+}

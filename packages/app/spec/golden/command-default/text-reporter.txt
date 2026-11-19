@@ -1,0 +1,19 @@
+display	PASS  finished
+displayWarning	FAIL  capped-exit-1
+displayWarning	  1 │ SUT run failed: the command exited with code 1; transcript "claude-stream-json": Claude Code
+displayWarning	    ┊  ended the run with result "error_max_turns"; stderr: fake: stopped at the turn limit
+displayWarning	FAIL  capped-exit-0
+displayWarning	  1 │ SUT run failed: transcript "claude-stream-json" could not be decoded: Claude Code ended the 
+displayWarning	    ┊ run with result "error_max_turns"
+displayWarning	FAIL  finished-exit-1
+displayWarning	  1 │ SUT run failed: the command exited with code 1; stderr: fake: failing on purpose
+displayWarning	FAIL  garbage
+displayWarning	  1 │ SUT run failed: transcript "claude-stream-json" could not be decoded: the transcript has no 
+displayWarning	    ┊ final "result" line, so the run did not complete (it was cut off, or the command does not pr
+displayWarning	    ┊ int `--output-format stream-json --verbose`).
+displayWarning	FAIL  killed
+displayWarning	  1 │ SUT run failed: the command exited with code null; transcript "claude-stream-json": Claude C
+displayWarning	    ┊ ode ended the run with result "error_max_turns"
+display	PASS  repeated (2/2 runs passed, 100%, needs 100%)
+display	      runs 1: PASS · 2: PASS
+displayWarning	EVAL RESULT: 2/7 case(s) passed, 5 failed. Results written to out/command-default
