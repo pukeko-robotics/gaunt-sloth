@@ -866,7 +866,7 @@ The case fails if `src/greet.mjs` does not say `welcome banner`, if the agent wr
 
 | Key | Meaning |
 |-----|---------|
-| `file_contains` | A map from a file to a string, or a list of strings, that the file must contain. A file that does not exist fails with its own reason. |
+| `file_contains` | A map from a file to a string, or a list of strings, that the file must contain. A file that does not exist fails with its own reason, and so does an entry that is not a regular file, such as a directory or a named pipe, which is never opened. |
 | `must_not_exist` | Globs. The case fails when anything in the workspace matches one: a file, a directory or a symbolic link. |
 | `after` | Commands run in the workspace, in order. Each sets exactly one of `equals` or `contains`, compared with its standard output, or `exit_code`. |
 

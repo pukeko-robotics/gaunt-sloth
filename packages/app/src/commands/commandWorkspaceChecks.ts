@@ -11,13 +11,23 @@
  *
  * @module
  */
-import { lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { lstatSync, readFileSync, readdirSync, realpathSync, statSync, type Stats } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { WorkspaceFileContainsCheck, WorkspaceMustNotExistCheck } from '@gaunt-sloth/batch';
 import { matchesWorkspaceGlob } from '@gaunt-sloth/batch/workspaceChecks.js';
 
 /** How many matching entries a `must_not_exist` reason names before it summarises the rest. */
 const MAX_LISTED_MATCHES = 5;
+
+/** What a non-regular entry is, for a reason: "a directory", "a named pipe (FIFO)", … */
+function describeEntryType(stats: Stats): string {
+  if (stats.isDirectory()) return 'a directory';
+  if (stats.isFIFO()) return 'a named pipe (FIFO)';
+  if (stats.isSocket()) return 'a socket';
+  if (stats.isCharacterDevice()) return 'a character device';
+  if (stats.isBlockDevice()) return 'a block device';
+  return 'not a regular file';
+}
 
 /** Whether `candidate` is `root` or inside it. Both must be canonical (realpath) paths. */
 export function isInsideDir(root: string, candidate: string): boolean {
@@ -70,8 +80,14 @@ export function checkFileContains(
       );
       continue;
     }
-    if (statSync(real).isDirectory()) {
-      failures.push(`${label}: it is a directory, not a file`);
+    // Only a REGULAR file is ever opened. A named pipe the agent left at the path would block the
+    // synchronous read below forever (no writer, no deadline: the case's timeout covers its
+    // processes, not this read), and a starved event loop never runs gth's SIGINT handler, so even
+    // Ctrl+C could not stop the run. A socket or a device is no better. So every other entry type is
+    // a failure naming what was there, and is never opened.
+    const stats = statSync(real);
+    if (!stats.isFile()) {
+      failures.push(`${label}: it is ${describeEntryType(stats)}, not a regular file`);
       continue;
     }
     const text = readFileSync(real, 'utf8');

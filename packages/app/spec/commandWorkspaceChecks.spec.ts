@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseEvalSuite } from '@gaunt-sloth/batch/evalSuite.js';
 import { classifyEvalExit, runEvalSuite } from '@gaunt-sloth/batch/evalRunner.js';
 import { decodeClaudeStreamJson } from '@gaunt-sloth/batch/transcripts/claudeStreamJson.js';
@@ -173,6 +174,48 @@ describe('file_contains', () => {
     }
     const summary = await run(suiteWith(dir, 'file_contains: { "alias.txt": "inner needle" }'));
     expect(summary.cases[0].reasons).toEqual([]);
+  });
+});
+
+/** The checker's own source, run in a child process by the FIFO spec. */
+const CHECKS_SOURCE = resolve(HERE, '../src/commands/commandWorkspaceChecks.ts');
+
+describe('file_contains — entries that are not regular files', () => {
+  it('fails a named pipe without opening it, within a bounded time', (ctx) => {
+    // POSIX only: Windows has no `mkfifo`, and a machine without the tool cannot make the entry.
+    if (process.platform === 'win32') ctx.skip();
+    const dir = mkdtempSync(join(scratch, 'fifo-'));
+    const made = spawnSync('mkfifo', [join(dir, 'greet.mjs')]);
+    if (made.error !== undefined) ctx.skip();
+    expect(made.status).toBe(0);
+    // A read of a FIFO with no writer blocks synchronously, and a vitest timeout cannot interrupt a
+    // blocked event loop, so the check runs in a CHILD with a deadline. A regression to opening the
+    // pipe fails here in seconds instead of hanging the suite. The child imports the checker's
+    // TypeScript source (Node strips the types), so it grades the code under test.
+    const script =
+      `const { checkFileContains } = await import(${JSON.stringify(pathToFileURL(CHECKS_SOURCE).href)});` +
+      `process.stdout.write(JSON.stringify(checkFileContains(process.argv[1], ` +
+      `[{ path: 'greet.mjs', substrings: ['welcome'] }])));`;
+    const child = spawnSync(process.execPath, ['--input-type=module', '-e', script, dir], {
+      encoding: 'utf8',
+      timeout: 15_000,
+      killSignal: 'SIGKILL',
+    });
+    expect(child.error, 'the check blocked on the pipe and was killed').toBeUndefined();
+    expect(child.status).toBe(0);
+    expect(JSON.parse(child.stdout)).toEqual([
+      'file_contains "greet.mjs": it is a named pipe (FIFO), not a regular file',
+    ]);
+  }, 30_000);
+
+  it('fails a directory with a reason naming it, as a FAIL rather than a harness error', async () => {
+    const dir = suiteDir('fc-dir', { 'src/greet.mjs': 'welcome banner\n' });
+    const summary = await run(suiteWith(dir, 'file_contains: { "src": "welcome banner" }'));
+    expect(summary.cases[0].sutOk).toBe(true);
+    expect(summary.cases[0].reasons).toEqual([
+      'file_contains "src": it is a directory, not a regular file',
+    ]);
+    expect(classifyEvalExit(summary)).toBe(1);
   });
 });
 
