@@ -53,7 +53,7 @@
  * @module
  */
 import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type {
@@ -385,7 +385,11 @@ export function writeCommandTranscript(
   const base = transcriptFileBase(cell);
   mkdirSync(outputDir, { recursive: true });
   writeFileSync(join(outputDir, `${base}.stdout.txt`), run.stdout);
-  if (run.stderr.length > 0) writeFileSync(join(outputDir, `${base}.stderr.txt`), run.stderr);
+  const stderrFile = join(outputDir, `${base}.stderr.txt`);
+  // A run with nothing on stderr removes the file a previous run into the same `-o` left under
+  // this name. Left in place it would sit beside this run's stdout and read as this run's.
+  if (run.stderr.length > 0) writeFileSync(stderrFile, run.stderr);
+  else rmSync(stderrFile, { force: true });
 }
 
 function tail(text: string): string {

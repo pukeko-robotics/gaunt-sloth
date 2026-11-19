@@ -164,6 +164,18 @@ describe('command runner — transcript files', () => {
     expect(readdirSync(outDir)).toEqual(['quiet#run2.stdout.txt']);
   });
 
+  it("removes a previous run's stderr file when this run printed nothing to stderr", async () => {
+    const { writeCommandTranscript } = await import('#src/commands/commandEvalRunner.js');
+    writeCommandTranscript(outDir, { id: 'reused', run: 1 }, RUNS.noisy);
+    expect(readdirSync(outDir).sort()).toEqual([
+      'reused#run1.stderr.txt',
+      'reused#run1.stdout.txt',
+    ]);
+    writeCommandTranscript(outDir, { id: 'reused', run: 1 }, RUNS.pass);
+    expect(readdirSync(outDir)).toEqual(['reused#run1.stdout.txt']);
+    expect(readFileSync(join(outDir, 'reused#run1.stdout.txt'), 'utf8')).toBe('pass-out');
+  });
+
   it('creates the output directory when it does not exist yet', async () => {
     const { writeCommandTranscript } = await import('#src/commands/commandEvalRunner.js');
     const nested = join(outDir, 'not', 'yet');

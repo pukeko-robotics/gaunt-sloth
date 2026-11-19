@@ -568,7 +568,7 @@ async function printRunDiff(
   if (baseline.only !== undefined) {
     displayWarning(
       `eval: the baseline at ${baselineFile} was a partial run (--only ` +
-        `${baseline.only.patterns.join(' ')}: ${baseline.only.selectedCases} of ` +
+        `${baseline.only.patterns.map((p) => `"${p}"`).join(', ')}: ${baseline.only.selectedCases} of ` +
         `${baseline.only.suiteCases} cases), so the diff covers only the cases it ran.`
     );
   }
@@ -1205,6 +1205,10 @@ export function evalCommand(
         const single = suites.length === 1;
         const usedStems = new Map<string, number>();
         const combinedCases: EvalCaseResult[] = [];
+        // BATCH-66 — suites `--only` skipped for having no matching case. The total line counts only
+        // the suites that ran and names the skipped ones, so "across 2 suites" never includes a
+        // suite that contributed no case. Always 0 without `--only`, which leaves that line as it was.
+        let skippedSuites = 0;
         // BATCH-25 — a breached `gate: fail` metric threshold is a PRODUCT signal (exit 1) exactly
         // like a failed case, and it is tracked HERE rather than read off `combined`: the aggregate
         // summary is a bare concatenation of cases and carries no per-suite `classification` report,
@@ -1275,6 +1279,7 @@ export function evalCommand(
               );
               if (selected.length === 0) {
                 displayInfo(`eval: --only matched no case in ${suite.readPath}; skipped it.`);
+                skippedSuites += 1;
                 continue;
               }
               displayInfo(
@@ -1411,8 +1416,9 @@ export function evalCommand(
         // prints beyond its reporter output.)
         if (suites.length > 1) {
           const totalLine =
-            `EVAL TOTAL: ${combined.passed}/${combined.total} across ${suites.length} suites, ` +
-            `${combined.failed} failed`;
+            `EVAL TOTAL: ${combined.passed}/${combined.total} across ` +
+            `${suites.length - skippedSuites} suites, ${combined.failed} failed` +
+            (skippedSuites > 0 ? ` (${skippedSuites} skipped by --only)` : '');
           if (combined.failed === 0 && !anyHarnessError) {
             displaySuccess(totalLine);
           } else {

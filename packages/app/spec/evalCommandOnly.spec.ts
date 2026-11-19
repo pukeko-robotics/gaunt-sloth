@@ -127,11 +127,36 @@ cases:
   - { id: flaky, prompt: noisy, must_contain: [out], repeat: 2 }
 `;
 
+// A second command suite with a case id the first one also has, so a multi-suite run that put
+// both suites' transcripts in one directory would overwrite one with the other.
+const COMMAND_SUITE_TWO = `
+target:
+  type: command
+  run: agent -p
+  transcript: claude-stream-json
+cases:
+  - { id: passes, prompt: noisy, must_contain: [out] }
+`;
+
+// A classifier suite, so a filtered run has suite-level metrics to (not) compare.
+const CLASSIFIER_SUITE = `
+target: { type: gth-agent }
+classification: { labels: [safe, destructive] }
+metrics:
+  - { name: safe_rate, where: "actual.label == safe" }
+cases:
+  - { id: c-one, prompt: p1, expect_label: safe }
+  - { id: c-two, prompt: p2, expect_label: safe }
+`;
+
 const FILES: Record<string, string> = {
   'agent.yaml': AGENT_SUITE,
   'matrix.yaml': MATRIX_SUITE,
   'sweep.yaml': SWEEP_SUITE,
   'command.yaml': COMMAND_SUITE,
+  'command2.yaml': COMMAND_SUITE_TWO,
+  'classifier.yaml': CLASSIFIER_SUITE,
+  'broken.yaml': 'target: { type: no-such-target }\ncases: []\n',
 };
 
 const RUNS: Record<string, CommandRunResult> = {
@@ -211,10 +236,24 @@ describe('gth eval --only and --keep-transcripts', () => {
       expect(systemUtilsMock.setExitCode).not.toHaveBeenCalled();
     });
 
-    it('a glob is anchored at both ends', async () => {
+    it('a pattern without * matches only the whole id', async () => {
       await runEval('agent.yaml', '-o', outputDir, '--only', 'fix');
       expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(2);
       expect(dispatched).toEqual([]);
+    });
+
+    it('a glob with * is anchored at both ends', async () => {
+      // `*-loop` matches `fix-loop` up to its end. `ix-*` would match both `fix-` cases if the start
+      // were not anchored, and `*-lo` would match `fix-loop` if the end were not.
+      await runEval('agent.yaml', '-o', outputDir, '--only', '*-loop');
+      expect(dispatched).toEqual(['fix-loop']);
+      for (const unanchored of ['ix-*', '*-lo']) {
+        dispatched = [];
+        systemUtilsMock.setExitCode.mockClear();
+        await runEval('agent.yaml', '-o', outputDir, '--only', unanchored);
+        expect(dispatched).toEqual([]);
+        expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(2);
+      }
     });
 
     it('runs every identity and every repeat of a matched case, and none of an unmatched one', async () => {
@@ -261,6 +300,30 @@ describe('gth eval --only and --keep-transcripts', () => {
       expect(dispatched.sort()).toEqual(['unpicked__admin', 'unpicked__guest']);
       expect(existsSync(join(outputDir, 'agent'))).toBe(false);
       expect(systemUtilsMock.setExitCode).not.toHaveBeenCalled();
+      // The total counts the suite that ran, and names the one that was skipped.
+      expect(consoleUtilsMock.displaySuccess).toHaveBeenCalledWith(
+        'EVAL TOTAL: 2/2 across 1 suites, 0 failed (1 skipped by --only)'
+      );
+    });
+
+    it('prints a parse error from the pre-pass alongside the no-match error', async () => {
+      await runEval('agent.yaml', 'broken.yaml', '-o', outputDir, '--only', 'nope-*');
+      expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(2);
+      const errors = consoleUtilsMock.displayError.mock.calls.map((call) => String(call[0]));
+      expect(errors).toHaveLength(2);
+      expect(errors[0]).toMatch(/^eval harness error in broken\.yaml: /);
+      expect(errors[1]).toBe(
+        'eval harness error: --only "nope-*" matched no case in 2 suite(s). Nothing was run.'
+      );
+    });
+
+    it('is refused with --relabel-diff, before anything is read', async () => {
+      await runEval('agent.yaml', '--only', 'fix-*', '--relabel-diff', join(projectRoot, 'r.json'));
+      expect(systemUtilsMock.setExitCode).toHaveBeenCalledWith(2);
+      expect(allText(consoleUtilsMock.displayError)).toContain(
+        '--only cannot be combined with --export-blind or --relabel-diff'
+      );
+      expect(fileUtilsMock.readFileFromProjectDir).not.toHaveBeenCalled();
     });
 
     it('is refused with --export-blind, before anything is read', async () => {
@@ -299,6 +362,14 @@ describe('gth eval --only and --keep-transcripts', () => {
 
       it('compares only the selected cases and does not report the others as missing', async () => {
         writeBaseline();
+        // `fix-loop` now fails against a passing baseline, so the REGRESSED list below has
+        // something to show, and must show only it.
+        batchCommandMock.buildProductionRunCell.mockImplementation(
+          async () => async (cell: MatrixCell) => {
+            dispatched.push(cell.id);
+            return { ok: true, answer: cell.id === 'fix-loop' ? 'goodbye' : 'hello' };
+          }
+        );
         await runEval(
           'agent.yaml',
           '-o',
@@ -312,7 +383,11 @@ describe('gth eval --only and --keep-transcripts', () => {
         const warned = allText(consoleUtilsMock.displayWarning);
         expect(shown).toContain('compared: 2 case(s)');
         expect(warned).not.toContain('only in the baseline');
-        expect(warned).not.toContain('REGRESSED');
+        expect(warned).toContain('REGRESSED (1):');
+        expect(allText(consoleUtilsMock.display)).toContain('fix-loop: PASS → FAIL');
+        for (const unselected of ['rename-symbol', 'other']) {
+          expect(`${shown}\n${warned}`).not.toContain(`${unselected}:`);
+        }
         expect(shown).toContain(
           '--only: the baseline was compared on the same selection of cases; its other cases ' +
             'were left out, not counted as missing.'
@@ -320,11 +395,73 @@ describe('gth eval --only and --keep-transcripts', () => {
       });
 
       it('says when the baseline was itself a partial run', async () => {
-        writeBaseline({ only: { patterns: ['fix-*'], selectedCases: 2, suiteCases: 4 } });
+        writeBaseline({ only: { patterns: ['fix-*', 'other'], selectedCases: 3, suiteCases: 4 } });
         await runEval('agent.yaml', '-o', outputDir, '--compare-to', baselineRoot);
         expect(allText(consoleUtilsMock.displayWarning)).toContain(
-          'was a partial run (--only fix-*: 2 of 4 cases)'
+          'was a partial run (--only "fix-*", "other": 3 of 4 cases)'
         );
+      });
+
+      it('says so on a filtered run against a partial baseline too', async () => {
+        writeBaseline({ only: { patterns: ['fix-*'], selectedCases: 2, suiteCases: 4 } });
+        await runEval(
+          'agent.yaml',
+          '-o',
+          outputDir,
+          '--only',
+          'fix-null',
+          '--compare-to',
+          baselineRoot
+        );
+        expect(allText(consoleUtilsMock.displayWarning)).toContain(
+          'was a partial run (--only "fix-*": 2 of 4 cases)'
+        );
+      });
+
+      it('leaves suite metrics out of a filtered diff and says why', async () => {
+        const metric = { name: 'safe_rate', overall: { value: 0.5 } };
+        const cases = ['c-one', 'c-two'].map((id) => ({
+          id,
+          passThreshold: 6,
+          durationMs: 1,
+          verdict: 'PASS',
+          sutOk: true,
+          reasons: [],
+        }));
+        writeFileSync(
+          join(baselineRoot, 'results.json'),
+          JSON.stringify({
+            total: 2,
+            passed: 2,
+            failed: 0,
+            cases,
+            classification: { metrics: [metric] },
+          })
+        );
+        const deltaLine = '  metric deltas:';
+        const note =
+          '  --only: metric deltas were not compared, because the baseline computed its metrics ' +
+          'over the whole suite and this run over the selected cases only.';
+
+        // Control: unfiltered, the same two summaries DO produce a metric delta, so its absence
+        // below is the filter's doing.
+        await runEval('classifier.yaml', '-o', outputDir, '--compare-to', baselineRoot);
+        expect(allText(consoleUtilsMock.display)).toContain(deltaLine);
+        expect(allText(consoleUtilsMock.display)).not.toContain(note);
+
+        consoleUtilsMock.display.mockClear();
+        await runEval(
+          'classifier.yaml',
+          '-o',
+          outputDir,
+          '--only',
+          'c-one',
+          '--compare-to',
+          baselineRoot
+        );
+        const shown = consoleUtilsMock.display.mock.calls.map((call) => String(call[0]));
+        expect(shown).not.toContain(deltaLine);
+        expect(shown).toContain(note);
       });
     });
   });
@@ -355,6 +492,25 @@ describe('gth eval --only and --keep-transcripts', () => {
         (c) => c.id === 'times-out'
       );
       expect(timedOut?.sutOk).toBe(false);
+      // The flag works on this target, so the "writes nothing" notice must not be printed.
+      expect(allText(consoleUtilsMock.displayInfo)).not.toContain('--keep-transcripts');
+    });
+
+    it("writes each suite's transcripts into that suite's own directory in a multi-suite run", async () => {
+      await runEval('command.yaml', 'command2.yaml', '-o', outputDir, '--keep-transcripts');
+      expect(readdirSync(outputDir).sort()).toEqual(['command', 'command2']);
+      const read = (suite: string, name: string): string =>
+        readFileSync(join(outputDir, suite, name), 'utf8');
+      // Both suites have a case `passes`; each keeps its own transcript beside its own JSON.
+      expect(read('command', 'passes.stdout.txt')).toBe('pass-out');
+      expect(read('command2', 'passes.stdout.txt')).toBe('noisy-out');
+      expect(read('command2', 'passes.stderr.txt')).toBe('warn');
+      expect(readdirSync(join(outputDir, 'command2')).sort()).toEqual([
+        'passes.json',
+        'passes.stderr.txt',
+        'passes.stdout.txt',
+        'results.json',
+      ]);
     });
 
     it('writes nothing on a non-command target and prints one notice for it', async () => {

@@ -993,7 +993,7 @@ gth eval eval/ --only 'fix-*' --only rename-symbol
 - A pattern without `*` matches an id exactly. A `*` matches any run of characters, and the pattern must match the whole id, so `fix` does not match `fix-null-check`. Quote a pattern with `*` so the shell does not expand it.
 - `--only` can be given several times. A case runs when any pattern matches it, in every suite given.
 - A matched case runs in full: every identity of an [identity matrix](#identity-matrix), every [sweep](#config-sweep) cell and every [repeat](#repeated-cases).
-- A suite with no matching case is skipped, with a notice naming it. When no case in any suite matches, `gth eval` exits `2` before any agent starts.
+- A suite with no matching case is skipped, with a notice naming it, and the `EVAL TOTAL` line counts only the suites that ran and says how many were skipped. When no case in any suite matches, `gth eval` exits `2` before any agent starts.
 - `results.json` records the filter as `only: { patterns, selectedCases, suiteCases }`, so a partial run is never read as the whole suite. Without `--only` there is no such field.
 - Suite-level figures, such as [declared metrics](#declared-metrics) and [tool coverage](#tool-coverage), and the gates on them, are computed over the selected cases only.
 - With [`--compare-to`](#run-over-run-diff), the baseline is narrowed to the same selection, so the cases you did not select are not reported as missing. Metric deltas are not compared on a filtered run, because the baseline's metrics cover the whole suite. A baseline that was itself a filtered run is named as partial.
@@ -1013,6 +1013,7 @@ gth eval eval/claude-fixes.yaml -o out/today --keep-transcripts
 - The whole output is kept. The stderr quoted in a harness-error reason is cut to its end; the file is not.
 - Each file is written as its run finishes, so a run you stop with Ctrl+C keeps the transcripts of the runs that finished.
 - Only a [`command` target](#the-command-target) has a transcript. On any other target the flag writes nothing and prints one notice per suite.
+- Running again into the same `-o` directory overwrites each file this run writes, and removes a run's old `.stderr.txt` when that run printed nothing to stderr. Files whose names this run does not write are left as they were: after a case changes to `repeat: 3`, its old `<id>.stdout.txt` is still there beside the new `<id>#run1.stdout.txt`. Use a fresh `-o` directory when you need only this run's files.
 
 ### Tool coverage
 
