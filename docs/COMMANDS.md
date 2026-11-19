@@ -777,7 +777,7 @@ gth eval eval/claude-skills.yaml
 
 Without a [workspace](#workspaces), the command runs in the directory `gth eval` was started in, with gth's environment. With `-j` above `1`, cases run at the same time in that directory, so an agent that edits files needs a workspace or `-j 1`. Stopping `gth eval` with Ctrl+C, or ending it with SIGTERM, also stops the commands it started.
 
-`claude-stream-json` reads `claude -p --output-format stream-json --verbose`. The answer is the text of the final `result` line. Each `tool_use` is a call, in the order the agent made it, and each `tool_result` is a result, matched to its call by id, with the agent's error flag. Calls made by subagents are included. `tool_call_json_path` reads a call's `input`, and needs [`evalToolCallArgs`](configuration/output.md#recorded-tool-call-arguments-evaltoolcallargs) like every other target. Results and arguments are recorded up to [`toolResultCaptureMaxBytes`](configuration/output.md#recorded-tool-result-size-toolresultcapturemaxbytes).
+`claude-stream-json` reads `claude -p --output-format stream-json --verbose`. The answer is the text of the final `result` line. Each `tool_use` is a call, in the order the agent made it, and each `tool_result` is a result, matched to its call by id, with the agent's error flag. Calls made by subagents are included. `tool_call_json_path` reads a call's `input`, and needs [`evalToolCallArgs`](configuration/output.md#recorded-tool-call-arguments-evaltoolcallargs) like every other target. Results and arguments are recorded up to [`toolResultCaptureMaxBytes`](configuration/output.md#recorded-tool-result-size-toolresultcapturemaxbytes). The run's cost is the `result` line's `total_cost_usd`; see [Cost reported by the agent](#cost-reported-by-the-agent).
 
 A case fails as a harness error (`SUT run failed`, and exit `2` when every case fails this way) when the command:
 
@@ -820,7 +820,7 @@ The first case is graded whether the agent finished or stopped at its third turn
 
 A `command` suite cannot use `identities`, `sweep`, `tool_coverage` or multi-turn `turns:` cases. The agent reads its own configuration rather than a gth profile, and its transcript does not list the tools it loaded. Each of these is rejected when the suite loads. Write one case per prompt.
 
-To read another agent's output, point `transcript` at a JavaScript module, resolved from the suite file's directory. Its default export takes the command's whole standard output and returns `{ answer, toolCalls, toolResults }`. Each call is `{ name, id?, args }` with `args` as JSON text, and each result is `{ name, isError, content? }`. It may also return `tokensInput` and `tokensOutput`.
+To read another agent's output, point `transcript` at a JavaScript module, resolved from the suite file's directory. Its default export takes the command's whole standard output and returns `{ answer, toolCalls, toolResults }`. Each call is `{ name, id?, args }` with `args` as JSON text, and each result is `{ name, isError, content? }`. It may also return `tokensInput` and `tokensOutput`, and `costUsd`, the run's cost in US dollars when the agent prints one ([Cost reported by the agent](#cost-reported-by-the-agent)). Leave `costUsd` out when the agent reports no cost. When it is set, it must be a finite number of zero or more: any other value fails the case as a harness error naming the decoder.
 
 How the decoder ends decides whether a case can be graded:
 
@@ -844,6 +844,23 @@ target:
   transcript: ./my-agent-decoder.mjs
   prompt: stdin
 ```
+
+#### Cost reported by the agent
+
+When the agent says what a run cost, `gth eval` reports it. `claude-stream-json` reads the US-dollar cost Claude Code prints on its final `result` line, including on a run [graded under `grade_when`](#grading-a-run-that-hit-a-limit). gth does not price models itself, so the figure is always the agent's own, and is labelled that way, before the verdict line:
+
+```
+COST (reported by agent): 0.6321924 USD for 2 of 7 case(s)
+EVAL RESULT: 2/7 case(s) passed, 5 failed. Results written to <output dir>
+```
+
+- Each case with a cost carries `"costUsd"` in its `<id>.json` and its entry in `results.json`. A case whose agent reported no cost, and a case that failed as a harness error, has no `costUsd`.
+- A [repeated case](#repeated-cases) carries the sum over its runs, and each run carries its own. The case has a cost only when every run reported one, so a total never leaves a run out without saying so.
+- The line counts the cases it covers. The amount is printed with the digits the agent reported, not rounded to cents.
+- Several suites in one run print one more line after `EVAL TOTAL:`, `COST TOTAL (reported by agent): …`, totalled across the suites.
+- With no cost reported anywhere, nothing is printed and no `costUsd` is written, which is always the case for the `gth-agent`, `ag-ui` and `adk-agent` targets.
+- The JUnit and TeamCity reporters do not show the cost.
+- With `--retry`, the cost is the last attempt's: a failed attempt that was retried is not counted.
 
 #### Workspaces
 

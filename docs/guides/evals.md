@@ -128,6 +128,12 @@ target:
 
 See [Grading a run that hit a limit](../COMMANDS.md#grading-a-run-that-hit-a-limit).
 
+Capping runs is often about spend, so it helps to see what a suite cost. Claude Code prints the cost
+of each run, and `claude-stream-json` reads it: the report then ends with one line such as
+`COST (reported by agent): 0.6321924 USD for 2 of 7 case(s)`, and each case's JSON carries
+`costUsd`. The figure is Claude Code's own; gth prices nothing. See
+[Cost reported by the agent](../COMMANDS.md#cost-reported-by-the-agent).
+
 The external agent keeps its own model, tools and credentials, and the `judge` grades with the
 model from your local gth config (or the judge profile, below). What each target can check depends
 on what its protocol carries:
