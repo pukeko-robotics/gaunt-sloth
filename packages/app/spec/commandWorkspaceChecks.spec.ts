@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -279,20 +280,17 @@ describe('file_contains — entries that are not regular files', () => {
 
 describe('workspace entries the checks cannot read', () => {
   /**
-   * Run a case whose agent leaves a mode-000 entry, and return the summary. The workspace is the
-   * run's own, recorded through the inspection seam; it is removed by the runner, and restored and
-   * removed here only if that failed, so a run never leaks it.
+   * Run a case whose agent leaves a mode-000 entry, and return the summary. The agent records its
+   * own cwd (the run's workspace) before it does anything, so the workspace is known however the
+   * grading ends; it is removed by the runner, and restored and removed here only if that failed,
+   * so a run never leaks it, even under a mutation that throws out of the grader.
    */
   async function runUnreadable(name: string, caseKeys: string, kind: 'file' | 'dir') {
     const dir = suiteDir(name);
-    const suite = suiteWith(dir, caseKeys, '', ['unreadable', kind, 'locked']);
-    let workspace: string | undefined;
+    const recordFile = join(dir, 'workspace.path');
+    const suite = suiteWith(dir, caseKeys, '', ['unreadable', kind, 'locked', recordFile]);
     const removeFailures: string[] = [];
     const runCell = buildCommandRunCell(targetOf(suite), suite, decodeClaudeStreamJson, {
-      inspectWorkspace: (ws, outcome) => {
-        workspace = ws.dir;
-        return outcome;
-      },
       onWorkspaceRemoveFailed: (_caseId, _dir, reason) => removeFailures.push(reason),
     });
     try {
@@ -302,6 +300,7 @@ describe('workspace entries the checks cannot read', () => {
       if (kind === 'file') expect(removeFailures).toEqual([]);
       return summary;
     } finally {
+      const workspace = existsSync(recordFile) ? readFileSync(recordFile, 'utf8') : undefined;
       if (workspace !== undefined && existsSync(workspace)) {
         chmodSync(join(workspace, 'locked'), 0o700);
         rmSync(workspace, { recursive: true, force: true });

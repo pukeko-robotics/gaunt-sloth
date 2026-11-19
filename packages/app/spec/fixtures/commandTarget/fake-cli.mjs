@@ -36,9 +36,10 @@
 //   fake-cli.mjs kill-self                         end itself with SIGKILL (no exit code)
 //
 // BATCH-59 agent modes, which leave something in the workspace and answer "done".
-//   fake-cli.mjs unreadable <file|dir> <path> <prompt>
+//   fake-cli.mjs unreadable <file|dir> <path> <recordfile> <prompt>
 //                                                  make a file (or an empty directory) at <path>
-//                                                  with mode 000
+//                                                  with mode 000, and write the cwd to <recordfile>
+//                                                  first, so the spec can always clean it up
 //   fake-cli.mjs dangling <path> <prompt>          make <path> a link to a name that does not exist
 import { spawn, spawnSync } from 'node:child_process';
 import {
@@ -133,7 +134,8 @@ if (mode === 'edit-shared') {
 } else if (mode === 'kill-self') {
   process.kill(process.pid, 'SIGKILL');
 } else if (mode === 'unreadable') {
-  const [kind, path] = rest;
+  const [kind, path, recordFile] = rest;
+  writeFileSync(recordFile, process.cwd());
   if (kind === 'dir') mkdirSync(path, { recursive: true });
   else writeFileSync(path, 'welcome banner\n');
   chmodSync(path, 0o000);
