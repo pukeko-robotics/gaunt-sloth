@@ -185,7 +185,7 @@ export function resolveWorkspaceCwd(dir: string, cwd: string | undefined): strin
   try {
     real = realpathSync.native(full);
   } catch (error) {
-    throw new Error(describeCwdError(cwd, full, error));
+    throw new Error(describeCwdError(dir, cwd, full, error));
   }
   const root = realpathSync.native(dir);
   if (!isInsideDir(root, real)) {
@@ -205,14 +205,15 @@ export function resolveWorkspaceCwd(dir: string, cwd: string | undefined): strin
  * link `setup` or the template made, and a permission error at the mode of a directory on the way.
  * Calling all three "does not exist" would send the author looking for the wrong mistake.
  */
-function describeCwdError(cwd: string, full: string, error: unknown): string {
+export function describeCwdError(dir: string, cwd: string, full: string, error: unknown): string {
   const code = (error as NodeJS.ErrnoException | undefined)?.code;
   const at = `the workspace cwd "${cwd}" (looked for "${full}")`;
   switch (code) {
     case 'ENOENT':
-      return `${at} does not exist after setup`;
     case 'ENOTDIR':
-      return `${at} does not exist after setup: a part of the path is not a directory`;
+      return firstNonDirectoryParent(dir, cwd)
+        ? `${at} does not exist after setup: a part of the path is not a directory`
+        : `${at} does not exist after setup`;
     case 'ELOOP':
       return `${at} could not be resolved: its symbolic links form a loop`;
     case 'EACCES':
@@ -221,6 +222,27 @@ function describeCwdError(cwd: string, full: string, error: unknown): string {
     default:
       return `${at} could not be resolved: ${error instanceof Error ? error.message : String(error)}`;
   }
+}
+
+/**
+ * Whether some parent of `cwd`, below the workspace root `dir`, exists and is not a directory.
+ *
+ * The errno alone cannot say so on every platform. POSIX `realpath` of `f/x`, where `f` is a
+ * regular file, fails with `ENOTDIR`, but Windows reports `ENOENT` for the same path, which would
+ * read as "setup did not make it" when the real mistake is a file where a directory was meant. So
+ * on either code the parents are walked from the root down, and the first one found decides: a
+ * non-directory there gives the "not a directory" wording, and a missing one stops the walk (that
+ * is a plain missing directory). `statSync` follows links, so a link to a file counts as a file and
+ * a dangling link as missing.
+ */
+function firstNonDirectoryParent(dir: string, cwd: string): boolean {
+  const segments = cwd.split('/');
+  for (let depth = 1; depth < segments.length; depth += 1) {
+    const stats = statSync(join(dir, ...segments.slice(0, depth)), { throwIfNoEntry: false });
+    if (stats === undefined) return false;
+    if (!stats.isDirectory()) return true;
+  }
+  return false;
 }
 
 /** A setup step's argv with its tokens expanded, element by element (never re-split). */

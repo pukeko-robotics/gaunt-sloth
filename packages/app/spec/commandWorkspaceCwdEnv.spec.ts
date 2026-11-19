@@ -25,6 +25,7 @@ import {
 import {
   buildWorkspaceEnv,
   mergeWorkspaceEnv,
+  describeCwdError,
   resolveWorkspaceCwd,
 } from '#src/commands/commandWorkspace.js';
 
@@ -328,6 +329,28 @@ describe('resolveWorkspaceCwd — why a cwd could not be resolved', () => {
     expect(() => resolveWorkspaceCwd(ws, 'f/x')).toThrow(
       /the workspace cwd "f\/x" \(looked for ".*"\) does not exist after setup: a part of the path is not a directory/
     );
+  });
+
+  it('gives the same "not a directory" wording when realpath reports ENOENT, as Windows does', () => {
+    // Windows fails realpath of a path under a regular file with ENOENT, where POSIX says ENOTDIR.
+    // The code is forced here, so the parent walk that decides the wording runs on every platform.
+    const ws = workspace('why-enoent-file-parent');
+    mkdirSync(join(ws, 'a'));
+    writeFileSync(join(ws, 'a', 'f'), 'x');
+    const enoent = Object.assign(new Error('no such file'), { code: 'ENOENT' });
+    const full = join(ws, 'a', 'f', 'x');
+    expect(describeCwdError(ws, 'a/f/x', full, enoent)).toBe(
+      `the workspace cwd "a/f/x" (looked for "${full}") does not exist after setup: a part of ` +
+        'the path is not a directory'
+    );
+    // A parent that is simply missing stays a missing directory, under either code.
+    const missing = join(ws, 'a', 'nope', 'x');
+    for (const code of ['ENOENT', 'ENOTDIR']) {
+      const error = Object.assign(new Error(code), { code });
+      expect(describeCwdError(ws, 'a/nope/x', missing, error)).toBe(
+        `the workspace cwd "a/nope/x" (looked for "${missing}") does not exist after setup`
+      );
+    }
   });
 
   it('names a link loop as a loop, not as a missing directory', (ctx) => {
