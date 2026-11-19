@@ -134,6 +134,35 @@ describe('file_contains', () => {
     expect(classifyEvalExit(summary)).toBe(1);
   });
 
+  it('checks every string of a list, failing on a later one that is missing', async () => {
+    const dir = suiteDir('fc-list', { 'src/greet.mjs': '// welcome banner\n' });
+    const summary = await run(
+      suiteWith(
+        dir,
+        'file_contains: { "src/greet.mjs": ["welcome banner", "export default", "greet("] }'
+      )
+    );
+    expect(summary.cases[0].verdict).toBe('FAIL');
+    expect(summary.cases[0].reasons).toEqual([
+      'file_contains "src/greet.mjs": the file does not contain "export default"',
+      'file_contains "src/greet.mjs": the file does not contain "greet("',
+    ]);
+  });
+
+  it('fails a dangling link with its own reason, not as a missing file', async (ctx) => {
+    // The agent makes the link. On Windows a file link needs the create-symlink privilege, which
+    // the runner cannot be relied on to hold, so this case is POSIX-only.
+    if (process.platform === 'win32') ctx.skip();
+    const dir = suiteDir('fc-dangling');
+    const summary = await run(
+      suiteWith(dir, 'file_contains: { "link.txt": "x" }', '', ['dangling', 'link.txt'])
+    );
+    expect(summary.cases[0].sutOk).toBe(true);
+    expect(summary.cases[0].reasons).toEqual([
+      'file_contains "link.txt": it is a symbolic link whose target does not exist',
+    ]);
+  });
+
   it('refuses to read a file that a symbolic link leads out of the workspace', async (ctx) => {
     // The outside file HOLDS the needle, so reading through the link would pass the case.
     const outsideDir = join(scratch, 'fc-outside');
@@ -312,6 +341,18 @@ describe('must_not_exist', () => {
     expect(summary.cases[0].reasons).toEqual(['must_not_exist "build": the workspace has build']);
   });
 
+  it('names the first five matches and counts the rest', async () => {
+    const files = Object.fromEntries(
+      Array.from({ length: 7 }, (_, i) => [`notes/n${i}.txt`, 'x'] as const)
+    );
+    const dir = suiteDir('mne-many', files);
+    const summary = await run(suiteWith(dir, 'must_not_exist: ["notes/*"]'));
+    expect(summary.cases[0].reasons).toEqual([
+      'must_not_exist "notes/*": the workspace has notes/n0.txt, notes/n1.txt, notes/n2.txt, ' +
+        'notes/n3.txt, notes/n4.txt and 2 more',
+    ]);
+  });
+
   it('lists the entries with / on every platform and never walks through a link', async (ctx) => {
     const dir = suiteDir('mne-walk', { 'a/b/c.txt': 'x' });
     try {
@@ -398,6 +439,57 @@ describe('after', () => {
     );
     expect(result.reasons[1]).toMatch(/exited with code 3, so its output was not compared/);
     expect(classifyEvalExit(summary)).toBe(1);
+  });
+
+  it('grades the files the agent left, before an after step can change them', async () => {
+    // The after step CREATES the file the check asks for. Graded first, the file is missing.
+    const dir = suiteDir('after-order');
+    const summary = await run(
+      suiteWith(
+        dir,
+        `file_contains: { "made.txt": "made" }
+after:
+  ${afterStep('exit_code: 0', 'write', 'made.txt', 'made')}`
+      )
+    );
+    expect(summary.cases[0].reasons).toEqual([
+      'file_contains "made.txt": the file does not exist in the workspace',
+    ]);
+  });
+
+  it('stops at an after step that cannot start, and runs none of the steps after it', async () => {
+    const dir = suiteDir('after-stop');
+    const marker = join(scratch, 'after-stop-later-step-ran.txt');
+    const summary = await run(
+      suiteWith(
+        dir,
+        `after:
+  - { run: "gth-eval-no-such-after-59", exit_code: 0 }
+  ${afterStep('exit_code: 0', 'write', marker, 'ran')}`
+      )
+    );
+    expect(summary.cases[0].sutOk).toBe(false);
+    expect(summary.cases[0].reasons[0]).toMatch(/after step 1 of 2 .* could not start/);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it('fails a step killed by a signal under exit_code: 0', async () => {
+    const dir = suiteDir('after-signal');
+    const summary = await run(
+      suiteWith(
+        dir,
+        `after:
+  ${afterStep('exit_code: 0', 'kill-self')}`
+      )
+    );
+    expect(summary.cases[0].sutOk).toBe(true);
+    expect(summary.cases[0].verdict).toBe('FAIL');
+    // POSIX reports no exit code for a signal; Windows reports one, which is not 0 either.
+    expect(summary.cases[0].reasons[0]).toMatch(
+      process.platform === 'win32'
+        ? /^after step 1 of 1 .*: expected exit code 0, got [1-9]/
+        : /^after step 1 of 1 .*: expected exit code 0, got none \(it was killed by a signal\)$/
+    );
   });
 
   it('grades a step that cannot start as a harness error (exit 2)', async () => {
