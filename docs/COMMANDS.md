@@ -847,19 +847,17 @@ target:
 
 #### Cost reported by the agent
 
-When the agent says what a run cost, `gth eval` reports it. `claude-stream-json` reads the US-dollar cost Claude Code prints on its final `result` line, including on a run [graded under `grade_when`](#grading-a-run-that-hit-a-limit). gth does not price models itself, so the figure is always the agent's own, and is labelled that way, before the verdict line:
+When the agent says what a run cost, `gth eval` reports it. `claude-stream-json` reads the US-dollar cost Claude Code prints on its final `result` line, including on a run [graded under `grade_when`](#grading-a-run-that-hit-a-limit). gth does not price models itself, so the figure is always the agent's own, and the line printed just before `EVAL RESULT:` is labelled that way:
 
 ```
 COST (reported by agent): 0.6321924 USD for 2 of 7 case(s)
-EVAL RESULT: 2/7 case(s) passed, 5 failed. Results written to <output dir>
 ```
 
 - Each case with a cost carries `"costUsd"` in its `<id>.json` and its entry in `results.json`. A case whose agent reported no cost, and a case that failed as a harness error, has no `costUsd`.
 - A [repeated case](#repeated-cases) carries the sum over its runs, and each run carries its own. The case has a cost only when every run reported one, so a total never leaves a run out without saying so.
 - The line counts the cases it covers. The amount is printed with the digits the agent reported, not rounded to cents.
 - Several suites in one run print one more line after `EVAL TOTAL:`, `COST TOTAL (reported by agent): …`, totalled across the suites.
-- With no cost reported anywhere, nothing is printed and no `costUsd` is written, which is always the case for the `gth-agent`, `ag-ui` and `adk-agent` targets.
-- The JUnit and TeamCity reporters do not show the cost.
+- With no cost reported anywhere, nothing is printed and no `costUsd` is written, which is always the case for the `gth-agent`, `ag-ui` and `adk-agent` targets. The JUnit and TeamCity reports never include it.
 - With `--retry`, the cost is the last attempt's: a failed attempt that was retried is not counted.
 
 #### Workspaces
