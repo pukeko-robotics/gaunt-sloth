@@ -1,5 +1,15 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,8 +17,16 @@ import { parseEvalSuite } from '@gaunt-sloth/batch/evalSuite.js';
 import { classifyEvalExit, runEvalSuite } from '@gaunt-sloth/batch/evalRunner.js';
 import { decodeClaudeStreamJson } from '@gaunt-sloth/batch/transcripts/claudeStreamJson.js';
 import type { CommandTarget, EvalSuite } from '@gaunt-sloth/batch';
-import { buildCommandRunCell } from '#src/commands/commandEvalRunner.js';
-import { buildWorkspaceEnv, mergeWorkspaceEnv } from '#src/commands/commandWorkspace.js';
+import {
+  buildCommandRunCell,
+  runCommandProcess,
+  type CommandSpawnRequest,
+} from '#src/commands/commandEvalRunner.js';
+import {
+  buildWorkspaceEnv,
+  mergeWorkspaceEnv,
+  resolveWorkspaceCwd,
+} from '#src/commands/commandWorkspace.js';
 
 // BATCH-63 — a workspace's `cwd` and a `null` env value end to end: the REAL parser, the REAL
 // runner spawning the fake CLI, and runEvalSuite. The fake CLI's `probe` mode records, from a
@@ -133,7 +151,7 @@ cases:
     const summary = await runEvalSuite(suite, { runCell });
     expect(summary.cases[0].sutOk).toBe(false);
     expect(summary.cases[0].reasons[0]).toMatch(
-      /the workspace cwd "not\/made" does not exist after setup .*; the case's command was not started/
+      /the workspace cwd "not\/made" \(looked for ".*"\) does not exist after setup; the case's command was not started/
     );
     expect(classifyEvalExit(summary)).toBe(2);
     expect(readProbes(probes).command).toBeUndefined();
@@ -255,6 +273,84 @@ cases:
       { set: true, value: 'from-default' },
       { set: false, value: null },
     ]);
+  });
+});
+
+describe('command workspace — cwd is spawned at its realpath', () => {
+  it('starts the command at the directory a cwd link resolves to, the one that was checked', async () => {
+    const dir = suiteDir('cwd-realpath');
+    mkdirSync(join(dir, 'fixture', 'real'), { recursive: true });
+    // process.cwd() in the child reports the physical directory either way, so the spawn request
+    // is what is observed: the path handed to spawn must be the resolved one, not `<root>/alias`.
+    const requests: CommandSpawnRequest[] = [];
+    const suite = commandSuite(
+      dir,
+      fakeLine('cwd'),
+      `
+cases:
+  - id: cwd-realpath
+    prompt: "x"
+    must_contain: [real]
+    workspace:
+      template: fixture
+      cwd: alias
+      setup:
+        - ${JSON.stringify(fakeLine('link', 'dir', '{{workspace}}/real', 'alias', 'unused-prompt'))}
+`
+    );
+    const runCell = buildCommandRunCell(targetOf(suite), suite, decodeClaudeStreamJson, {
+      spawnCommand: (request) => {
+        requests.push(request);
+        return runCommandProcess(request);
+      },
+    });
+    const summary = await runEvalSuite(suite, { runCell });
+    expect(summary.cases[0].reasons).toStrictEqual([]);
+    const [setup, command] = requests;
+    expect(setup.promptDelivery).toBe('none');
+    expect(command.promptDelivery).not.toBe('none');
+    // The workspace is gone by now, so nothing can be resolved here. The setup step's cwd is the
+    // workspace's realpath and `real` is a real directory in it, so this join is canonical.
+    expect(command.cwd).toBe(join(setup.cwd, 'real'));
+  });
+});
+
+describe('resolveWorkspaceCwd — why a cwd could not be resolved', () => {
+  function workspace(name: string): string {
+    const dir = join(scratch, name);
+    mkdirSync(dir, { recursive: true });
+    return realpathSync.native(dir);
+  }
+
+  it('says a part of the path is not a directory', () => {
+    const ws = workspace('why-enotdir');
+    writeFileSync(join(ws, 'f'), 'x');
+    expect(() => resolveWorkspaceCwd(ws, 'f/x')).toThrow(
+      /the workspace cwd "f\/x" \(looked for ".*"\) does not exist after setup: a part of the path is not a directory/
+    );
+  });
+
+  it('names a link loop as a loop, not as a missing directory', (ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+    const ws = workspace('why-eloop');
+    symlinkSync('loop', join(ws, 'loop'));
+    expect(() => resolveWorkspaceCwd(ws, 'loop')).toThrow(
+      /the workspace cwd "loop" \(looked for ".*"\) could not be resolved: its symbolic links form a loop/
+    );
+  });
+
+  it('names a permission error as one, not as a missing directory', (ctx) => {
+    if (process.platform === 'win32' || process.getuid?.() === 0) ctx.skip();
+    const ws = workspace('why-eacces');
+    mkdirSync(join(ws, 'locked', 'inner'), { recursive: true });
+    chmodSync(join(ws, 'locked'), 0o000);
+    try {
+      expect(() => resolveWorkspaceCwd(ws, 'locked/inner')).toThrow(
+        /the workspace cwd "locked\/inner" \(looked for ".*"\) could not be resolved: permission denied \(EACCES\)/
+      );
+    } finally {
+      chmodSync(join(ws, 'locked'), 0o755);
+    }
   });
 });
 

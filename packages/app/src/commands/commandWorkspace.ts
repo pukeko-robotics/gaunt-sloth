@@ -184,8 +184,8 @@ export function resolveWorkspaceCwd(dir: string, cwd: string | undefined): strin
   let real: string;
   try {
     real = realpathSync.native(full);
-  } catch {
-    throw new Error(`the workspace cwd "${cwd}" does not exist after setup (looked for "${full}")`);
+  } catch (error) {
+    throw new Error(describeCwdError(cwd, full, error));
   }
   const root = realpathSync.native(dir);
   if (!isInsideDir(root, real)) {
@@ -197,6 +197,30 @@ export function resolveWorkspaceCwd(dir: string, cwd: string | undefined): strin
     throw new Error(`the workspace cwd "${cwd}" is not a directory (it resolves to "${real}")`);
   }
   return real;
+}
+
+/**
+ * Why `cwd` could not be resolved, by the error's code. Each cause gets its own words because each
+ * sends the author somewhere different: a missing directory points at `setup`, a link loop at a
+ * link `setup` or the template made, and a permission error at the mode of a directory on the way.
+ * Calling all three "does not exist" would send the author looking for the wrong mistake.
+ */
+function describeCwdError(cwd: string, full: string, error: unknown): string {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  const at = `the workspace cwd "${cwd}" (looked for "${full}")`;
+  switch (code) {
+    case 'ENOENT':
+      return `${at} does not exist after setup`;
+    case 'ENOTDIR':
+      return `${at} does not exist after setup: a part of the path is not a directory`;
+    case 'ELOOP':
+      return `${at} could not be resolved: its symbolic links form a loop`;
+    case 'EACCES':
+    case 'EPERM':
+      return `${at} could not be resolved: permission denied (${code})`;
+    default:
+      return `${at} could not be resolved: ${error instanceof Error ? error.message : String(error)}`;
+  }
 }
 
 /** A setup step's argv with its tokens expanded, element by element (never re-split). */

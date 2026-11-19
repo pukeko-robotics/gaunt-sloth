@@ -183,6 +183,16 @@ cases:
     ).toThrow('defaults.workspace: `inherit` is a case key');
   });
 
+  it('refuses inherit: false inside defaults too, not only true', () => {
+    expect(() =>
+      parse(`${TARGET}
+defaults: { workspace: { inherit: false, template: fixtures/tiny-repo } }
+cases:
+  - { id: a, prompt: "x", must_contain: [ok] }
+`)
+    ).toThrow('defaults.workspace: `inherit` is a case key');
+  });
+
   it('still validates the case block it merges: a bad token is refused', () => {
     expect(() =>
       parse(`${TARGET}${DEFAULTS}
