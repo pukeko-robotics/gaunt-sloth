@@ -217,9 +217,10 @@ test.describe('gth code TUI — [[TUI-C99]] a mid-turn gate reads in the order i
    * Read off the real terminal, because placement is the whole claim and a unit render cannot see
    * the frame the human is looking at.
    *
-   * The round already did work before the question — the listing is on screen — so a request drawn
-   * above it says the question preceded work that in fact preceded the question. Afterwards the
-   * command runs, and the row order has to survive that too: its output belongs under the decision
+   * The model asked for both calls before the question, so both rows are on screen when it opens,
+   * though neither call has run yet: the gate holds the whole round. A request drawn above those
+   * rows would say the question came before the calls it is about. After the answer the calls run,
+   * and the row order has to survive that too: the command's output belongs under the decision
    * about it, not above.
    */
   test('the request sits below the work that preceded it, and the outcome sits on the call', async ({

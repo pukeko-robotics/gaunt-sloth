@@ -5,13 +5,14 @@
  *
  * The pairing is what makes the round non-trivial: two calls, one of which the rung grants and one
  * of which it escalates. The gate suspends the whole round before either runs, so while the human
- * is being asked NEITHER has executed — and the defect this config reproduces is the *ended* signal
- * that used to be emitted for both anyway, drawn as a success tick and the word *done* one row
- * above the question asking whether the command may run at all.
+ * is being asked NEITHER has executed and neither row may claim to be done. After the decision the
+ * granted listing runs whatever the answer. The shell command runs only if it is approved; if it
+ * is refused, it ends as an error carrying the refusal.
  *
- * The shell command is never approved in these cases, so nothing is executed: the printed marker
- * ('approval-sibling-out-marker') is deliberately not a substring of the command text, so the case
- * can tell "the pending command is DISPLAYED" from "the command RAN".
+ * The cases both approve and refuse the shell command. Its printed marker
+ * ('approval-sibling-out-marker') is deliberately not a substring of the command text, so a case
+ * can tell "the pending command is DISPLAYED" from "the command RAN": the marker is absent while
+ * the prompt is open and after a refusal, and present after an approval.
  *
  * Imports resolve from this file's location up to packages/app's own @langchain/core dependency,
  * so no extra devDependency is needed.
