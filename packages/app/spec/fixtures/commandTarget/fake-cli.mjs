@@ -38,6 +38,13 @@
 //   fake-cli.mjs print-env <name>                  print the variable's value, or nothing; exit 0
 //   fake-cli.mjs kill-self                         end itself with SIGKILL (no exit code)
 //
+// BATCH-63 probe, usable as a setup step, an after step and the command alike.
+//   fake-cli.mjs probe <file> <label> <name> [prompt]
+//                                                  append one JSON line to <file> (an absolute
+//                                                  path): the label, the cwd, whether <name> is
+//                                                  SET (an empty value is set) and its value; with
+//                                                  a trailing prompt, answer "probed"
+//
 // BATCH-59 agent modes, which leave something in the workspace and answer "done".
 //   fake-cli.mjs unreadable <file|dir> <path> <recordfile> <prompt>
 //                                                  make a file (or an empty directory) at <path>
@@ -142,6 +149,18 @@ if (mode === 'edit-shared') {
   }
 } else if (mode === 'print-env') {
   process.stdout.write(process.env[rest[0]] ?? '');
+} else if (mode === 'probe') {
+  const [file, label, name, prompt] = rest;
+  appendFileSync(
+    file,
+    JSON.stringify({
+      label,
+      cwd: process.cwd(),
+      set: name in process.env,
+      value: process.env[name] ?? null,
+    }) + '\n'
+  );
+  if (prompt !== undefined) answer('probed');
 } else if (mode === 'kill-self') {
   process.kill(process.pid, 'SIGKILL');
 } else if (mode === 'unreadable') {

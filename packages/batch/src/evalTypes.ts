@@ -930,8 +930,19 @@ export interface CommandWorkspace {
   /** The template directory, absolute (resolved against {@link suiteDir}); absent = start empty. */
   template?: string;
   setup: CommandWorkspaceSetupStep[];
-  /** Variables set over the inherited environment. Values may hold `{{…}}` tokens. */
-  env: Record<string, string>;
+  /**
+   * Variables set over the inherited environment. Values may hold `{{…}}` tokens. A `null` value
+   * (BATCH-63) REMOVES the variable from the environment of the setup steps, the command and the
+   * `after` steps, which is not the same as setting it empty.
+   */
+  env: Record<string, string | null>;
+  /**
+   * BATCH-63 — where the case's command starts, relative to the workspace and written with `/`;
+   * absent = the workspace itself. Only `target.run` starts there: `setup` and `after` steps run in
+   * the workspace, and `{{workspace}}` names the workspace. Checked after `setup` to be a directory
+   * whose realpath lies inside the workspace's.
+   */
+  cwd?: string;
 }
 
 /**

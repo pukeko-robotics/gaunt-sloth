@@ -244,12 +244,19 @@ const RawTurnSchema = RawAssertionsSchema.extend({
 /**
  * BATCH-58 — a `command` case's workspace as authored. `template` is a directory resolved against
  * the suite file's directory; `setup` lines are split like `target.run`; `env` values may use the
- * tokens of `workspaceTemplate.ts`. All three are optional: `workspace: {}` is an empty directory.
+ * tokens of `workspaceTemplate.ts`. All are optional: `workspace: {}` is an empty directory.
+ *
+ * BATCH-63 added three things: `cwd` (where the command starts, see `buildCommandWorkspace`),
+ * `inherit` (a case block merged over the default, see `resolveCaseWorkspace`), and a `null` env
+ * value, which removes the variable. YAML's `NAME:` with no value and `NAME: ~` are both `null`, so
+ * they remove the variable too; before BATCH-63 they were a parse error.
  */
 const RawWorkspaceSchema = suiteObject({
   template: z.string().min(1, 'workspace.template must name a directory').optional(),
   setup: z.array(z.string()).optional(),
-  env: z.record(z.string(), z.string()).optional(),
+  env: z.record(z.string(), z.string().nullable()).optional(),
+  cwd: z.string().optional(),
+  inherit: z.boolean().optional(),
 });
 
 /**
@@ -554,6 +561,9 @@ type RawAssertions = z.infer<typeof RawAssertionsSchema>;
  *   `setup` line that does not split into argv; an unknown `{{…}}` token, or a `{{`/`}}` that is
  *   not part of a complete token, in a `setup` argument or an `env` value; a `{{…}}` token in
  *   `target.run`, where tokens never expand.
+ * - BATCH-63: a workspace `cwd` that is absolute, has a `..` segment, a drive letter, a backslash,
+ *   an empty or `.` segment, or a `{{…}}` token; `inherit` in `defaults.workspace`, or
+ *   `inherit: true` on a case when the suite has no `defaults.workspace`.
  * - `file_contains` / `must_not_exist` / `after` (BATCH-59) on any target but `command`, or on a
  *   case with no workspace; an empty one; a path or glob that is absolute, has a `..` segment, a
  *   drive letter or a backslash; unsupported glob syntax; an `after` step without exactly one of
@@ -841,6 +851,17 @@ export function parseEvalSuite(
   // overrides it: a broken block is a broken suite whether or not it happens to be used).
   const suiteDir = options.suiteDir ?? dirname(resolve(sourcePath ?? 'suite.yaml'));
   const templateChecks = new Map<string, string>();
+  // BATCH-63 — `inherit` belongs to a case: it says "merge me over the default", and the default
+  // has nothing above it to merge over. Refused rather than ignored, so an author who put it there
+  // expecting every case to merge learns that cases must say so themselves. It shares the block's
+  // schema so the unknown-key message lists it, and is refused here with the reason.
+  if (data.defaults?.workspace?.inherit !== undefined) {
+    throw new Error(
+      `Invalid eval suite${suffix}: defaults.workspace: \`inherit\` is a case key. It merges a ` +
+        "case's workspace over this default, and the default has nothing to inherit from. Put " +
+        '`inherit: true` in the workspace of each case that should merge.'
+    );
+  }
   const defaultWorkspace =
     target.type === 'command' && data.defaults?.workspace !== undefined
       ? buildCommandWorkspace(
@@ -1539,11 +1560,23 @@ function resolveCaseRepeat(
 /**
  * BATCH-58 — the case's workspace: its own block, else the suite default, else none.
  *
- * **A case's block replaces the default wholesale.** There is no deep merge: a case that declares
- * `workspace: { setup: [...] }` gets that setup and NO template or env from the default. Merging
- * would leave the author guessing which half of a list or map survived, and a case that needs the
- * default's template can repeat it (or share it with a YAML anchor). `workspace: false` opts the
- * case out of the default and runs it where gth was started, as a suite without workspaces does.
+ * **Without `inherit`, a case's block replaces the default wholesale.** A case that declares
+ * `workspace: { setup: [...] }` gets that setup and NO template, env or cwd from the default.
+ * `workspace: false` opts the case out of the default and runs it where gth was started, as a
+ * suite without workspaces does.
+ *
+ * **BATCH-63 — `inherit: true` merges the case's block over the default, key by key.** Each key the
+ * case WRITES replaces the default's, decided by whether the raw key is present (the normalized
+ * block always has `setup` and `env`, so merging normalized objects would let an omitted `setup`
+ * wipe out the default's). Two keys need a rule of their own:
+ * - **`setup` is replaced whole, never concatenated.** Whether a case's steps would run before or
+ *   after the default's has no answer that suits every suite, and a concatenation cannot be undone
+ *   by the case. `setup: []` under `inherit` therefore clears the default's steps.
+ * - **`env` is merged by name, and the case wins.** A case's `NAME: null` removes a variable the
+ *   default set, and one inherited from the parent process, because the `null` survives the merge
+ *   and is applied at run time. A case key is re-inserted after the default's keys, so on Windows,
+ *   where the run-time merge deletes every spelling of a name before applying it, the case's
+ *   spelling is applied last and wins over the default's `Path` as well as its `PATH`.
  *
  * Spread into the case, so a case with no workspace has no `workspace` key at all.
  */
@@ -1556,14 +1589,34 @@ function resolveCaseWorkspace(
 ): { workspace?: CommandWorkspace } {
   if (rawCase.workspace === false) return {};
   if (rawCase.workspace !== undefined) {
+    const raw = rawCase.workspace;
+    const where = `case "${rawCase.id}" workspace`;
+    const own = buildCommandWorkspace(raw, where, suiteDir, templateChecks, suffix);
+    if (raw.inherit !== true) return { workspace: own };
+    // BATCH-63 — rejected rather than read as "inherit nothing": a case that asks to inherit from a
+    // default that does not exist was written against a suite that is not this one, and silently
+    // running it with half a workspace would read as the agent's failure.
+    if (defaultWorkspace === undefined) {
+      throw new Error(
+        `Invalid eval suite${suffix}: ${where}: \`inherit: true\` needs a \`defaults.workspace\` ` +
+          'to inherit from, and this suite has none. Remove `inherit`, or add the default block.'
+      );
+    }
+    const env: Record<string, string | null> = { ...defaultWorkspace.env };
+    for (const [name, value] of Object.entries(own.env)) {
+      delete env[name];
+      env[name] = value;
+    }
+    const template = raw.template !== undefined ? own.template : defaultWorkspace.template;
+    const cwd = raw.cwd !== undefined ? own.cwd : defaultWorkspace.cwd;
     return {
-      workspace: buildCommandWorkspace(
-        rawCase.workspace,
-        `case "${rawCase.id}" workspace`,
+      workspace: {
         suiteDir,
-        templateChecks,
-        suffix
-      ),
+        ...(template !== undefined ? { template } : {}),
+        setup: raw.setup !== undefined ? own.setup : defaultWorkspace.setup,
+        env,
+        ...(cwd !== undefined ? { cwd } : {}),
+      },
     };
   }
   return defaultWorkspace !== undefined ? { workspace: defaultWorkspace } : {};
@@ -1805,16 +1858,43 @@ function buildCommandWorkspace(
     return { run, argv };
   });
 
-  const env: Record<string, string> = {};
+  // BATCH-63 — a `null` value removes the variable at run time, so it has no tokens to check.
+  const env: Record<string, string | null> = {};
   for (const [name, value] of Object.entries(raw.env ?? {})) {
     if (name === '' || name.includes('=')) {
       fail(`env name "${name}" is not a valid environment variable name.`);
     }
-    checkTokens(value, `env.${name}`, false);
+    if (value !== null) checkTokens(value, `env.${name}`, false);
     env[name] = value;
   }
 
-  return { suiteDir, ...(template !== undefined ? { template } : {}), setup, env };
+  // BATCH-63 — `cwd` is refused here when it could name anything outside the workspace as written:
+  // the same lexical rule as a BATCH-59 workspace path. The run-time check after `setup` (realpath
+  // inside the workspace's realpath) is what stops a symlink; this one stops `../x` and `/x` before
+  // anything runs, and keeps the message at the line the author wrote. A token is refused because
+  // `cwd` is never expanded: `{{workspace}}/x` would be a literal directory name.
+  let cwd: string | undefined;
+  if (raw.cwd !== undefined) {
+    const problem = findWorkspacePathProblem(raw.cwd);
+    if (problem !== undefined) {
+      fail(`cwd "${raw.cwd}" ${problem}. cwd is relative to the workspace.`);
+    }
+    if (containsWorkspaceToken(raw.cwd) || findStrayTokenBrace(raw.cwd) !== undefined) {
+      fail(
+        `cwd "${raw.cwd}" uses a {{…}} token, and cwd takes none: it is already relative to ` +
+          'the workspace.'
+      );
+    }
+    cwd = raw.cwd;
+  }
+
+  return {
+    suiteDir,
+    ...(template !== undefined ? { template } : {}),
+    setup,
+    env,
+    ...(cwd !== undefined ? { cwd } : {}),
+  };
 }
 
 /**

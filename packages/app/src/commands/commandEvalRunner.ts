@@ -85,6 +85,7 @@ import {
   expandSetupArgv,
   removeWorkspaceDir,
   resolveSuiteDir,
+  resolveWorkspaceCwd,
 } from '#src/commands/commandWorkspace.js';
 import {
   checkFileContains,
@@ -567,7 +568,19 @@ export function buildCommandRunCell(
       const childEnv = buildWorkspaceEnv(spec, dir, baseEnv);
       const setupError = await runWorkspaceSetup(spec, dir, baseEnv, childEnv, timeoutMs);
       if (setupError !== undefined) return { ok: false, error: setupError };
-      const ran = await runAndDecode(cell, timeoutMs, dir, childEnv);
+      // BATCH-63 — only the command starts in the workspace's `cwd`; setup ran, and the `after`
+      // steps and file checks below run, in `dir`. A `cwd` that is missing or leads outside the
+      // workspace is a harness error: the agent never ran, so there is nothing to grade.
+      let commandDir: string;
+      try {
+        commandDir = resolveWorkspaceCwd(dir, spec.cwd);
+      } catch (error) {
+        return {
+          ok: false,
+          error: `${error instanceof Error ? error.message : String(error)}; the case's command was not started`,
+        };
+      }
+      const ran = await runAndDecode(cell, timeoutMs, commandDir, childEnv);
       const outcome = await gradeWorkspace(
         checks.get(cell.id),
         spec,
