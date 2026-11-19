@@ -231,12 +231,29 @@ describe('BATCH-60 — a repeated case through runEvalSuite', () => {
   it('sums the runs into durationMs and leaves the single-run fields unset', async () => {
     const { runEvalSuite } = await import('#src/evalRunner.js');
     const { runCell } = perRun({ 1: PASS, 2: PASS });
-    const summary = await runEvalSuite(suiteOf([repeatedCase(2, 1)]), { runCell });
-    const result = summary.cases[0];
-    expect(result.durationMs).toBe(
-      (result.runs ?? []).reduce((sum, run) => sum + run.durationMs, 0)
+    // The pool reads the clock once before and once after each (serial) run: run 1 takes 10 ms,
+    // run 2 takes 30 ms. Distinct, non-zero durations are what tell a sum from the first run.
+    const clock = vi.spyOn(Date, 'now');
+    for (const at of [1_000, 1_010, 2_000, 2_030]) clock.mockReturnValueOnce(at);
+    try {
+      const summary = await runEvalSuite(suiteOf([repeatedCase(2, 1)]), { runCell });
+      const result = summary.cases[0];
+      expect(result.runs?.map((run) => run.durationMs)).toEqual([10, 30]);
+      expect(result.durationMs).toBe(40);
+      expect('answer' in result).toBe(false);
+      expect('checks' in result).toBe(false);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("keeps the case's tags on the folded result", async () => {
+    const { runEvalSuite } = await import('#src/evalRunner.js');
+    const { runCell } = perRun({ 1: PASS, 2: PASS });
+    const summary = await runEvalSuite(
+      suiteOf([{ ...repeatedCase(2, 1), tags: ['tools', 'read'] }]),
+      { runCell }
     );
-    expect('answer' in result).toBe(false);
-    expect('checks' in result).toBe(false);
+    expect(summary.cases[0].tags).toEqual(['tools', 'read']);
   });
 });
