@@ -893,6 +893,9 @@ async function gradeUnit(
     ...base,
     verdict,
     sutOk: true,
+    // BATCH-62 — a run graded under `grade_when` says how it ended, beside `sutOk`, so a reader of
+    // the JSON cannot take a capped run for a finished one. Omitted for a finished run.
+    ...(cellResult.outcome !== undefined ? { outcome: cellResult.outcome } : {}),
     checks: { passed: deterministicFailures.length === 0, failures: deterministicFailures },
     judge: judgeOutcome,
     reasons,

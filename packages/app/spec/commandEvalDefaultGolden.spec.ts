@@ -137,9 +137,8 @@ describe('BATCH-62 — a command suite without grade_when keeps its exact output
     const { runEvalSuite } = await import('@gaunt-sloth/batch/evalRunner.js');
     const { writeEvalOutput } = await import('@gaunt-sloth/batch/evalOutput.js');
     const { createTextReporter } = await import('@gaunt-sloth/batch/reporters/textReporter.js');
-    const { decodeClaudeStreamJson } = await import(
-      '@gaunt-sloth/batch/transcripts/claudeStreamJson.js'
-    );
+    const { decodeClaudeStreamJson } =
+      await import('@gaunt-sloth/batch/transcripts/claudeStreamJson.js');
     const { buildCommandRunCell } = await import('#src/commands/commandEvalRunner.js');
 
     const suite: EvalSuite = parseEvalSuite(SUITE_YAML, 'command-default.yaml');
@@ -181,8 +180,6 @@ describe('BATCH-62 — a command suite without grade_when keeps its exact output
         join(GOLDEN_DIR, 'output', file)
       );
     }
-    await expect(`${text.join('\n')}\n`).toMatchFileSnapshot(
-      join(GOLDEN_DIR, 'text-reporter.txt')
-    );
+    await expect(`${text.join('\n')}\n`).toMatchFileSnapshot(join(GOLDEN_DIR, 'text-reporter.txt'));
   });
 });

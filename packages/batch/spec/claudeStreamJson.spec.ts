@@ -165,14 +165,57 @@ describe('decodeClaudeStreamJson — edges', () => {
     expect(() => decodeClaudeStreamJson(join(all.slice(0, -1)))).toThrow(/no final "result" line/);
   });
 
-  it('throws on a non-success result, naming the subtype', () => {
+  // BATCH-62 replaced "throws on a non-success result" with the three specs below: a non-success
+  // subtype is now RETURNED as the run's outcome, with the sentence the throw used to carry, and the
+  // runner decides whether it is graded (see `commandEvalRunner.ts` `gradedEnding`).
+  it('returns a non-success result as its outcome, with the transcript it decoded', () => {
     const all = lines();
-    const result = { ...all.at(-1), subtype: 'error_max_turns', is_error: true, result: undefined };
+    // A run capped after its two tool rounds: no final text, and no `result` string.
+    const result = { type: 'result', subtype: 'error_max_turns', is_error: true, num_turns: 3 };
+    const decoded = decodeClaudeStreamJson(join([...all.slice(0, 7), result]));
+    expect(decoded.outcome).toBe('error_max_turns');
+    expect(decoded.outcomeReason).toBe('Claude Code ended the run with result "error_max_turns"');
+    expect(decoded.answer).toBe('');
+    expect(decoded.toolCalls.map((call) => call.name)).toEqual(['Read', 'Read', 'Bash']);
+    expect(decoded.toolResults.map((r) => [r.name, r.isError])).toEqual([
+      ['Read', true],
+      ['Read', false],
+      ['Bash', false],
+    ]);
+  });
+
+  it('returns any non-success subtype as it is printed, whatever is_error says', () => {
+    const all = lines();
+    for (const [subtype, isError] of [
+      ['error_max_budget_usd', true],
+      ['error_some_future_limit', false],
+    ] as const) {
+      const result = { ...all.at(-1), subtype, is_error: isError, result: 'stopped' };
+      const decoded = decodeClaudeStreamJson(join([...all.slice(0, -1), result]));
+      expect(decoded.outcome).toBe(subtype);
+      expect(decoded.outcomeReason).toBe(
+        `Claude Code ended the run with result "${subtype}": stopped`
+      );
+      expect(decoded.answer).toBe('stopped');
+    }
+  });
+
+  it('reports no outcome for a finished run', () => {
+    const decoded = decodeClaudeStreamJson(CAPTURE);
+    expect('outcome' in decoded).toBe(false);
+    expect('outcomeReason' in decoded).toBe(false);
+  });
+
+  it('throws on a result line with no subtype, which no grade_when can name', () => {
+    const all = lines();
+    const result = { ...all.at(-1) };
+    delete (result as Record<string, unknown>).subtype;
     expect(() => decodeClaudeStreamJson(join([...all.slice(0, -1), result]))).toThrow(
-      /ended the run with result "error_max_turns"/
+      /ended the run with result "\(none\)"/
     );
   });
 
+  // BATCH-62: still a throw, so `grade_when` can never grade it. See the decoder's module docblock.
   it('throws on is_error even when the subtype says success', () => {
     const all = lines();
     const result = { ...all.at(-1), is_error: true };

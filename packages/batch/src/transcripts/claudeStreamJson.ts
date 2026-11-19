@@ -31,14 +31,25 @@
  * **The answer is the `result` line's `result` string.** In the capture it is byte-identical to the
  * last assistant `text` block. It is the CLI's own statement of the final answer, it is what
  * `--output-format json` prints alone, and it does not depend on how a multi-block final message
- * happens to be split across lines. Only when a successful result carries no `result` string does
- * the decoder fall back to the last assistant text block.
+ * happens to be split across lines. Only when the result carries no `result` string (a successful
+ * one that omits it, or an early ending such as `error_max_turns`, which has none) does the decoder
+ * fall back to the last assistant text block, and to `''` when there is none.
  *
- * **A non-success result is a failed run, not a graded one.** `subtype` other than `success` (such
- * as `error_max_turns` or `error_during_execution`), or `is_error: true`, throws with the subtype in
- * the message, and the runner grades the case as a harness error. The agent did not finish, so its
- * partial trace is not evidence of how it behaves, and an assertion failing against it would read
- * as the agent's choice when it was the harness's limit.
+ * **A non-success result is a run that stopped early, reported as its outcome (BATCH-62).** A
+ * `subtype` other than `success` (such as `error_max_turns`, `error_max_budget_usd` or
+ * `error_during_execution`) returns the decoded transcript with `outcome` set to that subtype,
+ * whatever `is_error` says, and `outcomeReason` set to the sentence this decoder used to throw. The
+ * runner grades it only when the case's `grade_when` lists the subtype; otherwise the case is a
+ * harness error with exactly that sentence, as before the key existed. Every subtype is returned
+ * as it is printed, so a subtype a newer Claude Code adds can be listed without a code change here.
+ * Unlisted, it is not graded: the agent did not finish, and an assertion failing against its partial
+ * trace would read as the agent's choice when it was the harness's limit.
+ *
+ * **`is_error: true` under `subtype: success` still throws, and can never be graded.** Claude Code
+ * reports a failure that is not a limit the suite chose this way (an API or authentication error
+ * ending the session), so it is not an ending a suite author asked for. It also has no name of its
+ * own to list: `success` is refused in `grade_when`, and inventing a name here would be a wire value
+ * Claude Code never printed. A `result` line with no string `subtype` throws for the same reason.
  *
  * **Subagent events are included.** A line with a non-null `parent_tool_use_id` belongs to a
  * subagent the main agent started (the `Task`/`Agent` tool), and its calls are part of the trace.
@@ -153,10 +164,13 @@ export const decodeClaudeStreamJson: TranscriptDecoder = (stdout) => {
         'or the command does not print `--output-format stream-json --verbose`).'
     );
   }
-  const subtype = typeof result.subtype === 'string' ? result.subtype : '(none)';
-  if (subtype !== 'success' || result.is_error === true) {
-    const detail = typeof result.result === 'string' && result.result ? `: ${result.result}` : '';
-    throw new Error(`Claude Code ended the run with result "${subtype}"${detail}`);
+  const subtype = typeof result.subtype === 'string' ? result.subtype : undefined;
+  const detail = typeof result.result === 'string' && result.result ? `: ${result.result}` : '';
+  const endedEarly = `Claude Code ended the run with result "${subtype ?? '(none)'}"${detail}`;
+  // No usable subtype, or an error flagged under `success`: not an ending a suite can list, so a
+  // throw, which no `grade_when` can turn into a graded run. See the module docblock.
+  if (!subtype || (subtype === 'success' && result.is_error === true)) {
+    throw new Error(endedEarly);
   }
 
   const answer = typeof result.result === 'string' ? result.result : (lastText ?? '');
@@ -165,6 +179,7 @@ export const decodeClaudeStreamJson: TranscriptDecoder = (stdout) => {
     answer,
     toolCalls,
     toolResults,
+    ...(subtype !== 'success' ? { outcome: subtype, outcomeReason: endedEarly } : {}),
     ...(usage
       ? {
           tokensInput:

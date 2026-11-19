@@ -840,6 +840,14 @@ export interface EvalCase {
    * whole percents (`evalRepeat.ts`). Set only together with {@link repeat}.
    */
   passRate?: number;
+  /**
+   * BATCH-62 — the run endings, besides `success`, that this case grades instead of reporting as a
+   * harness error: the case's `grade_when`, else the target's (a case's list REPLACES the target's,
+   * and a case's `grade_when: []` restores the strict default). Set only on a `command` case whose
+   * effective list is non-empty, so every other case keeps its exact shape. Never contains
+   * `success` or an empty string.
+   */
+  gradeWhen?: string[];
 }
 
 /**
@@ -1121,6 +1129,13 @@ export interface EvalCaseResult {
   /** Whether the SUT run itself completed without error (mirrors `CellRunOutcome.ok`). `false`
    * means the case FAILs outright — there is no answer text to check or grade. */
   sutOk: boolean;
+  /**
+   * BATCH-62 — how the graded run ended, when that was not `success`: an outcome the case's
+   * `grade_when` listed, such as `error_max_turns`. Omitted entirely for a run that finished, and on
+   * a harness error (whose reason already names the outcome), so a suite without `grade_when` keeps
+   * its exact output. On a repeated case it is on each entry of {@link runs}, not on the case.
+   */
+  outcome?: string;
   answer?: string;
   tokensInput?: number;
   tokensOutput?: number;

@@ -18,8 +18,16 @@ function describeRepeat(result: EvalCaseResult): string {
 /** BATCH-60 — each run's outcome in one row: `PASS`, `FAIL`, or `ERROR` for a run that did not
  * finish. Each run's reasons are in the case's own reasons and in `results.json`. */
 function describeRuns(result: EvalCaseResult): string {
-  const runs = (result.runs ?? []).map((run) => `${run.run}: ${run.sutOk ? run.verdict : 'ERROR'}`);
+  const runs = (result.runs ?? []).map(
+    (run) => `${run.run}: ${run.sutOk ? run.verdict : 'ERROR'}${describeOutcome(run)}`
+  );
   return `      runs ${runs.join(' · ')}`;
+}
+
+/** BATCH-62 — ` (ended on error_max_turns)` for a run graded under `grade_when` that did not end in
+ * `success`, so a capped run is never read as a finished one; nothing for a finished run. */
+function describeOutcome(result: EvalCaseResult): string {
+  return result.outcome !== undefined ? ` (ended on ${result.outcome})` : '';
 }
 
 /**
@@ -50,8 +58,11 @@ export function createTextReporter(): EvalReporter {
       // exactly as before (just the case id).
       // BATCH-60 — a repeated case names its rate on the verdict row and lists each run's outcome
       // on the row after. A case that ran once prints exactly as it always has.
+      // BATCH-62 — a run graded under `grade_when` names how it ended on the same row.
       const baseLabel = result.identity ? `${result.id} [${result.identity}]` : result.id;
-      const label = result.repeat ? `${baseLabel} ${describeRepeat(result)}` : baseLabel;
+      const label = result.repeat
+        ? `${baseLabel} ${describeRepeat(result)}`
+        : `${baseLabel}${describeOutcome(result)}`;
       if (result.verdict === 'PASS') {
         display(`PASS  ${label}`);
         if (result.repeat) display(describeRuns(result));

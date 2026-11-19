@@ -298,6 +298,32 @@ const RawPassRateSchema = z
   .gt(0, 'pass_rate must be greater than 0 (0 would pass every case)')
   .max(1, 'pass_rate must be at most 1 (more runs cannot pass than ran)');
 
+/**
+ * BATCH-62 — `grade_when`: the run endings, besides `success`, that a `command` case grades instead
+ * of reporting as a harness error. Each entry is a non-empty outcome name as the decoder reports it
+ * (Claude Code's result subtype, such as `error_max_turns`).
+ *
+ * - **A non-string or empty entry** is refused: an outcome name is matched exactly, so a number or a
+ *   blank could never match and the author would believe a list was in force that grades nothing.
+ *   Entries are trimmed, so whitespace-only counts as empty, for the same reason.
+ * - **`success`** is refused as meaningless: a finished run is always graded, and accepting it would
+ *   suggest the list could make a finished run graded or ungraded.
+ *
+ * The list is not checked against the decoder's vocabulary. A custom decoder names its own
+ * outcomes, and Claude Code adds subtypes; a name that never occurs simply never matches, which
+ * leaves the strict default in force rather than weakening it.
+ */
+const RawGradeWhenSchema = z.array(
+  z
+    .string({ error: 'grade_when entries must be strings naming a run outcome' })
+    .trim()
+    .min(1, 'grade_when entries must not be empty')
+    .refine(
+      (value) => value !== 'success',
+      'grade_when must not list "success": a run that finished is always graded'
+    )
+);
+
 const RawCaseSchema = RawAssertionsSchema.extend({
   id: z
     .string()
@@ -346,6 +372,9 @@ const RawCaseSchema = RawAssertionsSchema.extend({
   // BATCH-60: this case's run count and required pass rate, overriding `defaults`. Every target.
   repeat: RawRepeatSchema.optional(),
   pass_rate: RawPassRateSchema.optional(),
+  // BATCH-62: this case's graded run endings, REPLACING `target.grade_when`; `[]` restores the
+  // strict default. `command` target only.
+  grade_when: RawGradeWhenSchema.optional(),
   // BATCH-34: accepted at case level ONLY so a misplaced one is an error instead of a silence.
   // Negotiation context is per-round and belongs on a `turns:` entry — see the guard in the parse.
   justification: z.string().optional(),
@@ -460,6 +489,9 @@ const RawSuiteSchema = suiteObject({
     run: z.string().optional(),
     transcript: z.string().optional(),
     prompt: z.enum(['arg', 'stdin']).optional(),
+    // BATCH-62: the run endings, besides `success`, that are graded instead of being a harness
+    // error. `command` target only; the entries are validated in code (see `parseGradeWhen`).
+    grade_when: RawGradeWhenSchema.optional(),
   }),
   // BATCH-10 Task 2: optional identity profile whose model judges the cases. A top-level sibling of
   // `target`/`defaults`/`cases`, and distinct from `target.profile` (which selects the SUT and is
@@ -556,6 +588,8 @@ type RawAssertions = z.infer<typeof RawAssertionsSchema>;
  *   `command` suite using `identities`, a `sweep`, `tool_coverage` or a multi-turn `turns:` case.
  *   `run`/`transcript`/`prompt` and `timeout_ms` (case or `defaults`) on any other target. Every
  *   tool assertion, including `must_error`/`tool_result_json_path`, IS supported for `command`.
+ * - `grade_when` (BATCH-62, on the target or a case) on any target but `command`; an entry that is
+ *   not a string, is empty, or is `success`. See `RawGradeWhenSchema`.
  * - `workspace` (BATCH-58, in `defaults` or on a case) on any target but `command`; a workspace
  *   `template` that does not exist as a directory (resolved against the suite's directory); a
  *   `setup` line that does not split into argv; an unknown `{{…}}` token, or a `{{`/`}}` that is
@@ -815,7 +849,10 @@ export function parseEvalSuite(
   // The out-of-process targets run their agent somewhere gth cannot point at a directory at all.
   // Only the `command` target starts a process per case, which takes a `cwd` of its own.
   if (target.type !== 'command') {
-    const stray = (['run', 'transcript', 'prompt'] as const).filter(
+    // BATCH-62 — `grade_when` is refused for the same reason: only the command runner has a decoder
+    // that can report how a run ended, so on any other target the list would grade nothing while
+    // the author believed capped runs were being graded.
+    const stray = (['run', 'transcript', 'prompt', 'grade_when'] as const).filter(
       (key) => data.target[key] !== undefined
     );
     const strayCaseKeys = [
@@ -823,6 +860,7 @@ export function parseEvalSuite(
       ...(data.defaults?.workspace !== undefined ? ['defaults.workspace'] : []),
       ...data.cases.flatMap((rawCase) => [
         ...(rawCase.timeout_ms !== undefined ? [`case "${rawCase.id}" timeout_ms`] : []),
+        ...(rawCase.grade_when !== undefined ? [`case "${rawCase.id}" grade_when`] : []),
         ...(rawCase.workspace !== undefined ? [`case "${rawCase.id}" workspace`] : []),
         // BATCH-59 — the workspace assertions need a workspace, so they are refused wherever one
         // is, and for the same reason.
@@ -1271,6 +1309,7 @@ export function parseEvalSuite(
       ...caseWorkspace,
       ...(workspaceChecks !== undefined ? { workspaceChecks } : {}),
       ...resolveCaseRepeat(rawCase, data.defaults, suffix),
+      ...resolveCaseGradeWhen(rawCase.grade_when, data.target.grade_when, target),
     };
   });
 
@@ -1469,7 +1508,7 @@ function buildCommandTarget(
     throw new Error(
       `Invalid eval suite${suffix}: a "command" target does not take ` +
         `${foreign.map((key) => `\`${key}\``).join(', ')} — the command runs its own agent with its ` +
-        'own configuration. It takes `run`, `transcript` and `prompt`.'
+        'own configuration. It takes `run`, `transcript`, `prompt` and `grade_when`.'
     );
   }
   const run = raw.run?.trim();
@@ -1518,6 +1557,26 @@ function buildCommandTarget(
     );
   }
   return { type: 'command', run, argv, transcript, prompt: raw.prompt ?? 'arg' };
+}
+
+/**
+ * BATCH-62 — the case's effective `grade_when`: its own list, else the target's. A case's list
+ * REPLACES the target's rather than adding to it, so `grade_when: []` on a case restores the strict
+ * default for that case: a behaviour case beside skill-routing cases in the same suite must be able
+ * to say "a capped run is not evidence here".
+ *
+ * Spread into the case, and only when the effective list is non-empty and the target is `command`
+ * (any other target with the key was already refused), so a suite without the key parses to
+ * exactly the shape it did before. Duplicates are dropped; order is kept as written.
+ */
+function resolveCaseGradeWhen(
+  caseList: string[] | undefined,
+  targetList: string[] | undefined,
+  target: EvalTarget
+): { gradeWhen?: string[] } {
+  if (target.type !== 'command') return {};
+  const effective = caseList ?? targetList ?? [];
+  return effective.length > 0 ? { gradeWhen: [...new Set(effective)] } : {};
 }
 
 /**

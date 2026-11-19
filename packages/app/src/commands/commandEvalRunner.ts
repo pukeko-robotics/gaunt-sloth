@@ -35,6 +35,11 @@
  * way exits 2. Grading a run that did not finish would turn the harness's limit into an assertion
  * failure that reads as the agent's choice.
  *
+ * BATCH-62 — the one opt-out is `grade_when`: a run whose decoder reports an early ending the case
+ * lists (a `--max-turns` cap, say) is graded on the transcript it produced, whatever the exit code,
+ * and carries that `outcome` into its result. A decoder throw, a timeout and a signal kill are never
+ * graded. See `gradedEnding`.
+ *
  * ## Workspaces (BATCH-58)
  *
  * {@link CommandSpawnRequest} carries `cwd` and `env` per call. A case with no `workspace` runs in
@@ -470,6 +475,37 @@ export function buildCommandRunCell(
     )
   );
 
+  const gradeWhen = new Map(
+    suite.cases.flatMap((evalCase) =>
+      evalCase.gradeWhen !== undefined ? [[evalCase.id, new Set(evalCase.gradeWhen)] as const] : []
+    )
+  );
+
+  /**
+   * BATCH-62 — is a run that ended on `outcome` (not `success`) graded instead of being a harness
+   * error? Only when BOTH hold:
+   *
+   * - **The case's effective `grade_when` lists it.** Resolved at parse: the case's list, else the
+   *   target's, and a case's `[]` leaves nothing listed. An unlisted outcome stays a harness error,
+   *   because harness error is the right default: a run that did not finish is not evidence unless
+   *   the suite author says it is.
+   * - **The process exited with a code.** A run killed by a signal (`exitCode: null`) is never
+   *   graded, even when what it printed before dying happens to end on a listed result: the process
+   *   did not end the run, something outside it did. A timed-out run never gets here at all.
+   *
+   * The exit code's VALUE is deliberately not consulted. Claude Code exits 1 on `error_max_turns`,
+   * so requiring 0 would make the key useless for the case it exists for, and the transcript's own
+   * result line is the more specific statement of how the run ended. A `success` transcript with a
+   * non-zero exit is not an outcome and never reaches here: it stays a harness error, as before.
+   *
+   * A decoder THROW is never graded either, whatever the list says (it never reaches here): output
+   * without a terminal result is not a run that ended on anything.
+   */
+  function gradedEnding(outcome: string, caseId: string, exitCode: number | null): boolean {
+    if (exitCode === null) return false;
+    return gradeWhen.get(caseId)?.has(outcome) === true;
+  }
+
   const runAndDecode = async (
     cell: MatrixCell,
     timeoutMs: number,
@@ -512,6 +548,27 @@ export function buildCommandRunCell(
       decoded = decoder(run.stdout);
     } catch (error) {
       decodeError = error instanceof Error ? error.message : String(error);
+    }
+
+    // BATCH-62 — a run that reached a terminal result but did not end in `success`. See
+    // `gradedEnding` for when it is graded; otherwise it is the harness error the decoder used to
+    // throw, with the decoder's own sentence as the reason, so a suite without `grade_when` reports
+    // exactly what it did before the key existed.
+    const outcome =
+      decoded?.outcome !== undefined && decoded.outcome !== 'success' ? decoded.outcome : undefined;
+    if (decoded !== undefined && outcome !== undefined) {
+      if (gradedEnding(outcome, cell.id, run.exitCode)) {
+        return {
+          ok: true,
+          outcome,
+          answer: decoded.answer,
+          ...(decoded.tokensInput !== undefined ? { tokensInput: decoded.tokensInput } : {}),
+          ...(decoded.tokensOutput !== undefined ? { tokensOutput: decoded.tokensOutput } : {}),
+          ...shapeOutcome(decoded, captureMaxBytes, options.recordToolCallArgs === true),
+        };
+      }
+      decodeError = decoded.outcomeReason || `the run ended with outcome "${outcome}"`;
+      decoded = undefined;
     }
 
     if (run.exitCode !== 0) {

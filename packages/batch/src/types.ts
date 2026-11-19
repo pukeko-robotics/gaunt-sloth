@@ -149,6 +149,14 @@ export interface CellRunOutcome {
   /** A human-readable failure reason, set when `ok` is `false`. */
   error?: string;
   /**
+   * BATCH-62 — how a graded run ended when that was not `success`: the decoder's outcome name (such
+   * as `error_max_turns`), set only by the `command` runner, only on an `ok: true` outcome, and only
+   * because the case's `grade_when` listed it. Absent on every finished run, so a run that finished
+   * keeps its exact output shape. The eval runner copies it onto the case result so nobody reads a
+   * capped run as a finished one.
+   */
+  outcome?: string;
+  /**
    * BATCH-59 — the case's workspace assertions that did not hold (`file_contains`,
    * `must_not_exist`, `after`), one reason each, set only by the `command` runner and only on an
    * `ok: true` outcome. The eval runner adds them to the cell's `reasons`, so they FAIL the cell
