@@ -51,7 +51,17 @@ const CAPTURE = readFileSync(
  * so the committed capture stays exactly what Claude Code printed. */
 function cappedTranscript(subtype = 'error_max_turns'): string {
   const lines = CAPTURE.trimEnd().split('\n').slice(0, 7);
-  lines.push(JSON.stringify({ type: 'result', subtype, is_error: true, num_turns: 3 }));
+  // `usage` is there so a graded run's token counts can be pinned: what a capped case costs is
+  // the reason the key exists.
+  lines.push(
+    JSON.stringify({
+      type: 'result',
+      subtype,
+      is_error: true,
+      num_turns: 3,
+      usage: { input_tokens: 5, cache_read_input_tokens: 100, output_tokens: 20 },
+    })
+  );
   return `${lines.join('\n')}\n`;
 }
 
@@ -74,13 +84,18 @@ function fakeRun(...args: string[]): string {
   return [process.execPath, FAKE_CLI, ...args].map((arg) => `"${arg}"`).join(' ');
 }
 
-function suiteOf(run: string, targetExtra: string, cases: string): EvalSuite {
+function suiteOf(
+  run: string,
+  targetExtra: string,
+  cases: string,
+  transcript = 'claude-stream-json'
+): EvalSuite {
   return parseEvalSuite(
     `
 target:
   type: command
   run: ${JSON.stringify(run)}
-  transcript: claude-stream-json
+  transcript: ${JSON.stringify(transcript)}
 ${targetExtra}
 cases:
 ${cases}
@@ -157,6 +172,8 @@ describe('grade_when — a --max-turns-capped run through a real child (exit 1)'
     const { summary, byId } = await run(suite);
 
     expect(byId.routes).toMatchObject({ verdict: 'PASS', sutOk: true, outcome: 'error_max_turns' });
+    // A graded run reports what it cost: input counts the cached prompt tokens, as the decoder does.
+    expect(byId.routes).toMatchObject({ tokensInput: 105, tokensOutput: 20 });
     expect(byId.routes.reasons).toEqual([]);
     expect(byId.routes.toolCalls?.map((call) => call.name)).toEqual(['Read', 'Read', 'Bash']);
 
@@ -519,4 +536,94 @@ export default function decode(stdout) {
       );
     }
   );
+
+  /**
+   * A decoder module that returns whatever the command printed, as JSON. The suite names it in
+   * `target.transcript` and it is loaded from that name the way `gth eval` loads it, so a reason
+   * that names the decoder must name THIS module, not the built-in.
+   */
+  const ECHO_DECODER = `
+export default function decode(stdout) {
+  return { toolCalls: [], toolResults: [], ...JSON.parse(stdout) };
+}
+`;
+  const ECHO_NAME = './echo-decoder.mjs';
+
+  async function runEcho(
+    targetExtra: string,
+    printed: Record<string, unknown>,
+    exitCode: number,
+    stderr = ''
+  ): Promise<EvalCaseResult> {
+    const { loadTranscriptDecoder } = await import('#src/commands/commandEvalRunner.js');
+    writeFileSync(join(scratch, 'echo-decoder.mjs'), ECHO_DECODER);
+    const suite = suiteOf(
+      'fake-agent',
+      targetExtra,
+      `
+  - id: c
+    prompt: p
+    must_contain: [done]
+`,
+      ECHO_NAME
+    );
+    const decoder = await loadTranscriptDecoder(
+      targetOf(suite).transcript,
+      join(scratch, 'suite.yaml')
+    );
+    const { byId } = await run(
+      suite,
+      {
+        spawnCommand: seam({
+          p: { stdout: JSON.stringify(printed), stderr, exitCode, timedOut: false },
+        }),
+      },
+      decoder
+    );
+    return byId.c;
+  }
+
+  it('reads outcome "success" from a decoder as a finished run, at exit 0 and exit 1', async () => {
+    // The docs promise it: "return the transcript with no `outcome`, or with `outcome: "success"`".
+    const finished = await runEcho(
+      '  grade_when: [hit_step_limit]',
+      { answer: 'done', outcome: 'success' },
+      0
+    );
+    expect(finished).toMatchObject({ verdict: 'PASS', sutOk: true });
+    expect('outcome' in finished).toBe(false);
+
+    // A finished transcript with a non-zero exit is the plain exit-code harness error, as for a
+    // decoder that sets no outcome: no outcome sentence is added to it.
+    const exited = await runEcho('', { answer: 'done', outcome: 'success' }, 1);
+    expectHarnessError(exited, /^SUT run failed: the command exited with code 1$/);
+  });
+
+  it('names the custom decoder module, and quotes stderr, when its outcome is invalid', async () => {
+    const result = await runEcho(
+      '  grade_when: [hit_step_limit]',
+      { answer: 'done', outcome: '' },
+      0,
+      'agent: something went wrong'
+    );
+    expectHarnessError(
+      result,
+      /^SUT run failed: transcript "\.\/echo-decoder\.mjs" returned an invalid outcome "": it must be a non-empty string .*; stderr: agent: something went wrong$/
+    );
+  });
+
+  it.each([
+    ['an empty', ''],
+    ['a whitespace-only', '   '],
+  ])('falls back to a generic reason for %s outcomeReason', async (_label, outcomeReason) => {
+    const result = await runEcho(
+      '',
+      { answer: 'done', outcome: 'hit_step_limit', outcomeReason },
+      0
+    );
+    expectHarnessError(
+      result,
+      /^SUT run failed: transcript "\.\/echo-decoder\.mjs" could not be decoded: the run ended with outcome "hit_step_limit"$/
+    );
+  });
 });
