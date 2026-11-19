@@ -6,6 +6,22 @@ import type { EvalReporter, EvalRunContext } from '#src/reporters/reporterTypes.
 import { renderClassificationReport } from '#src/classificationRender.js';
 import { renderToolCoverage } from '#src/toolCoverageRender.js';
 
+/** BATCH-60 — `(2/3 runs passed, 67%, needs 67%)`, the numbers the verdict was decided on. */
+function describeRepeat(result: EvalCaseResult): string {
+  const repeat = result.repeat!;
+  return (
+    `(${repeat.passed}/${repeat.runs} runs passed, ${repeat.ratePercent}%, ` +
+    `needs ${repeat.requiredPercent}%)`
+  );
+}
+
+/** BATCH-60 — each run's outcome in one row: `PASS`, `FAIL`, or `ERROR` for a run that did not
+ * finish. Each run's reasons are in the case's own reasons and in `results.json`. */
+function describeRuns(result: EvalCaseResult): string {
+  const runs = (result.runs ?? []).map((run) => `${run.run}: ${run.sutOk ? run.verdict : 'ERROR'}`);
+  return `      runs ${runs.join(' · ')}`;
+}
+
 /**
  * The built-in default reporter: the human-readable, `review`-flavored summary — one PASS/FAIL line
  * per cell (failures carry their reasons), then a suite-total line. Doesn't replicate `review`'s
@@ -32,14 +48,19 @@ export function createTextReporter(): EvalReporter {
       // BATCH-12: an identity-matrix cell tags its line with the identity it ran under, so the two
       // rows a case produces per (case × identity) are distinguishable. A no-identities cell prints
       // exactly as before (just the case id).
-      const label = result.identity ? `${result.id} [${result.identity}]` : result.id;
+      // BATCH-60 — a repeated case names its rate on the verdict row and lists each run's outcome
+      // on the row after. A case that ran once prints exactly as it always has.
+      const baseLabel = result.identity ? `${result.id} [${result.identity}]` : result.id;
+      const label = result.repeat ? `${baseLabel} ${describeRepeat(result)}` : baseLabel;
       if (result.verdict === 'PASS') {
         display(`PASS  ${label}`);
+        if (result.repeat) display(describeRuns(result));
         return;
       }
       const reasons = result.reasons.join('; ');
       if (!reasons) {
         displayWarning(`FAIL  ${label} — no reason recorded`);
+        if (result.repeat) displayWarning(describeRuns(result));
         return;
       }
       // [[TUI-C71]] — **a reason is untrusted text, and this reporter writes to a terminal.**
@@ -62,6 +83,7 @@ export function createTextReporter(): EvalReporter {
         .lines) {
         displayWarning(row);
       }
+      if (result.repeat) displayWarning(describeRuns(result));
     },
 
     onSuiteEnd(summary: EvalSuiteSummary, ctx: EvalRunContext): void {
