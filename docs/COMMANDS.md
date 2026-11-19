@@ -481,6 +481,8 @@ Guide-shaped walkthrough: [Evaluate your agent](guides/evals.md) — and for tes
 ### Options
 - `-j, --concurrency <n>` - Maximum cases run in parallel (default: `1` — cases run one at a time). Parallelism is opt-in: concurrent generations thrash a local single-GPU backend and burn a cloud key's rate limit, so raise `-j` only when you know the backend has the headroom. A multi-case run with no `-j` says so at the end.
 - `--keep-workspaces` - Keep each `command` case's [workspace](#workspaces) after the case instead of removing it, and print its path.
+- `--only <pattern>` - Run only the cases whose id matches `<pattern>`, exactly or with `*` as a wildcard. Repeatable. See [Running some of the cases](#running-some-of-the-cases).
+- `--keep-transcripts` - Write what each `command` case's agent printed beside the case's JSON. See [Keeping transcripts](#keeping-transcripts).
 - `-o, --output <dir>` - Directory to write structured per-case JSON plus a `results.json` summary to (default: a timestamped `gth_<date>_EVAL` directory alongside other reports)
 - `--judge <profile>` - Identity profile whose model grades `judge:` rubrics. Overrides the suite's `judge_profile`; omit both to judge with the SUT's own model.
 - `--export-blind <file>` - Write the suite's cases — `id`, input(s) and `tags` only, **no expected labels, actions, rationales or rubrics** — to `<file>` as JSON, then exit without running anything. See [Blind relabel](#blind-relabel).
@@ -978,6 +980,39 @@ Every run is graded on its own, with its own assertions and its own judge call. 
 Each run is an independent unit of work. With `-j` the runs of one case run in parallel like separate cases, and on a `command` target each run gets its own fresh [workspace](#workspaces).
 
 A repeated case is still one result. The console row reads `PASS  reads-before-answering (2/3 runs passed, 67%, needs 67%)`, with each run's outcome on the row after it. In `results.json` and the case's `<id>.json` the case carries a `repeat` object (`runs`, `passed`, `ratePercent`, `passRate`, `requiredPercent`) and a `runs` array holding each run's full result. JUnit and TeamCity report one test per case, not one per run, and every run's outcome (`PASS`, `FAIL`, or `ERROR` for a run that did not finish) is in the test's output. A failing case's message starts with its rate, such as `pass rate 1/3 (33%) is below the required 67%`. A harness error's message instead says which runs did not finish, such as `1 of 3 runs did not finish (run 2)`, because no rate was computed. A case that runs once writes exactly the output it always has.
+
+### Running some of the cases
+
+While you write a case you want to run that case, not the whole suite, and every run costs money. `--only` picks cases by id:
+
+```bash
+gth eval eval/claude-fixes.yaml --only fix-null-check
+gth eval eval/ --only 'fix-*' --only rename-symbol
+```
+
+- A pattern without `*` matches an id exactly. A `*` matches any run of characters, and the pattern must match the whole id, so `fix` does not match `fix-null-check`. Quote a pattern with `*` so the shell does not expand it.
+- `--only` can be given several times. A case runs when any pattern matches it, in every suite given.
+- A matched case runs in full: every identity of an [identity matrix](#identity-matrix), every [sweep](#config-sweep) cell and every [repeat](#repeated-cases).
+- A suite with no matching case is skipped, with a notice naming it. When no case in any suite matches, `gth eval` exits `2` before any agent starts.
+- `results.json` records the filter as `only: { patterns, selectedCases, suiteCases }`, so a partial run is never read as the whole suite. Without `--only` there is no such field.
+- Suite-level figures, such as [declared metrics](#declared-metrics) and [tool coverage](#tool-coverage), and the gates on them, are computed over the selected cases only.
+- With [`--compare-to`](#run-over-run-diff), the baseline is narrowed to the same selection, so the cases you did not select are not reported as missing. Metric deltas are not compared on a filtered run, because the baseline's metrics cover the whole suite. A baseline that was itself a filtered run is named as partial.
+- `--only` cannot be combined with `--export-blind` or `--relabel-diff`, which act on the whole corpus.
+
+### Keeping transcripts
+
+When a `command` case fails, the first question is what the agent did between its tool calls. `--keep-transcripts` keeps what it printed:
+
+```bash
+gth eval eval/claude-fixes.yaml -o out/today --keep-transcripts
+```
+
+- Each run's standard output goes to `<id>.stdout.txt` beside the case's `<id>.json`, exactly as the agent printed it, so it can be fed back to the decoder. Its standard error goes to `<id>.stderr.txt` when there is any.
+- The runs of a [repeated case](#repeated-cases) are written as `<id>#run<n>.stdout.txt` and `<id>#run<n>.stderr.txt`, so no run overwrites another.
+- A run that timed out, exited non-zero or printed a transcript the decoder rejected is kept too. That is the run whose output you most need. A command that could not be started printed nothing, so it has no file.
+- The whole output is kept. The stderr quoted in a harness-error reason is cut to its end; the file is not.
+- Each file is written as its run finishes, so a run you stop with Ctrl+C keeps the transcripts of the runs that finished.
+- Only a [`command` target](#the-command-target) has a transcript. On any other target the flag writes nothing and prints one notice per suite.
 
 ### Tool coverage
 
@@ -1486,6 +1521,9 @@ gth eval eval/js-basics.yaml || echo "eval failed (exit $?)"
 # A suite with `defaults: { repeat: 3, pass_rate: 0.67 }`, its runs in parallel, diffed
 # against yesterday's run to see which cases turned flaky and which broke
 gth eval eval/tool-use.yaml -j 3 -o out/today --compare-to out/yesterday
+
+# Run just the cases you are writing, and keep what the agent printed in each run
+gth eval eval/claude-fixes.yaml --only 'fix-*' -o out/draft --keep-transcripts
 
 # A classifier suite: confusion matrix, per-tag sub-scores, and metric-gated exit
 gth eval eval/rater.yaml

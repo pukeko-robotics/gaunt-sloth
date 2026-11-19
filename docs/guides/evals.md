@@ -384,6 +384,23 @@ Re-run it later with `--compare-to out/today` and the diff lists a case whose ra
 **FLAKY**, and one that fell to zero as **BROKE**. See
 [Commands → eval → Repeated cases](../COMMANDS.md#repeated-cases) for every rule.
 
+## Work on one case at a time
+
+Goal: you are writing a new case for a suite of forty, and you want to run that case alone until
+it is right, then see what the agent printed when it fails.
+
+```bash
+gth eval eval/claude-fixes.yaml --only fix-null-check -o out/draft --keep-transcripts
+```
+
+Only `fix-null-check` runs, with all its repeats. Quote a pattern with `*`, such as
+`--only 'fix-*'`, and repeat the flag to pick more. A pattern that matches nothing exits `2`
+before any agent starts, so a typo costs nothing. On a `command` target, `out/draft` then holds
+`fix-null-check.stdout.txt` beside `fix-null-check.json`: everything the agent printed, kept even
+when the run timed out or crashed. See
+[Commands → eval → Running some of the cases](../COMMANDS.md#running-some-of-the-cases) and
+[Keeping transcripts](../COMMANDS.md#keeping-transcripts) for every rule.
+
 ## Wire it into CI
 
 Point `eval` at a whole directory to run every suite in it under one aggregate exit code, and add
