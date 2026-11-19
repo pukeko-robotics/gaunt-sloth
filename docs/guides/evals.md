@@ -75,7 +75,10 @@ An agent that is a command-line program, such as Claude Code, is started once pe
 from the transcript it prints. Running the suite runs that command; see
 [The command target](../COMMANDS.md#the-command-target). An agent that edits files gets a
 [workspace](../COMMANDS.md#workspaces) per case: a fresh copy of a fixture directory, with `setup`
-steps and `env` of your choosing, removed when the case ends. A case can then
+steps and `env` of your choosing, removed when the case ends. `env: { GITHUB_TOKEN: null }` keeps a
+credential from reaching the agent at all, `cwd` starts the agent in a subdirectory such as a git
+worktree that `setup` made, and `inherit: true` lets a case change one key of the default workspace
+without repeating the rest. A case can then
 [check what the agent left there](../COMMANDS.md#workspace-assertions): a file's text, files that
 must not exist, and `after` commands such as `git status` whose output must match. `after` commands
 run without asking, as `setup` steps do.

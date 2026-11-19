@@ -847,9 +847,39 @@ Before each case, `gth eval` copies `template` into a new directory under the sy
 |-----|---------|
 | `template` | A directory, resolved from the suite file's directory, copied into the workspace. It must exist when the suite loads. Without it the workspace starts empty. |
 | `setup` | Commands run in the workspace before the case's command, in order. |
-| `env` | Variables set for the setup steps and the command, over the inherited environment. |
+| `env` | Variables set for the setup steps, the command and the `after` steps, over the inherited environment. `NAME: null` removes the variable instead, so it is unset rather than empty; a key with no value, or `~`, means the same. `NAME: ""` sets it empty. |
+| `cwd` | Where `run` starts, relative to the workspace and written with `/`. Without it, `run` starts in the workspace. `setup` and `after` steps still run in the workspace, and `{{workspace}}` still names it. |
+| `inherit` | On a case only: `true` merges the case's block over `defaults.workspace` instead of replacing it. |
 
 Put the block under `defaults` for every case, or on one case. **A case's `workspace` replaces the default as a whole:** nothing is merged, so a case that sets only `setup` gets no `template` and no `env` from the default. `workspace: false` on a case runs that case without one. `workspace` is rejected on every target other than `command`, because the in-process agent shares one working directory with every case running beside it.
+
+With `inherit: true`, each key the case sets replaces the default's and each key it leaves out comes from the default. `env` is merged by name, the case winning, so `NAME: null` there also removes a variable the default sets. `setup` is replaced whole, never added to, and `setup: []` clears the default's steps. `inherit` is rejected in `defaults`, and on a case of a suite without `defaults.workspace`.
+
+A `cwd` that is absolute or has a `..` segment is rejected when the suite loads. After `setup`, the directory must exist and, following symbolic links, lie inside the workspace; otherwise the case is a harness error naming the path, and its command does not start. `{{env.NAME}}` reads the environment `gth eval` was started with, even for a variable the block removes.
+
+For example, cases that share a fixture and differ in one `setup` step, where the agent must start in a git worktree that `setup` creates, and must not see a real GitHub token:
+
+```yaml
+defaults:
+  workspace:
+    template: fixtures/tiny-repo
+    setup: ["git init -q", "git add -A", "git -c user.name=eval -c user.email=eval@example.com commit -qm init"]
+    env:
+      PATH: "{{suite_dir}}/stubs{{path_delimiter}}{{env.PATH}}"
+      GITHUB_TOKEN: null
+cases:
+  - id: works-in-the-worktree
+    prompt: "Fix the failing test on this branch."
+    must_call: [Edit]
+    workspace:
+      inherit: true
+      setup:
+        - git init -q
+        - git add -A
+        - git -c user.name=eval -c user.email=eval@example.com commit -qm init
+        - git worktree add -q -b fix worktrees/fix
+      cwd: worktrees/fix
+```
 
 `setup` steps follow the same rule as `run`: each is split into arguments and started without a shell. A step that needs a pipe or `&&` is two steps, or a script kept in the template and run as a step. A step that cannot start, exits non-zero or runs past the case's `timeout_ms` (each step gets the whole limit, as the command does) fails the case as a harness error naming the step, and the case's command does not start.
 
