@@ -857,7 +857,7 @@ COST (reported by agent): 0.6321924 USD for 2 of 7 case(s)
 - A [repeated case](#repeated-cases) carries the sum over its runs, and each run carries its own. The case has a cost only when every run reported one, so a total never leaves a run out without saying so.
 - The line counts the cases it covers. The amount is printed with the digits the agent reported, not rounded to cents.
 - Several suites in one run print one more line after `EVAL TOTAL:`, `COST TOTAL (reported by agent): …`, totalled across the suites.
-- With no cost reported anywhere, nothing is printed and no `costUsd` is written, which is always the case for the `gth-agent`, `ag-ui` and `adk-agent` targets. The JUnit and TeamCity reports never include it.
+- With no cost reported anywhere, nothing is printed and no `costUsd` is written, which is always the case for every target except `command`. The JUnit and TeamCity reports never include it.
 - With `--retry`, the cost is the last attempt's: a failed attempt that was retried is not counted.
 
 #### Workspaces

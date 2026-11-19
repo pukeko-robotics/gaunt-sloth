@@ -143,6 +143,13 @@ async function textReport(summary: EvalSuiteSummary): Promise<string[]> {
   ].map((call) => String(call[0]));
 }
 
+/** An object that refers to itself, which JSON.stringify cannot serialise. */
+function circular(): Record<string, unknown> {
+  const value: Record<string, unknown> = {};
+  value.self = value;
+  return value;
+}
+
 const ONE = `
   - id: c
     prompt: p
@@ -178,6 +185,9 @@ describe('cost — a custom decoder', () => {
     ['null', null, 'null'],
     ['NaN', Number.NaN, 'NaN'],
     ['Infinity', Number.POSITIVE_INFINITY, 'Infinity'],
+    // JSON.stringify throws on these two; the reason must still name the decoder.
+    ['a BigInt', 10n, '10n'],
+    ['a circular object', circular(), '[object Object]'],
   ])('is a harness error naming the decoder for %s cost', async (_label, cost, shown) => {
     const decoder: TranscriptDecoder = () => ({
       answer: 'done',

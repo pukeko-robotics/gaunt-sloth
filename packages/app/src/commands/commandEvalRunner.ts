@@ -405,6 +405,27 @@ function tail(text: string): string {
 }
 
 /**
+ * BATCH-65 — a value a custom decoder returned, as text for a harness-error reason. It must never
+ * throw: the reason is what names the decoder, and a throw here would replace it with the
+ * formatter's own message (`Do not know how to serialize a BigInt`). `JSON.stringify` throws on a
+ * BigInt and on a circular object, so a BigInt is written with its `n` suffix, and anything
+ * `JSON.stringify` cannot write falls back to `String`, then to the value's type.
+ */
+function describeDecodedValue(value: unknown): string {
+  if (typeof value === 'number') return String(value);
+  if (typeof value === 'bigint') return `${value}n`;
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    try {
+      return String(value);
+    } catch {
+      return `a value of type ${typeof value}`;
+    }
+  }
+}
+
+/**
  * Shape a decoded transcript the way the gth-agent target shapes its run stats: `tools` is the
  * de-duplicated names of every requested and executed tool in first-seen order (core's set), and
  * every payload and argument string is capped with core's own {@link capToolResultText}.
@@ -580,7 +601,7 @@ export function buildCommandRunCell(
           ok: false,
           error: withStderr(
             `transcript "${target.transcript}" returned an invalid costUsd ` +
-              `${typeof value === 'number' ? String(value) : (JSON.stringify(value) ?? String(value))}: it must be a finite, non-negative ` +
+              `${describeDecodedValue(value)}: it must be a finite, non-negative ` +
               'number of US dollars, or left out when the agent reports no cost'
           ),
         };
