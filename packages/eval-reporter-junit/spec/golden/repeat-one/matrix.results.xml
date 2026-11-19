@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="matrix" tests="2" failures="1" errors="0" time="0">
+  <testsuite name="matrix" tests="2" failures="1" errors="0" time="0">
+    <testcase classname="matrix" name="lists [admin]" time="0"/>
+    <testcase classname="matrix" name="lists [guest]" time="0">
+      <failure message="missing &quot;denied&quot;">missing &quot;denied&quot;</failure>
+    </testcase>
+  </testsuite>
+</testsuites>

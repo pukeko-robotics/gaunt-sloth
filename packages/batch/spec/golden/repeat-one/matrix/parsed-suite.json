@@ -1,0 +1,61 @@
+{
+  "target": {
+    "type": "gth-agent"
+  },
+  "identities": [
+    "admin",
+    "guest"
+  ],
+  "metrics": [],
+  "cases": [
+    {
+      "id": "lists",
+      "turns": [
+        {
+          "user": "list the records",
+          "expectations": [
+            {
+              "identities": [
+                "admin"
+              ],
+              "mustContain": [
+                "records"
+              ],
+              "mustNotContain": [],
+              "shouldContainAny": [],
+              "mustCall": [],
+              "mustNotCall": [],
+              "mustMatch": [],
+              "mustNotMatch": [],
+              "jsonPath": [],
+              "mustError": [],
+              "toolResultJsonPath": [],
+              "toolCallJsonPath": []
+            },
+            {
+              "identities": [
+                "guest"
+              ],
+              "mustContain": [
+                "denied"
+              ],
+              "mustNotContain": [],
+              "shouldContainAny": [],
+              "mustCall": [],
+              "mustNotCall": [],
+              "mustMatch": [],
+              "mustNotMatch": [],
+              "jsonPath": [],
+              "mustError": [],
+              "toolResultJsonPath": [],
+              "toolCallJsonPath": []
+            }
+          ]
+        }
+      ],
+      "passThreshold": 6,
+      "tags": [],
+      "modelFree": false
+    }
+  ]
+}

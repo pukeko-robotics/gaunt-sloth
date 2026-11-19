@@ -1,0 +1,171 @@
+{
+  "target": {
+    "type": "gth-agent"
+  },
+  "metrics": [],
+  "cases": [
+    {
+      "id": "greets",
+      "turns": [
+        {
+          "user": "say hello",
+          "expectations": [
+            {
+              "mustContain": [
+                "hello"
+              ],
+              "mustNotContain": [],
+              "shouldContainAny": [],
+              "mustCall": [],
+              "mustNotCall": [],
+              "mustMatch": [],
+              "mustNotMatch": [],
+              "jsonPath": [],
+              "mustError": [],
+              "toolResultJsonPath": [],
+              "toolCallJsonPath": []
+            }
+          ]
+        }
+      ],
+      "passThreshold": 6,
+      "tags": [],
+      "modelFree": false
+    },
+    {
+      "id": "misses",
+      "turns": [
+        {
+          "user": "say goodbye",
+          "expectations": [
+            {
+              "mustContain": [
+                "goodbye"
+              ],
+              "mustNotContain": [],
+              "shouldContainAny": [],
+              "mustCall": [],
+              "mustNotCall": [],
+              "mustMatch": [],
+              "mustNotMatch": [],
+              "jsonPath": [],
+              "mustError": [],
+              "toolResultJsonPath": [],
+              "toolCallJsonPath": []
+            }
+          ]
+        }
+      ],
+      "passThreshold": 6,
+      "tags": [
+        "farewell"
+      ],
+      "modelFree": false
+    },
+    {
+      "id": "sut-down",
+      "turns": [
+        {
+          "user": "anything at all",
+          "expectations": [
+            {
+              "mustContain": [
+                "anything"
+              ],
+              "mustNotContain": [],
+              "shouldContainAny": [],
+              "mustCall": [],
+              "mustNotCall": [],
+              "mustMatch": [],
+              "mustNotMatch": [],
+              "jsonPath": [],
+              "mustError": [],
+              "toolResultJsonPath": [],
+              "toolCallJsonPath": []
+            }
+          ]
+        }
+      ],
+      "passThreshold": 6,
+      "tags": [],
+      "modelFree": false
+    },
+    {
+      "id": "judged",
+      "turns": [
+        {
+          "user": "explain the file",
+          "expectations": [
+            {
+              "mustContain": [],
+              "mustNotContain": [],
+              "shouldContainAny": [],
+              "mustCall": [
+                "read_file"
+              ],
+              "mustNotCall": [],
+              "mustMatch": [],
+              "mustNotMatch": [],
+              "jsonPath": [],
+              "mustError": [],
+              "toolResultJsonPath": [],
+              "toolCallJsonPath": [],
+              "judgeRubric": "explains the file clearly"
+            }
+          ]
+        }
+      ],
+      "passThreshold": 6,
+      "tags": [],
+      "modelFree": false
+    },
+    {
+      "id": "chat",
+      "turns": [
+        {
+          "user": "hi there",
+          "expectations": [
+            {
+              "mustContain": [
+                "hi"
+              ],
+              "mustNotContain": [],
+              "shouldContainAny": [],
+              "mustCall": [],
+              "mustNotCall": [],
+              "mustMatch": [],
+              "mustNotMatch": [],
+              "jsonPath": [],
+              "mustError": [],
+              "toolResultJsonPath": [],
+              "toolCallJsonPath": []
+            }
+          ]
+        },
+        {
+          "user": "and bye",
+          "expectations": [
+            {
+              "mustContain": [
+                "bye"
+              ],
+              "mustNotContain": [],
+              "shouldContainAny": [],
+              "mustCall": [],
+              "mustNotCall": [],
+              "mustMatch": [],
+              "mustNotMatch": [],
+              "jsonPath": [],
+              "mustError": [],
+              "toolResultJsonPath": [],
+              "toolCallJsonPath": []
+            }
+          ]
+        }
+      ],
+      "passThreshold": 6,
+      "tags": [],
+      "modelFree": false
+    }
+  ]
+}

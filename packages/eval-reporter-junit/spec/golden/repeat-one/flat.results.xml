@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="flat" tests="5" failures="1" errors="1" time="0">
+  <testsuite name="flat" tests="5" failures="1" errors="1" time="0">
+    <testcase classname="flat" name="greets" time="0"/>
+    <testcase classname="flat" name="misses" time="0">
+      <failure message="missing &quot;goodbye&quot;">missing &quot;goodbye&quot;</failure>
+    </testcase>
+    <testcase classname="flat" name="sut-down" time="0">
+      <error message="SUT run failed: connection refused">SUT run failed: connection refused</error>
+    </testcase>
+    <testcase classname="flat" name="judged" time="0">
+      <system-out>judge: 8/10
+tools: read_file</system-out>
+    </testcase>
+    <testcase classname="flat" name="chat" time="0"/>
+  </testsuite>
+</testsuites>

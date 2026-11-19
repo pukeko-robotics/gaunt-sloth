@@ -1,0 +1,36 @@
+{
+  "id": "judged",
+  "passThreshold": 6,
+  "answer": "the file declares one function",
+  "tools": [
+    "read_file"
+  ],
+  "toolResults": [
+    {
+      "name": "read_file",
+      "isError": false,
+      "content": "export function f() {}"
+    }
+  ],
+  "toolCalls": [
+    {
+      "name": "read_file"
+    }
+  ],
+  "durationMs": 0,
+  "verdict": "PASS",
+  "sutOk": true,
+  "checks": {
+    "passed": true,
+    "failures": []
+  },
+  "judge": {
+    "attempted": true,
+    "ok": true,
+    "verdict": {
+      "rate": 8,
+      "reason": "clear enough"
+    }
+  },
+  "reasons": []
+}

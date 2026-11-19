@@ -1,0 +1,32 @@
+{
+  "id": "chat",
+  "passThreshold": 6,
+  "durationMs": 0,
+  "verdict": "PASS",
+  "sutOk": true,
+  "reasons": [],
+  "turns": [
+    {
+      "user": "hi there",
+      "answer": "echo: hi there",
+      "ok": true,
+      "verdict": "PASS",
+      "checks": {
+        "passed": true,
+        "failures": []
+      },
+      "reasons": []
+    },
+    {
+      "user": "and bye",
+      "answer": "echo: and bye",
+      "ok": true,
+      "verdict": "PASS",
+      "checks": {
+        "passed": true,
+        "failures": []
+      },
+      "reasons": []
+    }
+  ]
+}

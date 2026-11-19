@@ -1,0 +1,7 @@
+##teamcity[testSuiteStarted name='matrix']
+##teamcity[testStarted name='lists |[admin|]']
+##teamcity[testFinished name='lists |[admin|]' duration='0']
+##teamcity[testStarted name='lists |[guest|]']
+##teamcity[testFailed name='lists |[guest|]' message='missing "denied"' details='missing "denied"']
+##teamcity[testFinished name='lists |[guest|]' duration='0']
+##teamcity[testSuiteFinished name='matrix']

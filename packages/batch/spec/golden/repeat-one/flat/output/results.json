@@ -1,0 +1,122 @@
+{
+  "total": 5,
+  "passed": 3,
+  "failed": 2,
+  "cases": [
+    {
+      "id": "greets",
+      "passThreshold": 6,
+      "answer": "hello world",
+      "tokensInput": 10,
+      "tokensOutput": 3,
+      "durationMs": 0,
+      "verdict": "PASS",
+      "sutOk": true,
+      "checks": {
+        "passed": true,
+        "failures": []
+      },
+      "reasons": []
+    },
+    {
+      "id": "misses",
+      "passThreshold": 6,
+      "answer": "see you",
+      "tokensInput": 11,
+      "tokensOutput": 2,
+      "durationMs": 0,
+      "tags": [
+        "farewell"
+      ],
+      "verdict": "FAIL",
+      "sutOk": true,
+      "checks": {
+        "passed": false,
+        "failures": [
+          "missing \"goodbye\""
+        ]
+      },
+      "reasons": [
+        "missing \"goodbye\""
+      ]
+    },
+    {
+      "id": "sut-down",
+      "passThreshold": 6,
+      "durationMs": 0,
+      "verdict": "FAIL",
+      "sutOk": false,
+      "reasons": [
+        "SUT run failed: connection refused"
+      ]
+    },
+    {
+      "id": "judged",
+      "passThreshold": 6,
+      "answer": "the file declares one function",
+      "tools": [
+        "read_file"
+      ],
+      "toolResults": [
+        {
+          "name": "read_file",
+          "isError": false,
+          "content": "export function f() {}"
+        }
+      ],
+      "toolCalls": [
+        {
+          "name": "read_file"
+        }
+      ],
+      "durationMs": 0,
+      "verdict": "PASS",
+      "sutOk": true,
+      "checks": {
+        "passed": true,
+        "failures": []
+      },
+      "judge": {
+        "attempted": true,
+        "ok": true,
+        "verdict": {
+          "rate": 8,
+          "reason": "clear enough"
+        }
+      },
+      "reasons": []
+    },
+    {
+      "id": "chat",
+      "passThreshold": 6,
+      "durationMs": 0,
+      "verdict": "PASS",
+      "sutOk": true,
+      "reasons": [],
+      "turns": [
+        {
+          "user": "hi there",
+          "answer": "echo: hi there",
+          "ok": true,
+          "verdict": "PASS",
+          "checks": {
+            "passed": true,
+            "failures": []
+          },
+          "reasons": []
+        },
+        {
+          "user": "and bye",
+          "answer": "echo: and bye",
+          "ok": true,
+          "verdict": "PASS",
+          "checks": {
+            "passed": true,
+            "failures": []
+          },
+          "reasons": []
+        }
+      ]
+    }
+  ]
+}

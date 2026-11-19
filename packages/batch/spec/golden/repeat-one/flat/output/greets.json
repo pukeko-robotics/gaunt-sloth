@@ -1,0 +1,15 @@
+{
+  "id": "greets",
+  "passThreshold": 6,
+  "answer": "hello world",
+  "tokensInput": 10,
+  "tokensOutput": 3,
+  "durationMs": 0,
+  "verdict": "PASS",
+  "sutOk": true,
+  "checks": {
+    "passed": true,
+    "failures": []
+  },
+  "reasons": []
+}

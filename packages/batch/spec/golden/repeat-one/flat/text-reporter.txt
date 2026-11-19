@@ -1,0 +1,8 @@
+display	PASS  greets
+displayWarning	FAIL  misses
+displayWarning	  1 │ missing "goodbye"
+displayWarning	FAIL  sut-down
+displayWarning	  1 │ SUT run failed: connection refused
+display	PASS  judged
+display	PASS  chat
+displayWarning	EVAL RESULT: 3/5 case(s) passed, 2 failed. Results written to out/flat

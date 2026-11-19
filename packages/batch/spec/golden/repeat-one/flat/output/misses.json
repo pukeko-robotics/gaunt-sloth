@@ -1,0 +1,22 @@
+{
+  "id": "misses",
+  "passThreshold": 6,
+  "answer": "see you",
+  "tokensInput": 11,
+  "tokensOutput": 2,
+  "durationMs": 0,
+  "tags": [
+    "farewell"
+  ],
+  "verdict": "FAIL",
+  "sutOk": true,
+  "checks": {
+    "passed": false,
+    "failures": [
+      "missing \"goodbye\""
+    ]
+  },
+  "reasons": [
+    "missing \"goodbye\""
+  ]
+}

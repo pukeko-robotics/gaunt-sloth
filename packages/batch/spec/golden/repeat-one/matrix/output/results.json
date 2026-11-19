@@ -1,0 +1,39 @@
+{
+  "total": 2,
+  "passed": 1,
+  "failed": 1,
+  "cases": [
+    {
+      "id": "lists",
+      "identity": "admin",
+      "passThreshold": 6,
+      "answer": "here are the records",
+      "durationMs": 0,
+      "verdict": "PASS",
+      "sutOk": true,
+      "checks": {
+        "passed": true,
+        "failures": []
+      },
+      "reasons": []
+    },
+    {
+      "id": "lists",
+      "identity": "guest",
+      "passThreshold": 6,
+      "answer": "here are the records",
+      "durationMs": 0,
+      "verdict": "FAIL",
+      "sutOk": true,
+      "checks": {
+        "passed": false,
+        "failures": [
+          "missing \"denied\""
+        ]
+      },
+      "reasons": [
+        "missing \"denied\""
+      ]
+    }
+  ]
+}

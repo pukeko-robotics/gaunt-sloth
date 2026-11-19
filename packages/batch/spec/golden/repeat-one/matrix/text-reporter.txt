@@ -1,0 +1,4 @@
+display	PASS  lists [admin]
+displayWarning	FAIL  lists [guest]
+displayWarning	  1 │ missing "denied"
+displayWarning	EVAL RESULT: 1/2 cell(s) passed, 1 failed. Results written to out/matrix

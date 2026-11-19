@@ -1,0 +1,10 @@
+{
+  "id": "sut-down",
+  "passThreshold": 6,
+  "durationMs": 0,
+  "verdict": "FAIL",
+  "sutOk": false,
+  "reasons": [
+    "SUT run failed: connection refused"
+  ]
+}
