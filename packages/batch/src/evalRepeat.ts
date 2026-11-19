@@ -30,6 +30,13 @@ import type { EvalCaseResult, EvalRepeatSummary } from '#src/evalTypes.js';
  * The largest `repeat` a suite may declare. Every run is a full agent run plus its judge calls, so
  * a typo such as `repeat: 1000` would multiply a suite's cost a thousandfold before anyone noticed.
  * A hundred runs already resolves a pass rate to the whole percent the report prints.
+ *
+ * **The cap also carries the meaning of two rules.** For every n up to it, (n−1)/n must round
+ * BELOW 100% and 1/n must round ABOVE 0%. That is what makes `pass_rate: 1` mean "every run passed"
+ * and a BROKE rate in `--compare-to` mean "no run passed". (n−1)/n rounds to 100% from n = 200,
+ * and 1/n to 0% from n = 201, so a cap of 200 or more would let one failing run pass a `pass_rate: 1` case and
+ * call a case that still passes once BROKE. `evalRepeat.spec.ts` checks both for every n up to the
+ * cap; raise the cap only with a rule that keeps them true.
  */
 export const MAX_EVAL_REPEAT = 100;
 

@@ -38,6 +38,34 @@ describe('BATCH-60 — the whole-percent rate arithmetic', () => {
     expect(meetsPassRate(3, 3, 1)).toBe(true);
   });
 
+  it('rounds the observed rate to the nearest percent, not up: 1 of 3 is 33%', async () => {
+    const { meetsPassRate, passRatePercent } = await import('#src/evalRepeat.js');
+    expect(passRatePercent(1, 3)).toBe(33);
+    // A ceiling would make 1/3 read 34% and pass this.
+    expect(meetsPassRate(1, 3, 0.34)).toBe(false);
+  });
+
+  it('rounds the required rate to the nearest percent, not down: 0.335 requires 34%', async () => {
+    const { meetsPassRate } = await import('#src/evalRepeat.js');
+    // A floor on the required side would make 0.335 require 33% and pass 1 of 3.
+    expect(meetsPassRate(1, 3, 0.335)).toBe(false);
+    expect(meetsPassRate(1, 3, 0.334)).toBe(true);
+  });
+
+  it('holds the 99/100 edge: 0.99 is met, 0.995 requires 100%', async () => {
+    const { meetsPassRate } = await import('#src/evalRepeat.js');
+    expect(meetsPassRate(99, 100, 0.99)).toBe(true);
+    expect(meetsPassRate(99, 100, 0.995)).toBe(false);
+  });
+
+  it('keeps pass_rate 1 meaning every run, and 0% meaning no run, at every repeat up to the cap', async () => {
+    const { MAX_EVAL_REPEAT, passRatePercent } = await import('#src/evalRepeat.js');
+    for (let n = 1; n <= MAX_EVAL_REPEAT; n++) {
+      if (n > 1) expect(passRatePercent(n - 1, n), `(${n - 1})/${n}`).toBeLessThan(100);
+      expect(passRatePercent(1, n), `1/${n}`).toBeGreaterThan(0);
+    }
+  });
+
   it('rounds half up, and is not moved across a half by floating point', async () => {
     const { toWholePercent, passRatePercent } = await import('#src/evalRepeat.js');
     expect(passRatePercent(1, 8)).toBe(13);
@@ -124,6 +152,7 @@ describe('BATCH-60 — parsing repeat and pass_rate', () => {
     ['repeat: 0', /repeat must be at least 1/],
     ['pass_rate: 0', /pass_rate must be greater than 0/],
     ['pass_rate: 2', /pass_rate must be at most 1/],
+    ['pass_rate: 0.004', /defaults\.pass_rate is 0\.004, which rounds to 0%/],
   ])('rejects defaults with %s', async (defaults, message) => {
     const { parseEvalSuite } = await import('#src/evalSuite.js');
     expect(() => parseEvalSuite(suiteYaml({ defaults }))).toThrow(message);
