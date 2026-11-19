@@ -559,33 +559,66 @@ export function buildCommandRunCell(
     childEnv: NodeJS.ProcessEnv,
     timeoutMs: number
   ): Promise<string | undefined> {
+    const notStarted = "; the case's command was not started";
     for (const [index, step] of spec.setup.entries()) {
       const name = `workspace setup step ${index + 1} of ${spec.setup.length} ("${step.run}")`;
-      let run: CommandRunResult;
-      try {
-        run = await spawnCommand({
-          argv: expandSetupArgv(step.argv, spec, dir, baseEnv),
-          prompt: '',
-          promptDelivery: 'none',
-          timeoutMs,
-          cwd: dir,
-          env: childEnv,
-        });
-      } catch (error) {
-        return `${name} ${error instanceof Error ? error.message : String(error)}; the case's command was not started`;
+      const started = await startWorkspaceStep(step.argv, name, notStarted, spec, dir, {
+        baseEnv,
+        childEnv,
+        timeoutMs,
+      });
+      if ('reason' in started) return started.reason;
+      const { run } = started;
+      if (run.exitCode !== 0) {
+        return `${name} exited with code ${run.exitCode}${notStarted}${stderrSuffix(run)}`;
       }
-      const stderrTail = tail(run.stderr);
-      const withStderr = (reason: string): string =>
-        `${reason}; the case's command was not started${stderrTail ? `; stderr: ${stderrTail}` : ''}`;
-      if (run.timedOut) {
-        return withStderr(
-          `${name} did not finish within the case's ${timeoutMs}ms timeout and its process tree ` +
-            'was killed'
-        );
-      }
-      if (run.exitCode !== 0) return withStderr(`${name} exited with code ${run.exitCode}`);
     }
     return undefined;
+  }
+
+  /**
+   * Start one workspace-side step — a BATCH-58 `setup` step or a BATCH-59 `after` step — the one way
+   * both are started: its parse-time argv with the tokens expanded per element, through the spawn
+   * seam (no shell, the tree kill and the exit hook), with the workspace as its cwd, the workspace's
+   * `env`, NO prompt (appending the case's prompt to `git init` would make it a directory name), and
+   * the case's own timeout. One helper, so a change to how such a step starts cannot reach one kind
+   * and miss the other.
+   *
+   * Returns the run, or the harness-error reason when the step could not start or outlived the
+   * timeout; `suffix` is added to that reason before the stderr tail. What a finished run MEANS is
+   * the caller's: a `setup` step must exit 0, an `after` step is compared with its expectation.
+   */
+  async function startWorkspaceStep(
+    argv: readonly string[],
+    name: string,
+    suffix: string,
+    spec: CommandWorkspace,
+    dir: string,
+    envs: { baseEnv: NodeJS.ProcessEnv; childEnv: NodeJS.ProcessEnv; timeoutMs: number }
+  ): Promise<{ run: CommandRunResult } | { reason: string }> {
+    let run: CommandRunResult;
+    try {
+      run = await spawnCommand({
+        argv: expandSetupArgv(argv, spec, dir, envs.baseEnv),
+        prompt: '',
+        promptDelivery: 'none',
+        timeoutMs: envs.timeoutMs,
+        cwd: dir,
+        env: envs.childEnv,
+      });
+    } catch (error) {
+      return {
+        reason: `${name} ${error instanceof Error ? error.message : String(error)}${suffix}`,
+      };
+    }
+    if (run.timedOut) {
+      return {
+        reason:
+          `${name} did not finish within the case's ${envs.timeoutMs}ms timeout and its process ` +
+          `tree was killed${suffix}${stderrSuffix(run)}`,
+      };
+    }
+    return { run };
   }
 
   /**
@@ -650,9 +683,7 @@ export function buildCommandRunCell(
   /**
    * BATCH-59 — run one `after` step and compare its result.
    *
-   * It is started exactly as a `setup` step is: its parse-time argv with the tokens expanded per
-   * element, through the same spawn seam (no shell, the same tree kill and exit hook), with the
-   * workspace as its cwd, the workspace's `env`, no prompt, and the case's own timeout.
+   * It is started exactly as a `setup` step is, by {@link startWorkspaceStep}.
    *
    * ## A crashed check must never pass on its output
    *
@@ -674,32 +705,10 @@ export function buildCommandRunCell(
     envs: { baseEnv: NodeJS.ProcessEnv; childEnv: NodeJS.ProcessEnv; timeoutMs: number }
   ): Promise<{ harnessError?: string; failure?: string }> {
     const name = `after step ${index + 1} of ${count} ("${step.run}")`;
-    let run: CommandRunResult;
-    try {
-      run = await spawnCommand({
-        argv: expandSetupArgv(step.argv, spec, dir, envs.baseEnv),
-        prompt: '',
-        promptDelivery: 'none',
-        timeoutMs: envs.timeoutMs,
-        cwd: dir,
-        env: envs.childEnv,
-      });
-    } catch (error) {
-      return {
-        harnessError: `${name} ${error instanceof Error ? error.message : String(error)}`,
-      };
-    }
-    const stderrTail = tail(run.stderr);
-    const withStderr = (reason: string): string =>
-      stderrTail ? `${reason}; stderr: ${stderrTail}` : reason;
-    if (run.timedOut) {
-      return {
-        harnessError: withStderr(
-          `${name} did not finish within the case's ${envs.timeoutMs}ms timeout and its process ` +
-            'tree was killed'
-        ),
-      };
-    }
+    const started = await startWorkspaceStep(step.argv, name, '', spec, dir, envs);
+    if ('reason' in started) return { harnessError: started.reason };
+    const { run } = started;
+    const withStderr = (reason: string): string => `${reason}${stderrSuffix(run)}`;
     const expectation = step.expect;
     if (expectation.kind === 'exit_code') {
       return run.exitCode === expectation.code
@@ -733,6 +742,12 @@ export function buildCommandRunCell(
           failure: `${name}: stdout does not contain ${JSON.stringify(expectation.value)}; it was ${JSON.stringify(clip(stdout))}`,
         };
   }
+}
+
+/** `; stderr: <tail>` for a run that printed to stderr, or nothing. */
+function stderrSuffix(run: CommandRunResult): string {
+  const stderrTail = tail(run.stderr);
+  return stderrTail ? `; stderr: ${stderrTail}` : '';
 }
 
 /** At most {@link STDERR_TAIL_CHARS} characters of `text`, from its start, for a reason. */
