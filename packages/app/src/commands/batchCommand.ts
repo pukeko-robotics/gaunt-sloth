@@ -168,7 +168,9 @@ export async function buildProductionRunCell(
         toolCalls,
         advertisedTools,
       } = await runSingleShot(
-        `${options.sourcePrefix}-${cell.id}`,
+        // BATCH-60 — runs of one repeated eval case share `cell.id`; the run number keeps their
+        // output files apart (the name only resolves to the second, so concurrent runs collide).
+        `${options.sourcePrefix}-${cell.id}${cell.run !== undefined ? `-run-${cell.run}` : ''}`,
         preamble,
         content,
         cellConfig,

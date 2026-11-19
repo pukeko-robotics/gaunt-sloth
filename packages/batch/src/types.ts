@@ -35,6 +35,13 @@ export interface MatrixCell {
   inputRow?: MatrixRow;
   /** The fully-bound prompt content for this cell (base script content with the row interpolated). */
   content: string;
+  /**
+   * BATCH-60 — on an eval cell whose case repeats, the 1-based run number. Absent when the case runs
+   * once, and on every `gth batch` cell. {@link id} is the same for every run of a case, because a
+   * runner looks the case up by it; a runner that names a file after the cell must add this, or
+   * concurrent runs of one case write over each other.
+   */
+  run?: number;
 }
 
 /**

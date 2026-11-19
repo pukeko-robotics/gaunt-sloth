@@ -18,6 +18,9 @@
 //                                                  append the prompt as a line to <file> in the cwd,
 //                                                  meeting the other case at a barrier before and
 //                                                  after, then answer with the file's content
+//   fake-cli.mjs append <file> <prompt>            append the prompt as a line to <file> in the
+//                                                  cwd, then answer with the file's content
+//                                                  (BATCH-60: each repeat of a case runs it)
 //   fake-cli.mjs call-stub <name> <prompt>         run the first <name>.mjs on PATH with node,
 //                                                  passing the prompt, and answer with its stdout
 //   fake-cli.mjs cwd <prompt>                      answer with the working directory
@@ -95,6 +98,10 @@ if (mode === 'edit-shared') {
   await barrier(barrierDir, prompt, 'ready', 2);
   appendFileSync(file, `${prompt}\n`);
   await barrier(barrierDir, prompt, 'written', 2);
+  answer(readFileSync(file, 'utf8'));
+} else if (mode === 'append') {
+  const [file, prompt] = rest;
+  appendFileSync(file, `${prompt}\n`);
   answer(readFileSync(file, 'utf8'));
 } else if (mode === 'call-stub') {
   const [name, prompt] = rest;

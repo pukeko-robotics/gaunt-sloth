@@ -37,6 +37,7 @@ import { UNRECOGNIZED_LABEL } from '#src/classificationTypes.js';
 import { extractClassificationValue, readRaw } from '#src/classification.js';
 import { buildClassificationReport } from '#src/classificationReport.js';
 import { computeToolCoverage, type AdvertisedToolInventory } from '#src/toolCoverage.js';
+import { foldRepeatedRuns } from '#src/evalRepeat.js';
 
 /** Options for {@link runEvalSuite}. */
 export interface RunEvalSuiteOptions {
@@ -108,6 +109,8 @@ interface EvalUnit {
   evalCase: EvalCase;
   identity?: string;
   applicablePerTurn: EvalExpectation[][];
+  /** BATCH-60 — the 1-based run number, set only when the case repeats. */
+  run?: number;
 }
 
 /**
@@ -143,7 +146,7 @@ function buildUnits(suite: EvalSuite): EvalUnit[] {
   const units: EvalUnit[] = [];
   for (const evalCase of suite.cases) {
     for (const identity of identities) {
-      units.push({
+      const base = {
         cellId: identity === undefined ? evalCase.id : `${evalCase.id}__${identity}`,
         evalCase,
         identity,
@@ -151,7 +154,19 @@ function buildUnits(suite: EvalSuite): EvalUnit[] {
         applicablePerTurn: evalCase.turns.map((turn) =>
           turn.expectations.filter((e) => expectationAppliesTo(e, identity))
         ),
-      });
+      };
+      // BATCH-60 — a repeated case becomes N run units of the same (case × identity) cell, each an
+      // independent dispatch in the one pool: its own `RunCellFn` call (and so its own workspace
+      // on the `command` target), concurrent with the others under `-j`. Expanding here, below
+      // identities, is what makes every identity repeat; a sweep is an outer loop over this whole
+      // suite, so every sweep cell repeats too. A case that runs once gets exactly one unit with
+      // no `run`, as before.
+      const repeat = evalCase.repeat ?? 1;
+      if (repeat <= 1) {
+        units.push(base);
+      } else {
+        for (let run = 1; run <= repeat; run++) units.push({ ...base, run });
+      }
     }
   }
   return units;
@@ -246,6 +261,10 @@ export async function runEvalSuite(
     // (a MatrixCell has one `content`, so it can't carry a conversation) — turns[0].user is a
     // harmless placeholder there.
     content: unit.evalCase.turns[0].user,
+    // BATCH-60 — the run number travels on the cell, and the cell `id` stays the case's, because
+    // the runners look the case up by `id` (the `command` target's timeout, workspace and checks).
+    // A runner that names a file after the cell appends the run so repeats never share a name.
+    ...(unit.run !== undefined ? { run: unit.run } : {}),
   }));
 
   // BATCH-12 Task 2 — per-conversation per-turn outcomes, keyed by the unique `inputIndex` (a
@@ -359,7 +378,7 @@ export async function runEvalSuite(
     concurrency: options.concurrency,
   });
 
-  const results: EvalCaseResult[] = [];
+  const graded: EvalCaseResult[] = [];
   for (const cellResult of cellResults) {
     const unit = unitByInputIndex.get(cellResult.inputIndex);
     /* istanbul ignore next -- inputIndex is derived 1:1 from units (each cell's inputIndex is its
@@ -380,12 +399,28 @@ export async function runEvalSuite(
     );
 
     if (unit.evalCase.turns.length <= 1) {
-      results.push(await gradeUnit(unit, cellResult, options.judge, classifications?.[0]));
+      graded.push(await gradeUnit(unit, cellResult, options.judge, classifications?.[0]));
     } else {
-      results.push(
+      graded.push(
         await gradeConversationUnit(unit, outcomes, cellResult, options.judge, classifications)
       );
     }
+  }
+
+  // BATCH-60 — each run was graded on its own above (its own checks, its own judge call). Fold the
+  // runs of a repeated (case × identity) cell into the ONE result the cell reports; a cell that ran
+  // once passes through untouched. `graded` is in unit order, and a cell's runs are adjacent.
+  const results: EvalCaseResult[] = [];
+  for (let index = 0; index < graded.length;) {
+    const unit = units[index];
+    if (unit.run === undefined) {
+      results.push(graded[index]);
+      index += 1;
+      continue;
+    }
+    const count = unit.evalCase.repeat ?? 1;
+    results.push(foldRepeatedRuns(graded.slice(index, index + count), unit.evalCase.passRate ?? 1));
+    index += count;
   }
 
   const passed = results.filter((result) => result.verdict === 'PASS').length;
@@ -435,7 +470,9 @@ export async function runEvalSuite(
  */
 export function collectExercisedTools(results: readonly EvalCaseResult[]): string[] {
   const exercised = new Set<string>();
-  for (const result of results) {
+  // BATCH-60 — a repeated case leaves its top level unset like a multi-turn one, and carries each
+  // run's trace in `runs`; a run reached a tool whichever run it was.
+  for (const result of results.flatMap((r) => r.runs ?? [r])) {
     for (const tool of result.tools ?? []) exercised.add(tool);
     for (const turn of result.turns ?? []) {
       for (const tool of turn.tools ?? []) exercised.add(tool);
@@ -453,16 +490,24 @@ export function collectExercisedTools(results: readonly EvalCaseResult[]): strin
  * Both are how a classifier report comes to claim more than it measured.
  */
 export function toClassifiedCells(results: EvalCaseResult[]): ClassifiedCell[] {
-  return results.map((result) => ({
-    id: result.identity === undefined ? result.id : `${result.id}__${result.identity}`,
-    tags: result.tags ?? [],
-    expectedLabel: result.classification?.expectedLabel,
-    expectedAction: result.classification?.expectedAction,
-    actualLabel: result.classification?.actualLabel,
-    actualAction: result.classification?.actualAction,
-    modelLabel: result.classification?.modelLabel,
-    scored: result.sutOk && result.classification !== undefined,
-  }));
+  // BATCH-60 — every run of a repeated case is its own observation of the classifier, so each one
+  // is a cell of the matrices and the metric denominators, named `<cell>#run<k>`. Counting the case
+  // once would have to pick one run's label and discard the rest, which is exactly the variation a
+  // repeat exists to measure.
+  return results
+    .flatMap((r) => r.runs ?? [r])
+    .map((result) => ({
+      id:
+        (result.identity === undefined ? result.id : `${result.id}__${result.identity}`) +
+        (result.run !== undefined ? `#run${result.run}` : ''),
+      tags: result.tags ?? [],
+      expectedLabel: result.classification?.expectedLabel,
+      expectedAction: result.classification?.expectedAction,
+      actualLabel: result.classification?.actualLabel,
+      actualAction: result.classification?.actualAction,
+      modelLabel: result.classification?.modelLabel,
+      scored: result.sutOk && result.classification !== undefined,
+    }));
 }
 
 /**

@@ -263,6 +263,39 @@ describe('evalCommand', () => {
     expect(program.commands[0].description()).toContain('judge');
   });
 
+  it('BATCH-60: names each run of a repeated case distinctly, and writes one file for the case', async () => {
+    fileUtilsMock.readFileFromProjectDir.mockImplementation((file: string) => {
+      if (file === 'repeat-suite.yaml') {
+        return `
+target: { type: gth-agent }
+cases:
+  - id: greets-politely
+    prompt: "greet the user"
+    must_contain: ["hello"]
+    repeat: 3
+`;
+      }
+      throw new Error(`unexpected file read: ${file}`);
+    });
+    const { evalCommand } = await import('#src/commands/evalCommand.js');
+    const program = new Command();
+    evalCommand(program, {});
+    await program.parseAsync(['na', 'na', 'eval', 'repeat-suite.yaml', '-o', outputDir, '-j', '3']);
+
+    // Concurrent runs of one case must not share a run name: the name decides any file the run
+    // writes, and it resolves only to the second.
+    const sources = runSingleShot.mock.calls.map((call) => call[0]);
+    expect(sources.sort()).toEqual([
+      'EVAL-greets-politely-run-1',
+      'EVAL-greets-politely-run-2',
+      'EVAL-greets-politely-run-3',
+    ]);
+    const written = JSON.parse(readFileSync(join(outputDir, 'greets-politely.json'), 'utf8'));
+    expect(written.repeat).toMatchObject({ runs: 3, passed: 3 });
+    expect(written.runs).toHaveLength(3);
+    expect(systemUtilsMock.setExitCode).not.toHaveBeenCalled();
+  });
+
   it('runs a checks-only case through runSingleShot in ask mode and exits 0 on PASS', async () => {
     const { evalCommand } = await import('#src/commands/evalCommand.js');
     const program = new Command();

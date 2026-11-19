@@ -136,6 +136,54 @@ cases:
     expect(classifyEvalExit(summary)).toBe(0);
   }, 30_000);
 
+  it('BATCH-60: gives every run of a repeated case its own fresh copy of the fixture', async () => {
+    const dir = suiteDir('repeat-isolation');
+    mkdirSync(join(dir, 'fixture'));
+    writeFileSync(join(dir, 'fixture', 'shared.txt'), 'base\n');
+    const before = hashTree(join(dir, 'fixture'));
+
+    const suite = commandSuite(
+      dir,
+      fakeLine('append', 'shared.txt'),
+      `
+defaults:
+  workspace: { template: fixture }
+cases:
+  - { id: again, prompt: "A", repeat: 3, must_contain: [base] }
+`
+    );
+    const seen: Array<{ caseId: string; dir: string; content: string }> = [];
+    const runCell = buildCommandRunCell(targetOf(suite), suite, decodeClaudeStreamJson, {
+      inspectWorkspace: (workspace, outcome) => {
+        seen.push({
+          caseId: workspace.caseId,
+          dir: resolve(workspace.dir),
+          content: readFileSync(join(workspace.dir, 'shared.txt'), 'utf8'),
+        });
+        return outcome;
+      },
+    });
+    const summary = await runEvalSuite(suite, { runCell, concurrency: 3 });
+
+    // Three runs, each looked up under the case's own id (so each got the case's workspace), in
+    // three distinct directories, and each saw only its own write: a shared or reused workspace
+    // would show a second "A" line in a later run.
+    expect(seen).toHaveLength(3);
+    expect(seen.every((entry) => entry.caseId === 'again')).toBe(true);
+    expect(new Set(seen.map((entry) => entry.dir)).size).toBe(3);
+    expect(seen.map((entry) => entry.content)).toEqual(['base\nA\n', 'base\nA\n', 'base\nA\n']);
+    expect(summary.cases).toHaveLength(1);
+    expect(summary.cases[0].repeat).toMatchObject({ runs: 3, passed: 3 });
+    expect(summary.cases[0].runs?.map((run) => run.answer)).toEqual([
+      'base\nA\n',
+      'base\nA\n',
+      'base\nA\n',
+    ]);
+    expect(seen.every((entry) => !existsSync(entry.dir))).toBe(true);
+    expect(hashTree(join(dir, 'fixture'))).toBe(before);
+    expect(classifyEvalExit(summary)).toBe(0);
+  }, 30_000);
+
   it('removes the workspace after the case, and runs the case there rather than in the cwd', async () => {
     const dir = suiteDir('removal');
     const suite = commandSuite(

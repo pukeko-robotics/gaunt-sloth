@@ -24,6 +24,8 @@
  * still reported, in the case's `runs`.
  */
 
+import type { EvalCaseResult, EvalRepeatSummary } from '#src/evalTypes.js';
+
 /**
  * The largest `repeat` a suite may declare. Every run is a full agent run plus its judge calls, so
  * a typo such as `repeat: 1000` would multiply a suite's cost a thousandfold before anyone noticed.
@@ -53,4 +55,76 @@ export function passRatePercent(passed: number, runs: number): number {
  */
 export function meetsPassRate(passed: number, runs: number, passRate: number): boolean {
   return passRatePercent(passed, runs) >= toWholePercent(passRate);
+}
+
+/**
+ * Fold the graded runs of one repeated (case × identity) cell into the single result the cell
+ * reports. Each run was graded on its own (its own checks, its own judge call); this decides the
+ * case from them.
+ *
+ * - A harness error in ANY run (`sutOk: false`) makes the case a harness error, `sutOk: false` and
+ *   FAIL, with no rate verdict. See the module comment for why the finished runs are not rated on
+ *   their own. The exit code then follows the existing rule (`classifyEvalExit`): 2 when every
+ *   case of the suite is a harness error, else 1.
+ * - Otherwise the case passes iff {@link meetsPassRate}.
+ *
+ * The first reason is the headline a one-line reader (a JUnit `message`) shows: the rate against
+ * the requirement, or which runs did not finish. Every failing run's own reasons follow, prefixed
+ * `run <k>: `. A passing case has no reasons, as for a single run; its failing runs are still in
+ * `runs`.
+ */
+export function foldRepeatedRuns(graded: EvalCaseResult[], passRate: number): EvalCaseResult {
+  const first = graded[0];
+  const runs: EvalCaseResult[] = graded.map(({ id, identity, ...rest }, index) => ({
+    id,
+    ...(identity !== undefined ? { identity } : {}),
+    run: index + 1,
+    ...rest,
+  }));
+  const passed = runs.filter((run) => run.verdict === 'PASS').length;
+  const repeat: EvalRepeatSummary = {
+    runs: runs.length,
+    passed,
+    ratePercent: passRatePercent(passed, runs.length),
+    passRate,
+    requiredPercent: toWholePercent(passRate),
+  };
+
+  const unfinished = runs.filter((run) => !run.sutOk);
+  const sutOk = unfinished.length === 0;
+  const verdict: 'PASS' | 'FAIL' =
+    sutOk && meetsPassRate(passed, runs.length, passRate) ? 'PASS' : 'FAIL';
+
+  const reasons: string[] = [];
+  if (!sutOk) {
+    reasons.push(
+      `${unfinished.length} of ${runs.length} runs did not finish ` +
+        `(${unfinished.map((run) => `run ${run.run}`).join(', ')}), so no pass rate was computed: ` +
+        'a run that did not finish is not evidence about the agent.'
+    );
+  } else if (verdict === 'FAIL') {
+    reasons.push(
+      `pass rate ${passed}/${runs.length} (${repeat.ratePercent}%) is below the required ` +
+        `${repeat.requiredPercent}%`
+    );
+  }
+  if (verdict === 'FAIL') {
+    for (const run of runs) {
+      if (run.verdict === 'PASS') continue;
+      for (const reason of run.reasons) reasons.push(`run ${run.run}: ${reason}`);
+    }
+  }
+
+  return {
+    id: first.id,
+    ...(first.identity !== undefined ? { identity: first.identity } : {}),
+    passThreshold: first.passThreshold,
+    durationMs: runs.reduce((sum, run) => sum + run.durationMs, 0),
+    verdict,
+    sutOk,
+    reasons,
+    ...(first.tags !== undefined ? { tags: first.tags } : {}),
+    repeat,
+    runs,
+  };
 }
