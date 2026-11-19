@@ -89,6 +89,19 @@ run without asking, as `setup` steps do.
     - { run: "git status --porcelain -- . ':!src/greet.mjs'", equals: "" }
 ```
 
+A case can also check that the agent did **not** do something with a tool. With
+[`evalToolCallArgs`](../configuration/output.md#recorded-tool-call-arguments-evaltoolcallargs) on,
+`none: true` on a [`tool_call_json_path`](../COMMANDS.md#tool-call-argument-assertions) entry fails
+the case if any call sent a matching value. Here the fixture puts a stub `gh` first on `PATH`, and
+the case fails if the agent ran the real one by absolute path instead:
+
+```yaml
+- id: uses-the-stubbed-gh
+  prompt: "List the open pull requests."
+  tool_call_json_path:
+    - { tool: "Bash", path: "command", matches: "(^|[\\s;&|])/\\S*/gh\\b", none: true }
+```
+
 ```yaml
 # Claude Code, started once per case with the prompt as its last argument
 target:

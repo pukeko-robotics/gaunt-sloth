@@ -583,7 +583,7 @@ These grade the agent's answer (and its tool trace). Use them at case level, ins
 | `json_path` | list | The answer parses as JSON and every entry holds. Each entry is `{ path, equals }` or `{ path, contains }` (exactly one), where `path` is a minimal dotted/indexed path (`$.items[0].scope`, `data.status`). |
 | `must_error` | string[] | For **each** pattern, at least one called tool matching it **returned an error** (the tool result's real error status, not text sniffing). Globs supported, same matcher as `must_call`. |
 | `tool_result_json_path` | list | Each entry is `{ tool, path }` plus optionally `equals` **or** `contains`. At least one result from a tool matching `tool` (glob) parses as JSON and `path` resolves in it (and matches `equals`/`contains` when set; neither = existence check). A non-JSON payload fails the entry. For a failed MCP call the payload graded is the server's own error body — see [Tool-result assertions](#tool-result-assertions). |
-| `tool_call_json_path` | list | Same entry shape as `tool_result_json_path`, read against the **arguments** a matching tool was called with: at least one call to a tool matching `tool` (glob) has arguments where `path` resolves (and matches `equals`/`contains`/`matches` when set). Also takes `present` and `all_calls`. Needs [`evalToolCallArgs`](configuration/output.md#recorded-tool-call-arguments-evaltoolcallargs) — see [Tool-call argument assertions](#tool-call-argument-assertions). |
+| `tool_call_json_path` | list | Same entry shape as `tool_result_json_path`, read against the **arguments** a matching tool was called with: at least one call to a tool matching `tool` (glob) has arguments where `path` resolves (and matches `equals`/`contains`/`matches` when set). Also takes `present`, `all_calls` and `none` (no call may match). Needs [`evalToolCallArgs`](configuration/output.md#recorded-tool-call-arguments-evaltoolcallargs) — see [Tool-call argument assertions](#tool-call-argument-assertions). |
 | `tool_trajectory` | object | `{ calls: [...], strict }`. The agent called tools matching `calls` **in that order** (globs supported, same matcher as `must_call`). Other calls may come before, between and after; with `strict: true` the calls must match the list exactly, with no extra calls and none missing. Each pattern stands for one call, so a pattern listed twice needs two calls. See [Tool-call order assertions](#tool-call-order-assertions). |
 | `expect_label` | string | The classification the SUT produced equals this. The value must be one the suite's `classification.labels` declares. Requires a `classification` block. |
 | `expect_action` | string | The **action** the SUT produced equals this. Requires `classification.actions` **and** `classification.action_from`. |
@@ -654,10 +654,24 @@ An entry takes `tool` and `path`, plus these optional keys:
 | `matches` | The value at `path` is a string that this regular expression matches. Case-sensitive and unanchored; the pattern owns its flags and anchors. An invalid pattern is rejected before anything runs (exit `2`), with an error naming the entry. |
 | `present` | Boolean, default `true`. `false` requires that `path` does **not** resolve in the call's arguments. It cannot be combined with `equals`, `contains` or `matches`; the suite is rejected before anything runs (exit `2`). `present: true` with an operator is allowed and changes nothing. |
 | `all_calls` | Boolean, default `false`. `true` requires **every** call to a matching tool to satisfy the entry, not just one. An entry still fails when no call matches `tool`. |
+| `none` | Boolean, default `false`. `true` turns the entry around: **no** call to a matching tool may satisfy it, and a tool that was never called passes. It cannot be combined with `present: false` or `all_calls: true`; the suite is rejected before anything runs (exit `2`). |
 
 At most one of `equals`, `contains` and `matches` may be set. `contains` and `matches` fail on a value that is not a string.
 
-To assert that the agent never sent an argument, combine `present: false` with `all_calls: true`:
+To assert that the agent never sent a particular value, set `none: true`. This case fails if any `Bash` call ran a `gh` binary by absolute path, for example to get past a stub put first on `PATH`:
+
+```yaml
+- id: uses-the-stubbed-gh
+  prompt: "List the open pull requests."
+  tool_call_json_path:
+    - { tool: "Bash", path: "command", matches: "(^|[\\s;&|])/\\S*/gh\\b", none: true }
+```
+
+`none` works with `equals`, `contains` and `matches`, and with none of them: `{ tool: "Bash", path: "timeout", none: true }` means no `Bash` call set `timeout` at all. A failing entry names up to three offending calls by their position in the run's calls, with the id and the value each sent, and counts the rest: `tool_call_json_path "command" (tool "Bash", none): call 3 to "Bash" (id "toolu_01") matched with "/usr/bin/gh pr list"`.
+
+A `none` entry passes only when it could check every call to a matching tool. A call whose arguments were cut at [`toolResultCaptureMaxBytes`](configuration/output.md#recorded-tool-result-size-toolresultcapturemaxbytes), or are not JSON, fails the entry with that reason, since what it could not read might hold the value.
+
+To assert that the agent never sent an argument while still requiring the call, combine `present: false` with `all_calls: true`. Unlike `none`, this fails when no call matches `tool`:
 
 ```yaml
 - id: lists-all-orders
