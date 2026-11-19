@@ -583,7 +583,7 @@ export function buildCommandRunCell(
           ok: false,
           error: withStderr(
             `transcript "${target.transcript}" returned an invalid outcome ` +
-              `${JSON.stringify(value) ?? String(value)}: it must be a non-empty string naming ` +
+              `${describeDecodedValue(value)}: it must be a non-empty string naming ` +
               'how the run ended, or left out for a run that finished'
           ),
         };

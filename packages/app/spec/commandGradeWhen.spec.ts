@@ -537,6 +537,51 @@ export default function decode(stdout) {
     }
   );
 
+  // BATCH-65 — JSON.stringify throws on these two, which used to replace the reason with the
+  // formatter's own message, so the decoder was not named.
+  it.each([
+    ['a BigInt', () => 10n, '10n'],
+    [
+      'a circular object',
+      () => {
+        const value: Record<string, unknown> = {};
+        value.self = value;
+        return value;
+      },
+      '[object Object]',
+    ],
+  ])(
+    'refuses %s as an outcome with a harness error naming the decoder',
+    async (_label, make, shown) => {
+      const malformed = (() => ({
+        answer: 'done',
+        toolCalls: [],
+        toolResults: [],
+        outcome: make(),
+      })) as unknown as TranscriptDecoder;
+      const suite = suiteOf(
+        'fake-agent',
+        '  grade_when: [hit_step_limit]',
+        `
+  - id: c
+    prompt: p
+    must_contain: [done]
+`,
+        './my-decoder.mjs'
+      );
+      const { byId } = await run(
+        suite,
+        { spawnCommand: seam({ p: { stdout: 'x', stderr: '', exitCode: 0, timedOut: false } }) },
+        malformed
+      );
+      expect(byId.c.reasons).toEqual([
+        `SUT run failed: transcript "./my-decoder.mjs" returned an invalid outcome ${shown}: it ` +
+          'must be a non-empty string naming how the run ended, or left out for a run that finished',
+      ]);
+      expect(byId.c.sutOk).toBe(false);
+    }
+  );
+
   /**
    * A decoder module that returns whatever the command printed, as JSON. The suite names it in
    * `target.transcript` and it is loaded from that name the way `gth eval` loads it, so a reason
