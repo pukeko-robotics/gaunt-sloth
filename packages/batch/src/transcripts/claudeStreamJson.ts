@@ -35,21 +35,24 @@
  * one that omits it, or an early ending such as `error_max_turns`, which has none) does the decoder
  * fall back to the last assistant text block, and to `''` when there is none.
  *
- * **A non-success result is a run that stopped early, reported as its outcome (BATCH-62).** A
- * `subtype` other than `success` (such as `error_max_turns`, `error_max_budget_usd` or
- * `error_during_execution`) returns the decoded transcript with `outcome` set to that subtype,
- * whatever `is_error` says, and `outcomeReason` set to the sentence this decoder used to throw. The
- * runner grades it only when the case's `grade_when` lists the subtype; otherwise the case is a
- * harness error with exactly that sentence, as before the key existed. Every subtype is returned
- * as it is printed, so a subtype a newer Claude Code adds can be listed without a code change here.
- * Unlisted, it is not graded: the agent did not finish, and an assertion failing against its partial
- * trace would read as the agent's choice when it was the harness's limit.
+ * **A non-success subtype is reported as the run's outcome (BATCH-62).** A `subtype` other than
+ * `success` returns the decoded transcript with `outcome` set to that subtype, whatever `is_error`
+ * says, and `outcomeReason` set to the sentence this decoder used to throw. That covers a limit the
+ * suite set (`error_max_turns`, `error_max_budget_usd`) and an error that is not a limit at all
+ * (`error_during_execution`) alike: this decoder does not judge which endings are worth grading. The
+ * runner grades a run only when the case's `grade_when` lists its subtype, so **listing an error
+ * subtype grades an errored run**, which is the suite author's choice to make. Unlisted, the case is
+ * a harness error with exactly that sentence, as before the key existed: an assertion failing
+ * against an unfinished trace would read as the agent's choice when it was the harness's limit.
+ * Every subtype is returned as it is printed, so a subtype a newer Claude Code adds can be listed
+ * without a code change here.
  *
- * **`is_error: true` under `subtype: success` still throws, and can never be graded.** Claude Code
- * reports a failure that is not a limit the suite chose this way (an API or authentication error
- * ending the session), so it is not an ending a suite author asked for. It also has no name of its
- * own to list: `success` is refused in `grade_when`, and inventing a name here would be a wire value
- * Claude Code never printed. A `result` line with no string `subtype` throws for the same reason.
+ * **The dividing line between what can be listed and what throws is having a subtype name of its
+ * own.** `is_error: true` under `subtype: success` (which Claude Code prints for, among others, an
+ * API or authentication error ending the session) has none: its only name is `success`, which
+ * `grade_when` refuses because a finished run is always graded, and inventing a name here would be a
+ * wire value Claude Code never printed. So it throws, and can never be graded. A `result` line with
+ * no string `subtype` throws for the same reason.
  *
  * **Subagent events are included.** A line with a non-null `parent_tool_use_id` belongs to a
  * subagent the main agent started (the `Task`/`Agent` tool), and its calls are part of the trace.
