@@ -548,6 +548,8 @@ async function printRunDiff(
     if (
       line.trimStart().startsWith('!') ||
       line.trimStart().startsWith('REGRESSED') ||
+      line.trimStart().startsWith('BROKE') ||
+      line.trimStart().startsWith('FLAKY') ||
       line.trimStart().startsWith('JUDGE DRIFT')
     ) {
       displayWarning(line);
@@ -642,8 +644,8 @@ export function evalCommand(
     .option(
       '--compare-to <dir>',
       "A previous run's -o output root. Each run unit is diffed against the matching results.json " +
-        'under it: verdict regressions, verdict fixes, reclassifications, metric deltas, and ' +
-        'judge-score drift.'
+        'under it: verdict regressions, verdict fixes, repeated cases whose pass rate fell ' +
+        '(flaky) or fell to zero (broke), reclassifications, metric deltas, and judge-score drift.'
     )
     .option(
       '--drift <filter>',

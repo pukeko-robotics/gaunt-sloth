@@ -403,6 +403,14 @@ export interface RunDiff {
   fixed: RunDiffEntry[];
   /** Cases whose actual label/action changed, verdict aside — a rating-prompt edit's real signal. */
   reclassified: RunDiffEntry[];
+  /**
+   * BATCH-60 — cases whose pass rate FELL but stayed above zero: the agent still does it, just not
+   * every time. Classified only when at least one of the two runs repeated the case; see
+   * {@link diffRuns}.
+   */
+  flaky: RunDiffEntry[];
+  /** BATCH-60 — cases whose pass rate fell TO ZERO: no run passes any more. Same condition. */
+  broke: RunDiffEntry[];
   /** Metric deltas, `after - before`, for metrics both runs computed. */
   metricDeltas: {
     name: string;
@@ -440,6 +448,14 @@ export interface RunDiff {
  * multi-turn suite an empty drift section forever — the same silence this node exists to end.
  */
 function judgeRateOf(result: EvalCaseResult): number | undefined {
+  // BATCH-60 — a repeated case carries its judge scores per run; the weakest run is the one nearest
+  // the gate, by the same reasoning as the weakest turn below.
+  if (result.runs !== undefined) {
+    const runRates = result.runs
+      .map((run) => judgeRateOf(run))
+      .filter((rate): rate is number => rate !== undefined);
+    return runRates.length === 0 ? undefined : Math.min(...runRates);
+  }
   const direct = rateOfOutcome(result.judge);
   if (direct !== undefined) return direct;
   const turnRates = (result.turns ?? [])
@@ -485,6 +501,25 @@ function driftReason(
   return undefined;
 }
 
+/**
+ * BATCH-60 — a case's pass rate for the flaky/broke classification, or `undefined` when it has
+ * none worth comparing.
+ *
+ * A repeated case reports its own whole-percent rate. A case that ran once counts as a rate of
+ * 100% or 0% by its verdict, which is what lets a repeated run be compared with a single-run
+ * baseline and the other way round. A harness error (`sutOk: false`) has no rate: its runs did not
+ * all finish, and a rate read off it would report infrastructure as flakiness.
+ */
+function passRateOf(result: EvalCaseResult): { label: string; percent: number } | undefined {
+  if (!result.sutOk) return undefined;
+  if (result.repeat !== undefined) {
+    const { passed, runs, ratePercent } = result.repeat;
+    return { label: `${passed}/${runs} (${ratePercent}%)`, percent: ratePercent };
+  }
+  const percent = result.verdict === 'PASS' ? 100 : 0;
+  return { label: `${percent === 100 ? 1 : 0}/1 (${percent}%)`, percent };
+}
+
 /** The key a cell is diffed on across runs: id plus identity, since a matrix cell's id alone is
  * ambiguous. */
 function diffKey(result: { id: string; identity?: string }): string {
@@ -517,6 +552,8 @@ export function diffRuns(
   const regressed: RunDiffEntry[] = [];
   const fixed: RunDiffEntry[] = [];
   const reclassified: RunDiffEntry[] = [];
+  const flaky: RunDiffEntry[] = [];
+  const broke: RunDiffEntry[] = [];
   const ratePairs: { key: string; before: number; after: number; passThreshold: number }[] = [];
   let lostRates = 0;
   let movedGates = 0;
@@ -547,10 +584,33 @@ export function diffRuns(
       fixed.push({ id: key, before: 'FAIL', after: 'PASS' });
     }
 
-    const beforeClass = describeClassification(beforeCase.classification);
-    const afterClass = describeClassification(afterCase.classification);
-    if (beforeClass !== afterClass && (beforeClass !== '-' || afterClass !== '-')) {
-      reclassified.push({ id: key, before: beforeClass, after: afterClass });
+    // BATCH-60 — flaky vs broke, by pass rate. Only when at least one side repeated the case: two
+    // single runs can only go 100% → 0%, which is exactly a regression and already listed as one,
+    // and calling it "broke" as well would change every existing diff while saying nothing a single
+    // run can tell apart. A rate that held or rose is in neither list.
+    const repeated = beforeCase.repeat !== undefined || afterCase.repeat !== undefined;
+    const beforePassRate = repeated ? passRateOf(beforeCase) : undefined;
+    const afterPassRate = repeated ? passRateOf(afterCase) : undefined;
+    if (
+      beforePassRate !== undefined &&
+      afterPassRate !== undefined &&
+      afterPassRate.percent < beforePassRate.percent
+    ) {
+      (afterPassRate.percent > 0 ? flaky : broke).push({
+        id: key,
+        before: beforePassRate.label,
+        after: afterPassRate.label,
+      });
+    }
+
+    // A repeated case has no single classification at the top level (each run carries its own),
+    // so a reclassification is not read off it; its rate above is the comparison that applies.
+    if (!repeated) {
+      const beforeClass = describeClassification(beforeCase.classification);
+      const afterClass = describeClassification(afterCase.classification);
+      if (beforeClass !== afterClass && (beforeClass !== '-' || afterClass !== '-')) {
+        reclassified.push({ id: key, before: beforeClass, after: afterClass });
+      }
     }
   }
 
@@ -630,6 +690,8 @@ export function diffRuns(
     regressed,
     fixed,
     reclassified,
+    flaky,
+    broke,
     metricDeltas,
     judgeDrift,
     judgeDriftMean,
@@ -661,6 +723,9 @@ export function renderRunDiff(diff: RunDiff): string[] {
     for (const entry of entries) lines.push(`    ${entry.id}: ${entry.before} → ${entry.after}`);
   };
   list('REGRESSED', diff.regressed);
+  // BATCH-60 — upper case like REGRESSED, since both are bad news a reader must not skim past.
+  list('BROKE', diff.broke);
+  list('FLAKY', diff.flaky);
   list('fixed', diff.fixed);
   list('reclassified', diff.reclassified);
 
@@ -717,6 +782,8 @@ export function renderRunDiff(diff: RunDiff): string[] {
     diff.regressed.length === 0 &&
     diff.fixed.length === 0 &&
     diff.reclassified.length === 0 &&
+    diff.flaky.length === 0 &&
+    diff.broke.length === 0 &&
     diff.metricDeltas.every((delta) => delta.delta === 0) &&
     // BATCH-33 — drift has to count here too, or a run that printed a JUDGE DRIFT section would
     // print "no change." underneath it and contradict itself.
