@@ -85,7 +85,11 @@ import {
   removeWorkspaceDir,
   resolveSuiteDir,
 } from '#src/commands/commandWorkspace.js';
-import { checkFileContains, checkMustNotExist } from '#src/commands/commandWorkspaceChecks.js';
+import {
+  checkFileContains,
+  checkMustNotExist,
+  WorkspaceUnreadableError,
+} from '#src/commands/commandWorkspaceChecks.js';
 
 /** How long a SIGTERM'd tree gets before SIGKILL, matching the shell tool's ladder. */
 const KILL_GRACE_MS = 3_000;
@@ -599,6 +603,8 @@ export function buildCommandRunCell(
    * - **A check that does not hold is an assertion failure:** its reason goes on
    *   `workspaceFailures`, the outcome stays `ok: true`, and the eval runner adds it to the cell's
    *   `reasons`, so the cell FAILs (exit 1).
+   * - **A workspace entry the file checks could not read** (EACCES and the like) is a harness
+   *   error, for the same reason as the next item: the check never looked.
    * - **An `after` step that cannot start, or outlives the case's timeout, is a harness error**
    *   (`ok: false`, exit 2), exactly as a `setup` step is: the check never ran, so there is no
    *   result to grade, and reporting the case as failed would charge the harness's trouble to the
@@ -617,10 +623,18 @@ export function buildCommandRunCell(
     outcome: CellRunOutcome
   ): Promise<CellRunOutcome> {
     if (caseChecks === undefined || !outcome.ok) return outcome;
-    const failures = [
-      ...checkFileContains(dir, caseChecks.fileContains),
-      ...checkMustNotExist(dir, caseChecks.mustNotExist),
-    ];
+    let failures: string[];
+    try {
+      failures = [
+        ...checkFileContains(dir, caseChecks.fileContains),
+        ...checkMustNotExist(dir, caseChecks.mustNotExist),
+      ];
+    } catch (error) {
+      // An entry the check could not look at (EACCES and the like) is a harness error: see
+      // WorkspaceUnreadableError. Anything else is a bug, and is left to propagate.
+      if (error instanceof WorkspaceUnreadableError) return { ok: false, error: error.message };
+      throw error;
+    }
     for (const [index, step] of caseChecks.after.entries()) {
       const result = await runAfterStep(step, index, caseChecks.after.length, spec, dir, {
         baseEnv,

@@ -33,8 +33,24 @@
 //   fake-cli.mjs print-file <file>                 print <file>'s content (relative to the cwd);
 //                                                  exit 66 when it cannot be read
 //   fake-cli.mjs print-env <name>                  print the variable's value, or nothing; exit 0
+//   fake-cli.mjs kill-self                         end itself with SIGKILL (no exit code)
+//
+// BATCH-59 agent modes, which leave something in the workspace and answer "done".
+//   fake-cli.mjs unreadable <file|dir> <path> <prompt>
+//                                                  make a file (or an empty directory) at <path>
+//                                                  with mode 000
+//   fake-cli.mjs dangling <path> <prompt>          make <path> a link to a name that does not exist
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { delimiter, join } from 'node:path';
 
 const [mode, ...rest] = process.argv.slice(2);
@@ -114,6 +130,17 @@ if (mode === 'edit-shared') {
   }
 } else if (mode === 'print-env') {
   process.stdout.write(process.env[rest[0]] ?? '');
+} else if (mode === 'kill-self') {
+  process.kill(process.pid, 'SIGKILL');
+} else if (mode === 'unreadable') {
+  const [kind, path] = rest;
+  if (kind === 'dir') mkdirSync(path, { recursive: true });
+  else writeFileSync(path, 'welcome banner\n');
+  chmodSync(path, 0o000);
+  answer('done');
+} else if (mode === 'dangling') {
+  symlinkSync('no-such-target.txt', rest[0], 'file');
+  answer('done');
 } else if (mode === 'replay') {
   replay(rest[0]);
 } else if (mode === 'exit') {

@@ -1,6 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -48,15 +56,15 @@ function suiteDir(name: string, files: Record<string, string> = {}): string {
 
 /**
  * Parse a one-case command suite whose file lives in `dir`, with `fixture/` as the workspace
- * template and the given extra case keys. The case's command answers with its cwd and writes
- * nothing, so the workspace holds exactly the template.
+ * template and the given extra case keys. By default the case's command answers with its cwd and
+ * writes nothing, so the workspace holds exactly the template; `agent` names another fake-CLI mode.
  */
-function suiteWith(dir: string, caseKeys: string, defaults = ''): EvalSuite {
+function suiteWith(dir: string, caseKeys: string, defaults = '', agent = ['cwd']): EvalSuite {
   return parseEvalSuite(
     `
 target:
   type: command
-  run: ${JSON.stringify(fakeLine('cwd'))}
+  run: ${JSON.stringify(fakeLine(...agent))}
   transcript: claude-stream-json
 defaults:
   workspace:
@@ -216,6 +224,67 @@ describe('file_contains — entries that are not regular files', () => {
       'file_contains "src": it is a directory, not a regular file',
     ]);
     expect(classifyEvalExit(summary)).toBe(1);
+  });
+});
+
+describe('workspace entries the checks cannot read', () => {
+  /**
+   * Run a case whose agent leaves a mode-000 entry, and return the summary. The workspace is the
+   * run's own, recorded through the inspection seam; it is removed by the runner, and restored and
+   * removed here only if that failed, so a run never leaks it.
+   */
+  async function runUnreadable(name: string, caseKeys: string, kind: 'file' | 'dir') {
+    const dir = suiteDir(name);
+    const suite = suiteWith(dir, caseKeys, '', ['unreadable', kind, 'locked']);
+    let workspace: string | undefined;
+    const removeFailures: string[] = [];
+    const runCell = buildCommandRunCell(targetOf(suite), suite, decodeClaudeStreamJson, {
+      inspectWorkspace: (ws, outcome) => {
+        workspace = ws.dir;
+        return outcome;
+      },
+      onWorkspaceRemoveFailed: (_caseId, _dir, reason) => removeFailures.push(reason),
+    });
+    try {
+      const summary = await runEvalSuite(suite, { runCell });
+      // A mode-000 FILE is removed with its directory. A mode-000 DIRECTORY cannot be listed, so
+      // the runner's removal fails and is reported (BATCH-58's notice); the finally below cleans up.
+      if (kind === 'file') expect(removeFailures).toEqual([]);
+      return summary;
+    } finally {
+      if (workspace !== undefined && existsSync(workspace)) {
+        chmodSync(join(workspace, 'locked'), 0o700);
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    }
+  }
+
+  /** Mode 000 means nothing to root, and Windows has no such mode. */
+  const cannotLock = process.platform === 'win32' || process.getuid?.() === 0;
+
+  it('grades an unreadable file_contains file as a harness error naming the path and code', async (ctx) => {
+    if (cannotLock) ctx.skip();
+    const summary = await runUnreadable(
+      'unreadable-file',
+      'file_contains: { "locked": "welcome banner" }',
+      'file'
+    );
+    expect(summary.cases[0].sutOk).toBe(false);
+    expect(summary.cases[0].reasons).toHaveLength(1);
+    expect(summary.cases[0].reasons[0]).toMatch(
+      /^SUT run failed: file_contains "locked": the workspace entry could not be read \(EACCES\)/
+    );
+    expect(classifyEvalExit(summary)).toBe(2);
+  });
+
+  it('grades a must_not_exist walk into an unreadable directory as a harness error', async (ctx) => {
+    if (cannotLock) ctx.skip();
+    const summary = await runUnreadable('unreadable-dir', 'must_not_exist: ["**/*.log"]', 'dir');
+    expect(summary.cases[0].sutOk).toBe(false);
+    expect(summary.cases[0].reasons[0]).toMatch(
+      /^SUT run failed: must_not_exist could not list "locked": the workspace entry could not be read \(EACCES\)/
+    );
+    expect(classifyEvalExit(summary)).toBe(2);
   });
 });
 

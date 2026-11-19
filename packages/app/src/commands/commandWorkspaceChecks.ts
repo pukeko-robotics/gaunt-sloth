@@ -6,8 +6,9 @@
  * `workspaceChecks.ts`.
  *
  * Each function returns one reason per assertion that did not hold, and nothing for one that did.
- * A reason is an assertion FAILURE, never a harness error: what the agent left in its workspace is
- * the agent's result.
+ * A reason is an assertion FAILURE: what the agent left in its workspace is the agent's result. An
+ * entry the check could not look at is the one exception, thrown as a
+ * {@link WorkspaceUnreadableError} and graded as a harness error.
  *
  * @module
  */
@@ -18,6 +19,41 @@ import { matchesWorkspaceGlob } from '@gaunt-sloth/batch/workspaceChecks.js';
 
 /** How many matching entries a `must_not_exist` reason names before it summarises the rest. */
 const MAX_LISTED_MATCHES = 5;
+
+/**
+ * A workspace entry that the check could not look at: a permission error, or any other read error
+ * that is not "it is not there". Thrown out of {@link checkFileContains} and
+ * {@link checkMustNotExist}, and graded by the runner as a HARNESS error, never an assertion
+ * failure.
+ *
+ * ## Why a harness error
+ *
+ * A check that could not look is not evidence about the agent. Reporting it as a FAIL would charge
+ * the agent with a file it may have written correctly; reporting it as a pass, or as "missing",
+ * would be worse, because the check never saw the entry at all. So it is `ok: false` (exit 2 when
+ * every case is like that), the same class as an `after` step that cannot start, and the reason
+ * names the path and the error code so the author can see which entry the harness tripped on.
+ */
+export class WorkspaceUnreadableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WorkspaceUnreadableError';
+  }
+}
+
+/** Whether `error` means "the entry is not there" rather than "it could not be looked at". */
+function isAbsentError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return code === 'ENOENT' || code === 'ENOTDIR' || code === 'ELOOP';
+}
+
+function unreadable(label: string, error: unknown): WorkspaceUnreadableError {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code ?? 'unknown error';
+  const message = error instanceof Error ? error.message : String(error);
+  return new WorkspaceUnreadableError(
+    `${label}: the workspace entry could not be read (${code}), so the check could not look: ${message}`
+  );
+}
 
 /** What a non-regular entry is, for a reason: "a directory", "a named pipe (FIFO)", … */
 function describeEntryType(stats: Stats): string {
@@ -62,14 +98,16 @@ export function checkFileContains(
     const full = resolve(root, ...check.path.split('/'));
     try {
       lstatSync(full);
-    } catch {
+    } catch (error) {
+      if (!isAbsentError(error)) throw unreadable(label, error);
       failures.push(`${label}: the file does not exist in the workspace`);
       continue;
     }
     let real: string;
     try {
       real = realpathSync.native(full);
-    } catch {
+    } catch (error) {
+      if (!isAbsentError(error)) throw unreadable(label, error);
       failures.push(`${label}: it is a symbolic link whose target does not exist`);
       continue;
     }
@@ -85,12 +123,17 @@ export function checkFileContains(
     // processes, not this read), and a starved event loop never runs gth's SIGINT handler, so even
     // Ctrl+C could not stop the run. A socket or a device is no better. So every other entry type is
     // a failure naming what was there, and is never opened.
-    const stats = statSync(real);
-    if (!stats.isFile()) {
-      failures.push(`${label}: it is ${describeEntryType(stats)}, not a regular file`);
-      continue;
+    let text: string;
+    try {
+      const stats = statSync(real);
+      if (!stats.isFile()) {
+        failures.push(`${label}: it is ${describeEntryType(stats)}, not a regular file`);
+        continue;
+      }
+      text = readFileSync(real, 'utf8');
+    } catch (error) {
+      throw unreadable(label, error);
     }
-    const text = readFileSync(real, 'utf8');
     for (const substring of check.substrings) {
       if (!text.includes(substring)) {
         failures.push(`${label}: the file does not contain ${JSON.stringify(substring)}`);
@@ -109,7 +152,13 @@ export function checkFileContains(
 export function listWorkspaceEntries(workspaceDir: string): string[] {
   const entries: string[] = [];
   const walk = (dir: string, prefix: string): void => {
-    for (const dirent of readdirSync(dir, { withFileTypes: true })) {
+    let dirents;
+    try {
+      dirents = readdirSync(dir, { withFileTypes: true });
+    } catch (error) {
+      throw unreadable(`must_not_exist could not list "${prefix || '.'}"`, error);
+    }
+    for (const dirent of dirents) {
       const rel = prefix === '' ? dirent.name : `${prefix}/${dirent.name}`;
       entries.push(rel);
       if (dirent.isDirectory()) walk(join(dir, dirent.name), rel);

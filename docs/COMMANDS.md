@@ -876,7 +876,7 @@ In a glob, `*` matches any characters within one path segment, `?` matches one c
 
 An `after` step is started the way a `setup` step is: split into arguments with no shell, with the case's `env`, the same tokens, and the case's `timeout_ms`. Standard output is trimmed before it is compared, so `equals: ""` means it printed nothing. With `equals` or `contains`, a step that exits non-zero fails the case whatever it printed, and the reason gives its exit code and the end of its standard error. A step that does not match fails the case, and every step still runs, so one run reports every check that failed. A step that cannot start, or runs past the timeout, fails the case as a harness error, and the steps after it do not run.
 
-These keys need a workspace: they are rejected on a case without one, including one with `workspace: false`, and on every target other than `command`. They are case keys, not part of an `expect:` block. Each of them counts as a check, so a case may have no other assertions. Nothing is checked when the case's command itself failed: that is already a harness error.
+These keys need a workspace: they are rejected on a case without one, including one with `workspace: false`, and on every target other than `command`. They are case keys, not part of an `expect:` block. Each of them counts as a check, so a case may have no other assertions. Nothing is checked when the case's command itself failed: that is already a harness error. An entry the checks cannot read, such as a file or directory without read permission, is a harness error too, naming the path and the error.
 
 ### Identity matrix
 
