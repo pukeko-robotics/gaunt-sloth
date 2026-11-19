@@ -826,6 +826,10 @@ async function gradeUnit(
     answer: cellResult.answer,
     tokensInput: cellResult.tokensInput,
     tokensOutput: cellResult.tokensOutput,
+    // BATCH-65 — the agent's own figure for the run, omitted entirely when it reported none so a
+    // case without one keeps its exact keys. Only a run that was graded carries it: a harness error
+    // reports no cost, which is what makes a repeated case with one such run cost-less too.
+    ...(cellResult.ok && cellResult.costUsd !== undefined ? { costUsd: cellResult.costUsd } : {}),
     tools: cellResult.tools,
     // BATCH-21: threaded parallel to `tools`; `undefined` for a runner that captured none, so a
     // pre-BATCH-21 cell's `<id>.json` keeps its exact keys (JSON.stringify drops undefined).

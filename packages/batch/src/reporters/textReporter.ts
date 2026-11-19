@@ -5,6 +5,7 @@ import type { EvalCaseResult, EvalSuiteSummary } from '#src/evalTypes.js';
 import type { EvalReporter, EvalRunContext } from '#src/reporters/reporterTypes.js';
 import { renderClassificationReport } from '#src/classificationRender.js';
 import { renderToolCoverage } from '#src/toolCoverageRender.js';
+import { renderReportedCost } from '#src/evalCost.js';
 
 /** BATCH-60 — `(2/3 runs passed, 67%, needs 67%)`, the numbers the verdict was decided on. */
 function describeRepeat(result: EvalCaseResult): string {
@@ -131,6 +132,13 @@ export function createTextReporter(): EvalReporter {
           }
         }
       }
+
+      // BATCH-65 — what the agent said these cases cost, labelled as its own figure (gaunt-sloth
+      // prices nothing), with how many cases it covers. Nothing when no case reported a cost, so
+      // every suite whose agent reports none prints exactly as before. Before the verdict line,
+      // which stays the last thing on screen.
+      const costLine = renderReportedCost(summary.cases);
+      if (costLine !== undefined) display(costLine);
 
       // M1: X/Y counts CELLS in a matrix run (one per case × identity) — e.g. `2/2` for 1 case × 2
       // identities — so a bare "case(s)" would misreport the denominator. Use an identity-aware

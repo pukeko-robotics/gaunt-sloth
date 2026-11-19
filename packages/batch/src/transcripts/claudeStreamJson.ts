@@ -64,6 +64,12 @@
  * because Anthropic reports cached prompt tokens outside `input_tokens` (the capture's
  * `input_tokens` is 4 for a 99k-token run); output is `output_tokens`.
  *
+ * **Cost is the `result` line's `total_cost_usd` (BATCH-65)**, Claude Code's own figure for the run
+ * in US dollars. It is read from the same terminal line whatever the subtype, so a run graded under
+ * `grade_when` keeps it. It is kept only when it is a finite, non-negative number; anything else
+ * (absent, a string, a negative, `1e999` which JSON parses to `Infinity`) means no cost, not zero,
+ * because a zero would claim the run was free and a wrong figure would corrupt every total it joins.
+ *
  * A result for a call the transcript never showed throws: there is no honest name to file it under,
  * and `must_error` keyed on a guessed name could pass or fail for the wrong reason.
  *
@@ -178,6 +184,8 @@ export const decodeClaudeStreamJson: TranscriptDecoder = (stdout) => {
 
   const answer = typeof result.result === 'string' ? result.result : (lastText ?? '');
   const usage = isObject(result.usage) ? result.usage : undefined;
+  const cost = result.total_cost_usd;
+  const costUsd = typeof cost === 'number' && Number.isFinite(cost) && cost >= 0 ? cost : undefined;
   return {
     answer,
     toolCalls,
@@ -192,5 +200,6 @@ export const decodeClaudeStreamJson: TranscriptDecoder = (stdout) => {
           tokensOutput: numberOr0(usage.output_tokens),
         }
       : {}),
+    ...(costUsd !== undefined ? { costUsd } : {}),
   };
 };

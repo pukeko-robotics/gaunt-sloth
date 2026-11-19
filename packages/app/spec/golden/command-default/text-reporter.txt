@@ -16,4 +16,5 @@ displayWarning	  1 │ SUT run failed: the command exited with code null; transc
 displayWarning	    ┊ ode ended the run with result "error_max_turns"
 display	PASS  repeated (2/2 runs passed, 100%, needs 100%)
 display	      runs 1: PASS · 2: PASS
+display	COST (reported by agent): 0.6321924 USD for 2 of 7 case(s)
 displayWarning	EVAL RESULT: 2/7 case(s) passed, 5 failed. Results written to out/command-default

@@ -1139,6 +1139,15 @@ export interface EvalCaseResult {
   answer?: string;
   tokensInput?: number;
   tokensOutput?: number;
+  /**
+   * BATCH-65 — what the run cost in US dollars, as the AGENT reported it (a `command` target whose
+   * decoder read one, such as Claude Code's `total_cost_usd`); never a price gaunt-sloth computed.
+   * Omitted entirely when the agent reported none, so every other case keeps its exact output. A
+   * harness error has none: the runner sets it only on a run that was graded. On a repeated case it
+   * is the sum over {@link runs}, present only when EVERY run reported one, so a total never
+   * understates silently; each run also carries its own.
+   */
+  costUsd?: number;
   tools?: string[];
   /** BATCH-21 — the cell's per-tool-call result records (parallel to {@link tools}; omitted when
    * the runner produced none, so a pre-BATCH-21 `<id>.json` stays byte-for-byte identical). For a

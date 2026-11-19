@@ -789,6 +789,7 @@ export function evalCommand(
         const { aggregateToolCoverage, gradeRunToolCoverage, hasRunToolCoverageSpec } =
           await import('@gaunt-sloth/batch/toolCoverage.js');
         const { renderToolCoverage } = await import('@gaunt-sloth/batch/toolCoverageRender.js');
+        const { renderReportedCost } = await import('@gaunt-sloth/batch/evalCost.js');
 
         // BATCH-33 — reject a malformed `--drift` BEFORE anything runs. The filter is not consulted
         // until each unit's diff is printed, at the very end of a run that can take minutes and
@@ -1424,6 +1425,12 @@ export function evalCommand(
           } else {
             displayWarning(totalLine);
           }
+
+          // BATCH-65 — the agent-reported cost across every suite, beside `EVAL TOTAL:` and printed
+          // only where it is (multi-suite runs; one suite's reporter line already is the total).
+          // Nothing when no case anywhere reported a cost.
+          const costTotalLine = renderReportedCost(combined.cases, { scope: 'TOTAL' });
+          if (costTotalLine !== undefined) display(costTotalLine);
 
           // BATCH-32 — the run-level coverage figure, beside `EVAL TOTAL:` and for the same reason
           // that line exists. Coverage is a DIRECTORY-level property: one suite covering 3 tools is

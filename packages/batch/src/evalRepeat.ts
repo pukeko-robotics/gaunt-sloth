@@ -24,6 +24,7 @@
  * still reported, in the case's `runs`.
  */
 
+import { repeatedCaseCost } from '#src/evalCost.js';
 import type { EvalCaseResult, EvalRepeatSummary } from '#src/evalTypes.js';
 
 /**
@@ -122,11 +123,15 @@ export function foldRepeatedRuns(graded: EvalCaseResult[], passRate: number): Ev
     }
   }
 
+  // BATCH-65 — unlike the other single-run fields, cost is summed onto the case, because it is
+  // additive and a reader wants the case's spend. Present only when every run reported one.
+  const costUsd = repeatedCaseCost(runs);
   return {
     id: first.id,
     ...(first.identity !== undefined ? { identity: first.identity } : {}),
     passThreshold: first.passThreshold,
     durationMs: runs.reduce((sum, run) => sum + run.durationMs, 0),
+    ...(costUsd !== undefined ? { costUsd } : {}),
     verdict,
     sutOk,
     reasons,

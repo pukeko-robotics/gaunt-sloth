@@ -80,6 +80,20 @@ export interface DecodedTranscript {
    * when a decoder sets an outcome without one.
    */
   outcomeReason?: string;
+  /**
+   * BATCH-65 — what the run cost in US dollars, **as the agent itself reported it** (Claude Code's
+   * `total_cost_usd`). Absent when the agent reports none.
+   *
+   * This is a fact read from the agent's own output, not a price: gaunt-sloth computes no cost for
+   * any model, because there is no reliable price list to compute one from (core's run stats have
+   * no cost field for that reason). The report therefore always labels it as reported by the agent.
+   *
+   * It is part of the public contract for custom decoders. The runner validates it: a value that is
+   * set but is not a finite, non-negative number is a harness error naming the decoder. Dropping a
+   * bad value silently would make the printed total cover fewer cases than the reader believes;
+   * passing it on would put `NaN` or a negative into a sum.
+   */
+  costUsd?: number;
 }
 
 /**

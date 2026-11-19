@@ -569,6 +569,27 @@ export function buildCommandRunCell(
       }
     }
 
+    // BATCH-65 — `costUsd` is part of the same public contract, and is checked the same way: a value
+    // that is set must be a finite, non-negative number of US dollars. Anything else is a harness
+    // error naming the decoder. Dropping it would make the printed total silently cover fewer cases
+    // than the decoder's author expects; keeping it would put NaN, Infinity or a negative into a sum.
+    if (decoded !== undefined && 'costUsd' in decoded && decoded.costUsd !== undefined) {
+      const value: unknown = decoded.costUsd;
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+        return {
+          ok: false,
+          error: withStderr(
+            `transcript "${target.transcript}" returned an invalid costUsd ` +
+              `${typeof value === 'number' ? String(value) : (JSON.stringify(value) ?? String(value))}: it must be a finite, non-negative ` +
+              'number of US dollars, or left out when the agent reports no cost'
+          ),
+        };
+      }
+    }
+    // Carried on both graded paths below, including a run graded under `grade_when`: a capped run
+    // still spent money, and leaving it out would understate the total.
+    const cost = decoded?.costUsd !== undefined ? { costUsd: decoded.costUsd } : {};
+
     // BATCH-62 — a run that reached a terminal result but did not end in `success`. See
     // `gradedEnding` for when it is graded; otherwise it is the harness error the decoder used to
     // throw, with the decoder's own sentence as the reason, so a suite without `grade_when` reports
@@ -583,6 +604,7 @@ export function buildCommandRunCell(
           answer: decoded.answer,
           ...(decoded.tokensInput !== undefined ? { tokensInput: decoded.tokensInput } : {}),
           ...(decoded.tokensOutput !== undefined ? { tokensOutput: decoded.tokensOutput } : {}),
+          ...cost,
           ...shapeOutcome(decoded, captureMaxBytes, options.recordToolCallArgs === true),
         };
       }
@@ -613,6 +635,7 @@ export function buildCommandRunCell(
       answer: decoded.answer,
       ...(decoded.tokensInput !== undefined ? { tokensInput: decoded.tokensInput } : {}),
       ...(decoded.tokensOutput !== undefined ? { tokensOutput: decoded.tokensOutput } : {}),
+      ...cost,
       ...shapeOutcome(decoded, captureMaxBytes, options.recordToolCallArgs === true),
     };
   };

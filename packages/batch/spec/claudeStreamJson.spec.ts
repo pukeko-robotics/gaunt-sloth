@@ -69,6 +69,51 @@ describe('decodeClaudeStreamJson — the captured transcript', () => {
     expect(decoded.tokensInput).toBe(4 + 38330 + 61124);
     expect(decoded.tokensOutput).toBe(342);
   });
+
+  it("reads the cost Claude Code reported from the result line's total_cost_usd", () => {
+    expect(decoded.costUsd).toBe(0.2107308);
+  });
+});
+
+// BATCH-65 — the cost is the agent's own figure, kept only when it is a finite, non-negative number.
+describe('decodeClaudeStreamJson — reported cost', () => {
+  /** The capture with its result line's `total_cost_usd` replaced by `raw`, verbatim JSON text, so
+   * `1e999` reaches `JSON.parse` and comes out as Infinity. `undefined` removes the key. */
+  function withCost(raw: string | undefined): string {
+    const all = lines();
+    const { total_cost_usd: _dropped, ...result } = all.at(-1)!;
+    const resultText = JSON.stringify(result);
+    const last =
+      raw === undefined ? resultText : `${resultText.slice(0, -1)},"total_cost_usd":${raw}}`;
+    return `${join(all.slice(0, -1))}\n${last}`;
+  }
+
+  it('keeps a zero, which is a cost the agent reported', () => {
+    expect(decodeClaudeStreamJson(withCost('0')).costUsd).toBe(0);
+  });
+
+  it('gives no cost when the result line has none, or one that is not a usable number', () => {
+    for (const raw of [undefined, '"0.21"', 'null', '-0.5', '1e999', '-1e999', '{"usd":1}']) {
+      const decoded = decodeClaudeStreamJson(withCost(raw));
+      expect('costUsd' in decoded, `total_cost_usd ${raw}`).toBe(false);
+      // The rest of the run still decodes: a bad cost costs only the cost.
+      expect(decoded.tokensOutput).toBe(342);
+    }
+  });
+
+  it('keeps the cost of a run that did not end in success, so a graded capped run has one', () => {
+    const all = lines();
+    const result = {
+      type: 'result',
+      subtype: 'error_max_turns',
+      is_error: true,
+      num_turns: 3,
+      total_cost_usd: 0.05,
+    };
+    const decoded = decodeClaudeStreamJson(join([...all.slice(0, 7), result]));
+    expect(decoded.outcome).toBe('error_max_turns');
+    expect(decoded.costUsd).toBe(0.05);
+  });
 });
 
 describe('decodeClaudeStreamJson — edges', () => {

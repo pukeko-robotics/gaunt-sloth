@@ -4,6 +4,7 @@
   "answer": "`present.txt` contains the single line \"hello from the fixture\"; `missing.txt` doesn't exist, and `ls` shows `present.txt` is the only file in the directory.",
   "tokensInput": 99458,
   "tokensOutput": 342,
+  "costUsd": 0.2107308,
   "tools": [
     "Read",
     "Bash"

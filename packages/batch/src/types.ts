@@ -128,6 +128,12 @@ export interface CellRunOutcome {
   tokensInput?: number;
   /** Total completion/output tokens for the run, when available (see {@link answer}'s caveat). */
   tokensOutput?: number;
+  /**
+   * BATCH-65 — the run's cost in US dollars as the AGENT reported it, never a price gaunt-sloth
+   * computed. Set only by the `command` runner, only on an `ok: true` outcome, and only when the
+   * decoder returned one; absent everywhere else, so a run without it keeps its exact output.
+   */
+  costUsd?: number;
   /** Names of tools invoked during the run, when available (see {@link answer}'s caveat). */
   tools?: string[];
   /** BATCH-21 — per-tool-call result records for the run, when available; parallel to

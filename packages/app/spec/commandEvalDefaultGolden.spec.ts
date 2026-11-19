@@ -20,6 +20,10 @@ import type { CommandRunResult, CommandSpawnRequest } from '#src/commands/comman
  * The comparison is a string equality on purpose: a partial matcher would let a new key, such as
  * an `outcome` on a harness error, ride along unnoticed.
  *
+ * BATCH-65 changed this golden on purpose, by additions only: the capture's result line reports
+ * `total_cost_usd`, so the finished and repeated cases carry `costUsd` and the text report has one
+ * cost line. Output with no reported cost is pinned unchanged by the BATCH-60 `repeat-one` goldens.
+ *
  * The command is a fake behind the spawn seam rather than a real process, so the parsed suite
  * carries no machine-specific path and the golden is the same on every platform.
  */
