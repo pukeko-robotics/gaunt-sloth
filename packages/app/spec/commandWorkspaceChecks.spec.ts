@@ -29,6 +29,14 @@ const HERE = fileURLToPath(new URL('.', import.meta.url));
 const FAKE_CLI = resolve(HERE, 'fixtures/commandTarget/fake-cli.mjs');
 const CAPTURE = resolve(HERE, '../../batch/spec/fixtures/claude-stream-json/capture.jsonl');
 
+/**
+ * The link type for a link to a DIRECTORY. On Windows a junction, which any user may create, where a
+ * directory symlink needs the create-symlink privilege. libuv reports a junction as a link to
+ * `lstat` and to a `Dirent`, as it does a symlink; the Windows cell is what confirms it (the Node
+ * docs do not say). The type argument is ignored on every other platform.
+ */
+const DIR_LINK = process.platform === 'win32' ? 'junction' : 'dir';
+
 let scratch: string;
 beforeAll(() => {
   scratch = mkdtempSync(join(tmpdir(), 'gth-command-wschecks-'));
@@ -163,39 +171,52 @@ describe('file_contains', () => {
     ]);
   });
 
-  it('refuses to read a file that a symbolic link leads out of the workspace', async (ctx) => {
-    // The outside file HOLDS the needle, so reading through the link would pass the case.
-    const outsideDir = join(scratch, 'fc-outside');
+  /** A directory outside every workspace whose one file HOLDS the needle, so reading through a
+   * link to it would pass the case. */
+  function outsideNeedle(name: string): { outsideDir: string; outsideFile: string } {
+    const outsideDir = join(scratch, name);
     mkdirSync(outsideDir, { recursive: true });
     const outsideFile = join(outsideDir, 'secret.txt');
     writeFileSync(outsideFile, 'OUTSIDE-NEEDLE\n');
-    const dir = suiteDir('fc-symlink');
+    return { outsideDir, outsideFile };
+  }
+
+  it('refuses to read a file that a file link leads out of the workspace', async (ctx) => {
+    const { outsideFile } = outsideNeedle('fc-outside-file');
+    const dir = suiteDir('fc-symlink-file');
     try {
-      // Absolute targets, made at run time: the template copy keeps them as written, so the
-      // workspace's links lead out of it exactly as an agent-made link would.
+      // An absolute target, made at run time: the template copy keeps it as written, so the
+      // workspace's link leads out of it exactly as an agent-made link would.
       symlinkSync(outsideFile, join(dir, 'fixture', 'leak.txt'), 'file');
-      symlinkSync(outsideDir, join(dir, 'fixture', 'leakdir'), 'dir');
     } catch (error) {
-      // Windows needs the create-symlink privilege (or Developer Mode) for this; without it there
-      // is no link to follow, so the case is skipped there and only there.
+      // A FILE link on Windows needs the create-symlink privilege (or Developer Mode), and a
+      // junction cannot point at a file; without it there is no link to follow, so this case is
+      // skipped there and only there. The directory case below needs no privilege.
       if (process.platform === 'win32' && (error as NodeJS.ErrnoException).code === 'EPERM') {
         ctx.skip();
       }
       throw error;
     }
-    const summary = await run(
-      suiteWith(
-        dir,
-        'file_contains: { "leak.txt": "OUTSIDE-NEEDLE", "leakdir/secret.txt": "OUTSIDE-NEEDLE" }'
-      )
-    );
+    const summary = await run(suiteWith(dir, 'file_contains: { "leak.txt": "OUTSIDE-NEEDLE" }'));
     expect(summary.cases[0].verdict).toBe('FAIL');
-    expect(summary.cases[0].reasons).toHaveLength(2);
+    expect(summary.cases[0].reasons).toHaveLength(1);
     expect(summary.cases[0].reasons[0]).toMatch(
       /^file_contains "leak\.txt": it resolves outside the workspace .* so it was not read$/
     );
-    expect(summary.cases[0].reasons[1]).toMatch(
-      /^file_contains "leakdir\/secret\.txt": it resolves outside the workspace/
+  });
+
+  it('refuses to read a file that a directory link leads out of the workspace', async () => {
+    const { outsideDir } = outsideNeedle('fc-outside-dir');
+    const dir = suiteDir('fc-symlink-dir');
+    // A junction on Windows, which needs no privilege, so this case runs on every cell.
+    symlinkSync(outsideDir, join(dir, 'fixture', 'leakdir'), DIR_LINK);
+    const summary = await run(
+      suiteWith(dir, 'file_contains: { "leakdir/secret.txt": "OUTSIDE-NEEDLE" }')
+    );
+    expect(summary.cases[0].verdict).toBe('FAIL');
+    expect(summary.cases[0].reasons).toHaveLength(1);
+    expect(summary.cases[0].reasons[0]).toMatch(
+      /^file_contains "leakdir\/secret\.txt": it resolves outside the workspace .* so it was not read$/
     );
   });
 
@@ -353,16 +374,10 @@ describe('must_not_exist', () => {
     ]);
   });
 
-  it('lists the entries with / on every platform and never walks through a link', async (ctx) => {
+  it('lists the entries with / on every platform and never walks through a link', () => {
     const dir = suiteDir('mne-walk', { 'a/b/c.txt': 'x' });
-    try {
-      symlinkSync(scratch, join(dir, 'fixture', 'a', 'up'), 'dir');
-    } catch (error) {
-      if (process.platform === 'win32' && (error as NodeJS.ErrnoException).code === 'EPERM') {
-        ctx.skip();
-      }
-      throw error;
-    }
+    // A junction on Windows, which needs no privilege, so this case runs on every cell.
+    symlinkSync(scratch, join(dir, 'fixture', 'a', 'up'), DIR_LINK);
     expect(listWorkspaceEntries(join(dir, 'fixture'))).toEqual(['a', 'a/b', 'a/b/c.txt', 'a/up']);
   });
 });
