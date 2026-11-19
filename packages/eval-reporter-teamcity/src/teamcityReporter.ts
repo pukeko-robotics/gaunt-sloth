@@ -58,6 +58,36 @@ function suiteStem(suitePath: string): string {
   return ext ? base.slice(0, -ext.length) : base;
 }
 
+/**
+ * BATCH-60 — the fields a repeated case carries. Read structurally rather than from the imported
+ * type: this package type-checks against the PUBLISHED `@gaunt-sloth/batch`, which may predate
+ * them, and an older batch simply never sets them.
+ */
+interface RepeatedCaseResult extends EvalCaseResult {
+  repeat?: { runs: number; passed: number; ratePercent: number; requiredPercent: number };
+  runs?: Array<EvalCaseResult & { run?: number }>;
+}
+
+/**
+ * BATCH-60 — the per-run detail of a repeated case, sent as the test's `testStdOut`: its rate, then
+ * one line per run. The case stays ONE test — one per run would count each case N times on the
+ * build's test tab — and a failing one leads its `testFailed` message with the rate, which is the
+ * first of its reasons. `undefined` for a case that ran once, so its messages are exactly what they
+ * always were.
+ */
+function repeatText(result: RepeatedCaseResult): string | undefined {
+  if (result.repeat === undefined) return undefined;
+  const { passed, runs, ratePercent, requiredPercent } = result.repeat;
+  const lines = [`pass rate: ${passed}/${runs} (${ratePercent}%), required ${requiredPercent}%`];
+  for (const run of result.runs ?? []) {
+    const outcome = run.sutOk ? run.verdict : 'ERROR';
+    const reasons =
+      Array.isArray(run.reasons) && run.reasons.length > 0 ? ` — ${run.reasons.join('; ')}` : '';
+    lines.push(`run ${run.run}: ${outcome}${reasons}`);
+  }
+  return lines.join('\n');
+}
+
 /** The SAME label the text and JUnit reporters use: `<id> [<identity>]` for a matrix cell, else
  * `<id>` — so matrix cell names are unique per (case × identity). */
 function cellLabel(result: EvalCaseResult): string {
@@ -94,6 +124,10 @@ export function createTeamCityReporter(
     onCellResult(result: EvalCaseResult): void {
       const name = cellLabel(result);
       write(serviceMessage('testStarted', { name }));
+      const repeated = repeatText(result as RepeatedCaseResult);
+      if (repeated !== undefined) {
+        write(serviceMessage('testStdOut', { name, out: repeated }));
+      }
 
       if (result.verdict !== 'PASS') {
         const reasons = Array.isArray(result.reasons) ? result.reasons : [];
