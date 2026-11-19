@@ -59,4 +59,22 @@ describe('BATCH-60 — TeamCity keeps one test per repeated case', () => {
     const failed = chunks.find((chunk) => chunk.startsWith('##teamcity[testFailed'));
     expect(failed).toContain("message='pass rate 2/3 (67%) is below the required 100%'");
   });
+
+  it('labels a run that did not finish ERROR in the test output', async () => {
+    const { createTeamCityReporter } = await import('#src/teamcityReporter.js');
+    const result = repeatedCase('FAIL', [
+      '1 of 3 runs did not finish (run 2)',
+    ]) as EvalCaseResult & {
+      runs: Array<EvalCaseResult & { run: number }>;
+    };
+    result.sutOk = false;
+    result.runs[1] = { ...result.runs[1], sutOk: false, reasons: ['SUT run failed: down'] };
+    const chunks: string[] = [];
+    createTeamCityReporter((chunk) => chunks.push(chunk)).onCellResult?.(result, {
+      suitePath: 's.yaml',
+      outputDir: 'out',
+    });
+    const stdout = chunks.find((chunk) => chunk.startsWith('##teamcity[testStdOut'));
+    expect(stdout).toContain('|nrun 2: ERROR — SUT run failed: down|n');
+  });
 });

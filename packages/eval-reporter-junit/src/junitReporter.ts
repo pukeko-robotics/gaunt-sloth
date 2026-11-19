@@ -77,7 +77,10 @@ function repeatText(result: RepeatedCaseResult): string | undefined {
       run.judge?.attempted && run.judge.ok && run.judge.verdict
         ? ` (judge ${run.judge.verdict.rate}/10)`
         : '';
-    const reasons = run.reasons.length > 0 ? ` — ${run.reasons.join('; ')}` : '';
+    // Guarded like the TeamCity reporter: a `results.json` from another batch version may carry a
+    // run entry without `reasons`, and one malformed run must not throw away the whole document.
+    const reasons =
+      Array.isArray(run.reasons) && run.reasons.length > 0 ? ` — ${run.reasons.join('; ')}` : '';
     lines.push(`run ${run.run}: ${outcome}${judge}${reasons}`);
   }
   return lines.join('\n');

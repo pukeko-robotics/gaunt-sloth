@@ -76,4 +76,45 @@ describe('BATCH-60 — JUnit keeps one testcase per repeated case', () => {
       ].join('\n')
     );
   });
+
+  it('labels a run that did not finish ERROR, and tolerates a run entry with no reasons', async () => {
+    const { createJUnitReporter } = await import('#src/junitReporter.js');
+    const harness = {
+      id: 'broken-run',
+      verdict: 'FAIL',
+      passThreshold: 6,
+      sutOk: false,
+      durationMs: 3,
+      reasons: ['1 of 2 runs did not finish (run 2)', 'run 2: SUT run failed: down'],
+      repeat: { runs: 2, passed: 1, ratePercent: 50, passRate: 0.5, requiredPercent: 50 },
+      runs: [
+        // A run entry from a results.json written without `reasons` on it.
+        { id: 'broken-run', run: 1, verdict: 'PASS', passThreshold: 6, sutOk: true, durationMs: 1 },
+        {
+          id: 'broken-run',
+          run: 2,
+          verdict: 'FAIL',
+          passThreshold: 6,
+          sutOk: false,
+          durationMs: 2,
+          reasons: ['SUT run failed: down'],
+        },
+      ],
+    } as unknown as EvalCaseResult;
+    await createJUnitReporter().onSuiteEnd?.(
+      { total: 1, passed: 0, failed: 1, cases: [harness] },
+      { suitePath: 'suite.yaml', outputDir: scratch }
+    );
+    const xml = readFileSync(join(scratch, 'results.xml'), 'utf-8');
+    const parsed = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '' }).parse(xml);
+    const testcase = parsed.testsuites.testsuite.testcase;
+    expect(testcase.error.message).toBe('1 of 2 runs did not finish (run 2)');
+    expect(testcase['system-out']).toBe(
+      [
+        'pass rate: 1/2 (50%), required 50%',
+        'run 1: PASS',
+        'run 2: ERROR — SUT run failed: down',
+      ].join('\n')
+    );
+  });
 });
