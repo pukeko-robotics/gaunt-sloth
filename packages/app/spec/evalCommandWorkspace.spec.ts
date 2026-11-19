@@ -13,6 +13,7 @@ import type { CommandRunnerOptions } from '#src/commands/commandEvalRunner.js';
 const runnerMock = {
   buildCommandRunCell: vi.fn(),
   loadTranscriptDecoder: vi.fn(),
+  writeCommandTranscript: vi.fn(),
 };
 vi.mock('#src/commands/commandEvalRunner.js', () => runnerMock);
 

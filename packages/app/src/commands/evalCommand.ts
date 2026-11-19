@@ -16,6 +16,7 @@ import {
   buildProductionRunConversation,
 } from '#src/commands/batchCommand.js';
 import { parseIntOption } from '#src/commands/cliOptionParsers.js';
+import { toolNameMatchesPattern } from '@gaunt-sloth/core/utils/toolMatching.js';
 import { resolveSuiteDir } from '#src/commands/commandWorkspace.js';
 import {
   display,
@@ -38,6 +39,7 @@ import {
 import type {
   ComparisonColumn,
   EvalCaseResult,
+  EvalOnlyRecord,
   EvalReporterFactory,
   EvalSuite,
   EvalSuiteSummary,
@@ -79,6 +81,22 @@ interface EvalCommandOptions {
    * the threshold-ward default. Parsed by the batch layer, which owns why the unfiltered form is
    * not on offer. */
   drift?: string;
+  /** BATCH-66 `--only <pattern>` — repeatable; run only the cases whose id matches one pattern. */
+  only?: string[];
+  /** BATCH-66 `--keep-transcripts` — write each `command` run's raw stdout (and non-empty stderr)
+   * beside its case's JSON. */
+  keepTranscripts?: boolean;
+}
+
+/**
+ * BATCH-66 — does a case id match any `--only` pattern? A pattern with no `*` matches the id
+ * exactly; a `*` matches any run of characters, anchored at both ends. It is core's
+ * `toolNameMatchesPattern`, the matcher `must_call` and the coverage `waive:` list already use, so
+ * one glob dialect covers every name list in an eval. Case ids are `[\w.-]` only, so `*` is the one
+ * metacharacter an id pattern needs.
+ */
+export function caseMatchesOnly(caseId: string, patterns: readonly string[]): boolean {
+  return patterns.some((pattern) => toolNameMatchesPattern(caseId, pattern));
 }
 
 /** Split each collected `--reporter` value on `,`, flatten, trim, drop blanks, and de-duplicate
@@ -518,7 +536,8 @@ async function printRunDiff(
   outputRoot: string,
   cellOutputDir: string,
   summary: EvalSuiteSummary,
-  driftSpec: string | undefined
+  driftSpec: string | undefined,
+  onlyPatterns: readonly string[] | undefined
 ): Promise<void> {
   const projectDir = getProjectDir();
   const relativePath = relative(
@@ -543,7 +562,47 @@ async function printRunDiff(
   // `undefined` leaves the threshold-ward default to `diffRuns` itself rather than restating it
   // here, so the CLI cannot drift from the library's idea of quiet.
   const driftFilter = driftSpec === undefined ? undefined : parseJudgeDriftFilter(driftSpec);
-  const diff = diffRuns(baseline, summary, driftFilter);
+
+  // BATCH-66 — a baseline that was itself filtered is named, so a diff against it is not read as a
+  // comparison with the whole suite.
+  if (baseline.only !== undefined) {
+    displayWarning(
+      `eval: the baseline at ${baselineFile} was a partial run (--only ` +
+        `${baseline.only.patterns.join(' ')}: ${baseline.only.selectedCases} of ` +
+        `${baseline.only.suiteCases} cases), so the diff covers only the cases it ran.`
+    );
+  }
+
+  let before = baseline;
+  let after = summary;
+  const onlyNotes: string[] = [];
+  if (onlyPatterns !== undefined) {
+    // BATCH-66 — a filtered run is compared with the same selection of the baseline. `diffRuns`
+    // never lists a case missing from this run as regressed, but it counts it as "only in the
+    // baseline" and warns that a case that disappeared cannot regress: on every `--only` run that
+    // would read as the unselected cases having been removed. The baseline's suite-level
+    // `classification` metrics are left out of the diff (not out of what was written): they cover
+    // the baseline's whole corpus, this run's cover the selection, and a delta between the two
+    // would measure the filter, not a change.
+    const { classification: beforeMetrics, ...beforeRest } = baseline;
+    const { classification: afterMetrics, ...afterRest } = summary;
+    before = {
+      ...beforeRest,
+      cases: baseline.cases.filter((result) => caseMatchesOnly(result.id, onlyPatterns)),
+    };
+    after = afterRest;
+    onlyNotes.push(
+      '  --only: the baseline was compared on the same selection of cases; its other cases were ' +
+        'left out, not counted as missing.'
+    );
+    if (beforeMetrics !== undefined || afterMetrics !== undefined) {
+      onlyNotes.push(
+        '  --only: metric deltas were not compared, because the baseline computed its metrics ' +
+          'over the whole suite and this run over the selected cases only.'
+      );
+    }
+  }
+  const diff = diffRuns(before, after, driftFilter);
   for (const line of renderRunDiff(diff)) {
     if (
       line.trimStart().startsWith('!') ||
@@ -557,6 +616,7 @@ async function printRunDiff(
       display(line);
     }
   }
+  for (const note of onlyNotes) display(note);
 }
 
 /**
@@ -610,6 +670,20 @@ export function evalCommand(
       '--keep-workspaces',
       "Keep each command-target case's workspace directory after the case instead of removing " +
         'it, and print its path (for debugging a fixture or a setup step)'
+    )
+    .option(
+      '--only <pattern>',
+      'Run only the cases whose id matches <pattern>: exact, or a glob where * matches any run ' +
+        'of characters (quote it so the shell leaves the * alone). Repeatable; applies to every ' +
+        'suite given. A matched case runs all its identities, sweep points and repeats. Exits 2 ' +
+        'without running anything when no case matches; results.json records the filter.',
+      (value: string, previous: string[] = []) => [...previous, value]
+    )
+    .option(
+      '--keep-transcripts',
+      "Write each command-target run's raw standard output to <id>.stdout.txt beside its " +
+        '<id>.json, and its standard error to <id>.stderr.txt when there is any (a repeated ' +
+        "case's runs are <id>#run<n>.*). Runs that ended in a harness error are kept too."
     )
     .option(
       '-o, --output <dir>',
@@ -677,6 +751,8 @@ export function evalCommand(
         '  $ gth eval eval/js-basics.yaml --reporter junit\n' +
         '  $ gth eval eval/js-basics.yaml --reporter text,junit\n' +
         "  $ gth eval eval/claude-fixes.yaml -j 2 --keep-workspaces  # keep each case's workspace\n" +
+        "  $ gth eval eval/ --only 'fix-*' --only rename-symbol      # just the cases you are writing\n" +
+        '  $ gth eval eval/claude-fixes.yaml --keep-transcripts      # keep what the agent printed\n' +
         '  $ gth eval eval/tool-use.yaml -j 3 -o out/today --compare-to out/yesterday\n' +
         '    # a suite with `defaults: { repeat: 3, pass_rate: 0.67 }`: flaky vs broke cases\n' +
         '\n' +
@@ -720,6 +796,21 @@ export function evalCommand(
         // report the flag.
         if (options.drift !== undefined) parseJudgeDriftFilter(options.drift);
 
+        // BATCH-66 — `--only` is refused with the two no-run operations. A blind export of part of
+        // a corpus hands a second labeller part of the corpus without saying so, and a relabel diff
+        // against a filtered corpus reports every unselected id as one the labeller added. Both
+        // act on the whole corpus by design. Refused before anything is read (→ exit 2).
+        const onlyPatterns = options.only;
+        if (
+          onlyPatterns !== undefined &&
+          (options.exportBlind !== undefined || options.relabelDiff !== undefined)
+        ) {
+          throw new Error(
+            '--only cannot be combined with --export-blind or --relabel-diff: both act on the ' +
+              'whole corpus. Nothing was run.'
+          );
+        }
+
         // BATCH-48 — the run floor, resolved ONCE, from the base config the run was started with,
         // before any suite runs. See `resolveRunToolCoverage` for why it is never read off a config
         // a suite builds. A malformed floor, or a `-i` / `-c` that does not resolve, throws here →
@@ -761,7 +852,9 @@ export function evalCommand(
           // BATCH-25 — the sweep cell this run is for (`undefined` = no sweep, the original path).
           // It changes only how the config is BUILT; everything downstream is identical, which is
           // why a sweep needed no change to the runner or to #405's identity matrix.
-          sweepCell: SweepCell | undefined
+          sweepCell: SweepCell | undefined,
+          // BATCH-66 — what `--only` selected from this suite; `undefined` without the flag.
+          only: EvalOnlyRecord | undefined
         ): Promise<EvalSuiteSummary> => {
           // BATCH-12 PRECONDITION — trustworthy loads (no false-green): every suite-declared identity
           // must resolve to its OWN config (`.gsloth-settings/<name>/`), not the global/plain
@@ -884,7 +977,7 @@ export function evalCommand(
             // grades from the local config. The decoder is loaded BEFORE anything runs, so a broken
             // custom decoder is this suite's harness error with no case started.
             baseConfig = await initConfigForCell(commandLineConfigOverrides, sweepCell);
-            const { buildCommandRunCell, loadTranscriptDecoder } =
+            const { buildCommandRunCell, loadTranscriptDecoder, writeCommandTranscript } =
               await import('#src/commands/commandEvalRunner.js');
             const { resolveToolResultCaptureMaxBytes } =
               await import('@gaunt-sloth/core/config/toolResultCapture.js');
@@ -939,6 +1032,13 @@ export function evalCommand(
                 displayWarning(
                   `eval: could not remove the workspace of case "${caseId}" (${dir}): ${reason}`
                 ),
+              // BATCH-66 — each run's raw output, written as the run finishes, so an interrupted
+              // suite keeps the transcripts of the runs it finished. A command suite has no sweep,
+              // so this directory is the one its `<id>.json` files go into.
+              onTranscript:
+                options.keepTranscripts === true
+                  ? (cell, run) => writeCommandTranscript(suiteOutputDir, cell, run)
+                  : undefined,
             });
           } else if (parsedSuite.target.type === 'rater') {
             // BATCH-25 Half B: grade gth's OWN approvals rater. Nothing is run through an agent —
@@ -1014,7 +1114,7 @@ export function evalCommand(
             : baseConfig;
           const judge = buildProductionJudge(judgeConfig);
 
-          const summary = await runEvalSuite(parsedSuite, {
+          const ran = await runEvalSuite(parsedSuite, {
             runCell,
             runCellByIdentity,
             runConversation,
@@ -1025,6 +1125,9 @@ export function evalCommand(
             // which is the pre-BATCH-25 behaviour byte for byte.
             classify,
           });
+          // BATCH-66 — the filter is recorded on the summary itself, so `results.json` says the run
+          // was partial. Without `--only` the summary is the runner's own object, unchanged.
+          const summary: EvalSuiteSummary = only !== undefined ? { ...ran, only } : ran;
 
           writeEvalOutput(suiteOutputDir, summary);
 
@@ -1054,6 +1157,44 @@ export function evalCommand(
         for (const message of resolutionErrors) {
           displayError(`eval harness error: ${message}`);
           anyHarnessError = true;
+        }
+
+        // BATCH-66 — with `--only`, every suite is parsed BEFORE any of them runs, because a filter
+        // that matches nothing anywhere must exit 2 before any agent starts (a typo in a pattern
+        // must not cost one suite's full run first). The parsed suites are reused by the loop. A
+        // suite that fails to parse is left to the loop, which reports it as that suite's harness
+        // error exactly as without the flag. Without `--only` there is no pre-pass, so a parse
+        // error still prints in its place among the suites' reports.
+        const preParsed = new Map<string, EvalSuite>();
+        if (onlyPatterns !== undefined) {
+          let matched = 0;
+          const parseErrors: string[] = [];
+          for (const suite of suites) {
+            try {
+              const parsed = parseEvalSuite(
+                readFileFromProjectDir(suite.readPath),
+                suite.readPath,
+                { suiteDir: resolveSuiteDir(suite.readPath) }
+              );
+              preParsed.set(suite.absPath, parsed);
+              matched += parsed.cases.filter((evalCase) =>
+                caseMatchesOnly(evalCase.id, onlyPatterns)
+              ).length;
+            } catch (error) {
+              parseErrors.push(
+                `${suite.readPath}: ${error instanceof Error ? error.message : String(error)}`
+              );
+            }
+          }
+          if (matched === 0) {
+            for (const message of parseErrors) displayError(`eval harness error in ${message}`);
+            displayError(
+              `eval harness error: --only ${onlyPatterns.map((p) => `"${p}"`).join(', ')} ` +
+                `matched no case in ${suites.length} suite(s). Nothing was run.`
+            );
+            setExitCode(2);
+            return;
+          }
         }
 
         // Exactly one resolved suite → write DIRECTLY into the output dir (byte-for-byte with the
@@ -1103,22 +1244,58 @@ export function evalCommand(
             // diff all read the same parsed suite the run does.
             // BATCH-58 — the suite's directory goes in so a workspace `template` is checked to
             // exist at parse time, against the same directory a custom decoder resolves against.
-            const parsedSuite = parseEvalSuite(
-              readFileFromProjectDir(suite.readPath),
-              suite.readPath,
-              { suiteDir: resolveSuiteDir(suite.readPath) }
-            );
+            const loadedSuite =
+              preParsed.get(suite.absPath) ??
+              parseEvalSuite(readFileFromProjectDir(suite.readPath), suite.readPath, {
+                suiteDir: resolveSuiteDir(suite.readPath),
+              });
 
             // BATCH-25 — the two operations that do NOT run the suite. They short-circuit before any
             // config is built or any model is called: a blind export exists to be handed to a human,
             // and a relabel diff is arithmetic over two files.
             if (options.exportBlind !== undefined) {
-              await writeBlindExport(parsedSuite, options.exportBlind, suite.readPath, single);
+              await writeBlindExport(loadedSuite, options.exportBlind, suite.readPath, single);
               continue;
             }
             if (options.relabelDiff !== undefined) {
-              await printRelabelDiff(parsedSuite, options.relabelDiff);
+              await printRelabelDiff(loadedSuite, options.relabelDiff);
               continue;
+            }
+
+            // BATCH-66 — `--only` narrows the suite's CASES and nothing else, so a matched case
+            // keeps its identities, its sweep cells and its repeats: each is expanded from the case
+            // further down, exactly as for an unfiltered run. A suite with no matching case is
+            // skipped rather than run empty, because an empty run is a harness error (exit 2) and
+            // the run as a whole did match something.
+            let parsedSuite = loadedSuite;
+            let onlyRecord: EvalOnlyRecord | undefined;
+            if (onlyPatterns !== undefined) {
+              const selected = loadedSuite.cases.filter((evalCase) =>
+                caseMatchesOnly(evalCase.id, onlyPatterns)
+              );
+              if (selected.length === 0) {
+                displayInfo(`eval: --only matched no case in ${suite.readPath}; skipped it.`);
+                continue;
+              }
+              displayInfo(
+                `eval: --only runs ${selected.length} of ${loadedSuite.cases.length} case(s) in ` +
+                  `${suite.readPath}: ${selected.map((evalCase) => evalCase.id).join(', ')}`
+              );
+              parsedSuite = { ...loadedSuite, cases: selected };
+              onlyRecord = {
+                patterns: [...onlyPatterns],
+                selectedCases: selected.length,
+                suiteCases: loadedSuite.cases.length,
+              };
+            }
+
+            // BATCH-66 — transcripts exist only where a command printed one. Said once per suite,
+            // so a flag that writes nothing is not mistaken for one that failed silently.
+            if (options.keepTranscripts === true && parsedSuite.target.type !== 'command') {
+              displayInfo(
+                `eval: --keep-transcripts writes nothing for ${suite.readPath}: its target is ` +
+                  `"${parsedSuite.target.type}", and only a "command" target has a transcript.`
+              );
             }
 
             // BATCH-52 — argument assertions need the arguments, which are recorded only when the
@@ -1151,7 +1328,13 @@ export function evalCommand(
               // Each cell writes into its own subdir so the per-cell results.json/results.xml never
               // clobber. A no-sweep run keeps writing directly into the suite dir.
               const cellOutputDir = cell ? join(suiteOutputDir, cell.dirName) : suiteOutputDir;
-              const summary = await runOneSuite(suite, cellOutputDir, parsedSuite, cell);
+              const summary = await runOneSuite(
+                suite,
+                cellOutputDir,
+                parsedSuite,
+                cell,
+                onlyRecord
+              );
               combinedCases.push(...summary.cases);
               if ((summary.classification?.gateFailures.length ?? 0) > 0) {
                 anyMetricGateFailed = true;
@@ -1177,7 +1360,8 @@ export function evalCommand(
                   outputRoot,
                   cellOutputDir,
                   summary,
-                  options.drift
+                  options.drift,
+                  onlyPatterns
                 );
               }
             }

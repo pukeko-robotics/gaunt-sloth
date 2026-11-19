@@ -1184,4 +1184,20 @@ export interface EvalSuiteSummary {
    * `0/0` coverage figure looks like a measurement and is not one.
    */
   toolCoverage?: ToolCoverageReport;
+  /**
+   * BATCH-66 — set only when the run was filtered with `gth eval --only`, so a partial run can never
+   * be read as the whole suite. Omitted entirely without the flag, which keeps `results.json`
+   * byte-for-byte as it was.
+   */
+  only?: EvalOnlyRecord;
+}
+
+/** BATCH-66 — what `gth eval --only` selected from one suite. */
+export interface EvalOnlyRecord {
+  /** The `--only` patterns as given, in order. */
+  patterns: string[];
+  /** How many of the suite's cases matched and ran. */
+  selectedCases: number;
+  /** How many cases the suite declares. */
+  suiteCases: number;
 }

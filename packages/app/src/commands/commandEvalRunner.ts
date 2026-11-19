@@ -53,7 +53,8 @@
  * @module
  */
 import { spawn, type ChildProcess } from 'node:child_process';
-import { resolve } from 'node:path';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type {
   CellRunOutcome,
@@ -344,6 +345,47 @@ export interface CommandRunnerOptions {
     workspace: { caseId: string; dir: string },
     outcome: CellRunOutcome
   ) => CellRunOutcome | Promise<CellRunOutcome>;
+  /**
+   * BATCH-66 `--keep-transcripts`: called with what the case's command printed, as soon as it
+   * finishes and before the run is judged, so a run that timed out, exited non-zero or printed a
+   * transcript the decoder rejects is reported too. That harness-error run is the one whose output
+   * is most needed. It is not called when the command could not be started (there is no output),
+   * nor for a workspace `setup` or `after` step: their output is not the agent's.
+   */
+  onTranscript?: (cell: MatrixCell, run: CommandRunResult) => void;
+}
+
+/**
+ * BATCH-66 — the file name, without extension, of one run's kept transcript: `<id>` for a case that
+ * runs once, `<id>#run<n>` for each run of a repeated case.
+ *
+ * The run suffix is BATCH-60's own name for a run cell, and it is used rather than a `-run-<n>`
+ * suffix because `#` is outside the case-id alphabet (`/^[\w.-]+$/`, checked at parse): case `a`
+ * run 1 and a separate case `a-run-1` could otherwise share a file and overwrite each other. That
+ * same parse-time check is what keeps an id from naming a path outside the output directory, so the
+ * id needs no further sanitising here. A `command` target rejects `identities` and `sweep` at parse,
+ * so a run has no identity or sweep cell to add to the name.
+ */
+export function transcriptFileBase(cell: Pick<MatrixCell, 'id' | 'run'>): string {
+  return cell.run !== undefined ? `${cell.id}#run${cell.run}` : cell.id;
+}
+
+/**
+ * BATCH-66 — write one run's raw output into `outputDir`, beside the case's `<id>.json`:
+ * `<base>.stdout.txt` always, and `<base>.stderr.txt` only when the command printed to standard
+ * error. Both are written exactly as captured, with no header, so a kept stdout can be fed straight
+ * back to a decoder. {@link runCommandProcess} keeps all of both streams, so nothing in either file
+ * was cut; the 600-character stderr tail is only what a harness-error reason quotes.
+ */
+export function writeCommandTranscript(
+  outputDir: string,
+  cell: Pick<MatrixCell, 'id' | 'run'>,
+  run: Pick<CommandRunResult, 'stdout' | 'stderr'>
+): void {
+  const base = transcriptFileBase(cell);
+  mkdirSync(outputDir, { recursive: true });
+  writeFileSync(join(outputDir, `${base}.stdout.txt`), run.stdout);
+  if (run.stderr.length > 0) writeFileSync(join(outputDir, `${base}.stderr.txt`), run.stderr);
 }
 
 function tail(text: string): string {
@@ -442,6 +484,8 @@ export function buildCommandRunCell(
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
+    // Before any branch below can return: every way a finished run is judged keeps its transcript.
+    options.onTranscript?.(cell, run);
 
     const stderrTail = tail(run.stderr);
     const withStderr = (reason: string): string =>

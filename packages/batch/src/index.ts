@@ -39,6 +39,7 @@ export type {
   EvalCase,
   EvalCaseResult,
   EvalExpectation,
+  EvalOnlyRecord,
   EvalRepeatSummary,
   EvalSuite,
   EvalSuiteSummary,
