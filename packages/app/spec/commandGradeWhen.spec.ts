@@ -386,6 +386,9 @@ describe('grade_when — the outcome is visible in every output', () => {
     prompt: capped
     must_call: [Read]
     repeat: 2
+  - id: misroutes
+    prompt: capped
+    must_call: [Skill]
 `
     );
     const { summary } = await run(suite, {
@@ -425,5 +428,8 @@ describe('grade_when — the outcome is visible in every output', () => {
     expect(printed).toContain(
       '      runs 1: PASS (ended on error_max_turns) · 2: PASS (ended on error_max_turns)'
     );
+    // A graded FAIL is the row most easily misread as a finished run's verdict.
+    const warned = consoleUtilsMock.displayWarning.mock.calls.map((call) => String(call[0]));
+    expect(warned).toContain('FAIL  misroutes (ended on error_max_turns)');
   });
 });
