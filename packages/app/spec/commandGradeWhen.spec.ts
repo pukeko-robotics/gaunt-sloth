@@ -433,3 +433,90 @@ describe('grade_when — the outcome is visible in every output', () => {
     expect(warned).toContain('FAIL  misroutes (ended on error_max_turns)');
   });
 });
+
+describe('grade_when — the outcome in the public custom-decoder contract', () => {
+  // A decoder MODULE, loaded the way a suite names one, and a real child process.
+  const DECODER = `
+export default function decode(stdout) {
+  const text = stdout.trim();
+  if (!text) throw new Error('the agent printed nothing');
+  const [marker, ...answer] = text.split(' ');
+  const transcript = { answer: answer.join(' '), toolCalls: [], toolResults: [] };
+  if (marker === 'STOPPED') {
+    return { ...transcript, outcome: 'hit_step_limit', outcomeReason: 'the agent hit its step limit' };
+  }
+  return transcript;
+}
+`;
+
+  it('grades a case on a module decoder outcome that grade_when lists, whatever the exit code', async () => {
+    const { loadTranscriptDecoder } = await import('#src/commands/commandEvalRunner.js');
+    const decoderPath = join(scratch, 'step-limit-decoder.mjs');
+    writeFileSync(decoderPath, DECODER);
+    const decoder = await loadTranscriptDecoder(
+      './step-limit-decoder.mjs',
+      join(scratch, 'suite.yaml')
+    );
+
+    const cases = `
+  - id: c
+    prompt: p
+    must_contain: [halfway]
+`;
+    const listed = suiteOf(
+      fakeRun('print', 'STOPPED halfway there', '1'),
+      '  grade_when: [hit_step_limit]',
+      cases
+    );
+    const graded = await run(listed, {}, decoder);
+    expect(graded.byId.c).toMatchObject({
+      verdict: 'PASS',
+      sutOk: true,
+      outcome: 'hit_step_limit',
+      answer: 'halfway there',
+    });
+
+    const strict = suiteOf(fakeRun('print', 'STOPPED halfway there', '1'), '', cases);
+    const refused = await run(strict, {}, decoder);
+    expectHarnessError(
+      refused.byId.c,
+      /exited with code 1; transcript "claude-stream-json": the agent hit its step limit/
+    );
+  });
+
+  it.each([
+    ['an empty string', ''],
+    ['whitespace', '   '],
+    ['a number', 42],
+    ['null', null],
+    ['an object', { name: 'hit_step_limit' }],
+  ])(
+    'refuses %s as an outcome with a harness error naming the decoder, even when listed',
+    async (_label, value) => {
+      const malformed = (() => ({
+        answer: 'done',
+        toolCalls: [],
+        toolResults: [],
+        outcome: value,
+      })) as unknown as TranscriptDecoder;
+      const suite = suiteOf(
+        'fake-agent',
+        '  grade_when: [hit_step_limit]',
+        `
+  - id: c
+    prompt: p
+    must_contain: [done]
+`
+      );
+      const { byId } = await run(
+        suite,
+        { spawnCommand: seam({ p: { stdout: 'x', stderr: '', exitCode: 0, timedOut: false } }) },
+        malformed
+      );
+      expectHarnessError(
+        byId.c,
+        /^SUT run failed: transcript "claude-stream-json" returned an invalid outcome .*: it must be a non-empty string/
+      );
+    }
+  );
+});

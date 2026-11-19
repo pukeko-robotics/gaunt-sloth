@@ -820,7 +820,13 @@ The first case is graded whether the agent finished or stopped at its third turn
 
 A `command` suite cannot use `identities`, `sweep`, `tool_coverage` or multi-turn `turns:` cases. The agent reads its own configuration rather than a gth profile, and its transcript does not list the tools it loaded. Each of these is rejected when the suite loads. Write one case per prompt.
 
-To read another agent's output, point `transcript` at a JavaScript module, resolved from the suite file's directory. Its default export takes the command's whole standard output and returns `{ answer, toolCalls, toolResults }`. Each call is `{ name, id?, args }` with `args` as JSON text, and each result is `{ name, isError, content? }`. It may also return `tokensInput` and `tokensOutput`. Throw when the output does not describe a finished run; the message becomes the case's harness-error reason. A decoder that can tell a run stopped at a limit returns the transcript with `outcome` set to the name of that ending, and `outcomeReason` set to the sentence to report when the case does not list it in [`grade_when`](#grading-a-run-that-hit-a-limit). A thrown error is never graded.
+To read another agent's output, point `transcript` at a JavaScript module, resolved from the suite file's directory. Its default export takes the command's whole standard output and returns `{ answer, toolCalls, toolResults }`. Each call is `{ name, id?, args }` with `args` as JSON text, and each result is `{ name, isError, content? }`. It may also return `tokensInput` and `tokensOutput`.
+
+How the decoder ends decides whether a case can be graded:
+
+- **A run that finished:** return the transcript with no `outcome`, or with `outcome: "success"`.
+- **A run that reached its end but stopped at a limit,** such as a step or budget cap: return what it did, with `outcome` set to a name for that ending, such as `"hit_step_limit"`, and `outcomeReason` set to the sentence to report when the case does not list that name in [`grade_when`](#grading-a-run-that-hit-a-limit). A case that lists it is graded on what you returned; any other case is a harness error with `outcomeReason` as its reason. `outcome` must be a non-empty string: any other value fails the case as a harness error naming the decoder.
+- **Output that does not describe a run that reached its end,** because it was cut off, is garbled or has no final result: throw. The message becomes the case's harness-error reason, and a thrown error is never graded, whatever `grade_when` lists.
 
 ```js
 // eval/my-agent-decoder.mjs

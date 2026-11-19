@@ -550,6 +550,25 @@ export function buildCommandRunCell(
       decodeError = error instanceof Error ? error.message : String(error);
     }
 
+    // BATCH-62 — `outcome` is part of the public decoder contract, so a custom decoder's value is
+    // checked before it can decide anything: it must be a non-empty string. Anything else is a
+    // harness error naming the decoder, whatever `grade_when` lists and whatever the exit code,
+    // because a malformed outcome cannot be matched against the list honestly; treating it as
+    // `success` would grade a run the decoder was trying to say did not finish.
+    if (decoded !== undefined && 'outcome' in decoded && decoded.outcome !== undefined) {
+      const value: unknown = decoded.outcome;
+      if (typeof value !== 'string' || value.trim() === '') {
+        return {
+          ok: false,
+          error: withStderr(
+            `transcript "${target.transcript}" returned an invalid outcome ` +
+              `${JSON.stringify(value) ?? String(value)}: it must be a non-empty string naming ` +
+              'how the run ended, or left out for a run that finished'
+          ),
+        };
+      }
+    }
+
     // BATCH-62 — a run that reached a terminal result but did not end in `success`. See
     // `gradedEnding` for when it is graded; otherwise it is the harness error the decoder used to
     // throw, with the decoder's own sentence as the reason, so a suite without `grade_when` reports
@@ -567,7 +586,11 @@ export function buildCommandRunCell(
           ...shapeOutcome(decoded, captureMaxBytes, options.recordToolCallArgs === true),
         };
       }
-      decodeError = decoded.outcomeReason || `the run ended with outcome "${outcome}"`;
+      const reason: unknown = decoded.outcomeReason;
+      decodeError =
+        typeof reason === 'string' && reason.trim() !== ''
+          ? reason
+          : `the run ended with outcome "${outcome}"`;
       decoded = undefined;
     }
 

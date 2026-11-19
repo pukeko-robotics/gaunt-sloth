@@ -28,6 +28,11 @@
  * finished one. Returning an outcome is how a decoder opts its own early endings in to being
  * gradeable at all; the suite author still has to list them.
  *
+ * `outcome` is part of the public contract for custom decoders (`docs/COMMANDS.md`, the command
+ * target). The runner validates it: a value that is set but is not a non-empty string is a harness
+ * error naming the decoder, never read as `success`. A non-string `outcomeReason` is ignored in
+ * favour of a generic sentence.
+ *
  * @module
  */
 
