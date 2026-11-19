@@ -41,6 +41,10 @@
 //                                                  with mode 000, and write the cwd to <recordfile>
 //                                                  first, so the spec can always clean it up
 //   fake-cli.mjs dangling <path> <prompt>          make <path> a link to a name that does not exist
+//   fake-cli.mjs link <file|dir> <target> <path> <prompt>
+//                                                  make <path> a link to <target>, as an agent
+//                                                  would during its run: a junction for a
+//                                                  directory on Windows, a symlink elsewhere
 import { spawn, spawnSync } from 'node:child_process';
 import {
   appendFileSync,
@@ -142,6 +146,11 @@ if (mode === 'edit-shared') {
   answer('done');
 } else if (mode === 'dangling') {
   symlinkSync('no-such-target.txt', rest[0], 'file');
+  answer('done');
+} else if (mode === 'link') {
+  const [kind, target, path] = rest;
+  const type = kind === 'dir' ? (process.platform === 'win32' ? 'junction' : 'dir') : 'file';
+  symlinkSync(target, path, type);
   answer('done');
 } else if (mode === 'replay') {
   replay(rest[0]);

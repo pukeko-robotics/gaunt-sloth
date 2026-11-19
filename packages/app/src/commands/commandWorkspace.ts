@@ -19,6 +19,14 @@
  *   into an absolute one pointing back into the template, so an agent writing through the link
  *   would edit the committed fixture. `cpSync` keeps file modes on POSIX, so an executable stub in
  *   the template stays executable.
+ * - **A junction in the template may arrive as a real directory on Windows.** Node 24's JS `cpSync`
+ *   (`lib/internal/fs/cp/cp-sync.js`) hands a recursive copy with no `filter` to the native
+ *   `cpSyncCopyDir`, whose source is not in this repository, so the JS does not say how it treats a
+ *   junction. The Windows cells show a template junction to an outside directory arriving as
+ *   something the containment check does not see as leading outside, which fits a copy of the
+ *   directory's contents. That is acceptable: the template is the suite author's, and trusted. What
+ *   the containment check guards against is a link the AGENT makes during its run, and the specs
+ *   pin that case on every platform.
  * - **Removal retries.** On Windows a process that has just exited (or a virus scanner) can hold a
  *   handle for a moment, and `rm` fails with `EBUSY`/`EPERM`; Node's `maxRetries` backs off and
  *   tries again. A removal that still fails is reported by the caller and never fails the case: the

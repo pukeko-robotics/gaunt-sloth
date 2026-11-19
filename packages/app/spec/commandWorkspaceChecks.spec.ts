@@ -32,9 +32,10 @@ const CAPTURE = resolve(HERE, '../../batch/spec/fixtures/claude-stream-json/capt
 
 /**
  * The link type for a link to a DIRECTORY. On Windows a junction, which any user may create, where a
- * directory symlink needs the create-symlink privilege. libuv reports a junction as a link to
- * `lstat` and to a `Dirent`, as it does a symlink; the Windows cell is what confirms it (the Node
- * docs do not say). The type argument is ignored on every other platform.
+ * directory symlink needs the create-symlink privilege. The Node docs do not say how `lstat` or a
+ * `Dirent` reports a junction; the walk spec, which makes one directly and lists it as a single
+ * entry it does not descend into, is what the Windows cells measure. The type argument is ignored
+ * on every other platform.
  */
 const DIR_LINK = process.platform === 'win32' ? 'junction' : 'dir';
 
@@ -182,23 +183,35 @@ describe('file_contains', () => {
     return { outsideDir, outsideFile };
   }
 
+  // The two escape specs below have the AGENT make its link, in its workspace, during the run: that
+  // is the threat the containment check exists for. A link put in the template instead is copied by
+  // BATCH-58's cpSync, which on Windows need not keep a junction as a link (see commandWorkspace.ts),
+  // so a template-made link would not test containment there at all.
+
   it('refuses to read a file that a file link leads out of the workspace', async (ctx) => {
     const { outsideFile } = outsideNeedle('fc-outside-file');
     const dir = suiteDir('fc-symlink-file');
     try {
-      // An absolute target, made at run time: the template copy keeps it as written, so the
-      // workspace's link leads out of it exactly as an agent-made link would.
-      symlinkSync(outsideFile, join(dir, 'fixture', 'leak.txt'), 'file');
+      // A probe link in scratch: a FILE link on Windows needs the create-symlink privilege (or
+      // Developer Mode), and a junction cannot point at a file. Without it the agent could not make
+      // the link either, so this case is skipped there and only there. The directory case below
+      // needs no privilege.
+      symlinkSync(outsideFile, join(dir, 'probe-link.txt'), 'file');
     } catch (error) {
-      // A FILE link on Windows needs the create-symlink privilege (or Developer Mode), and a
-      // junction cannot point at a file; without it there is no link to follow, so this case is
-      // skipped there and only there. The directory case below needs no privilege.
       if (process.platform === 'win32' && (error as NodeJS.ErrnoException).code === 'EPERM') {
         ctx.skip();
       }
       throw error;
     }
-    const summary = await run(suiteWith(dir, 'file_contains: { "leak.txt": "OUTSIDE-NEEDLE" }'));
+    const summary = await run(
+      suiteWith(dir, 'file_contains: { "leak.txt": "OUTSIDE-NEEDLE" }', '', [
+        'link',
+        'file',
+        outsideFile,
+        'leak.txt',
+      ])
+    );
+    expect(summary.cases[0].sutOk).toBe(true);
     expect(summary.cases[0].verdict).toBe('FAIL');
     expect(summary.cases[0].reasons).toHaveLength(1);
     expect(summary.cases[0].reasons[0]).toMatch(
@@ -209,11 +222,17 @@ describe('file_contains', () => {
   it('refuses to read a file that a directory link leads out of the workspace', async () => {
     const { outsideDir } = outsideNeedle('fc-outside-dir');
     const dir = suiteDir('fc-symlink-dir');
-    // A junction on Windows, which needs no privilege, so this case runs on every cell.
-    symlinkSync(outsideDir, join(dir, 'fixture', 'leakdir'), DIR_LINK);
+    // The agent makes a junction on Windows, which needs no privilege, so this case runs on every
+    // cell and is never skipped: a PASS on Windows would be a real escape.
     const summary = await run(
-      suiteWith(dir, 'file_contains: { "leakdir/secret.txt": "OUTSIDE-NEEDLE" }')
+      suiteWith(dir, 'file_contains: { "leakdir/secret.txt": "OUTSIDE-NEEDLE" }', '', [
+        'link',
+        'dir',
+        outsideDir,
+        'leakdir',
+      ])
     );
+    expect(summary.cases[0].sutOk).toBe(true);
     expect(summary.cases[0].verdict).toBe('FAIL');
     expect(summary.cases[0].reasons).toHaveLength(1);
     expect(summary.cases[0].reasons[0]).toMatch(
