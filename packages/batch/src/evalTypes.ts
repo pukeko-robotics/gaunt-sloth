@@ -825,6 +825,36 @@ export interface EvalCase {
    * and only when the case has a {@link workspace}, so every other case keeps its exact shape.
    */
   workspaceChecks?: WorkspaceChecks;
+  /**
+   * BATCH-60 — how many independent times the case runs: the case's `repeat`, else the suite's
+   * `defaults.repeat`. Set only when that is more than 1, so a case that runs once keeps the exact
+   * shape it had before repeats existed. Always set together with {@link passRate}.
+   */
+  repeat?: number;
+  /**
+   * BATCH-60 — the share of {@link repeat} runs that must pass, in `(0, 1]`: the case's
+   * `pass_rate`, else the suite's `defaults.pass_rate`, else 1 (every run must pass). Compared in
+   * whole percents (`evalRepeat.ts`). Set only together with {@link repeat}.
+   */
+  passRate?: number;
+}
+
+/**
+ * BATCH-60 — the pass rate of a repeated case, as reported in its result. The percentages are the
+ * whole numbers the verdict was decided on, so a reader (or a reporter package, which cannot call
+ * batch's helpers) never re-derives them and never rounds differently.
+ */
+export interface EvalRepeatSummary {
+  /** How many times the case ran. */
+  runs: number;
+  /** How many of those runs passed. */
+  passed: number;
+  /** `round(100 × passed / runs)`. */
+  ratePercent: number;
+  /** The declared `pass_rate`, as authored. */
+  passRate: number;
+  /** `round(100 × passRate)`: the case passes when {@link ratePercent} is at least this. */
+  requiredPercent: number;
 }
 
 /**
@@ -1114,6 +1144,20 @@ export interface EvalCaseResult {
   /** BATCH-25 — the case's family tags, echoed here so a single `<id>.json` is self-describing and
    * a per-tag re-aggregation needs nothing else. Omitted when the case declares none. */
   tags?: string[];
+  /**
+   * BATCH-60 — the pass rate of a case that ran more than once. Omitted entirely for a case that
+   * ran once, so its output keeps the exact shape it had before repeats existed. When present, the
+   * top-level `verdict`, `sutOk` and `reasons` are the case's, decided by the rate; the single-run
+   * fields (`answer`, `tools`, `checks`, `judge`, …) are left unset, and each run's are in
+   * {@link runs}. `durationMs` is the SUM of the runs' durations (the work done, not wall-clock
+   * time: under `-j` runs overlap).
+   */
+  repeat?: EvalRepeatSummary;
+  /** BATCH-60 — each run of a repeated case, graded on its own, in run order. Present iff
+   * {@link repeat} is. */
+  runs?: EvalCaseResult[];
+  /** BATCH-60 — on an entry of {@link runs} only: its 1-based run number. */
+  run?: number;
 }
 
 /**

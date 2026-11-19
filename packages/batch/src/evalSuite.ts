@@ -26,6 +26,7 @@ import {
   FORCED_BY_MECHANISMS,
 } from '#src/evalTypes.js';
 import { compileWorkspaceGlob, findWorkspacePathProblem } from '#src/workspaceChecks.js';
+import { MAX_EVAL_REPEAT, toWholePercent } from '#src/evalRepeat.js';
 import type {
   CommandWorkspace,
   WorkspaceAfterExpectation,
@@ -259,6 +260,34 @@ const RawAfterStepSchema = suiteObject({
   exit_code: z.number().int('after exit_code must be an integer').optional(),
 });
 
+/**
+ * BATCH-60 — `repeat`: how many independent times a case runs. Each rejection guards a different
+ * mistake:
+ * - **0 or less** would run nothing and report a verdict about no runs.
+ * - **A fraction** has no meaning as a run count, and rounding it would run a number of times the
+ *   author did not write.
+ * - **Over {@link MAX_EVAL_REPEAT}** is almost always a typo, and every run is a billed agent run
+ *   plus its judge calls. The cap is the point past which the whole-percent rate gains nothing.
+ */
+const RawRepeatSchema = z
+  .number()
+  .int('repeat must be a whole number of runs')
+  .min(1, 'repeat must be at least 1')
+  .max(MAX_EVAL_REPEAT, `repeat must be at most ${MAX_EVAL_REPEAT}`);
+
+/**
+ * BATCH-60 — `pass_rate`: the share of runs that must pass, in `(0, 1]`.
+ * - **0** is rejected because it would make every case pass, whatever its runs did. So is any
+ *   value that rounds to 0% (under 0.005): the rate is compared in whole percents, so such a value
+ *   is 0 by another route. That check is in code (`resolveCaseRepeat`), since its message needs
+ *   the case.
+ * - **Over 1** asks for more runs to pass than ran, so no case could ever pass.
+ */
+const RawPassRateSchema = z
+  .number()
+  .gt(0, 'pass_rate must be greater than 0 (0 would pass every case)')
+  .max(1, 'pass_rate must be at most 1 (more runs cannot pass than ran)');
+
 const RawCaseSchema = RawAssertionsSchema.extend({
   id: z
     .string()
@@ -304,6 +333,9 @@ const RawCaseSchema = RawAssertionsSchema.extend({
   file_contains: z.record(z.string(), z.union([z.string(), z.array(z.string())])).optional(),
   must_not_exist: z.array(z.string()).optional(),
   after: z.array(RawAfterStepSchema).optional(),
+  // BATCH-60: this case's run count and required pass rate, overriding `defaults`. Every target.
+  repeat: RawRepeatSchema.optional(),
+  pass_rate: RawPassRateSchema.optional(),
   // BATCH-34: accepted at case level ONLY so a misplaced one is an error instead of a silence.
   // Negotiation context is per-round and belongs on a `turns:` entry — see the guard in the parse.
   justification: z.string().optional(),
@@ -438,6 +470,9 @@ const RawSuiteSchema = suiteObject({
     // BATCH-58: every case's workspace unless the case declares its own. `command` target only.
     // `false` is a case-level opt-out and means nothing here, so only the object is accepted.
     workspace: RawWorkspaceSchema.optional(),
+    // BATCH-60: every case's run count and required pass rate unless the case sets its own.
+    repeat: RawRepeatSchema.optional(),
+    pass_rate: RawPassRateSchema.optional(),
   }).optional(),
   // BATCH-25: the classifier layer. All three are optional and inert when absent, so every #405-era
   // suite parses to exactly the same `EvalSuite` it did before.
@@ -1210,6 +1245,7 @@ export function parseEvalSuite(
         : {}),
       ...caseWorkspace,
       ...(workspaceChecks !== undefined ? { workspaceChecks } : {}),
+      ...resolveCaseRepeat(rawCase, data.defaults, suffix),
     };
   });
 
@@ -1457,6 +1493,43 @@ function buildCommandTarget(
     );
   }
   return { type: 'command', run, argv, transcript, prompt: raw.prompt ?? 'arg' };
+}
+
+/**
+ * BATCH-60 — the case's run count and required pass rate: its own, else the suite default.
+ *
+ * Spread into the case, and only when the effective `repeat` is more than 1, so a case that runs
+ * once parses to exactly the shape it had before repeats existed. A repeated case with no
+ * `pass_rate` anywhere requires every run to pass (a rate of 1).
+ *
+ * **`pass_rate` at `repeat: 1` is accepted and ignored**, not rejected. At one run the rate is 0%
+ * or 100% and any accepted `pass_rate` requires at least 1%, so it decides nothing the plain
+ * verdict does not. Rejecting it would refuse `defaults: { repeat: 3, pass_rate: 0.67 }` for a case
+ * that overrides `repeat: 1`, over a default the case never wrote.
+ *
+ * A `pass_rate` that rounds to 0% is rejected here, wherever it is written: the rate is compared in
+ * whole percents (`evalRepeat.ts`), so such a value would pass every case exactly as 0 would.
+ */
+function resolveCaseRepeat(
+  rawCase: { id: string; repeat?: number; pass_rate?: number },
+  defaults: { repeat?: number; pass_rate?: number } | undefined,
+  suffix: string
+): { repeat?: number; passRate?: number } {
+  for (const [where, value] of [
+    ['defaults.pass_rate', defaults?.pass_rate],
+    [`case "${rawCase.id}" pass_rate`, rawCase.pass_rate],
+  ] as const) {
+    if (value !== undefined && toWholePercent(value) < 1) {
+      throw new Error(
+        `Invalid eval suite${suffix}: ${where} is ${value}, which rounds to 0%. The pass rate is ` +
+          'compared in whole percents, so this would pass every case whatever its runs did. Use ' +
+          '0.01 (1%) or more.'
+      );
+    }
+  }
+  const repeat = rawCase.repeat ?? defaults?.repeat ?? 1;
+  if (repeat <= 1) return {};
+  return { repeat, passRate: rawCase.pass_rate ?? defaults?.pass_rate ?? 1 };
 }
 
 /**
