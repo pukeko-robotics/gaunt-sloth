@@ -530,7 +530,7 @@ A suite is a single YAML document with these top-level keys:
 |-----|----------|---------|
 | `target` | yes | The system under test. `type` is `gth-agent` (the in-process agent, the default choice; `profile` is optional and, if set, must be `default`), `adk-agent` (an external Google ADK agent over A2A; requires `url`), `ag-ui` (an external agent over the AG-UI protocol; requires `url` and `agent_id`), `rater` (gth's own approvals rater, graded as a classifier; requires `rung` — see [The rater target](#the-rater-target)), or `command` (a command-line agent such as Claude Code, started once per case; requires `run` and `transcript` — see [The command target](#the-command-target)). |
 | `cases` | yes | A non-empty list of cases (below). |
-| `defaults` | no | Suite-wide defaults. `defaults.pass_threshold` (0–10) is the judge score gate applied to any case that doesn't set its own; the built-in default is `6`. `defaults.timeout_ms` is the per-case time limit of a `command` target, and `defaults.workspace` its per-case [workspace](#workspaces). |
+| `defaults` | no | Suite-wide defaults. `defaults.pass_threshold` (0–10) is the judge score gate applied to any case that doesn't set its own; the built-in default is `6`. `defaults.timeout_ms` is the per-case time limit of a `command` target, and `defaults.workspace` its per-case [workspace](#workspaces). `defaults.repeat` and `defaults.pass_rate` run every case several times and pass it at a rate; see [Repeated cases](#repeated-cases). |
 | `description` | no | Free text describing the suite. Documentation only; it does not affect grading. |
 | `judge_profile` | no | Identity profile whose model grades `judge:` rubrics. See [Judging](#judging) below. |
 | `identities` | no | The identity matrix — run every case once per listed profile. See [Identity matrix](#identity-matrix) below. |
@@ -926,6 +926,44 @@ cases:
 Turn 2 (`How many did you just list?`) only makes sense because it shares the conversation with turn 1. A `(case × identity)` cell passes only if **every** turn's applicable assertions pass; when one fails, the report names the failing turn (`turn N: …`).
 
 On a [`rater`](#the-rater-target) suite the same `turns:` array means something else — the rounds of one negotiation, with two keys of their own. See [Negotiation cases](#negotiation-cases).
+
+### Repeated cases
+
+An agent answers the same prompt differently from run to run, so one green run proves little. `repeat` runs a case several independent times, and `pass_rate` says how many of those runs must pass.
+
+Say the agent should use the `read_file` tool before it answers, and you want to know it does so reliably rather than once:
+
+```yaml
+target: { type: gth-agent }
+defaults: { repeat: 3, pass_rate: 0.67 }
+cases:
+  - id: reads-before-answering
+    prompt: "What does src/greet.mjs export?"
+    must_call: [read_file]
+  - id: never-deletes
+    prompt: "Tidy up the src directory"
+    must_not_call: [delete_file]
+    pass_rate: 1
+```
+
+Each case runs three times. `reads-before-answering` passes when two of its three runs pass. `never-deletes` passes only when all three do, because one deletion is one too many.
+
+| Key | Meaning |
+|-----|---------|
+| `repeat` | How many times the case runs: a whole number from 1 to 100. The default is 1. |
+| `pass_rate` | The share of runs that must pass, greater than 0 and at most 1. Without it a repeated case needs every run to pass. At `repeat: 1` it changes nothing, since one run passes or fails on its own. |
+
+Both can be set in `defaults` and on a case, and a case's value wins. They apply to every target, and in an [identity matrix](#identity-matrix) or a [sweep](#config-sweep) every cell repeats. A multi-turn case repeats as a whole conversation.
+
+**The rate is compared in whole percents, the number the report prints.** A case passes when `round(100 × passes / runs)` is at least `round(100 × pass_rate)`, rounding halves up. So 2 of 3 runs passing is 67%, which meets `pass_rate: 0.67` and falls short of `0.68`. A `pass_rate` that rounds to 0%, below 0.005, is rejected along with 0, because it would pass every case.
+
+**A run that did not finish fails the whole case as a harness error.** When any run's agent could not run (it timed out, failed to start, or produced nothing to grade), the case reports `sutOk: false` and no rate is computed from the runs that did finish: a run that never completed is not evidence about the agent. The exit code then follows the [usual rule](#exit-codes-eval): `2` when every case of the run is a harness error, `1` when other cases produced results.
+
+Every run is graded on its own, with its own assertions and its own judge call. **A case with `repeat: 3` costs three agent runs and three times its judge calls**, so a suite with `defaults: { repeat: 5 }` costs five times as much as one without it. On a [classifier suite](#classifier-suites) each run is a separate cell of the confusion matrix and of every metric's denominator, named `<id>#run<n>`, and every run's tools count toward [tool coverage](#tool-coverage).
+
+Each run is an independent unit of work. With `-j` the runs of one case run in parallel like separate cases, and on a `command` target each run gets its own fresh [workspace](#workspaces).
+
+A repeated case is still one result. The console row reads `PASS  reads-before-answering (2/3 runs passed, 67%, needs 67%)`, with each run's outcome on the row after it. In `results.json` and the case's `<id>.json` the case carries a `repeat` object (`runs`, `passed`, `ratePercent`, `passRate`, `requiredPercent`) and a `runs` array holding each run's full result. JUnit and TeamCity report one test per case, not one per run: a failing case's message starts with its rate, and every run's outcome is in the test's output. A case that runs once writes exactly the output it always has.
 
 ### Tool coverage
 
@@ -1356,6 +1394,8 @@ gth eval eval/rater.yaml -o out/today --compare-to out/yesterday
 
 It reports verdict **regressions** (PASS → FAIL), verdict **fixes**, **reclassifications**, **judge-score drift**, and **metric deltas**. Reclassification is the one a pass-rate comparison cannot see: a case can keep its verdict while the label underneath it moves, which is exactly what editing a rating prompt does. If the two runs do not cover the same cases it says so — a case that disappeared cannot regress, so "no regressions" there is not "nothing broke".
 
+For a [repeated case](#repeated-cases) it also tells two kinds of decline apart. A case whose pass rate fell but stayed above zero is listed as **FLAKY** (`3/3 (100%) → 2/3 (67%)`): the agent still does it, just not every time. One whose rate fell to zero is listed as **BROKE**. A case that ran once on one side counts as `1/1 (100%)` or `0/1 (0%)` by its verdict, so a repeated run can be compared with an ordinary baseline. When neither side repeated the case, a fall is reported only as a regression. A case that was a harness error on either side has no rate and is in neither list.
+
 #### Judge-score drift
 
 A verdict is a cliff: a case graded 10, then 8, then 7 against a `pass_threshold` of 6 is `PASS` every time, and the diff says `no change.` until the run it finally drops to 5. For an LLM-graded suite that slide **is** the regression — the flip is just the moment it becomes undeniable. `--compare-to` therefore also reports how each case's judge score moved:
@@ -1428,6 +1468,10 @@ gth eval eval/authz-matrix.yaml -j 8 -o eval/out/authz
 
 # Gate a CI step on the suite result
 gth eval eval/js-basics.yaml || echo "eval failed (exit $?)"
+
+# A suite with `defaults: { repeat: 3, pass_rate: 0.67 }`, its runs in parallel, diffed
+# against yesterday's run to see which cases turned flaky and which broke
+gth eval eval/tool-use.yaml -j 3 -o out/today --compare-to out/yesterday
 
 # A classifier suite: confusion matrix, per-tag sub-scores, and metric-gated exit
 gth eval eval/rater.yaml

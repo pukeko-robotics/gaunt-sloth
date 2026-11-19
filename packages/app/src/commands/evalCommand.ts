@@ -677,6 +677,8 @@ export function evalCommand(
         '  $ gth eval eval/js-basics.yaml --reporter junit\n' +
         '  $ gth eval eval/js-basics.yaml --reporter text,junit\n' +
         "  $ gth eval eval/claude-fixes.yaml -j 2 --keep-workspaces  # keep each case's workspace\n" +
+        '  $ gth eval eval/tool-use.yaml -j 3 -o out/today --compare-to out/yesterday\n' +
+        '    # a suite with `defaults: { repeat: 3, pass_rate: 0.67 }`: flaky vs broke cases\n' +
         '\n' +
         'Classifier suites (BATCH-25):\n' +
         '  A suite that declares `classification: { labels: [...] }` grades `expect_label` /\n' +

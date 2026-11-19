@@ -343,6 +343,34 @@ said about a floored command. A metric on `actual.label` whose denominator holds
 in its own warnings. See
 [Commands → eval → Declared metrics](../COMMANDS.md#declared-metrics).
 
+## Find out how reliably the agent does it
+
+Goal: know whether the agent reads the file before it answers most of the time, not just on the one
+run you happened to watch. Run each case several times and pass it at a rate:
+
+```yaml
+target: { type: gth-agent }
+defaults: { repeat: 3, pass_rate: 0.67 }
+cases:
+  - id: reads-before-answering
+    prompt: "What does src/greet.mjs export?"
+    must_call: [read_file]
+```
+
+```bash
+gth eval eval/tool-use.yaml -j 3 -o out/today
+```
+
+The case passes when two of its three runs pass, and its row shows the rate:
+`PASS  reads-before-answering (2/3 runs passed, 67%, needs 67%)`. The rate is compared in whole
+percents, the number printed. A run whose agent could not run at all fails the case as a harness
+error rather than counting as a failed run. Every run is a full agent run with its own judge calls,
+so `repeat: 3` triples what the suite costs.
+
+Re-run it later with `--compare-to out/today` and the diff lists a case whose rate fell as
+**FLAKY**, and one that fell to zero as **BROKE**. See
+[Commands → eval → Repeated cases](../COMMANDS.md#repeated-cases) for every rule.
+
 ## Wire it into CI
 
 Point `eval` at a whole directory to run every suite in it under one aggregate exit code, and add
