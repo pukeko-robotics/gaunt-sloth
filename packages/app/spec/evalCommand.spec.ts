@@ -296,6 +296,71 @@ cases:
     expect(systemUtilsMock.setExitCode).not.toHaveBeenCalled();
   });
 
+  it('BATCH-60: puts the FLAKY and BROKE lists of --compare-to on the warning channel', async () => {
+    fileUtilsMock.readFileFromProjectDir.mockImplementation((file: string) => {
+      if (file === 'repeat-compare-suite.yaml') {
+        return `
+target: { type: gth-agent }
+defaults: { repeat: 3, pass_rate: 0.67 }
+cases:
+  - { id: wobbles, prompt: "greet", must_contain: ["hello"] }
+  - { id: stopped, prompt: "greet", must_contain: ["hello"] }
+`;
+      }
+      throw new Error(`unexpected file read: ${file}`);
+    });
+    // `wobbles` passes 2 of 3 (still PASS at 0.67, so only FLAKY can report it); `stopped` passes
+    // none (BROKE).
+    runSingleShot.mockImplementation(async (source: string) => ({
+      ok: true,
+      answer: source === 'EVAL-wobbles-run-2' || source.startsWith('EVAL-stopped') ? 'no' : 'hello',
+    }));
+    const baselineDir = mkdtempSync(join(tmpdir(), 'batch60-t2-baseline-'));
+    try {
+      const allPass = (id: string) => ({
+        id,
+        verdict: 'PASS',
+        passThreshold: 6,
+        sutOk: true,
+        durationMs: 3,
+        reasons: [],
+        repeat: { runs: 3, passed: 3, ratePercent: 100, passRate: 0.67, requiredPercent: 67 },
+        runs: [],
+      });
+      writeFileSync(
+        join(baselineDir, 'results.json'),
+        JSON.stringify({
+          total: 2,
+          passed: 2,
+          failed: 0,
+          cases: [allPass('wobbles'), allPass('stopped')],
+        })
+      );
+      const { evalCommand } = await import('#src/commands/evalCommand.js');
+      const program = new Command();
+      evalCommand(program, {});
+      await program.parseAsync([
+        'na',
+        'na',
+        'eval',
+        'repeat-compare-suite.yaml',
+        '-o',
+        outputDir,
+        '--compare-to',
+        baselineDir,
+      ]);
+
+      const warned = consoleUtilsMock.displayWarning.mock.calls.map((call) => String(call[0]));
+      const shown = consoleUtilsMock.display.mock.calls.map((call) => String(call[0]));
+      expect(warned).toContain('  FLAKY (1):');
+      expect(warned).toContain('  BROKE (1):');
+      expect(shown).not.toContain('  FLAKY (1):');
+      expect(shown).not.toContain('  BROKE (1):');
+    } finally {
+      rmSync(baselineDir, { recursive: true, force: true });
+    }
+  });
+
   it('runs a checks-only case through runSingleShot in ask mode and exits 0 on PASS', async () => {
     const { evalCommand } = await import('#src/commands/evalCommand.js');
     const program = new Command();
