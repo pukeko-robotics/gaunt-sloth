@@ -7,6 +7,10 @@ import {
 } from '#src/providers/configurationPassthrough.js';
 import { env } from '#src/utils/systemUtils.js';
 import { GTH_MAX_RETRIES } from '#src/core/retryPolicy.js';
+import {
+  dropAnthropicSamplingSettings,
+  formatDroppedSamplingWarning,
+} from '#src/providers/anthropicSampling.js';
 import type { AnthropicInput } from '@langchain/anthropic';
 import type {
   BaseChatModel,
@@ -35,10 +39,19 @@ export async function processJsonConfig(
       'base URL, a timeout or extra headers under "clientOptions" in the "llm" block, or set ' +
       '"anthropicApiUrl" there for the base URL alone.',
   });
+  const model = llmConfig.model || getCuratedFallbackModel('anthropic');
+  // The Anthropic API version the SDK sends (2026-10-21) rejects `temperature`, `top_p` and
+  // `top_k` with a 400 on every model, even at the default value, so every configured value is
+  // dropped here, with one warning naming each. The full reasoning and the routes covered are in
+  // the docblock of `anthropicSampling.ts`.
+  const { config: samplingFreeConfig, dropped } = dropAnthropicSamplingSettings(llmConfig);
+  if (dropped.length > 0) {
+    displayWarning(formatDroppedSamplingWarning(model, dropped));
+  }
   return new anthropic.ChatAnthropic({
-    ...llmConfig,
+    ...samplingFreeConfig,
     apiKey: anthropicApiKey,
-    model: llmConfig.model || getCuratedFallbackModel('anthropic'),
+    model,
     // A default, never an override: a user's own value wins. See GTH_MAX_RETRIES.
     maxRetries: llmConfig.maxRetries ?? GTH_MAX_RETRIES,
   });
