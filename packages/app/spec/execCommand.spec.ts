@@ -221,6 +221,58 @@ describe('execCommand', () => {
 
     const passedConfig = runSingleShot.mock.calls[0][3];
     expect(passedConfig.llm.temperature).toBe(0);
+    expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+  });
+
+  it('does not apply --temperature to an Anthropic model, and warns once naming model and value', async () => {
+    configMock.initConfig.mockResolvedValue({
+      ...mockConfig,
+      llm: {
+        invoke: vi.fn(),
+        temperature: undefined,
+        model: 'claude-haiku-4-5-20251001',
+        _llmType: () => 'anthropic',
+      },
+    });
+    const { execCommand } = await import('#src/commands/execCommand.js');
+    const program = new Command();
+    execCommand(program, {});
+    await program.parseAsync(['na', 'na', 'exec', 'script.md', '--temperature', '0']);
+
+    const passedConfig = runSingleShot.mock.calls[0][3];
+    expect(passedConfig.llm.temperature).toBeUndefined();
+    expect(consoleUtilsMock.displayWarning).toHaveBeenCalledTimes(1);
+    const warning = consoleUtilsMock.displayWarning.mock.calls[0][0] as string;
+    expect(warning).toContain('-t 0');
+    expect(warning).toContain('claude-haiku-4-5-20251001');
+  });
+
+  it('prints no temperature warning for an Anthropic model when -t is not given', async () => {
+    configMock.initConfig.mockResolvedValue({
+      ...mockConfig,
+      llm: { invoke: vi.fn(), temperature: undefined, _llmType: () => 'anthropic' },
+    });
+    const { execCommand } = await import('#src/commands/execCommand.js');
+    const program = new Command();
+    execCommand(program, {});
+    await program.parseAsync(['na', 'na', 'exec', 'script.md']);
+
+    expect(runSingleShot.mock.calls[0][3].llm.temperature).toBeUndefined();
+    expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
+  });
+
+  it('still applies --temperature to a non-Anthropic model that names its type', async () => {
+    configMock.initConfig.mockResolvedValue({
+      ...mockConfig,
+      llm: { invoke: vi.fn(), temperature: 0.7, _llmType: () => 'openai' },
+    });
+    const { execCommand } = await import('#src/commands/execCommand.js');
+    const program = new Command();
+    execCommand(program, {});
+    await program.parseAsync(['na', 'na', 'exec', 'script.md', '--temperature', '0.2']);
+
+    expect(runSingleShot.mock.calls[0][3].llm.temperature).toBe(0.2);
+    expect(consoleUtilsMock.displayWarning).not.toHaveBeenCalled();
   });
 
   it('sets a non-zero exit code when the run fails', async () => {

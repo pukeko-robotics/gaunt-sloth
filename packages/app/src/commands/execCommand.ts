@@ -9,6 +9,7 @@ import { readMultipleFilesFromProjectDir } from '@gaunt-sloth/core/utils/fileUti
 import type { ConversationRef } from '@gaunt-sloth/core/history/conversationRef.js';
 import type { SingleShotResume } from '@gaunt-sloth/core/runtime/singleShot.js';
 import { resumeOption } from '#src/commands/resumeOption.js';
+import { isAnthropicChatModel } from '@gaunt-sloth/core/providers/anthropicSampling.js';
 
 export interface ExecCommandOptions {
   file?: string[];
@@ -65,7 +66,22 @@ export function buildExecConfig(
   // Best-effort determinism knob. LangChain chat models expose `temperature` as a mutable field;
   // setting it to 0 (the recommended exec default) makes runs as reproducible as the provider
   // allows. Guard with `in` so providers without the field are left untouched.
-  if (options.temperature !== undefined && execConfig.llm && 'temperature' in execConfig.llm) {
+  //
+  // Anthropic is the exception: its API rejects any `temperature` with a 400, even the default, and
+  // a ChatAnthropic declares the field even when unset, so the `in` guard alone would write it onto
+  // the request. The anthropic provider drops configured values for the same reason; see
+  // `anthropicSampling.ts` in core.
+  if (options.temperature !== undefined && isAnthropicChatModel(execConfig.llm)) {
+    const model = (execConfig.llm as unknown as { model?: string }).model ?? 'unknown';
+    displayWarning(
+      `Anthropic no longer accepts a sampling temperature on any model; ` +
+        `ignoring -t ${options.temperature} for model "${model}".`
+    );
+  } else if (
+    options.temperature !== undefined &&
+    execConfig.llm &&
+    'temperature' in execConfig.llm
+  ) {
     (execConfig.llm as unknown as { temperature: number }).temperature = options.temperature;
   }
 
@@ -103,7 +119,7 @@ export function execCommand(
     )
     .option(
       '-t, --temperature <number>',
-      'LLM sampling temperature for this run (0 = most deterministic)',
+      'LLM sampling temperature for this run (0 = most deterministic). Anthropic models ignore it with a warning.',
       parseFloat
     )
     .option(
