@@ -75,7 +75,8 @@ export function buildExecConfig(
     const model = (execConfig.llm as unknown as { model?: string }).model ?? 'unknown';
     displayWarning(
       `Anthropic no longer accepts a sampling temperature on any model; ` +
-        `ignoring -t ${options.temperature} for model "${model}".`
+        `ignoring -t ${options.temperature} for model "${model}". ` +
+        'The model samples at its own default; run without -t to silence this warning.'
     );
   } else if (
     options.temperature !== undefined &&

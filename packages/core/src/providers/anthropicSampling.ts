@@ -80,7 +80,7 @@ export function formatDroppedSamplingWarning(
   return (
     `Anthropic no longer accepts sampling settings (temperature, top_p, top_k) on any model; ` +
     `ignoring ${list} from the "llm" config for model "${model ?? 'unknown'}". ` +
-    'The model samples at its own defaults.'
+    'The model samples at its own defaults. Remove these settings from the config to silence this warning.'
   );
 }
 
