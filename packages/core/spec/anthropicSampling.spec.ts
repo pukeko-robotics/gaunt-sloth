@@ -112,6 +112,8 @@ describe('anthropic provider drops sampling settings', () => {
     ],
     ['invocationKwargs.top_p', { invocationKwargs: { top_p: 0.5 } }, 'invocationKwargs.top_p 0.5'],
     ['invocationKwargs.top_k', { invocationKwargs: { top_k: 7 } }, 'invocationKwargs.top_k 7'],
+    ['invocationKwargs.topP', { invocationKwargs: { topP: 0.4 } }, 'invocationKwargs.topP 0.4'],
+    ['invocationKwargs.topK', { invocationKwargs: { topK: 4 } }, 'invocationKwargs.topK 4'],
   ])('drops %s from the request and warns once naming it', async (_label, setting, named) => {
     const { body } = await sendThroughProvider(setting);
 
@@ -120,6 +122,18 @@ describe('anthropic provider drops sampling settings', () => {
     const warning = consoleUtilsMock.displayWarning.mock.calls[0][0] as string;
     expect(warning).toContain(named);
     expect(warning).toContain(MODEL);
+  });
+
+  it('names the curated fallback model in the warning when no model is configured', async () => {
+    const { getCuratedFallbackModel } = await import('#src/providers/modelDiscovery.js');
+    const fallback = getCuratedFallbackModel('anthropic');
+
+    const { body } = await sendThroughProvider({ model: undefined, temperature: 0 });
+
+    expect(body.model).toBe(fallback);
+    expect(consoleUtilsMock.displayWarning).toHaveBeenCalledTimes(1);
+    const warning = consoleUtilsMock.displayWarning.mock.calls[0][0] as string;
+    expect(warning).toContain(`model "${fallback}"`);
   });
 
   it('names every dropped setting in one warning and keeps other invocationKwargs', async () => {
