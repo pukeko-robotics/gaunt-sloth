@@ -121,6 +121,12 @@ takes its client options from `clientOptions`, so a `configuration` block reache
 reported as ignored when the provider starts. Put a custom base URL, a timeout or extra headers
 under `clientOptions` in the `llm` block, or set `anthropicApiUrl` there for the base URL alone.
 
+**Sampling settings are ignored.** The Anthropic API rejects `temperature`, `top_p` and `top_k` on
+every model, even at their default values, so Gaunt Sloth removes `temperature`, `topP` and `topK`
+from the `llm` block (and `temperature`, `top_p` and `top_k` from `invocationKwargs`) and prints a
+warning naming each one. `gth exec -t` is ignored the same way. A `.gsloth.config.mjs` that builds
+its own `ChatAnthropic` is not filtered, so leave these settings out of it.
+
 ### Groq
 
 ```bash

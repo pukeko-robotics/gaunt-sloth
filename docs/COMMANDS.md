@@ -290,7 +290,7 @@ gth exec [script]
 ### Options
 - `-m, --message <text>` - Inline prompt text to execute instead of a script file path. Cannot be combined with `[script]`.
 - `-f, --file [files...]` - Additional context files. Their content is added BEFORE the script.
-- `-t, --temperature <number>` - LLM sampling temperature for this run (`0` = most deterministic).
+- `-t, --temperature <number>` - LLM sampling temperature for this run (`0` = most deterministic). Anthropic models ignore it with a warning; see [Anthropic](configuration/providers.md#anthropic).
 - `--resume <id>` - Continue a recorded conversation with the `-m` text as the next message. Only `-m` can carry the new input: a script path, `-f` files, or a script on stdin is refused, and nothing runs. See [Resuming a conversation](#resuming-a-conversation).
 - `--allow-dir <path>` - **Has no effect in this release** (repeatable). It widened filesystem access beyond the cwd for the deepagents backend, which has been removed; the flag still parses and warns on use, and the agent reads and writes within the working directory only.
 

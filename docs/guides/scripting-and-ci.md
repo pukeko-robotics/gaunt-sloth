@@ -62,7 +62,8 @@ fails), see [Review code and pull requests](review-code-and-prs.md) and
 When the prompt is fixed and you want the same input to give as close to the same output as the
 provider allows, use `exec` instead of `ask`. `exec` runs a markdown "prompt-executable" and, unlike
 `ask`, cannot be interrupted with ESC (there is no interactive user). Pass `-t 0` to pin the sampling
-temperature to its most deterministic setting:
+temperature to its most deterministic setting (Anthropic models ignore it with a warning; see
+[Anthropic](../configuration/providers.md#anthropic)):
 
 ```bash
 gth exec -m "List the section headings in CHANGELOG.md as a bullet list." -t 0 < CHANGELOG.md
