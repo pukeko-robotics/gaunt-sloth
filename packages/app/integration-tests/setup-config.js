@@ -175,7 +175,8 @@ if (fs.existsSync(workdirReviewPath)) {
 for (const suffix of ['', '-wal', '-shm']) {
   const stale = `${historyDbPath}${suffix}`;
   if (!fs.existsSync(stale)) continue;
-  fs.unlinkSync(stale);
+  // The store is a directory (an index plus one file per thread), so remove it recursively.
+  fs.rmSync(stale, { recursive: true, force: true });
   console.log(`Removed workdir/${path.basename(stale)}`);
 }
 
