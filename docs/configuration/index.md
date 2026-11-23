@@ -107,10 +107,11 @@ project's, and fails if you have no global `devops` profile:
 gth -g -i devops pr 42
 ```
 
-`-g` scopes **configuration** only; it is not a boundary around the project directory. Prompt files
-([guidelines, review checklist and the rest](prompts.md)) still resolve from the working directory
-as usual, falling back to the built-in defaults — so a project's own guidelines or review prompt are
-read into the prompt under `-g` just as they are without it.
+Under `-g`, [prompt files](prompts.md) (guidelines, review checklist and the rest, and any path a
+`prompts` entry names) are looked up first in the directory the configuration came from —
+`~/.gsloth/` or `~/.gsloth/.gsloth-settings/<name>/` — then in the working directory as usual, then
+in the built-in defaults. So a prompt file kept next to a global config is used, and a project's own
+guidelines or review prompt are still read when the global directory has no file of that name.
 
 `-g` and `-c` cannot be combined: both choose where configuration comes from, so passing the pair
 is rejected rather than silently honouring one of them.

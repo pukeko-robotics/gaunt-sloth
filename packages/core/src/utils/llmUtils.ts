@@ -50,7 +50,7 @@ const PROMPT_SEGMENT_FILES: Record<PromptSegmentName, string> = {
 /** The config slice every prompt-segment read needs. */
 type PromptReadConfig = Pick<
   GthConfig,
-  'prompts' | 'identityProfile' | 'noDefaultPrompts' | 'scopedPrompts'
+  'prompts' | 'identityProfile' | 'noDefaultPrompts' | 'scopedPrompts' | 'globalConfigDir'
 >;
 
 /**
@@ -115,9 +115,10 @@ const SCOPED_SEGMENT_NAMES: readonly PromptSegmentName[] = [
  */
 export function resolveScopedSegmentPath(
   path: string,
-  identityProfile: string | undefined
+  identityProfile: string | undefined,
+  globalConfigDir?: string
 ): { resolved: string; exists: boolean } {
-  const resolved = getGslothConfigReadPath(path, identityProfile);
+  const resolved = getGslothConfigReadPath(path, identityProfile, globalConfigDir);
   return { resolved, exists: existsSync(resolved) };
 }
 
@@ -131,7 +132,7 @@ export function resolveScopedSegmentPath(
  */
 export function measureScopedPrompts(
   entries: readonly ScopedPromptsEntry[],
-  config: Pick<GthConfig, 'identityProfile'>
+  config: Pick<GthConfig, 'identityProfile' | 'globalConfigDir'>
 ): ScopedPromptBudget {
   let totalBytes = 0;
   const entryNames: string[] = [];
@@ -140,7 +141,11 @@ export function measureScopedPrompts(
     for (const segment of SCOPED_SEGMENT_NAMES) {
       const path = entry[segment];
       if (!path) continue;
-      const { resolved, exists } = resolveScopedSegmentPath(path, config.identityProfile);
+      const { resolved, exists } = resolveScopedSegmentPath(
+        path,
+        config.identityProfile,
+        config.globalConfigDir
+      );
       if (!exists) continue;
       totalBytes += Buffer.byteLength(readFileSync(resolved, { encoding: 'utf8' }), 'utf8');
       contributed = true;
@@ -203,7 +208,11 @@ function composeScopedPromptSegment(segment: PromptSegmentName, config: PromptRe
   for (const entry of entries) {
     const path = entry[segment];
     if (!path) continue;
-    const { resolved, exists } = resolveScopedSegmentPath(path, config.identityProfile);
+    const { resolved, exists } = resolveScopedSegmentPath(
+      path,
+      config.identityProfile,
+      config.globalConfigDir
+    );
     if (!exists) {
       displayWarning(
         `Scoped prompt "${entry.name}" points its ${segment} at ${path}, which does not exist ` +
@@ -270,7 +279,13 @@ export function readPromptSegment(segment: PromptSegmentName, config: PromptRead
   const setting = config.prompts?.[segment];
   const segmentConfig = typeof setting === 'string' ? { path: setting } : (setting ?? {});
   const readBuiltIn = () =>
-    readPromptFile(PROMPT_SEGMENT_FILES[segment], config.identityProfile, config.noDefaultPrompts);
+    readPromptFile(
+      PROMPT_SEGMENT_FILES[segment],
+      config.identityProfile,
+      config.noDefaultPrompts,
+      undefined,
+      config.globalConfigDir
+    );
   const readBase = (): string => {
     if (segmentConfig.enabled === false) {
       return '';
@@ -281,7 +296,9 @@ export function readPromptSegment(segment: PromptSegmentName, config: PromptRead
     const fileContent = readPromptFile(
       segmentConfig.path,
       config.identityProfile,
-      config.noDefaultPrompts
+      config.noDefaultPrompts,
+      undefined,
+      config.globalConfigDir
     );
     if (segmentConfig.mode === 'append') {
       return [readBuiltIn(), fileContent].filter(Boolean).join('\n');
@@ -307,6 +324,7 @@ export function readGuidelines(
         // CFG-70 — this list is the type-level statement of what the function reads, so a field
         // `readPromptSegment` now consults has to appear here or the type says it does not.
         | 'scopedPrompts'
+        | 'globalConfigDir'
       >
     | string
 ): string {
@@ -417,9 +435,10 @@ export function readPromptFile(
   filename: string,
   identityProfile: string | undefined,
   noDefaultPrompts?: boolean,
-  defaultPromptDir?: string
+  defaultPromptDir?: string,
+  globalConfigDir?: string
 ): string {
-  const path = getGslothConfigReadPath(filename, identityProfile);
+  const path = getGslothConfigReadPath(filename, identityProfile, globalConfigDir);
   if (existsSync(path)) {
     return readFileSync(path, { encoding: 'utf8' });
   }

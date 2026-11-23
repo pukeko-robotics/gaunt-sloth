@@ -91,7 +91,8 @@ searched from the working directory up to the repository root. Add
 [`-g`/`--global`](index.md#run-under-the-global-config-only) and the same name is looked up in
 `~/.gsloth/.gsloth-settings/<name>/` instead — your own profiles, in a repository that knows nothing
 about them. The two are separate namespaces: a profile that exists only in the project is not found
-under `-g`, and vice versa.
+under `-g`, and vice versa. A global profile's prompt files are read from its own directory first,
+so a relative `prompts` path in its config is resolved next to that config.
 
 ### Creating a profile
 

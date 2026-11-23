@@ -86,12 +86,22 @@ export function getGslothConfigWritePath(filename: string, identityProfileRaw?: 
  * Gets the path where gsloth should look for configuration files based on .gsloth directory existence
  * @param filename The configuration filename to look for
  * @param identityProfileRaw The identity profile dir within GSLOTH_SETTINGS_DIR to look for the configuration file in.
+ * @param globalConfigDir On a `--global` run, the global directory the config was read from
+ *   (`GthConfig.globalConfigDir`). Checked first, before the project, so a prompt file kept
+ *   next to a global config is found. Prompt readers pass it; config discovery never does.
  * @returns The resolved path where the configuration file should be found
  */
 export function getGslothConfigReadPath(
   filename: string,
-  identityProfileRaw: string | undefined
+  identityProfileRaw: string | undefined,
+  globalConfigDir?: string
 ): string {
+  if (globalConfigDir) {
+    const globalPath = resolve(globalConfigDir, filename);
+    if (existsSync(globalPath)) {
+      return globalPath;
+    }
+  }
   const baseDir = getProjectDir();
   const identityProfile = identityProfileRaw?.trim();
   if (gslothDirExists()) {

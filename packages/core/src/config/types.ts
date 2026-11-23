@@ -251,6 +251,13 @@ export interface GthConfig {
    */
   identityProfile?: string;
   /**
+   * On a `--global` run, the global directory the config was read from:
+   * `~/.gsloth/.gsloth-settings/<profile>/` with an identity profile, `~/.gsloth/` without. Prompt
+   * files are looked up there first, then in the project, then in the installed defaults. Set by
+   * the config loader on every run (cleared when the run is not global), never read from a file.
+   */
+  globalConfigDir?: string;
+  /**
    * Whether to include the current date in the project review instructions or not.
    */
   includeCurrentDateAfterGuidelines: boolean;

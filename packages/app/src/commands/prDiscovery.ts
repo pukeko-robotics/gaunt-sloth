@@ -52,13 +52,14 @@ declare module '@gaunt-sloth/core/config.js' {
  * overrides and falling back to the default prompt shipped with the assistant package.
  */
 export function readPrDiscoveryPrompt(
-  config: Pick<GthConfig, 'identityProfile' | 'noDefaultPrompts'>
+  config: Pick<GthConfig, 'identityProfile' | 'noDefaultPrompts' | 'globalConfigDir'>
 ): string {
   return readPromptFile(
     GSLOTH_PR_DISCOVERY_PROMPT,
     config.identityProfile,
     config.noDefaultPrompts,
-    assistantPackageDir
+    assistantPackageDir,
+    config.globalConfigDir
   );
 }
 

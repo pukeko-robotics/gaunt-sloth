@@ -43,6 +43,7 @@ import { isMissingProviderKeyError, MissingProviderKeyError } from '#src/config/
 import { ConfigDiscoveryError, isConfigDiscoveryError } from '#src/config/configDiscovery.js';
 import { getGslothConfigReadPath, importExternalFile } from '#src/utils/fileUtils.js';
 import { getGlobalGslothConfigReadPath, getGlobalGslothDir } from '#src/utils/globalConfigUtils.js';
+import { globalPromptDir } from '#src/config/globalPromptDir.js';
 import {
   env,
   getCurrentWorkDir,
@@ -2105,6 +2106,19 @@ export function resolveConfig(
   if (commandLineConfigOverrides.identityProfile !== undefined) {
     displayInfo(`Activating profile: ${commandLineConfigOverrides.identityProfile}`);
     mergedConfig.identityProfile = commandLineConfigOverrides.identityProfile.trim();
+  }
+
+  // CFG-89 — a --global run reads its prompt files from the directory its config came from, before
+  // the project. Decided on every run, so a config file cannot set it: the top-level schema lets
+  // unknown keys through, and a value from a file would redirect prompt lookup on a project run.
+  const globalConfigDir = globalPromptDir(
+    commandLineConfigOverrides.global,
+    globalLayerProfile(commandLineConfigOverrides)
+  );
+  if (globalConfigDir) {
+    mergedConfig.globalConfigDir = globalConfigDir;
+  } else {
+    delete mergedConfig.globalConfigDir;
   }
 
   if (commandLineConfigOverrides.verbose !== undefined) {
