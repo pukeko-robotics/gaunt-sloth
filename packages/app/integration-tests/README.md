@@ -57,8 +57,8 @@ An `x-small` tier (a mid model such as gemma-31b) can be reintroduced the day a 
 ### Config names are file names, not provider types
 
 The argument after `pnpm run it` names a file in `configs/`, so one provider can have several
-entries pinning different models — `xai` and `xai-build`, `google-genai` and
-`google-genai-flash-lite`. Any new name must be added to `setup-config.js`'s `validConfigs`, which
+entries pinning different models — `google-genai` and `google-genai-flash-lite`, `vertexai` and
+`vertexai-preview`. Any new name must be added to `setup-config.js`'s `validConfigs`, which
 exits 1 on an unknown name before vitest starts.
 
 ### The `openai` config pins minimal reasoning effort

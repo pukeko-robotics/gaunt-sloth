@@ -48,7 +48,7 @@ function isTemperatureRestrictedModel(model: string | undefined): boolean {
  *
  * Guards: (1) only reasoning-capable models — leave gpt-4o etc. on completions; (2) never override an
  * explicit `useResponsesApi` the user set (true OR false). The model-name guard also scopes this away
- * from OpenAI-compatible providers that reuse this file (Inception/DeepSeek/xAI ids don't match the
+ * from OpenAI-compatible providers that reuse this file (DeepSeek/xAI ids don't match the
  * regex). Routing a no-tools/plain call to Responses is still correct FOR GTH because gth never
  * injects reasoning params itself — so even a non-reasoning `gpt-5`-prefixed id (e.g.
  * `gpt-5-chat-latest`, which this regex also sweeps) is accepted there. (Responses isn't a universal

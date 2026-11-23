@@ -38,8 +38,8 @@ Configuration can be created with the `gth init` command. When called without ar
 available API keys in the environment and prompts you to select a provider. You can also specify a
 provider directly: `gth init [vendor]`. Currently, `anthropic`, `groq`, `deepseek`, `openai`,
 `google-genai`, `vertexai`, `openrouter`, `huggingface`, `ollama` and `xai` can be configured with
-`gth init [vendor]`. For providers using OpenAI format (like Inception), use `gth init openai` and
-then modify the configuration.
+`gth init [vendor]`. For any other provider with an OpenAI-compatible API, use `gth init openai` and
+then modify the configuration (see [Other OpenAI-compatible providers](#other-openai-compatible-providers)).
 
 By default, `gth init` creates a `.gsloth` directory in the project root and places configuration
 files in `.gsloth/.gsloth-settings/`. Project root configuration is still supported for backward
@@ -382,7 +382,7 @@ A complete LM Studio config:
 }
 ```
 
-### Other OpenAI-compatible providers (Inception, etc.)
+### Other OpenAI-compatible providers
 
 For providers that use OpenAI-compatible APIs:
 
@@ -391,16 +391,17 @@ cd ./your-project
 gth init openai
 ```
 
-Then edit your configuration file to add the custom base URL and API key. For example, for Inception:
+Then edit your configuration file to add the provider's base URL, model and API key. For example,
+for a provider called YourProviderAPI:
 
 ```json
 {
   "llm": {
     "type": "openai",
-    "model": "mercury-coder",
-    "apiKeyEnvironmentVariable": "INCEPTION_API_KEY",
+    "model": "your-provider-model",
+    "apiKeyEnvironmentVariable": "YOUR_PROVIDER_API_KEY",
     "configuration": {
-      "baseURL": "https://api.inceptionlabs.ai/v1"
+      "baseURL": "https://api.yourprovider.example/v1"
     }
   }
 }
@@ -504,23 +505,6 @@ You can use the `OPENAI_API_KEY` environment variable instead of specifying `api
 ```
 
 See [LM Studio](#lm-studio) above for the API-key and tool-calling notes.
-
-**Example of .gsloth.config.json for Inception (OpenAI-compatible)**
-
-```json
-{
-  "llm": {
-    "type": "openai",
-    "model": "mercury-coder",
-    "apiKeyEnvironmentVariable": "INCEPTION_API_KEY",
-    "configuration": {
-      "baseURL": "https://api.inceptionlabs.ai/v1"
-    }
-  }
-}
-```
-
-You can use the `INCEPTION_API_KEY` environment variable as specified in `apiKeyEnvironmentVariable`.
 
 **Example of .gsloth.config.json for Google GenAI**
 
@@ -868,23 +852,6 @@ export async function configure() {
       apiKey: 'none', // LM Studio doesn't validate API keys
       configuration: {
         baseURL: 'http://127.0.0.1:1234/v1',
-      },
-    }),
-  };
-}
-```
-
-**Example of .gsloth.config.mjs for Inception (OpenAI-compatible)**
-
-```javascript
-export async function configure() {
-  const openai = await import('@langchain/openai');
-  return {
-    llm: new openai.ChatOpenAI({
-      model: 'mercury-coder',
-      apiKey: process.env.INCEPTION_API_KEY, // Default value, but you can provide the key in many different ways, even as literal
-      configuration: {
-        baseURL: 'https://api.inceptionlabs.ai/v1',
       },
     }),
   };

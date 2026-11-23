@@ -43,7 +43,7 @@ import {
  *   is not in the small matrix — it is `BIG_TEST_PROVIDER` in
  *   `.github/workflows/integration-tests.yml`, which runs the suite UNFILTERED and therefore
  *   collects this file for free.
- * - **Every other run is smoke, not a regression guard.** xai, openrouter, xai-build,
+ * - **Every other run is smoke, not a regression guard.** xai, openrouter,
  *   google-genai-flash-lite, huggingface, anthropic and ollama were each measured against unfixed
  *   trunk: all left the optional out of `required`, the model omitted the key, and the old code
  *   passed. Their value is the other direction: the fix changes the emitted wire shape for EVERY
@@ -54,8 +54,7 @@ import {
  * matrix: anthropic, xai, openrouter, google-genai-flash-lite, huggingface — and the same
  * set minus openrouter runs non-gating at a release (`release.yml`'s `integration-tests-small`).
  * `.github/workflows/integration-tests-platforms.yml` adds macOS/Windows × openrouter, and the local
- * `pnpm run it ollama xx-small` pre-merge gate adds ollama. **xai-build is measured but is a leg in
- * no workflow** — its config exists and `pnpm run it xai-build xx-small` runs by hand.
+ * `pnpm run it ollama xx-small` pre-merge gate adds ollama.
  *
  * ## Why programmatic rather than a spawned CLI run
  *
@@ -113,7 +112,7 @@ function describeFailure(error: string): string {
 }
 
 interface AmbientProvider {
-  /** Provider `type` from the config's `llm` block, e.g. `xai` for the `xai-build` config. */
+  /** Provider `type` from the config's `llm` block, e.g. `google-genai` for the `google-genai-flash-lite` config. */
   type: string;
   model: string;
   /** Name only — never a value; an API key must not reach test output. */

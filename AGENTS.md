@@ -407,7 +407,7 @@ Gaunt Sloth is a command line AI assistant for software developers, primarily fo
 
 3. **LLM Providers**: Via LangChain the tool works with:
    - Anthropic (Claude), Google Vertex AI (Gemini), Google AI Studio, Groq
-   - DeepSeek, OpenAI & OpenAI-compatible (e.g., Inception, OpenRouter)
+   - DeepSeek, OpenAI & OpenAI-compatible (e.g., OpenRouter, or YourProviderAPI at a custom base URL)
    - xAI and any other provider configured through JS configs
 
 4. **Content Providers / Inputs**:

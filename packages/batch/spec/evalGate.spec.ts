@@ -26,7 +26,7 @@ const cell = (
   reasons: string[] = []
 ) => ({ id, identity, sutOk, verdict, reasons });
 
-const PASSING_CELL = cell('read-marker', 'inception-mercury-2', true, 'PASS');
+const PASSING_CELL = cell('read-marker', 'openai-6.1-terra', true, 'PASS');
 const FAILING_CELL = cell('read-marker', 'google-3.5-flash-lite', true, 'FAIL', [
   'must_contain: expected "GS-MARKER-7" in answer',
 ]);
@@ -150,7 +150,7 @@ describe('eval-gate (scripts/eval-gate.mjs)', () => {
 
     it('escapes a pipe in the detail column so one reason cannot break the table', async () => {
       const { renderReport, summarize, verdictOf } = await import(HELPER);
-      const piped = cell('read-marker', 'inception-mercury-2', true, 'FAIL', [
+      const piped = cell('read-marker', 'openai-6.1-terra', true, 'FAIL', [
         'must_contain: expected "a|b" in answer',
       ]);
       const summary = summarize([PASSING_CELL, piped]);
