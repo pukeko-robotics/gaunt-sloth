@@ -165,6 +165,28 @@ describe('CFG-56: -g / --global flag (bypass project config)', () => {
     expect(resolved.modelDisplayName).toBe('global-sec-model');
   });
 
+  it('CFG-89: carries the global directory the config came from, for prompt lookup, only under -g', async () => {
+    writeGlobalProfileConfig('sec', { llm: { type: 'vertexai', model: 'global-sec-model' } });
+    writeGlobalConfig({ llm: { type: 'vertexai', model: 'global-model' } });
+    // A config file cannot redirect prompt lookup: the key is decided by the run, not read.
+    writeProjectConfig({
+      llm: { type: 'vertexai', model: 'project-model' },
+      globalConfigDir: resolve(projectRoot, 'elsewhere'),
+    });
+
+    const { initConfig } = await import('#src/config/loader.js');
+
+    const profileRun = await initConfig({ global: true, identityProfile: 'sec' });
+    expect(profileRun.globalConfigDir).toBe(resolve(globalRoot, '.gsloth-settings', 'sec'));
+
+    const plainGlobalRun = await initConfig({ global: true });
+    expect(plainGlobalRun.globalConfigDir).toBe(globalRoot);
+
+    const projectRun = await initConfig({});
+    expect(projectRun.modelDisplayName).toBe('project-model');
+    expect('globalConfigDir' in projectRun).toBe(false);
+  });
+
   it('resolves extends chain under ~/.gsloth/.gsloth-settings/ when global is active', async () => {
     writeGlobalProfileConfig('base-profile', {
       llm: { type: 'vertexai', model: 'global-base-model' },
