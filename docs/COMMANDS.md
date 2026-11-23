@@ -1440,7 +1440,7 @@ sweep:
 
 The axes are crossed, so that is four cells. Each value sets `model:` (rebuilds the model through its provider — the supported path to a genuinely fresh instance) and/or `config:` (deep-merged onto the resolved config; objects merge, arrays and scalars replace). `config.llm` is rejected — use `model:`.
 
-**`model:` moves the model, not the provider.** It rebuilds through the provider your config already declares, exactly as `--model` does, so a cell naming a model from a *different* provider will not switch to it — the two example cells above only work if `gemini-3.6-flash` and `gemma4:12b` are reachable through the same `llm.type`. To sweep across providers, give each one an [identity profile](configuration/profiles.md) carrying its own `llm` block and make the axis a `config:` override that selects the profile. On a **rater** suite that is `approvals.rater`, which is the same mechanism a session uses:
+**`model:` moves the model, not the provider.** It rebuilds through the provider your config already declares, exactly as `--model` does, so a cell naming a model from a *different* provider will not switch to it — the two example cells above only work if `gemini-3.8-flash` and `gemma4:12b` are reachable through the same `llm.type`. To sweep across providers, give each one an [identity profile](configuration/profiles.md) carrying its own `llm` block and make the axis a `config:` override that selects the profile. On a **rater** suite that is `approvals.rater`, which is the same mechanism a session uses:
 
 ```yaml
 sweep:
