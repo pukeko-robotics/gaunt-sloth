@@ -19,7 +19,6 @@ const validConfigs = [
   'vertexai-preview-beta',
   'deepseek',
   'openai',
-  'inception',
   'google-genai',
   'google-genai-flash-lite',
   'xai',

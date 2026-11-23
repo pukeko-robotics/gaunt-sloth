@@ -145,23 +145,38 @@ const NON_CHAT_PATTERN =
 const chatOnly = (id: string): boolean => !NON_CHAT_PATTERN.test(id);
 
 /**
+ * Gemini curated list, shared by google-genai and vertexai so the two cannot drift. The head is
+ * the runtime default: gemini-3.8-flash stays there as the GA flash tier, with the Gemini 4 family
+ * offered after it.
+ */
+const GEMINI_CURATED_MODELS = [
+  'gemini-3.8-flash',
+  'gemini-4-hydrogen',
+  'gemini-4-argon',
+  'gemini-4-neon',
+  'gemini-4-carbon',
+];
+
+/**
  * Provider registry. The curated `preferredModels` are the models we have
  * tested with Gaunt Sloth's agent loop; defaults mirror the `init` templates in
- * each `#src/providers/<id>.js` factory.
- *
- * CFG-22 (2026-07-24): the CLOUD curated lists were trimmed to 1-2 current-gen ids/provider
- * (head-first = the runtime default via getCuratedFallbackModel). Every surviving cloud id was live
- * tool-call-validated with a `gth eval` identity matrix (a marker-read that proves a real tool
- * call), with two exceptions: vertexai (no ADC here → mirrors the google-genai head) and ollama
- * (local ids, out of the cloud-trim scope — kept as-is, validated against the local daemon if
- * present). A dead id was caught and dropped: groq's qwen 404'd (`model_not_found`).
+ * each `#src/providers/<id>.js` factory. The head of each list is the runtime default
+ * (getCuratedFallbackModel). Every cloud id must be in its provider's live catalog and pass the
+ * read-marker tool-call eval (evals/configs/configs-smoke-test.suite.yaml) before it is listed.
+ * Ollama ids are local and only marked preferred when actually pulled.
  */
 export const PROVIDER_DESCRIPTORS: readonly ProviderDescriptor[] = [
   {
     id: 'anthropic',
     label: 'Anthropic (Claude)',
     apiKeyEnvironmentVariables: ['ANTHROPIC_API_KEY'],
-    preferredModels: ['claude-sonnet-5', 'claude-opus-4-8'],
+    preferredModels: [
+      'claude-sonnet-5-5',
+      'claude-opus-5-5',
+      'claude-fable-5-2',
+      'claude-sonnet-5',
+      'claude-opus-4-8',
+    ],
     discovery: {
       kind: 'anthropic',
       modelsUrl: () => 'https://api.anthropic.com/v1/models',
@@ -172,7 +187,7 @@ export const PROVIDER_DESCRIPTORS: readonly ProviderDescriptor[] = [
     id: 'openai',
     label: 'OpenAI',
     apiKeyEnvironmentVariables: ['OPENAI_API_KEY'],
-    preferredModels: ['gpt-5.6', 'gpt-5.5'],
+    preferredModels: ['gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-5.5'],
     discovery: {
       kind: 'openai',
       modelsUrl: () => 'https://api.openai.com/v1/models',
@@ -184,11 +199,7 @@ export const PROVIDER_DESCRIPTORS: readonly ProviderDescriptor[] = [
     id: 'google-genai',
     label: 'Google AI Studio (Gemini)',
     apiKeyEnvironmentVariables: ['GOOGLE_API_KEY'],
-    // GA-only defaults (Andrew 2026-09-07): the Gemini 3.x Pro tier is preview-only, so the curated
-    // defaults stay on GA flash tiers — gemini-3.8-flash (head, verified live via ListModels +
-    // tool-call probe) and gemini-3.5-flash-lite (the GA routing/summarizing workhorse, and still
-    // the newest GA id in that tier).
-    preferredModels: ['gemini-3.8-flash', 'gemini-3.5-flash-lite'],
+    preferredModels: GEMINI_CURATED_MODELS,
     discovery: {
       kind: 'google',
       // Native ListModels — returns the full current family (incl. the 3.x tier)
@@ -204,13 +215,10 @@ export const PROVIDER_DESCRIPTORS: readonly ProviderDescriptor[] = [
     id: 'vertexai',
     label: 'Google Vertex AI (Gemini)',
     apiKeyEnvironmentVariables: [],
-    // Vertex mirrors the AI Studio (google-genai) family under the SAME slugs (the older "bare-slug"
-    // assumption was wrong). Verified live 2026-09-07 (Andrew, ADC box): all mirror-genai models
-    // resolve, and these GA flash defaults resolve with no extra config (preview models, not used
-    // here, are global-location only). Kept exactly in sync with the google-genai GA-only defaults.
-    // An ADC box is the only place this half is confirmable — there is no ADC on CI, and `discovery`
-    // is `none`, so nothing here re-checks it.
-    preferredModels: ['gemini-3.8-flash', 'gemini-3.5-flash-lite'],
+    // Vertex mirrors the AI Studio (google-genai) family under the SAME slugs, with no extra
+    // location config. An ADC box is the only place this half is confirmable — there is no ADC on
+    // CI, and `discovery` is `none`, so nothing here re-checks it.
+    preferredModels: GEMINI_CURATED_MODELS,
     discovery: { kind: 'none' },
     requiresExternalAuth: true,
   },
@@ -218,7 +226,7 @@ export const PROVIDER_DESCRIPTORS: readonly ProviderDescriptor[] = [
     id: 'groq',
     label: 'Groq',
     apiKeyEnvironmentVariables: ['GROQ_API_KEY'],
-    preferredModels: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'],
+    preferredModels: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.8-27b'],
     discovery: {
       kind: 'openai',
       // Groq's OpenAI-compatible surface lives under /openai/v1.
@@ -231,7 +239,7 @@ export const PROVIDER_DESCRIPTORS: readonly ProviderDescriptor[] = [
     id: 'deepseek',
     label: 'DeepSeek',
     apiKeyEnvironmentVariables: ['DEEPSEEK_API_KEY'],
-    preferredModels: ['deepseek-v4-pro', 'deepseek-v4-flash'],
+    preferredModels: ['deepseek-v4-pro', 'deepseek-flash'],
     discovery: {
       kind: 'openai',
       modelsUrl: () => 'https://api.deepseek.com/v1/models',
@@ -243,7 +251,7 @@ export const PROVIDER_DESCRIPTORS: readonly ProviderDescriptor[] = [
     id: 'xai',
     label: 'xAI (Grok)',
     apiKeyEnvironmentVariables: ['XAI_API_KEY'],
-    preferredModels: ['grok-4.5', 'grok-4.3'],
+    preferredModels: ['grok-4.7', 'grok-4.6', 'grok-4.5', 'grok-4.3'],
     discovery: {
       kind: 'openai',
       modelsUrl: () => 'https://api.x.ai/v1/models',
@@ -257,7 +265,7 @@ export const PROVIDER_DESCRIPTORS: readonly ProviderDescriptor[] = [
     // OPENROUTER_API_KEY is accepted as an alias.
     label: 'OpenRouter',
     apiKeyEnvironmentVariables: ['OPEN_ROUTER_API_KEY', 'OPENROUTER_API_KEY'],
-    preferredModels: ['moonshotai/kimi-k3', 'deepseek/deepseek-v4-pro'],
+    preferredModels: ['moonshotai/kimi-k3.1-pro', 'moonshotai/kimi-k3', 'deepseek/deepseek-v4-pro'],
     discovery: {
       kind: 'openai',
       modelsUrl: () => 'https://openrouter.ai/api/v1/models',
@@ -269,7 +277,12 @@ export const PROVIDER_DESCRIPTORS: readonly ProviderDescriptor[] = [
     id: 'huggingface',
     label: 'Hugging Face (Inference Providers)',
     apiKeyEnvironmentVariables: ['HF_TOKEN', 'HUGGINGFACEHUB_API_TOKEN', 'HF_API_KEY'],
-    preferredModels: ['zai-org/GLM-5.2', 'moonshotai/Kimi-K2.7-Code'],
+    preferredModels: [
+      'zai-org/GLM-5.3',
+      'moonshotai/Kimi-K3.1-Pro',
+      'zai-org/GLM-5.2',
+      'moonshotai/Kimi-K2.7-Code',
+    ],
     discovery: {
       kind: 'openai',
       // HF's OpenAI-compatible router exposes /v1/models across all inference providers.

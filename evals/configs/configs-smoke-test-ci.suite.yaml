@@ -6,7 +6,7 @@
 # can never be the thing that flakes.
 #
 # WHY ONLY THESE TWO IDENTITIES — this list is not arbitrary, do not extend it casually:
-#   1. Both have an API key that already exists as a CI secret (GOOGLE_API_KEY, INCEPTION_API_KEY),
+#   1. Both have an API key that already exists as a CI secret (GOOGLE_API_KEY, OPENAI_API_KEY),
 #      so the gate is runnable on a stock runner.
 #   2. Both are cheap, fast models — a release gate people wait for is a gate people keep.
 #   3. MEASURED: both validate their API key LAZILY, at call time. A missing key therefore produces a
@@ -23,11 +23,13 @@
 #      nothing. Ending that is OPS-43's job, not this file's.)
 #   4. Two different providers, so a single vendor outage does not decide a release on its own.
 #
-# temperature: 0 is pinned in each identity's own config dir (.gsloth/.gsloth-settings/<id>/) for the
-# same anti-flake reason.
+# temperature: 0 is pinned in google-3.5-flash-lite's own config dir (.gsloth/.gsloth-settings/<id>/)
+# for the same anti-flake reason. openai-6.1-terra cannot take that pin: OpenAI's gpt-5 and later
+# families reject any temperature but the default. It was chosen over the cheaper luna tiers because it
+# passed every measured run, while gpt-6-luna refuses to "disclose a secret marker" in most runs.
 target:
   type: gth-agent
-identities: [google-3.5-flash-lite, inception-mercury-2]
+identities: [google-3.5-flash-lite, openai-6.1-terra]
 cases:
   - id: read-marker
     prompt: 'Read the file evals/configs/configs-smoke-test-marker.txt using your tools and report the exact secret marker string it contains.'

@@ -236,14 +236,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          INCEPTION_API_KEY: ${{ secrets.INCEPTION_API_KEY }}
           OPEN_ROUTER_API_KEY: ${{ secrets.OPEN_ROUTER_API_KEY }}
 
   integration-tests-small:
     name: Integration tests small
     # OPS-53: PROVIDER breadth at the release gate. The platforms job above is four legs of
     # openrouter — it varies the OS, not the provider — and `integration-tests` runs openai alone,
-    # so without this a release never exercises anthropic, google, groq, xai, inception or
+    # so without this a release never exercises anthropic, google, groq, xai or
     # huggingface beyond providerContract's two Anthropic cases. GS2-64 is why that matters: a
     # double-SystemMessage bug that hard-rejected on Anthropic and shipped anyway, because CI ran a
     # provider that silently merged the duplicate.
@@ -273,7 +272,7 @@ jobs:
       fail-fast: false
       matrix:
         node-version: [24.x]
-        provider: [anthropic, groq, inception, xai, google-genai-flash-lite, huggingface]
+        provider: [anthropic, groq, xai, google-genai-flash-lite, huggingface]
       # Three at a time because of GitHub runner capacity, not provider rate limits — do not raise
       # this on the assumption that it is a spend knob.
       max-parallel: 3
@@ -297,7 +296,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          INCEPTION_API_KEY: ${{ secrets.INCEPTION_API_KEY }}
           XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           # The huggingface provider reads HF_TOKEN first, then HUGGINGFACEHUB_API_TOKEN / HF_API_KEY.

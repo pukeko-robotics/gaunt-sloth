@@ -40,5 +40,4 @@ jobs:
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-        INCEPTION_API_KEY: ${{ secrets.INCEPTION_API_KEY }}
         OPEN_ROUTER_API_KEY: ${{ secrets.OPEN_ROUTER_API_KEY }}

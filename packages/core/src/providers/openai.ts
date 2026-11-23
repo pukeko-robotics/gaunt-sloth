@@ -14,12 +14,12 @@ import { GTH_MAX_RETRIES } from '#src/core/retryPolicy.js';
 /**
  * OpenAI reasoning-model families that reject any non-default `temperature`: the API 400s with
  * "Unsupported value: 'temperature' does not support 0 ... Only the default (1) value is
- * supported." (confirmed live for gpt-5.x, o3-mini, o4-mini). The denylist matches the
- * `gpt-5` family and the `o<digit>` series (o1/o3/o4/...) so it stays future-proof for new
- * minor/point releases (gpt-5.5, o5, etc.) without enumerating every id. Models like `gpt-4o`
- * are NOT matched and keep their configured temperature.
+ * supported." (confirmed live for gpt-5.x, gpt-6.x, o3-mini, o4-mini). The denylist matches every
+ * `gpt-<N>` family from 5 up (gpt-5, gpt-6, ..., gpt-10) and the `o<digit>` series (o1/o3/o4/...)
+ * so it stays future-proof for new families and point releases without enumerating every id.
+ * Models like `gpt-4o` are NOT matched and keep their configured temperature.
  */
-const TEMPERATURE_RESTRICTED_MODEL = /^(gpt-5|o\d)/i;
+const TEMPERATURE_RESTRICTED_MODEL = /^(gpt-([5-9]|[1-9]\d)|o\d)/i;
 
 /** The only `temperature` value OpenAI reasoning models accept (their fixed default). */
 const SUPPORTED_DEFAULT_TEMPERATURE = 1;

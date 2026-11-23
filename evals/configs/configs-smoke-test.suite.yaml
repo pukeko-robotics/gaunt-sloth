@@ -14,7 +14,7 @@
 # two-identity configs-smoke-test-ci.suite.yaml — do not widen it to match this file.
 target:
   type: gth-agent
-identities: [anthropic-sonnet-5,deepseek-reasoner,google-3.5-flash-lite,groq-gpt-oss-120b,hf-glm-5.2,inception-mercury-2,ollama-gemma4-12b,openai-5.6,openrouter-kimi-k3,xai-grok-4.5]
+identities: [anthropic-sonnet-5,deepseek-reasoner,google-3.5-flash-lite,groq-gpt-oss-120b,hf-glm-5.2,ollama-gemma4-12b,openai-6.2-sol,openrouter-kimi-k3,xai-grok-4.5]
 cases:
   - id: read-marker
     prompt: 'Read the file evals/configs/configs-smoke-test-marker.txt using your tools and report the exact secret marker string it contains.'

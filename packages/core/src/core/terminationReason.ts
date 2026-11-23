@@ -476,8 +476,8 @@ const CONTEXT_OVERFLOW_PATTERNS: readonly string[] = [
   // `The input token count exceeds the maximum number of tokens allowed 1048576.` against AI
   // Studio's `... allowed (1048576).` So matching the tail rather than the head is what spans the
   // two PLATFORMS as well as the inline-count case above; an arm reaching into the open paren
-  // would have missed Vertex entirely. Confirmed on both curated Vertex defaults
-  // (`gemini-3.8-flash`, `gemini-3.5-flash-lite`) and on both transports.
+  // would have missed Vertex entirely. Confirmed on `gemini-3.8-flash` and `gemini-3.5-flash-lite`
+  // on Vertex, on both transports.
   //
   // The one Vertex case this cannot reach is `gemini-2.5-flash-image` while STREAMING, which
   // answers an oversized input `Request contains an invalid argument.` with no token-count prose
@@ -508,8 +508,9 @@ const CONTEXT_OVERFLOW_PATTERNS: readonly string[] = [
   //
   // **Why it was not worth closing: nothing a `gth init` can produce lands in that cell.** `vertexai`
   // carries `discovery: { kind: 'none' }`, so `buildModelList` returns only the curated
-  // `preferredModels` — `gemini-3.8-flash` and `gemini-3.5-flash-lite`, both of which classify on
-  // both transports. The first-run dialog offers free-text model entry ONLY when that list comes back
+  // `preferredModels`. Its head, `gemini-3.8-flash`, classifies on both transports; the Gemini 4
+  // ids after it (hydrogen, argon, neon, carbon) have NOT been measured against an oversized input,
+  // so whether they reach the generic sentence while streaming is unknown. The first-run dialog offers free-text model entry ONLY when that list comes back
   // empty, which for this provider it never does, and a bare `init vertexai` omits `model` entirely
   // so it resolves through `getCuratedFallbackModel('vertexai')` to `gemini-3.8-flash`. Reaching the
   // affected cell takes a hand-edited config naming an image-generation model as an agentic chat

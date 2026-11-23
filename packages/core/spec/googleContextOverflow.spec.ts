@@ -78,8 +78,8 @@ const RECORDED_OVERFLOW_SMALL_WINDOW = {
 };
 
 /**
- * Recorded 2026-09-12 — the **Vertex** wording of the same overflow, on both curated Vertex
- * defaults (`gemini-3.8-flash` and `gemini-3.5-flash-lite`, window 1048576) and on both transports.
+ * Recorded 2026-09-12 — the **Vertex** wording of the same overflow, on `gemini-3.8-flash` and
+ * `gemini-3.5-flash-lite` (window 1048576) and on both transports.
  *
  * **The parentheses are the entire difference from AI Studio**, which sends `... allowed (1048576).`
  * where Vertex sends `... allowed 1048576.` That is why the arm in `CONTEXT_OVERFLOW_PATTERNS` ends

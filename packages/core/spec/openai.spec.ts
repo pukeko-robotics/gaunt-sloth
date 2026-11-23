@@ -132,6 +132,29 @@ describe('openai provider processJsonConfig useResponsesApi routing', () => {
     expect(builtConfig.useResponsesApi).toBe(true);
   });
 
+  it.each(['gpt-6.2-sol', 'gpt-6-luna', 'gpt-10'])(
+    'forces useResponsesApi for a later gpt family (%s) with NO reasoning configured',
+    async (model) => {
+      // gpt-6.x 400s on chat/completions + function tools exactly as gpt-5.x does (measured live
+      // 2026-11-23 through gth eval). A regex keyed on `gpt-5` alone sent it there.
+      const { processJsonConfig } = await import('#src/providers/openai.js');
+
+      await processJsonConfig(buildConfig({ model }));
+
+      const builtConfig = chatOpenAIConstructorMock.mock.calls[0][0];
+      expect(builtConfig.useResponsesApi).toBe(true);
+    }
+  );
+
+  it('drops a custom temperature for a later gpt family (gpt-6.2-sol)', async () => {
+    const { processJsonConfig } = await import('#src/providers/openai.js');
+
+    await processJsonConfig(buildConfig({ model: 'gpt-6.2-sol', temperature: 0 }));
+
+    const builtConfig = chatOpenAIConstructorMock.mock.calls[0][0];
+    expect(builtConfig.temperature).toBeUndefined();
+  });
+
   it('routes a non-reasoning gpt-5-prefixed model (gpt-5-chat-latest) to Responses too — deliberate, safe (gth injects no reasoning params)', async () => {
     // The `/^(gpt-5|o\d)/i` sweep intentionally catches gpt-5-chat-latest as well. Routing it to
     // Responses is a harmless side-effect (Responses accepts it for a plain call), NOT an accident —

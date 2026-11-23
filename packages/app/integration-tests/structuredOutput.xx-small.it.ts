@@ -43,7 +43,7 @@ import {
  *   is not in the small matrix — it is `BIG_TEST_PROVIDER` in
  *   `.github/workflows/integration-tests.yml`, which runs the suite UNFILTERED and therefore
  *   collects this file for free.
- * - **Every other run is smoke, not a regression guard.** xai, inception, openrouter, xai-build,
+ * - **Every other run is smoke, not a regression guard.** xai, openrouter, xai-build,
  *   google-genai-flash-lite, huggingface, anthropic and ollama were each measured against unfixed
  *   trunk: all left the optional out of `required`, the model omitted the key, and the old code
  *   passed. Their value is the other direction: the fix changes the emitted wire shape for EVERY
@@ -51,7 +51,7 @@ import {
  *   and they catch any provider that later adopts groq's hoisting.
  *
  * Which of those actually run anywhere is a smaller list than which were measured. In the small
- * matrix: anthropic, xai, inception, openrouter, google-genai-flash-lite, huggingface — and the same
+ * matrix: anthropic, xai, openrouter, google-genai-flash-lite, huggingface — and the same
  * set minus openrouter runs non-gating at a release (`release.yml`'s `integration-tests-small`).
  * `.github/workflows/integration-tests-platforms.yml` adds macOS/Windows × openrouter, and the local
  * `pnpm run it ollama xx-small` pre-merge gate adds ollama. **xai-build is measured but is a leg in
@@ -151,9 +151,10 @@ function resolveAmbientProvider(): AmbientProvider {
   const model = llm.model ?? '(provider default)';
 
   // Order matters: an explicit `apiKeyEnvironmentVariable` wins over the descriptor, exactly as
-  // every provider factory's own getApiKey does. The `inception` config is `type: "openai"` with
-  // `apiKeyEnvironmentVariable: "INCEPTION_API_KEY"` — resolving it by descriptor would consult
-  // OPENAI_API_KEY and call the leg runnable on a machine that cannot reach Inception at all.
+  // every provider factory's own getApiKey does. A `type: "openai"` config pointed at another
+  // OpenAI-compatible host names its own key in `apiKeyEnvironmentVariable` — resolving it by
+  // descriptor would consult OPENAI_API_KEY and call the leg runnable on a machine that cannot
+  // reach that host at all.
   const configured = llm.apiKeyEnvironmentVariable;
   if (configured) {
     const present = (process.env[configured] ?? '').trim().length > 0;
