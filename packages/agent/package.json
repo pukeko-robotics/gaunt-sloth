@@ -43,7 +43,7 @@
     "@ag-ui/encoder": "^1.0.4",
     "@agentclientprotocol/sdk": "2.0.2",
     "@gaunt-sloth/core": "workspace:*",
-    "@langchain/core": "^1.4.1",
+    "@langchain/core": "^1.5.0",
     "@langchain/langgraph": "^1.7.5",
     "@langchain/mcp-adapters": "2.0.3",
     "@modelcontextprotocol/client": "2.4.0",

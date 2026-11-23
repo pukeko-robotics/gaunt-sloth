@@ -36,7 +36,7 @@
     "#src/*.js": "./dist/*.js"
   },
   "dependencies": {
-    "@langchain/core": "^1.4.1",
+    "@langchain/core": "^1.5.0",
     "@langchain/langgraph": "^1.7.5",
     "jiti": "^2.7.0",
     "jsonc-parser": "^3.3.1",

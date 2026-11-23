@@ -17,8 +17,11 @@ packages:
 # dependency, leaving two copies of @langchain/core in the tree and a nominal
 # type clash ("ChatXAI is not assignable to BaseChatModel"). Deduping core alone
 # is enough — the provider copies then all build against the same core type.
+# Never leave this below the `@langchain/core` peer range of the installed `langchain`: the override
+# silences that peer check, and langchain 1.6.7 on core 1.4.1 turns a rejected tool call into a
+# HumanMessage, so the approval gate runs the command the human refused.
 overrides:
-  '@langchain/core': ^1.4.1
+  '@langchain/core': ^1.5.0
 
   # OPS-120 — there is deliberately NO `minimatch` override. The tree holds two minimatch lines:
   # 11.x for eslint and typescript-eslint, which carries the ReDoS fixes, and 10.x for typedoc,
