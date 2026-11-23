@@ -51,23 +51,13 @@ function cellLabel(result: EvalCaseResult): string {
 }
 
 /**
- * BATCH-60 — the fields a repeated case carries. Read structurally rather than from the imported
- * type: this package type-checks against the PUBLISHED `@gaunt-sloth/batch`, which may predate
- * them, and an older batch simply never sets them.
- */
-interface RepeatedCaseResult extends EvalCaseResult {
-  repeat?: { runs: number; passed: number; ratePercent: number; requiredPercent: number };
-  runs?: Array<EvalCaseResult & { run?: number }>;
-}
-
-/**
  * BATCH-60 — the `<system-out>` of a repeated case: its rate, then one line per run with that run's
  * verdict, judge score and reasons. A repeated case stays ONE `<testcase>` — one per run would
  * count each case N times in every CI dashboard — and a failing one leads its `message` with the
  * rate, which is the first of its reasons. `undefined` for a case that ran once, so its element is
  * exactly what it always was.
  */
-function repeatText(result: RepeatedCaseResult): string | undefined {
+function repeatText(result: EvalCaseResult): string | undefined {
   if (result.repeat === undefined) return undefined;
   const { passed, runs, ratePercent, requiredPercent } = result.repeat;
   const lines = [`pass rate: ${passed}/${runs} (${ratePercent}%), required ${requiredPercent}%`];
@@ -93,7 +83,7 @@ function repeatText(result: RepeatedCaseResult): string | undefined {
  * omits the element entirely.
  */
 function systemOutText(result: EvalCaseResult): string | undefined {
-  const repeated = repeatText(result as RepeatedCaseResult);
+  const repeated = repeatText(result);
   if (repeated !== undefined) return repeated;
   const lines: string[] = [];
   if (result.judge?.attempted && result.judge.ok && result.judge.verdict) {

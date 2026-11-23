@@ -69,8 +69,8 @@ importers:
         specifier: ^8.3.8
         version: 8.3.8(@types/node@26.6.6)(jiti@2.7.0)(yaml@2.9.1)
       vitest:
-        specifier: ^5.1.0
-        version: 5.1.0(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(vite@8.3.8(@types/node@26.6.6)(jiti@2.7.0)(yaml@2.9.1))
+        specifier: ^5.1.1
+        version: 5.1.1(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(vite@8.3.8(@types/node@26.6.6)(jiti@2.7.0)(yaml@2.9.1))
 
   evals/mcp-authz:
     dependencies:
@@ -87,11 +87,11 @@ importers:
         specifier: ^1.3.0
         version: 1.3.0(@bufbuild/protobuf@2.16.0)(express@5.3.0)
       '@ag-ui/core':
-        specifier: ^1.0.4
-        version: 1.0.4(zod@4.6.7)
+        specifier: ^1.0.5
+        version: 1.0.5(zod@4.6.7)
       '@ag-ui/encoder':
-        specifier: ^1.0.4
-        version: 1.0.4(zod@4.6.7)
+        specifier: ^1.0.5
+        version: 1.0.5(zod@4.6.7)
       '@agentclientprotocol/sdk':
         specifier: 2.0.2
         version: 2.0.2(zod@4.6.7)
@@ -106,7 +106,7 @@ importers:
         version: 1.7.5(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(react@19.3.1)(zod@4.6.7)
       '@langchain/mcp-adapters':
         specifier: 2.0.3
-        version: 2.0.3(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(@langchain/langgraph@1.7.5(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(react@19.3.1)(zod@4.6.7))
+        version: 2.0.3(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(@langchain/langgraph@1.7.5(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(zod@4.6.7))
       '@modelcontextprotocol/client':
         specifier: 2.4.0
         version: 2.4.0
@@ -117,8 +117,8 @@ importers:
         specifier: ^5.3.0
         version: 5.3.0
       langchain:
-        specifier: ^1.6.6
-        version: 1.6.6(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))(react@19.3.1)
+        specifier: ^1.6.7
+        version: 1.6.7(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))(react@19.3.1)
       undici:
         specifier: ~8.12.4
         version: 8.12.4
@@ -136,8 +136,8 @@ importers:
   packages/app:
     dependencies:
       '@ag-ui/core':
-        specifier: ^1.0.4
-        version: 1.0.4(zod@4.6.7)
+        specifier: ^1.0.5
+        version: 1.0.5(zod@4.6.7)
       '@gaunt-sloth/agent':
         specifier: workspace:*
         version: link:../agent
@@ -154,35 +154,35 @@ importers:
         specifier: workspace:*
         version: link:../review
       '@langchain/anthropic':
-        specifier: ^1.6.5
-        version: 1.6.5(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))
+        specifier: ^1.6.6
+        version: 1.6.6(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))
       '@langchain/core':
         specifier: ^1.5.0
         version: 1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))
       '@langchain/deepseek':
-        specifier: ^1.1.25
-        version: 1.1.25(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)
+        specifier: ^1.1.26
+        version: 1.1.26(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)
       '@langchain/google':
-        specifier: ^0.2.15
-        version: 0.2.15(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))
+        specifier: ^0.2.17
+        version: 0.2.17(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))
       '@langchain/groq':
-        specifier: ^1.3.1
-        version: 1.3.1(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))
+        specifier: ^1.3.2
+        version: 1.3.2(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))
       '@langchain/langgraph':
         specifier: ^1.7.5
         version: 1.7.5(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(react@19.3.1)(zod@4.6.7)
       '@langchain/ollama':
-        specifier: ^1.3.0
-        version: 1.3.0(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))
+        specifier: ^1.3.1
+        version: 1.3.1(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))
       '@langchain/openai':
-        specifier: ^1.8.4
-        version: 1.8.4(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)
+        specifier: ^1.8.5
+        version: 1.8.5(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)
       '@langchain/openrouter':
-        specifier: ^0.4.25
-        version: 0.4.25(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)
+        specifier: ^0.4.26
+        version: 0.4.26(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)
       '@langchain/xai':
-        specifier: ^1.5.6
-        version: 1.5.6(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)
+        specifier: ^1.5.7
+        version: 1.5.7(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)
       commander:
         specifier: ^15.1.0
         version: 15.1.0
@@ -234,35 +234,35 @@ importers:
   packages/core:
     dependencies:
       '@langchain/anthropic':
-        specifier: ^1.6.5
-        version: 1.6.5(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))
+        specifier: ^1.6.6
+        version: 1.6.6(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))
       '@langchain/core':
         specifier: ^1.5.0
         version: 1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))
       '@langchain/deepseek':
-        specifier: ^1.1.25
-        version: 1.1.25(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)
+        specifier: ^1.1.26
+        version: 1.1.26(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)
       '@langchain/google':
-        specifier: ^0.2.15
-        version: 0.2.15(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))
+        specifier: ^0.2.17
+        version: 0.2.17(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))
       '@langchain/groq':
-        specifier: ^1.3.1
-        version: 1.3.1(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))
+        specifier: ^1.3.2
+        version: 1.3.2(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))
       '@langchain/langgraph':
         specifier: ^1.7.5
         version: 1.7.5(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(react@19.3.1)(zod@4.6.7)
       '@langchain/ollama':
-        specifier: ^1.3.0
-        version: 1.3.0(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))
+        specifier: ^1.3.1
+        version: 1.3.1(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))
       '@langchain/openai':
-        specifier: ^1.8.4
-        version: 1.8.4(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)
+        specifier: ^1.8.5
+        version: 1.8.5(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)
       '@langchain/openrouter':
-        specifier: ^0.4.25
-        version: 0.4.25(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)
+        specifier: ^0.4.26
+        version: 0.4.26(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)
       '@langchain/xai':
-        specifier: ^1.5.6
-        version: 1.5.6(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)
+        specifier: ^1.5.7
+        version: 1.5.7(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)
       jiti:
         specifier: ^2.7.0
         version: 2.7.0
@@ -270,8 +270,8 @@ importers:
         specifier: ^3.3.1
         version: 3.3.1
       langchain:
-        specifier: ^1.6.6
-        version: 1.6.6(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))(react@19.3.1)
+        specifier: ^1.6.7
+        version: 1.6.7(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))(react@19.3.1)
       string-width:
         specifier: ^8.3.0
         version: 8.3.0
@@ -289,8 +289,8 @@ importers:
   packages/eval-reporter-junit:
     devDependencies:
       '@gaunt-sloth/batch':
-        specifier: 2.4.0
-        version: 2.4.0(bf349e29c509fa56c6e83585605e0e08)
+        specifier: 2.4.1
+        version: 2.4.1(c52c13debd588a87ae616efdeca3b44d)
       fast-xml-parser:
         specifier: ^5.12.1
         version: 5.12.1
@@ -298,8 +298,8 @@ importers:
   packages/eval-reporter-teamcity:
     devDependencies:
       '@gaunt-sloth/batch':
-        specifier: 2.4.0
-        version: 2.4.0(bf349e29c509fa56c6e83585605e0e08)
+        specifier: 2.4.1
+        version: 2.4.1(c52c13debd588a87ae616efdeca3b44d)
 
   packages/review:
     dependencies:
@@ -313,8 +313,8 @@ importers:
         specifier: ^1.7.5
         version: 1.7.5(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(react@19.3.1)(zod@4.6.7)
       langchain:
-        specifier: ^1.6.6
-        version: 1.6.6(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))(react@19.3.1)
+        specifier: ^1.6.7
+        version: 1.6.7(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))(react@19.3.1)
       zod:
         specifier: ^4.6.7
         version: 4.6.7
@@ -357,13 +357,31 @@ packages:
       zod:
         optional: true
 
+  '@ag-ui/core@1.0.5':
+    resolution: {integrity: sha512-W7xg7E/bVco3svYxZCp3CMqJ6/fB15U7yAaMS3mhLCwwlJXFzZJ/bGwMqnNrx6Afmj1WmnjFKzliYds+KFXMMQ==}
+    peerDependencies:
+      zod: ^3.25.18 || ^4.0.0
+    peerDependenciesMeta:
+      zod:
+        optional: true
+
   '@ag-ui/encoder@1.0.4':
     resolution: {integrity: sha512-fq5kqj+kCFtpLhBhfLjv55DRTKdbduFg6Wcsw4VL3uCABSQhH+PLC36vMjbjZdDp9q+mgVrGhRvaW+JdkdfVog==}
     peerDependencies:
       zod: ^3.25.18 || ^4.0.0
 
+  '@ag-ui/encoder@1.0.5':
+    resolution: {integrity: sha512-SKg5jOF2FCVMcl1nSNlk4hZdX9jV5Jg2nce5+jxY7lLSsMkBNMXvEpxZdQ1oWef3YI8OJCyB3cADUI3eyzplhA==}
+    peerDependencies:
+      zod: ^3.25.18 || ^4.0.0
+
   '@ag-ui/proto@1.0.4':
     resolution: {integrity: sha512-+OAa2w1ELijSwNgNGvMDCIx5rFO+1NQDpwzoq1oXwE4L0qWciZnhIisocVzAKjtH7Ac/ONSyYR1t4qG3kMzRkw==}
+    peerDependencies:
+      zod: ^3.25.18 || ^4.0.0
+
+  '@ag-ui/proto@1.0.5':
+    resolution: {integrity: sha512-HFtYEapXepL3VtCkN2YS1KO5wndjJ8+86d3Qag3EeGp1EKxljZW/hRWN3HiILUTVI5cJ3CqGXBycE1/IAKQsGA==}
     peerDependencies:
       zod: ^3.25.18 || ^4.0.0
 
@@ -519,25 +537,25 @@ packages:
     resolution: {integrity: sha512-IkO+/KEUvwbVpiURZg+P7zF74z5Jxe0UgJxVni+RtoHQ6IZieXaO02kmadomap/q+l6bc/jdPGGqTjhuZnuz1Q==}
     engines: {node: ^20.19.0 || ^22.13.0 || >=24}
 
-  '@gaunt-sloth/agent@2.4.0':
-    resolution: {integrity: sha512-m+5OcdM03iB0nTu8eqcZ8aARhC4t9IfkBEf59obMo4jQW71RiPdmZ/Q9yDyRUe8c6wM7zGJbgPMQDa2thotDkg==}
+  '@gaunt-sloth/agent@2.4.1':
+    resolution: {integrity: sha512-gjgLqAmOFyN+mHNUvK5ngmFpThp0Con2lk6+apYCG8u1ukBKsfFgoSOB9CTuUQad3tz1k0SFGp1qtJoHpSeqyw==}
     hasBin: true
 
-  '@gaunt-sloth/batch@2.4.0':
-    resolution: {integrity: sha512-KUOghvqXwffGw9frlofqWWw4b/e7LL0SLK7VlTPSww2Ijavm1BNP6B8B1aU2D5x1eRDYag9kraJ27Ebp3xudWQ==}
+  '@gaunt-sloth/batch@2.4.1':
+    resolution: {integrity: sha512-uFl5EWdtUr6FOqU8On9nyJ5trOQHfrsvRDmof45gq4WWq1+zLc71xxc+8ofPDtV4FHZ0LjenIwnebK3NvZRfSA==}
     hasBin: true
 
-  '@gaunt-sloth/core@2.4.0':
-    resolution: {integrity: sha512-zmGiirSFj45ZL/NDBJsLB3Ntb5txcXC35lCtpGS1s5pwi89XxcQK3h6MFuxGyrA9jiklfGXG3y8ztncALqq7mA==}
+  '@gaunt-sloth/core@2.4.1':
+    resolution: {integrity: sha512-I7QZTRJZHLeJVKJpy1GkPN7yBXqVG1b8GemZdx1A2Cjzx/73x/OftEk2DbrRNtDR+kzPVkG6G3rNBdKiNd39WA==}
     peerDependencies:
-      '@langchain/anthropic': ^1.6.0
-      '@langchain/deepseek': ^1.1.19
-      '@langchain/google': ^0.2.12
+      '@langchain/anthropic': ^1.6.5
+      '@langchain/deepseek': ^1.1.25
+      '@langchain/google': ^0.2.15
       '@langchain/groq': ^1.3.1
       '@langchain/ollama': ^1.3.0
-      '@langchain/openai': ^1.7.0
-      '@langchain/openrouter': ^0.4.19
-      '@langchain/xai': ^1.5.0
+      '@langchain/openai': ^1.8.4
+      '@langchain/openrouter': ^0.4.25
+      '@langchain/xai': ^1.5.6
     peerDependenciesMeta:
       '@langchain/anthropic':
         optional: true
@@ -707,8 +725,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@langchain/anthropic@1.6.5':
-    resolution: {integrity: sha512-qB9bMeyRm46TI5ozkS66tPSnLu4Eayv+2R0aB7Uz79jwXZSEFRQ1i0uyov7xtPJW1R3EjbhpT2UuHy4x38pbAA==}
+  '@langchain/anthropic@1.6.6':
+    resolution: {integrity: sha512-tBsnERCfJsr7GetZYK8esUzvV6rzlvbKK8BqKrzgTuW1TVDnxvtzh7404N0hOcdvW5zTiSr/CkiwNBtR7s8ryw==}
     engines: {node: '>=20'}
     peerDependencies:
       '@langchain/core': ^1.5.0
@@ -717,20 +735,20 @@ packages:
     resolution: {integrity: sha512-MhkmHmiBr5iNNJNt2OV6JE91953fIVwI4/krM8De4sKjBZTs/aXxAk3iRJ9i7fuUzd4qFHTcUf6e7Fmtp4B9ug==}
     engines: {node: '>=20'}
 
-  '@langchain/deepseek@1.1.25':
-    resolution: {integrity: sha512-aF3gf+Iqi8n077TefTGIp+fcS+qfpSfLKUKBv/AL1CJbC6RTYb+2PkrdeaB3PxZ9PFgGqtAbHjMIKFI9BIn8RQ==}
+  '@langchain/deepseek@1.1.26':
+    resolution: {integrity: sha512-xzX2l5jw8+BtKVIFVE/AZpV2e9ho4eZVML8LSzZR3SoTBeHx/hyQllxgL8mt1stLwxrC4T6KDLIVuncFY5mw4w==}
     engines: {node: '>=20'}
     peerDependencies:
       '@langchain/core': ^1.5.0
 
-  '@langchain/google@0.2.15':
-    resolution: {integrity: sha512-AOi08b5gTZhxfRxoaRDLWrmY6dVoFCksNTf9QOXGsE0iVGN6+Km1ffBONliWyRgN3KkBTG4dp3kwKcQ8QGf5FA==}
+  '@langchain/google@0.2.17':
+    resolution: {integrity: sha512-2JSfeXF8NNshsBJKjQe+anx86pvNOO/8WeZQdngGyd2BwbNR+inT/cErzEnejltSJ6oKSse+qRxcQJiyXeU/qg==}
     engines: {node: '>=20'}
     peerDependencies:
       '@langchain/core': ^1.5.0
 
-  '@langchain/groq@1.3.1':
-    resolution: {integrity: sha512-ImxfGBis4FEHpZdeT6dot6V6l09uBLYm/1BHQ6x3XEQmJFF7aKwbOeSOV5h/h5IeRx+2gaInR+LfyYoqT8satQ==}
+  '@langchain/groq@1.3.2':
+    resolution: {integrity: sha512-fuIvVQBCp9sbWRFuGHxXYBYVCWXZqbnsCruTN+Z1yerwnOLOHf6/vo7oAuPq6Ocn61r9XxRea6piv3SbT0Ks2w==}
     engines: {node: '>=20'}
     peerDependencies:
       '@langchain/core': ^1.5.0
@@ -740,18 +758,6 @@ packages:
     engines: {node: '>=18'}
     peerDependencies:
       '@langchain/core': ^1.5.0
-
-  '@langchain/langgraph-sdk@1.12.7':
-    resolution: {integrity: sha512-+tIY6oVDDt9e3LnDKs4Qqe3nFJSY7amDUofro7me0kZ8QbaJhFViQL0LaX30SQhIaHuCLZYMRIluhuFSOPjF8g==}
-    peerDependencies:
-      '@langchain/core': ^1.5.0
-      react: ^18 || ^19
-      react-dom: ^18 || ^19
-    peerDependenciesMeta:
-      react:
-        optional: true
-      react-dom:
-        optional: true
 
   '@langchain/langgraph-sdk@1.17.0':
     resolution: {integrity: sha512-m6fAzU7N5yXyG+9QY3A/92tXiT8KXj2hz2wa0XpC7h6DLg0ynNjaVHeyZPxyAd5ioEw9ylUabreSdE7HrZt5Ag==}
@@ -765,26 +771,12 @@ packages:
       react-dom:
         optional: true
 
-  '@langchain/langgraph@1.5.2':
-    resolution: {integrity: sha512-jfVB9x+FH3CqlOYsYSVyuBoElV/J9pRL2nb7gie9Fb53J6rwNxSjTwxtyH3N8eVbZ94QckuFRxom6KTMlFfMOQ==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      '@langchain/core': ^1.5.0
-      zod: ^3.25.32 || ^4.2.0
-
   '@langchain/langgraph@1.7.5':
     resolution: {integrity: sha512-HeT0O1aOrOIUXLEER5uEvb4HjuYhYOfLKr2vid2HR+NjRVsHnhTfF+wZdzARTBYvWmP83xJx6ItQOPFN3KcfuQ==}
     engines: {node: '>=18'}
     peerDependencies:
       '@langchain/core': ^1.5.0
       zod: ^3.25.32 || ^4.2.0
-
-  '@langchain/mcp-adapters@2.0.1':
-    resolution: {integrity: sha512-dYijIiyN5JdufWX1I8cGrhKnmtSzl50cKLPuH9196xpsEJBz9TO+Z/ZM9pcHNyKM7+OZJDJvwB+DS7cAVhyheA==}
-    engines: {node: '>=20.10.0'}
-    peerDependencies:
-      '@langchain/core': ^1.5.0
-      '@langchain/langgraph': ^1.4.18
 
   '@langchain/mcp-adapters@2.0.3':
     resolution: {integrity: sha512-DQ75p5pQIzscmxp18uDxMRZJ4d9kDJQ/uFpfd5xcMvdmrQn0xKnF//fOdu3FKCejAHNa/Qi3j2ZpMeJ+n8+EHA==}
@@ -793,32 +785,29 @@ packages:
       '@langchain/core': ^1.5.0
       '@langchain/langgraph': ^1.4.18
 
-  '@langchain/ollama@1.3.0':
-    resolution: {integrity: sha512-uzLkZVTXN0SI5zAoJbJzL4y/QN7gbmJ1txBgFfqJ5M0Qf+Yu2Zu8q98L3jIrfM+akWMaNmRU4R4APhcfQmeIsw==}
+  '@langchain/ollama@1.3.1':
+    resolution: {integrity: sha512-YQhfLZsJ80Z/ieujybwYpziGjDFsCgaHWztw3LmgrwjPqdFT1RJmtkrMGGK2juun6NwwI7hsAPkTe+IJBR9z6w==}
     engines: {node: '>=20'}
     peerDependencies:
       '@langchain/core': ^1.5.0
 
-  '@langchain/openai@1.8.4':
-    resolution: {integrity: sha512-SMbIgGuZrjntuzOr1K6SR+6www3niEGvQ2mLDWHuEHNjYqxGBwelmfb/Mqd9GeFhb5BXFhnpbvHDpy6O2jtQKg==}
+  '@langchain/openai@1.8.5':
+    resolution: {integrity: sha512-BOwfSNIquC+8E5hJqoYiO7PTuXDo271bMNHeKk+KYFG9+mY5cJ9O5gfnvhEy0Y+AlE6gi5XfVtVrWbvRcZs2iA==}
     engines: {node: '>=22'}
     peerDependencies:
       '@langchain/core': ^1.5.0
 
-  '@langchain/openrouter@0.4.25':
-    resolution: {integrity: sha512-zEr1FIgaJgKWpEV6bkhL7M/pDI5LeRvLzl+jzkhW5qc+mz1NG1NgUX9YvWqzxccItuxe58FikYeZp6X+WHYtIA==}
+  '@langchain/openrouter@0.4.26':
+    resolution: {integrity: sha512-MpMcRC5ale7vBoNCt120LrFwfn06T6GrXmcdOxZADS9Lwk4NQR0hoZFb0gySmFKC9G0paSkjWtToo6czzr3JTA==}
     engines: {node: '>=20'}
     peerDependencies:
       '@langchain/core': ^1.5.0
 
-  '@langchain/protocol@0.0.20':
-    resolution: {integrity: sha512-sxlkDG2/HGyjDFLTJ8B/o3oglRjOv8iLCFgrV0550/Vym3V6RZ0SUjAQFe8jrLQw8ZXjERy3swJp5OODBSrUYA==}
-
   '@langchain/protocol@0.0.21':
     resolution: {integrity: sha512-HJS8Cd5GJ437MIrCnbrPHx0FJcluyOk5HdZzD081ap4SBzfWpAj/6AtI7fqpNSMo6VZEoEdaN9fIts8R0XR1AQ==}
 
-  '@langchain/xai@1.5.6':
-    resolution: {integrity: sha512-X+kkSeJlP2aa7wbDHNRCbWdmtvQbHIDacwjMsyXxlF9h3ALw8hybQvH2FuI7A47LBd7m2swycMbPESe5NIJiAQ==}
+  '@langchain/xai@1.5.7':
+    resolution: {integrity: sha512-fWNNoVjxoBYgy/2uiuXLNxDgGPnsQs4RJzNuz/tb4p8VlaAVhyts6BmoTNQdhFGFhp6C0gXagm3IjetzNLGk3A==}
     engines: {node: '>=20'}
     peerDependencies:
       '@langchain/core': ^1.5.0
@@ -1279,8 +1268,8 @@ packages:
     resolution: {integrity: sha512-mbCddXd+jm7hfx7w2YU64/Av4/NqqeG3GoRZgxPcgoTxYjhrcfJRw9ULch71SS4G+Q3bOXFhRvPqjguN0Hyp5w==}
     hasBin: true
 
-  '@vitest/mocker@5.1.0':
-    resolution: {integrity: sha512-5umB9/jlWcqVS6fsrFmv5Gdnpu6wAUio/lEOwAmvB7v+lFo/IW2B9FhAD0p19GCULTgMzLCdUmuCDCnAzWgppQ==}
+  '@vitest/mocker@5.1.1':
+    resolution: {integrity: sha512-b2OgTB4+3ImWIVafXKazJXwLKwQxUNnix6b3xUvUTMh7RyXlrtzoxfZr8aEz9zkHOMAS4K5lu3TvFWoiVeVTQg==}
     peerDependencies:
       msw: ^2.4.9 || ^3.0.0
       vite: ^6.0.0 || ^7.0.0 || ^8.0.0
@@ -1290,8 +1279,8 @@ packages:
       vite:
         optional: true
 
-  '@vitest/spy@5.1.0':
-    resolution: {integrity: sha512-2DPO5OMHWKrBngC+fCmTQqemNF0gidRhp3lxbBmRhW+M1XJrfgPpqNqWVevXtn2f2ufD5ZaR1B6B641aAlcX5A==}
+  '@vitest/spy@5.1.1':
+    resolution: {integrity: sha512-6K8C6alQG1/Yc8/ZI22iJS7JEsxPdVzqtqDq+/xM4Z0mGVykemMVjLhqMy/q6/IHYG3kKD8hKSwRen/ZdyI9vQ==}
 
   accepts@2.0.0:
     resolution: {integrity: sha512-5cvg6CtKwfgdmVqY1WIiXKc3Q1bkRqGLi+2W/6ao+6Y7gu/RCwRuAhGEzh5B4KlszSuTLgZYuqFqo5bImjNKng==}
@@ -1943,14 +1932,14 @@ packages:
   koffi@3.3.4:
     resolution: {integrity: sha512-31Vr+LM+w1dEsNcOJtJWvYyUTjVc/SWOxNDZJxfhsBC6qZ5YVn98n5x1oBbDq5skxCbWD4SByJpNmq63fvg9Aw==}
 
-  langchain@1.5.19:
-    resolution: {integrity: sha512-9fcjfjr3EWL6Oj/m0Uygkrq1hiq9gxsWryPHuEquJydmWPnDC8j/kBhrGyGTiQCw3ECdMmUXkWyZT93n8SSyoQ==}
+  langchain@1.6.6:
+    resolution: {integrity: sha512-/BWplLnjxDxbffyosRCYShCYOqVLusao/syOuHgdEnngg0yAhAH4rfkX3AzqFjCbZyG+0xwF2IwCg1la2FQjgg==}
     engines: {node: '>=20'}
     peerDependencies:
       '@langchain/core': ^1.5.0
 
-  langchain@1.6.6:
-    resolution: {integrity: sha512-/BWplLnjxDxbffyosRCYShCYOqVLusao/syOuHgdEnngg0yAhAH4rfkX3AzqFjCbZyG+0xwF2IwCg1la2FQjgg==}
+  langchain@1.6.7:
+    resolution: {integrity: sha512-dahToKwQzAFXvXuwOcZYRW+Zp1fm88syblfIdeUhnu0O+kZ0v/8DoPkU7pG+rnLIcbfbPTO3shgzUZdVKBlSNA==}
     engines: {node: '>=20'}
     peerDependencies:
       '@langchain/core': ^1.5.0
@@ -2066,8 +2055,8 @@ packages:
   lunr@2.3.9:
     resolution: {integrity: sha512-zTU3DaZaF3Rt9rhN3uBMGQD3dD2/vFQqnvZCDv4dl5iOzq2IZQqTxu90r4E5J+nP70J3ilqVCrbho2eWaeW8Ow==}
 
-  magic-string@1.4.3:
-    resolution: {integrity: sha512-z12OxmaPGE0F4xlpGdjuAUckipLpQlTAuAmyGhNoD7ODpYUzvDfvtxUbjM/jwznyP178oju/KDdyi220wNJ0RQ==}
+  magic-string@1.4.5:
+    resolution: {integrity: sha512-oLLC2+YvQUfAa+vxoufE/yc1icb87M9iXIRqAoR/2EhE/8cb3SF/+Gi0c2By1B+5Vz2e2vQtUvHiu1+63Znh+w==}
 
   markdown-it@14.3.3:
     resolution: {integrity: sha512-L//tDAkjTjJCU6pBUSBTgs3Kg4InVaZuUZog/b6V12UKhcDQ7S78877ibbCanRExwPuYP1CZD7Gd2dxSy1GXRg==}
@@ -2436,8 +2425,8 @@ packages:
     resolution: {integrity: sha512-avMLDQpUI9I5XFrklECw1ZEUPJhqzcwSWsyyI8blhRLT+8N1jLJWLWWYQpB2q2xthq8xDvjZPISVh53T/+CLYQ==}
     engines: {node: '>=18'}
 
-  tinybench@6.2.2:
-    resolution: {integrity: sha512-nIZ2N2dFpjBsg2hgitKu7mA+FvsIJuGJOwysRngmVRRmWgR/UyPjwJj8c/fT/dhm8EkHnF5EOogRf+0Z2qrimA==}
+  tinybench@6.2.4:
+    resolution: {integrity: sha512-SQ52jEncXxbMCzJuY2A/jGIbbAu6NYsBWW7grz2pNE+EnzQdoGaoBfpk4qC/opE7qiUcGmGgaGIz5EoHdS1O9w==}
     engines: {node: '>=20.0.0'}
 
   tinyexec@1.3.1:
@@ -2567,20 +2556,20 @@ packages:
       yaml:
         optional: true
 
-  vitest@5.1.0:
-    resolution: {integrity: sha512-MzmNFnrwa8v8lF1bLxw3UJ4EREwVOVb75VqJZmUDRjJ6EluK/x9th7qTbaeDk41WxE1GxWqmTXcdsfobfH5sOA==}
+  vitest@5.1.1:
+    resolution: {integrity: sha512-trVmzUFOSraCZcI3uZIMD5FqBh4atFkC/XuJP/IU7qtyQay0FCs3Ia+0QiQ2JJwGyWG/xrcBoJNel2+O7kEZ0g==}
     engines: {node: ^22.12.0 || ^24.0.0 || >=26.0.0}
     hasBin: true
     peerDependencies:
       '@edge-runtime/vm': '*'
       '@opentelemetry/api': ^1.9.0
       '@types/node': ^22.0.0 || >=24.0.0
-      '@vitest/browser-playwright': 5.1.0
-      '@vitest/browser-preview': 5.1.0
+      '@vitest/browser-playwright': 5.1.1
+      '@vitest/browser-preview': 5.1.1
       '@vitest/browser-webdriverio': ^5.0.0-beta.5 || >=5.0.0
-      '@vitest/coverage-istanbul': 5.1.0
-      '@vitest/coverage-v8': 5.1.0
-      '@vitest/ui': 5.1.0
+      '@vitest/coverage-istanbul': 5.1.1
+      '@vitest/coverage-v8': 5.1.1
+      '@vitest/ui': 5.1.1
       happy-dom: '*'
       jsdom: '*'
       vite: ^6.4.0 || ^7.0.0 || ^8.0.0
@@ -2681,15 +2670,32 @@ snapshots:
     optionalDependencies:
       zod: 4.6.7
 
+  '@ag-ui/core@1.0.5(zod@4.6.7)':
+    optionalDependencies:
+      zod: 4.6.7
+
   '@ag-ui/encoder@1.0.4(zod@4.6.7)':
     dependencies:
       '@ag-ui/core': 1.0.4(zod@4.6.7)
       '@ag-ui/proto': 1.0.4(zod@4.6.7)
       zod: 4.6.7
 
+  '@ag-ui/encoder@1.0.5(zod@4.6.7)':
+    dependencies:
+      '@ag-ui/core': 1.0.5(zod@4.6.7)
+      '@ag-ui/proto': 1.0.5(zod@4.6.7)
+      zod: 4.6.7
+
   '@ag-ui/proto@1.0.4(zod@4.6.7)':
     dependencies:
       '@ag-ui/core': 1.0.4(zod@4.6.7)
+      '@bufbuild/protobuf': 2.16.0
+      '@protobuf-ts/protoc': 2.11.1
+      zod: 4.6.7
+
+  '@ag-ui/proto@1.0.5(zod@4.6.7)':
+    dependencies:
+      '@ag-ui/core': 1.0.5(zod@4.6.7)
       '@bufbuild/protobuf': 2.16.0
       '@protobuf-ts/protoc': 2.11.1
       zod: 4.6.7
@@ -2882,20 +2888,20 @@ snapshots:
       '@eslint/core': 1.2.1
       levn: 0.4.1
 
-  '@gaunt-sloth/agent@2.4.0(bf349e29c509fa56c6e83585605e0e08)':
+  '@gaunt-sloth/agent@2.4.1(c52c13debd588a87ae616efdeca3b44d)':
     dependencies:
       '@a2a-js/sdk': 1.3.0(@bufbuild/protobuf@2.16.0)(express@5.3.0)
       '@ag-ui/core': 1.0.4(zod@4.6.7)
       '@ag-ui/encoder': 1.0.4(zod@4.6.7)
       '@agentclientprotocol/sdk': 2.0.2(zod@4.6.7)
-      '@gaunt-sloth/core': 2.4.0(15434658591b9498ff8bc47f00b6db58)
+      '@gaunt-sloth/core': 2.4.1(89ee58ef45812cc189fff5c056b6f44c)
       '@langchain/core': 1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))
-      '@langchain/langgraph': 1.5.2(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(react@19.3.1)(zod@4.6.7)
-      '@langchain/mcp-adapters': 2.0.1(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(@langchain/langgraph@1.5.2(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(react@19.3.1)(zod@4.6.7))
+      '@langchain/langgraph': 1.7.5(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(react@19.3.1)(zod@4.6.7)
+      '@langchain/mcp-adapters': 2.0.3(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(@langchain/langgraph@1.7.5(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(zod@4.6.7))
       '@modelcontextprotocol/client': 2.4.0
       diff: 9.0.0
       express: 5.3.0
-      langchain: 1.5.19(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))(react@19.3.1)
+      langchain: 1.6.6(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))
       undici: 8.12.4
       uuid: 14.0.3
       zod: 4.6.7
@@ -2923,10 +2929,10 @@ snapshots:
       - supports-color
       - ws
 
-  '@gaunt-sloth/batch@2.4.0(bf349e29c509fa56c6e83585605e0e08)':
+  '@gaunt-sloth/batch@2.4.1(c52c13debd588a87ae616efdeca3b44d)':
     dependencies:
-      '@gaunt-sloth/agent': 2.4.0(bf349e29c509fa56c6e83585605e0e08)
-      '@gaunt-sloth/core': 2.4.0(15434658591b9498ff8bc47f00b6db58)
+      '@gaunt-sloth/agent': 2.4.1(c52c13debd588a87ae616efdeca3b44d)
+      '@gaunt-sloth/core': 2.4.1(89ee58ef45812cc189fff5c056b6f44c)
       '@langchain/core': 1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))
       yaml: 2.9.1
       zod: 4.6.7
@@ -2954,24 +2960,24 @@ snapshots:
       - supports-color
       - ws
 
-  '@gaunt-sloth/core@2.4.0(15434658591b9498ff8bc47f00b6db58)':
+  '@gaunt-sloth/core@2.4.1(89ee58ef45812cc189fff5c056b6f44c)':
     dependencies:
       '@langchain/core': 1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))
-      '@langchain/langgraph': 1.5.2(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(react@19.3.1)(zod@4.6.7)
+      '@langchain/langgraph': 1.7.5(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(react@19.3.1)(zod@4.6.7)
       jiti: 2.7.0
       jsonc-parser: 3.3.1
-      langchain: 1.5.19(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))(react@19.3.1)
+      langchain: 1.6.6(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))
       string-width: 8.3.0
       zod: 4.6.7
     optionalDependencies:
-      '@langchain/anthropic': 1.6.5(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))
-      '@langchain/deepseek': 1.1.25(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)
-      '@langchain/google': 0.2.15(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))
-      '@langchain/groq': 1.3.1(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))
-      '@langchain/ollama': 1.3.0(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))
-      '@langchain/openai': 1.8.4(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)
-      '@langchain/openrouter': 0.4.25(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)
-      '@langchain/xai': 1.5.6(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)
+      '@langchain/anthropic': 1.6.6(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))
+      '@langchain/deepseek': 1.1.26(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)
+      '@langchain/google': 0.2.17(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))
+      '@langchain/groq': 1.3.2(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))
+      '@langchain/ollama': 1.3.1(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))
+      '@langchain/openai': 1.8.5(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)
+      '@langchain/openrouter': 0.4.26(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)
+      '@langchain/xai': 1.5.7(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)
     transitivePeerDependencies:
       - '@opentelemetry/api'
       - '@opentelemetry/exporter-trace-otlp-proto'
@@ -3094,7 +3100,7 @@ snapshots:
   '@koromix/koffi-win32-x64@3.3.4':
     optional: true
 
-  '@langchain/anthropic@1.6.5(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))':
+  '@langchain/anthropic@1.6.6(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))':
     dependencies:
       '@anthropic-ai/sdk': 1.9.0(zod@4.6.7)
       '@langchain/core': 1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))
@@ -3116,10 +3122,10 @@ snapshots:
       - openai
       - ws
 
-  '@langchain/deepseek@1.1.25(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)':
+  '@langchain/deepseek@1.1.26(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)':
     dependencies:
       '@langchain/core': 1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))
-      '@langchain/openai': 1.8.4(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)
+      '@langchain/openai': 1.8.5(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)
     transitivePeerDependencies:
       - '@aws-sdk/credential-provider-node'
       - '@smithy/hash-node'
@@ -3128,7 +3134,7 @@ snapshots:
       - undici
       - ws
 
-  '@langchain/google@0.2.15(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))':
+  '@langchain/google@0.2.17(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))':
     dependencies:
       '@langchain/core': 1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))
       eventsource-parser: 4.1.3
@@ -3137,7 +3143,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@langchain/groq@1.3.1(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))':
+  '@langchain/groq@1.3.2(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))':
     dependencies:
       '@langchain/core': 1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))
       groq-sdk: 1.6.0
@@ -3145,16 +3151,6 @@ snapshots:
   '@langchain/langgraph-checkpoint@1.2.3(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))':
     dependencies:
       '@langchain/core': 1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))
-
-  '@langchain/langgraph-sdk@1.12.7(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(react@19.3.1)':
-    dependencies:
-      '@langchain/core': 1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))
-      '@langchain/protocol': 0.0.20
-      '@types/json-schema': 7.0.15
-      p-queue: 9.3.5
-      p-retry: 7.1.1
-    optionalDependencies:
-      react: 19.3.1
 
   '@langchain/langgraph-sdk@1.17.0(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(react@19.3.1)':
     dependencies:
@@ -3165,18 +3161,6 @@ snapshots:
       p-retry: 7.1.1
     optionalDependencies:
       react: 19.3.1
-
-  '@langchain/langgraph@1.5.2(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(react@19.3.1)(zod@4.6.7)':
-    dependencies:
-      '@langchain/core': 1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))
-      '@langchain/langgraph-checkpoint': 1.2.3(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))
-      '@langchain/langgraph-sdk': 1.12.7(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(react@19.3.1)
-      '@langchain/protocol': 0.0.20
-      '@standard-schema/spec': 1.1.0
-      zod: 4.6.7
-    transitivePeerDependencies:
-      - react
-      - react-dom
 
   '@langchain/langgraph@1.7.5(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(react@19.3.1)(zod@4.6.7)':
     dependencies:
@@ -3190,15 +3174,7 @@ snapshots:
       - react
       - react-dom
 
-  '@langchain/mcp-adapters@2.0.1(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(@langchain/langgraph@1.5.2(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(react@19.3.1)(zod@4.6.7))':
-    dependencies:
-      '@langchain/core': 1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))
-      '@langchain/langgraph': 1.5.2(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(react@19.3.1)(zod@4.6.7)
-      '@modelcontextprotocol/client': 2.4.0
-      '@modelcontextprotocol/core': 2.4.0
-      zod: 4.6.7
-
-  '@langchain/mcp-adapters@2.0.3(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(@langchain/langgraph@1.7.5(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(react@19.3.1)(zod@4.6.7))':
+  '@langchain/mcp-adapters@2.0.3(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(@langchain/langgraph@1.7.5(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(zod@4.6.7))':
     dependencies:
       '@langchain/core': 1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))
       '@langchain/langgraph': 1.7.5(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(react@19.3.1)(zod@4.6.7)
@@ -3206,12 +3182,12 @@ snapshots:
       '@modelcontextprotocol/core': 2.4.0
       zod: 4.6.7
 
-  '@langchain/ollama@1.3.0(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))':
+  '@langchain/ollama@1.3.1(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))':
     dependencies:
       '@langchain/core': 1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))
       ollama: 0.6.4
 
-  '@langchain/openai@1.8.4(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)':
+  '@langchain/openai@1.8.5(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)':
     dependencies:
       '@langchain/core': 1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))
       js-tiktoken: 1.0.21
@@ -3225,10 +3201,10 @@ snapshots:
       - undici
       - ws
 
-  '@langchain/openrouter@0.4.25(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)':
+  '@langchain/openrouter@0.4.26(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)':
     dependencies:
       '@langchain/core': 1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))
-      '@langchain/openai': 1.8.4(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)
+      '@langchain/openai': 1.8.5(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)
       eventsource-parser: 4.1.3
       openai: 7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)
     transitivePeerDependencies:
@@ -3240,14 +3216,12 @@ snapshots:
       - ws
       - zod
 
-  '@langchain/protocol@0.0.20': {}
-
   '@langchain/protocol@0.0.21': {}
 
-  '@langchain/xai@1.5.6(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)':
+  '@langchain/xai@1.5.7(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)':
     dependencies:
       '@langchain/core': 1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))
-      '@langchain/openai': 1.8.4(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)
+      '@langchain/openai': 1.8.5(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(google-auth-library@11.3.4)(undici@8.12.4)
     transitivePeerDependencies:
       - '@aws-sdk/credential-provider-node'
       - '@smithy/hash-node'
@@ -3633,16 +3607,16 @@ snapshots:
     dependencies:
       '@typescript/old': typescript@6.0.3
 
-  '@vitest/mocker@5.1.0(vite@8.3.8(@types/node@26.6.6)(jiti@2.7.0)(yaml@2.9.1))':
+  '@vitest/mocker@5.1.1(vite@8.3.8(@types/node@26.6.6)(jiti@2.7.0)(yaml@2.9.1))':
     dependencies:
       '@jridgewell/trace-mapping': 0.3.31
-      '@vitest/spy': 5.1.0
+      '@vitest/spy': 5.1.1
       estree-walker: 3.0.3
-      magic-string: 1.4.3
+      magic-string: 1.4.5
     optionalDependencies:
       vite: 8.3.8(@types/node@26.6.6)(jiti@2.7.0)(yaml@2.9.1)
 
-  '@vitest/spy@5.1.0': {}
+  '@vitest/spy@5.1.1': {}
 
   accepts@2.0.0:
     dependencies:
@@ -4324,7 +4298,7 @@ snapshots:
       '@koromix/koffi-win32-ia32': 3.3.4
       '@koromix/koffi-win32-x64': 3.3.4
 
-  langchain@1.5.19(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))(react@19.3.1):
+  langchain@1.6.6(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)):
     dependencies:
       '@langchain/core': 1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))
       '@langchain/langgraph': 1.7.5(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(react@19.3.1)(zod@4.6.7)
@@ -4340,7 +4314,7 @@ snapshots:
       - react-dom
       - ws
 
-  langchain@1.6.6(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))(react@19.3.1):
+  langchain@1.6.7(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))(react@19.3.1):
     dependencies:
       '@langchain/core': 1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7))
       '@langchain/langgraph': 1.7.5(@langchain/core@1.5.0(@opentelemetry/api@1.10.0)(openai@7.57.0(google-auth-library@11.3.4)(undici@8.12.4)(zod@4.6.7)))(react@19.3.1)(zod@4.6.7)
@@ -4431,7 +4405,7 @@ snapshots:
 
   lunr@2.3.9: {}
 
-  magic-string@1.4.3:
+  magic-string@1.4.5:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.6.0
 
@@ -4791,7 +4765,7 @@ snapshots:
   terminal-size@4.0.1:
     optional: true
 
-  tinybench@6.2.2: {}
+  tinybench@6.2.4: {}
 
   tinyexec@1.3.1: {}
 
@@ -4895,18 +4869,18 @@ snapshots:
       jiti: 2.7.0
       yaml: 2.9.1
 
-  vitest@5.1.0(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(vite@8.3.8(@types/node@26.6.6)(jiti@2.7.0)(yaml@2.9.1)):
+  vitest@5.1.1(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(vite@8.3.8(@types/node@26.6.6)(jiti@2.7.0)(yaml@2.9.1)):
     dependencies:
       '@types/chai': 5.2.3
-      '@vitest/mocker': 5.1.0(vite@8.3.8(@types/node@26.6.6)(jiti@2.7.0)(yaml@2.9.1))
+      '@vitest/mocker': 5.1.1(vite@8.3.8(@types/node@26.6.6)(jiti@2.7.0)(yaml@2.9.1))
       chai: 6.3.0
       es-module-lexer: 2.3.2
       expect-type: 1.4.0
-      magic-string: 1.4.3
+      magic-string: 1.4.5
       obug: 3.0.0
       picomatch: 4.0.7
       std-env: 4.3.0
-      tinybench: 6.2.2
+      tinybench: 6.2.4
       tinyexec: 1.3.1
       tinyglobby: 0.2.17
       vite: 8.3.8(@types/node@26.6.6)(jiti@2.7.0)(yaml@2.9.1)

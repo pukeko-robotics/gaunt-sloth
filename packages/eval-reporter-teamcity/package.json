@@ -44,7 +44,7 @@
     "@gaunt-sloth/batch": "*"
   },
   "devDependencies": {
-    "@gaunt-sloth/batch": "2.4.0"
+    "@gaunt-sloth/batch": "2.4.1"
   },
   "publishConfig": {
     "access": "public",
