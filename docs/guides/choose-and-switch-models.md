@@ -14,8 +14,8 @@ First, scaffold the two profiles. `config profile create` seeds each one from yo
 and swaps in the model you name:
 
 ```bash
-gth config profile create ask --model claude-haiku-4-5
-gth config profile create review --model claude-sonnet-4-5
+gth config profile create ask --model claude-haiku-5-5
+gth config profile create review --model claude-sonnet-5-5
 ```
 
 Each command writes `.gsloth/.gsloth-settings/<name>/.gsloth.config.json` and prints where it landed
@@ -23,7 +23,7 @@ and what it uses, e.g.:
 
 ```
 Created profile "ask" at /your/project/.gsloth/.gsloth-settings/ask/.gsloth.config.json
-It uses anthropic / claude-haiku-4-5. Edit that file, then run with --profile ask.
+It uses anthropic / claude-haiku-5-5. Edit that file, then run with --profile ask.
 ```
 
 The file it wrote is an ordinary, standalone config — just the provider and model:
@@ -32,7 +32,7 @@ The file it wrote is an ordinary, standalone config — just the provider and mo
 {
   "llm": {
     "type": "anthropic",
-    "model": "claude-haiku-4-5"
+    "model": "claude-haiku-5-5"
   }
 }
 ```
@@ -50,7 +50,7 @@ gth review origin/main...feature-branch --content-source git -i review
 
 `-i` (`--identity-profile`) selects the profile directory; `--profile` is the same flag under a
 friendlier name. The selected profile replaces the *project-file* layer of the config, so `ask`
-resolves `claude-haiku-4-5` and `review` resolves `claude-sonnet-4-5`. Naming a profile that has no
+resolves `claude-haiku-5-5` and `review` resolves `claude-sonnet-5-5`. Naming a profile that has no
 directory is an error — the run stops rather than silently falling back to your default config.
 
 ## See what you can pick from
@@ -67,8 +67,8 @@ gth models --provider anthropic
 
 ```bash
 # Create a cheap everyday profile and a strong review profile
-gth config profile create ask --model claude-haiku-4-5
-gth config profile create review --model claude-sonnet-4-5
+gth config profile create ask --model claude-haiku-5-5
+gth config profile create review --model claude-sonnet-5-5
 
 # Everyday question on the cheap model
 gth ask "what does the retry backoff in api/client.ts do?" -i ask
@@ -77,7 +77,7 @@ gth ask "what does the retry backoff in api/client.ts do?" -i ask
 git --no-pager diff | gth review --profile review
 
 # Change a profile's model later: overwrite it in place
-gth config profile create ask --model claude-haiku-4-5 --force
+gth config profile create ask --model claude-haiku-5-5 --force
 ```
 
 ## Related

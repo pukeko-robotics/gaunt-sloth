@@ -25,7 +25,7 @@ npm install @gaunt-sloth/core @langchain/anthropic
 
 I want my script to honour the user's `.gsloth.config.*` (provider, model, API keys) instead of
 hard-coding a vendor SDK. With a `.gsloth.config.json` such as
-`{ "llm": { "type": "anthropic", "model": "claude-sonnet-4-5" } }` in the working directory:
+`{ "llm": { "type": "anthropic", "model": "claude-sonnet-5-5" } }` in the working directory:
 
 ```js
 import { initConfig } from '@gaunt-sloth/core';

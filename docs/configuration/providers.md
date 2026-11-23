@@ -23,7 +23,7 @@ with the Anthropic provider selected:
 {
   "llm": {
     "type": "anthropic",
-    "model": "claude-sonnet-4-5"
+    "model": "claude-sonnet-5-5"
   }
 }
 ```
@@ -179,13 +179,13 @@ your data, forbids fallbacks to anyone else, and gives a second model to fall ba
 {
   "llm": {
     "type": "openrouter",
-    "model": "moonshotai/kimi-k2",
+    "model": "moonshotai/kimi-k3.1-pro",
     "provider": {
       "order": ["together", "fireworks"],
       "allow_fallbacks": false,
       "data_collection": "deny"
     },
-    "models": ["moonshotai/kimi-k2", "anthropic/claude-sonnet-5"],
+    "models": ["moonshotai/kimi-k3.1-pro", "anthropic/claude-sonnet-5.5"],
     "route": "fallback"
   }
 }
@@ -268,9 +268,9 @@ pulled from the Hub, is verified working in Gaunt Sloth via Ollama):
 **llama.cpp (`llama-server`)** downloads GGUF straight from the Hub with `-hf`:
 
 ```bash
-llama-server -hf ggml-org/gemma-3-1b-it-GGUF        # downloads + serves on :8080
+llama-server -hf ggml-org/gemma-4-E4B-it-GGUF        # downloads + serves on :8080
 # or a specific quant:
-llama-server -hf bartowski/Qwen2.5-7B-Instruct-GGUF:Q4_K_M
+llama-server -hf bartowski/Qwen_Qwen3.6-27B-GGUF:Q4_K_M
 ```
 
 ```json
@@ -308,7 +308,7 @@ ollama pull hf.co/google/gemma-4-12B-it-qat-q4_0-gguf:Q4_0
 and point `baseURL` at `http://127.0.0.1:1234/v1` (see the LM Studio section below).
 
 **Note:** tool-calling reliability is model- and runtime-dependent for small
-local models. Prefer tool-tuned models (e.g. Qwen2.5-Coder/-Instruct, gpt-oss)
+local models. Prefer tool-tuned models (e.g. Gemma 4, Qwen3.6, gpt-oss)
 for agent work.
 
 ### Ollama
@@ -324,7 +324,7 @@ gth init ollama
 {
   "llm": {
     "type": "ollama",
-    "model": "qwen3-coder"
+    "model": "gemma4:12b"
   }
 }
 ```
@@ -440,7 +440,7 @@ JSON configuration is simpler but less flexible than JavaScript configuration. I
   "llm": {
     "type": "anthropic",
     "apiKey": "your-api-key-here",
-    "model": "claude-sonnet-4-5"
+    "model": "claude-sonnet-5-5"
   }
 }
 ```
@@ -453,7 +453,7 @@ You can use the `ANTHROPIC_API_KEY` environment variable instead of specifying `
 {
   "llm": {
     "type": "groq",
-    "model": "deepseek-r1-distill-llama-70b",
+    "model": "openai/gpt-oss-120b",
     "apiKey": "your-api-key-here"
   }
 }
@@ -467,7 +467,7 @@ You can use the `GROQ_API_KEY` environment variable instead of specifying `apiKe
 {
   "llm": {
     "type": "deepseek",
-    "model": "deepseek-reasoner",
+    "model": "deepseek-v4-pro",
     "apiKey": "your-api-key-here"
   }
 }
@@ -481,7 +481,7 @@ You can use the `DEEPSEEK_API_KEY` environment variable instead of specifying `a
 {
   "llm": {
     "type": "openai",
-    "model": "gpt-4o",
+    "model": "gpt-6.2-sol",
     "apiKey": "your-api-key-here"
   }
 }
@@ -512,7 +512,7 @@ See [LM Studio](#lm-studio) above for the API-key and tool-calling notes.
 {
   "llm": {
     "type": "google-genai",
-    "model": "gemini-2.5-pro",
+    "model": "gemini-4-argon",
     "apiKey": "your-api-key-here"
   }
 }
@@ -526,7 +526,7 @@ You can use the `GOOGLE_API_KEY` environment variable instead of specifying `api
 {
   "llm": {
     "type": "vertexai",
-    "model": "gemini-2.5-pro"
+    "model": "gemini-4-argon"
   }
 }
 ```
@@ -564,7 +564,7 @@ speech generation has no reasoning panel to fill.
 {
   "llm": {
     "type": "google-genai",
-    "model": "gemini-3.6-flash",
+    "model": "gemini-3.8-flash",
     "thinkingLevel": "low"
   }
 }
@@ -584,7 +584,7 @@ longer delays, daily quotas, or other error classes terminate immediately.
 {
   "llm": {
     "type": "openrouter",
-    "model": "moonshotai/kimi-k2"
+    "model": "moonshotai/kimi-k3.1-pro"
   }
 }
 ```
@@ -598,7 +598,7 @@ When changing a model, make sure you're using a model which supports tools.
 {
   "llm": {
     "type": "xai",
-    "model": "grok-4-0709",
+    "model": "grok-4.7",
     "apiKey": "your-api-key-here"
   }
 }
@@ -724,7 +724,7 @@ const customLoggerTool = tool(
 
 export async function configure() {
   return {
-    llm: new ChatVertexAI({ model: 'gemini-2.5-pro', temperature: 0 }),
+    llm: new ChatVertexAI({ model: 'gemini-4-argon', temperature: 0 }),
 
     middleware: [
       'anthropic-prompt-caching', // built-in
@@ -777,7 +777,7 @@ export async function configure() {
   const google = await import('@langchain/google/node');
   return {
     llm: new google.ChatGoogle({
-      model: 'gemini-2.5-pro',
+      model: 'gemini-4-argon',
       vertexai: true,
     }),
     tools: [parrotTool],
@@ -793,7 +793,7 @@ export async function configure() {
   return {
     llm: new anthropic.ChatAnthropic({
       apiKey: process.env.ANTHROPIC_API_KEY, // Default value, but you can provide the key in many different ways, even as literal
-      model: 'claude-sonnet-4-5',
+      model: 'claude-sonnet-5-5',
     }),
   };
 }
@@ -806,7 +806,7 @@ export async function configure() {
   const groq = await import('@langchain/groq');
   return {
     llm: new groq.ChatGroq({
-      model: 'deepseek-r1-distill-llama-70b', // Check other models available
+      model: 'openai/gpt-oss-120b', // Check other models available
       apiKey: process.env.GROQ_API_KEY, // Default value, but you can provide the key in many different ways, even as literal
     }),
   };
@@ -820,7 +820,7 @@ export async function configure() {
   const deepseek = await import('@langchain/deepseek');
   return {
     llm: new deepseek.ChatDeepSeek({
-      model: 'deepseek-reasoner',
+      model: 'deepseek-v4-pro',
       apiKey: process.env.DEEPSEEK_API_KEY, // Default value, but you can provide the key in many different ways, even as literal
     }),
   };
@@ -834,7 +834,7 @@ export async function configure() {
   const openai = await import('@langchain/openai');
   return {
     llm: new openai.ChatOpenAI({
-      model: 'gpt-4o',
+      model: 'gpt-6.2-sol',
       apiKey: process.env.OPENAI_API_KEY, // Default value, but you can provide the key in many different ways, even as literal
     }),
   };
@@ -865,7 +865,7 @@ export async function configure() {
   const google = await import('@langchain/google/node');
   return {
     llm: new google.ChatGoogle({
-      model: 'gemini-2.5-pro',
+      model: 'gemini-4-argon',
       apiKey: process.env.GOOGLE_API_KEY, // Default value, but you can provide the key in many different ways, even as literal
       platformType: 'gai',
     }),
@@ -889,7 +889,7 @@ export async function configure() {
   const google = await import('@langchain/google/node');
   return {
     llm: new google.ChatGoogle({
-      model: 'gemini-2.5-pro', // Consider checking for latest recommended model versions
+      model: 'gemini-4-argon', // Consider checking for latest recommended model versions
       vertexai: true,
       //// Other parameters might be relevant depending on Vertex AI API updates.
       //// The project is not in the interface, but it is in documentation and it seems to work.
@@ -906,7 +906,7 @@ export async function configure() {
   const xai = await import('@langchain/xai');
   return {
     llm: new xai.ChatXAI({
-      model: 'grok-4-0709',
+      model: 'grok-4.7',
       apiKey: process.env.XAI_API_KEY, // Default value, but you can provide the key in many different ways, even as literal
     }),
   };

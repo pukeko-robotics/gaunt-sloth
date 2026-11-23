@@ -19,7 +19,7 @@ review checklist, while developers keep the default project config — no shared
 Scaffold a profile, seeding it with the model DevOps wants:
 
 ```bash
-gth config profile create devops --model claude-sonnet-4-5
+gth config profile create devops --model claude-sonnet-5-5
 ```
 
 That writes `.gsloth/.gsloth-settings/devops/.gsloth.config.json`. Drop the DevOps-specific prompt
@@ -115,13 +115,13 @@ Two ways to create a profile, depending on how you want it seeded:
 - **`gth config profile create <name>`** scaffolds a new profile directory
   (`.gsloth/.gsloth-settings/<name>/.gsloth.config.json`), seeded from your *current effective
   config* (or a minimal template when none resolves) and schema-validated before it is written.
-  Pass `--model <id>` to set the profile's model, and `--force` to overwrite an existing profile.
+  Pass `--model <id>` to set the profile's model (one your seeded config's provider serves), and `--force` to overwrite an existing profile.
   Use this when the new profile should start as a copy of what you already have.
 
-  For example, to add a cheap flash-lite profile alongside your normal setup and then run under it:
+  For example, on a Gemini setup, to add a cheap flash profile alongside it and then run under it:
 
   ```bash
-  gth config profile create cheap --model gemini-2.0-flash-lite
+  gth config profile create cheap --model gemini-3.8-flash
   gth --profile cheap ask "summarise the open TODOs in this repo"
   ```
 
@@ -184,7 +184,7 @@ Each entry names a subagent (the name the model selects it by) and the profile t
 
 ```json
 {
-  "llm": { "type": "anthropic", "model": "claude-opus-4-1" },
+  "llm": { "type": "anthropic", "model": "claude-opus-5-5" },
   "subagents": [
     { "name": "recall", "description": "Cheap read-only search/recall.", "profile": "cheap" }
   ]
@@ -192,11 +192,11 @@ Each entry names a subagent (the name the model selects it by) and the profile t
 ```
 
 To make the example above run, create the `cheap` profile it references, then start a coding session —
-when the model delegates a recall task, that subagent runs on `gemini-2.0-flash-lite`, not on the
-parent's `claude-opus-4-1`:
+when the model delegates a recall task, that subagent runs on `claude-haiku-5-5`, not on the
+parent's `claude-opus-5-5`:
 
 ```bash
-gth config profile create cheap --model gemini-2.0-flash-lite
+gth config profile create cheap --model claude-haiku-5-5
 gth code
 ```
 
@@ -228,7 +228,7 @@ The `api ag-ui` command reads its settings from `commands.api` in your config fi
 {
   "llm": {
     "type": "anthropic",
-    "model": "claude-sonnet-4-5"
+    "model": "claude-sonnet-5-5"
   },
   "commands": {
     "api": {
@@ -256,7 +256,7 @@ command runs, and what runs when the key is absent, so setting it changes nothin
 
 ```json
 {
-  "llm": { "type": "anthropic", "model": "claude-sonnet-4-5" },
+  "llm": { "type": "anthropic", "model": "claude-sonnet-5-5" },
   "agent": { "backend": "lean" }
 }
 ```

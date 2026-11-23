@@ -42,7 +42,7 @@ To set GitHub as your default requirement source, add this to your configuration
 
 ```json
 {
-  "llm": { "type": "vertexai", "model": "gemini-2.5-pro" },
+  "llm": { "type": "vertexai", "model": "gemini-4-argon" },
   "commands": {
     "pr": {
       "requirementSource": "github"
@@ -64,7 +64,7 @@ confirmed to work with the public Jira MCP.
 {
   "llm": {
     "type": "vertexai",
-    "model": "gemini-2.5-pro",
+    "model": "gemini-4-argon",
     "temperature": 0
   },
   "mcpServers": {
@@ -113,7 +113,7 @@ JSON:
 
 ```json
 {
-  "llm": { "type": "vertexai", "model": "gemini-2.5-pro" },
+  "llm": { "type": "vertexai", "model": "gemini-4-argon" },
   "requirementSource": "jira",
   "requirementSourceConfig": {
     "jira": {
@@ -129,7 +129,7 @@ Optionally `displayUrl` can be defined to have a clickable link in the output:
 
 ```json
 {
-  "llm": { "type": "vertexai", "model": "gemini-2.5-pro" },
+  "llm": { "type": "vertexai", "model": "gemini-4-argon" },
   "requirementSource": "jira",
   "requirementSourceConfig": {
     "jira": {
@@ -145,7 +145,7 @@ Cloud ID and optional display URL, then export `JIRA_FULL_BASE64_TOKEN`; Gaunt S
 
 ```json
 {
-  "llm": { "type": "vertexai", "model": "gemini-2.5-pro" },
+  "llm": { "type": "vertexai", "model": "gemini-4-argon" },
   "requirementSource": "jira",
   "requirementSourceConfig": {
     "jira": {
@@ -163,7 +163,7 @@ export async function configure() {
   const google = await import('@langchain/google/node');
   return {
     llm: new google.ChatGoogle({
-      model: 'gemini-2.5-pro',
+      model: 'gemini-4-argon',
       vertexai: true,
     }),
     requirementSource: 'jira',
@@ -223,7 +223,7 @@ JSON:
 
 ```json
 {
-  "llm": { "type": "vertexai", "model": "gemini-2.5-pro" },
+  "llm": { "type": "vertexai", "model": "gemini-4-argon" },
   "requirementSource": "jira-legacy",
   "requirementSourceConfig": {
     "jira-legacy": {
@@ -242,7 +242,7 @@ export async function configure() {
   const google = await import('@langchain/google/node');
   return {
     llm: new google.ChatGoogle({
-      model: 'gemini-2.5-pro',
+      model: 'gemini-4-argon',
       vertexai: true,
     }),
     requirementSource: 'jira-legacy',
@@ -501,7 +501,7 @@ You can customize rating behavior for `review` and `pr` commands under `commands
 {
   "llm": {
     "type": "anthropic",
-    "model": "claude-sonnet-4-5"
+    "model": "claude-sonnet-5-5"
   },
   "commands": {
     "review": {

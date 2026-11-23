@@ -37,7 +37,7 @@ bad rating. Create `.gsloth.config.json` next to the script:
 
 ```json
 {
-  "llm": { "type": "anthropic", "model": "claude-sonnet-4-5" },
+  "llm": { "type": "anthropic", "model": "claude-sonnet-5-5" },
   "commands": {
     "review": { "rating": { "enabled": true, "passThreshold": 6 } }
   }

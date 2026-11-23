@@ -379,9 +379,9 @@ export function batchCommand(
       'after',
       '\n' +
         'Examples:\n' +
-        '  $ gth batch prompts/classify.md --models claude-sonnet-4-5,gpt-4o,gemini-2.5-pro\n' +
+        '  $ gth batch prompts/classify.md --models claude-haiku-5-5,claude-sonnet-5-5,claude-opus-5-5\n' +
         '  $ gth batch prompts/triage.md --over data/tickets.csv -j 8\n' +
-        '  $ gth batch prompts/triage.md --over data/tickets.jsonl --models claude-sonnet-4-5,gpt-4o --retry 2 -o out/triage\n'
+        '  $ gth batch prompts/triage.md --over data/tickets.jsonl --models claude-haiku-5-5,claude-sonnet-5-5 --retry 2 -o out/triage\n'
     )
     .action(async (script: string, options: BatchCommandOptions) => {
       const config = await initConfig(commandLineConfigOverrides);

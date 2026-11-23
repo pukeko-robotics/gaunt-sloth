@@ -94,7 +94,7 @@ export function configCommand(
         '  $ gth config print\n' +
         "  $ gth config print --json | jq '.llm'\n" +
         '  $ gth config validate\n' +
-        '  $ gth config profile create cheap --model gemini-2.0-flash-lite\n'
+        '  $ gth config profile create cheap --model gemini-3.8-flash\n'
     );
 
   const profile = config
@@ -113,7 +113,7 @@ export function configCommand(
       'after',
       '\n' +
         'Examples:\n' +
-        '  $ gth config profile create cheap --model gemini-2.0-flash-lite\n' +
+        '  $ gth config profile create cheap --model gemini-3.8-flash\n' +
         '  $ gth --profile cheap ask "summarise the open TODOs in this repo"\n'
     )
     .action(async (name: string, options: { model?: string; force?: boolean }) => {

@@ -51,7 +51,7 @@ const jiraLogWork = tool(
 export async function configure() {
   const anthropic = await import('@langchain/anthropic');
   return {
-    llm: new anthropic.ChatAnthropic({ model: 'claude-sonnet-4-5' }),
+    llm: new anthropic.ChatAnthropic({ model: 'claude-sonnet-5-5' }),
     tools: [jiraLogWork],
   };
 }
@@ -92,7 +92,7 @@ key wraps a shell command as a tool and works in a plain JSON config. Each entry
 
 ```json
 {
-  "llm": { "type": "anthropic", "model": "claude-sonnet-4-5" },
+  "llm": { "type": "anthropic", "model": "claude-sonnet-5-5" },
   "customTools": {
     "run_migration": {
       "command": "npm run migrate -- ${migrationName}",

@@ -39,7 +39,7 @@ export interface WorkflowAgentOptions {
   schema?: z.ZodType<unknown>;
   /** System-message text. Default `''`. */
   system?: string;
-  /** Model override (e.g. `'google-genai:gemini-3.1-flash-lite'`); omit to use the host's base config. */
+  /** Model override (e.g. `'google-genai:gemini-3.8-flash'`); omit to use the host's base config. */
   model?: string;
   /** Agent mode for the text path's `runSingleShot` (default `'ask'`). Ignored for the schema path. */
   command?: GthCommand;

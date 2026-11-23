@@ -49,7 +49,7 @@ in-flight cases (default `1` — cases run one at a time until you ask for more)
 
 ```bash
 # Run one prompt-executable over a matrix of two models × the rows of a CSV.
-gth batch summarize.md --over inputs.csv --models gemini-2.5-pro,gemini-3.5-flash -j 4
+gth batch summarize.md --over inputs.csv --models gemini-4-argon,gemini-3.8-flash -j 4
 
 # Run a local orchestration script, passing it JSON as ctx.args.
 gth workflow rank-models.mjs --args '{"topic":"robotics"}'
@@ -78,7 +78,7 @@ produces, one JSON object per line (JSONL) on stdout:
 ```bash
 # Fan a prompt-executable over rows piped in as JSON (or YAML), across two models.
 echo '[{"topic":"gears"},{"topic":"levers"}]' \
-  | gth-batch explain.md --models gemini-2.5-flash,gemini-2.5-pro -j 4 \
+  | gth-batch explain.md --models gemini-3.8-flash,gemini-4-argon -j 4 \
   | jq -c 'select(.ok) | {id, model, answer}'
 ```
 

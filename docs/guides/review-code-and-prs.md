@@ -139,7 +139,7 @@ By default, every `review` and `pr` run opens its output with one line — the s
 Gaunt Sloth command opens with, naming the command you ran and the model that served it:
 
 ```text
-Gaunt Sloth · review · gemini-3.1-pro-preview (google-genai)
+Gaunt Sloth · review · gemini-4-argon (google-genai)
 ```
 
 A `gth pr` run says `pr`. That comes from the CLI itself, so it reaches everywhere the output goes —

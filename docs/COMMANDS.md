@@ -1434,7 +1434,7 @@ sweep:
         - { name: auto, config: { approvals: auto } }
     - name: model
       values:
-        - { name: flash, model: gemini-3.6-flash }
+        - { name: flash, model: gemini-3.8-flash }
         - { name: local, model: "gemma4:12b" }
 ```
 
@@ -1658,14 +1658,14 @@ The matrix is the cross-product of the model axis (`--models`) and the input axi
 ### Examples
 ```bash
 # Run one script across three models
-gth batch prompts/classify.md --models claude-sonnet-4-5,gpt-4o,gemini-2.5-pro
+gth batch prompts/classify.md --models claude-haiku-5-5,claude-sonnet-5-5,claude-opus-5-5
 
 # Bind CSV rows into the script via {{field}} placeholders, 8 cells in parallel
 gth batch prompts/triage.md --over data/tickets.csv -j 8
 
 # Fan out over models AND rows, retry failed cells, write to a named dir
 gth batch prompts/triage.md --over data/tickets.jsonl \
-  --models claude-sonnet-4-5,gpt-4o --retry 2 -o out/triage
+  --models claude-haiku-5-5,claude-sonnet-5-5 --retry 2 -o out/triage
 ```
 
 ## workflow
@@ -1967,8 +1967,8 @@ gth config print --json | jq '.llm'
 # Validate the config; exits non-zero when invalid
 gth config validate
 
-# Scaffold a cheap flash-lite profile, then run a command under it
-gth config profile create cheap --model gemini-2.0-flash-lite
+# Scaffold a cheap flash profile (on a Gemini setup), then run a command under it
+gth config profile create cheap --model gemini-3.8-flash
 gth --profile cheap ask "summarise the open TODOs in this repo"
 ```
 
@@ -2080,7 +2080,7 @@ Commands can be configured individually in your configuration file. See [Configu
 {
   "llm": {
     "type": "anthropic",
-    "model": "claude-sonnet-4-5"
+    "model": "claude-sonnet-5-5"
   },
   "commands": {
     "pr": {

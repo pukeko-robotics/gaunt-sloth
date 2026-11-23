@@ -8,11 +8,11 @@ leaving your network. Ollama is a first-class provider in Gaunt Sloth, so this i
 
 Goal: run `gth ask` against a free model on your own machine, with no provider key.
 
-1. Install [Ollama](https://ollama.com), then pull a model. `qwen3-coder` is tool-tuned and is the
-   model Gaunt Sloth defaults to for Ollama:
+1. Install [Ollama](https://ollama.com), then pull a model. `gemma4:12b` is a 7.6 GB download that
+   handles tool calling well:
 
    ```bash
-   ollama pull qwen3-coder
+   ollama pull gemma4:12b
    ```
 
 2. In your project root, scaffold an Ollama config:
@@ -27,12 +27,13 @@ Goal: run `gth ask` against a free model on your own machine, with no provider k
    {
      "llm": {
        "type": "ollama",
-       "model": "qwen3-coder"
+       "model": "gemma4:12b"
      }
    }
    ```
 
-   That's the whole config — Ollama runs locally and needs no `apiKey`.
+   That's the whole config — Ollama runs locally and needs no `apiKey`. (Leave `model` out and Gaunt
+   Sloth falls back to `qwen3-coder`, which you would need to pull first.)
 
 3. Ask:
 
@@ -44,8 +45,8 @@ Gaunt Sloth talks to the Ollama daemon on `http://127.0.0.1:11434`. If your daem
 set `OLLAMA_HOST` (the same variable the Ollama CLI uses) rather than putting a URL in the config.
 
 **Pick a tool-capable model.** Agent work (`code`, `exec`, the dev tools) needs a model that
-supports tool calling; small models often don't do it reliably. `qwen3-coder`, `qwen3`, and
-`gemma3` are known-good local picks. Plain `ask` questions work with almost any model.
+supports tool calling; small models often don't do it reliably. `gemma4:12b` and, with a larger GPU,
+`qwen3.6:35b` are known-good local picks. Plain `ask` questions work with almost any model.
 
 If a large thinking model answers with empty content after running a tool, its context window is
 starved — raise it with `numCtx` in the `llm` block (the default is `16384`):
@@ -54,7 +55,7 @@ starved — raise it with `numCtx` in the `llm` block (the default is `16384`):
 {
   "llm": {
     "type": "ollama",
-    "model": "qwen3-coder",
+    "model": "qwen3.6:35b",
     "numCtx": 32768
   }
 }
@@ -112,7 +113,7 @@ The `model` is the Hub repo id. `openai/gpt-oss-120b` is a strong tool-calling p
 
 ```bash
 # Pull a local model, then ask about the codebase
-ollama pull qwen3-coder
+ollama pull gemma4:12b
 gth ask "summarise what this module does" -f src/index.ts
 
 # Point at an Ollama daemon on another host

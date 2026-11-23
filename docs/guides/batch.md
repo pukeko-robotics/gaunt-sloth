@@ -51,10 +51,11 @@ a slow matrix never leaves you guessing whether the tool or the default was the 
 of both axes. Comparing three models on one prompt is a one-liner:
 
 ```bash
-gth batch prompts/classify.md --models claude-sonnet-4-5,gpt-4o,gemini-2.5-pro
+gth batch prompts/classify.md --models claude-haiku-5-5,claude-sonnet-5-5,claude-opus-5-5
 ```
 
-Omit `--models` and cells run under your configured model, no fan-out.
+Every model in the list must be one your configured provider serves: `--models` swaps the model,
+not the provider. Omit `--models` and cells run under your configured model, no fan-out.
 
 ## Retries and output
 
@@ -78,7 +79,7 @@ And when the shape is not "same prompt × many rows" but "call, decide, call aga
 ```bash
 # Fan out over models AND rows, retry failed cells, write to a named dir
 gth batch prompts/triage.md --over data/tickets.jsonl \
-  --models claude-sonnet-4-5,gpt-4o --retry 2 -o out/triage
+  --models claude-haiku-5-5,claude-sonnet-5-5 --retry 2 -o out/triage
 
 # Run a prompt-executable over CSV rows with all defaults
 gth batch prompts/summarize.md --over data/feedback.csv

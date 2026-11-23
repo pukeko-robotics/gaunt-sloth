@@ -475,8 +475,8 @@ the ready message.
 Every command opens with the same one-line run header, in every mode:
 
 ```text
-Gaunt Sloth · review · gemini-3.1-pro-preview (google-genai)
-Gaunt Sloth · exec · claude-haiku-4-5 (anthropic)
+Gaunt Sloth · review · gemini-4-argon (google-genai)
+Gaunt Sloth · exec · claude-haiku-5-5 (anthropic)
 ```
 
 - **The word after the product name is the COMMAND THE USER TYPED.** Not the agent mode the run

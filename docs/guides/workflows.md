@@ -66,7 +66,7 @@ The default export must be `async (ctx) => result`. `ctx` provides:
   returns a schema-validated object; without one it returns the answer text from a full agent run
   (tools included). Other options:
   `system` (system-message text), `model` (per-call model override, e.g.
-  `'google-genai:gemini-3.1-flash-lite'`), and `command` (the agent mode for text calls, default
+  `'google-genai:gemini-3.8-flash'`), and `command` (the agent mode for text calls, default
   `'ask'`). Throws on failure — wrap in try/catch where one bad call shouldn't end the workflow.
 - **`ctx.parallel(thunks)`** — runs an array of `() => Promise` thunks concurrently, **four at a
   time**, returning results in input order; a thunk that throws yields `null` in its slot instead

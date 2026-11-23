@@ -66,7 +66,7 @@ Set `writeBinaryOutputsToFile` in your config to control this behavior:
 
 ```json
 {
-  "llm": {"type": "vertexai", "model": "gemini-3.1-flash-image-preview", "location": "global"},
+  "llm": {"type": "vertexai", "model": "gemini-3.1-flash-image", "location": "global"},
   "writeBinaryOutputsToFile": true
 }
 ```
@@ -377,7 +377,7 @@ across three rungs:
 
 | rung | what the run opens with |
 | --- | --- |
-| `compact` (default) | One line naming the command you ran and the model that served it: `Gaunt Sloth · ask · gemini-3.1-pro (google-genai)`. On `review` and `pr`, that same line is the [review header](../guides/review-code-and-prs.md#what-a-review-is-labelled-with), emitted with the review document instead of with the preamble, so it never appears twice. |
+| `compact` (default) | One line naming the command you ran and the model that served it: `Gaunt Sloth · ask · gemini-4-argon (google-genai)`. On `review` and `pr`, that same line is the [review header](../guides/review-code-and-prs.md#what-a-review-is-labelled-with), emitted with the review document instead of with the preamble, so it never appears twice. |
 | `debug` | The Workdir/Model/Tools/Middleware status lines, plus — in interactive terminal runs — the `Press Escape or Q to interrupt Agent` hint box. |
 | `none` | Nothing — including, on `review` and `pr`, the review header. |
 

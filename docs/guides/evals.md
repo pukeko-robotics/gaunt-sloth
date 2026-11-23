@@ -308,7 +308,7 @@ Then point the rater at the cheaper model. `approvals.rater` names a profile —
 
 ```json
 {
-  "llm": { "type": "anthropic", "model": "claude-sonnet-4-5" },
+  "llm": { "type": "anthropic", "model": "claude-sonnet-5-5" },
   "approvals": { "mode": "assisted", "rater": "cheap" }
 }
 ```

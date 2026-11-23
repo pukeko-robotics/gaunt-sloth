@@ -16,7 +16,7 @@ dev-command tools) and `customTools` (your own shell commands).
 
 ```json
 {
-  "llm": { "type": "anthropic", "model": "claude-sonnet-4-5" },
+  "llm": { "type": "anthropic", "model": "claude-sonnet-5-5" },
   "customTools": {
     "deploy_staging": {
       "command": "npm run deploy:staging",
@@ -296,7 +296,7 @@ Example configuration including dev tools (from .gsloth.config.json):
 {
   "llm": {
     "type": "xai",
-    "model": "grok-4-0709"
+    "model": "grok-4.7"
   },
   "commands": {
     "code": {
@@ -459,7 +459,7 @@ Define custom tools at the root level to make them available across all commands
 {
   "llm": {
     "type": "vertexai",
-    "model": "gemini-2.5-pro"
+    "model": "gemini-4-argon"
   },
   "customTools": {
     "deploy_staging": {
@@ -643,7 +643,7 @@ Example of a secure custom tool that accepts a file path:
 {
   "llm": {
     "type": "anthropic",
-    "model": "claude-sonnet-4-5"
+    "model": "claude-sonnet-5-5"
   },
   "customTools": {
     "deploy_staging": {
@@ -814,7 +814,7 @@ Reduces API costs by caching prompts (Anthropic models only):
 {
   "llm": {
     "type": "anthropic",
-    "model": "claude-sonnet-4-5"
+    "model": "claude-sonnet-5-5"
   },
   "middleware": ["anthropic-prompt-caching"]
 }
@@ -905,7 +905,7 @@ You can combine multiple middleware:
 {
   "llm": {
     "type": "anthropic",
-    "model": "claude-sonnet-4-5"
+    "model": "claude-sonnet-5-5"
   },
   "middleware": [
     "anthropic-prompt-caching",
@@ -944,7 +944,7 @@ export async function configure() {
 
   return {
     llm: new anthropic.ChatAnthropic({
-      model: 'claude-sonnet-4-5',
+      model: 'claude-sonnet-5-5',
     }),
     middleware: ['summarization', requestLogger],
   };
@@ -961,7 +961,7 @@ Some AI providers provide integrated server tools, such as web search.
 {
   "llm": {
     "type": "openai",
-    "model": "gpt-4o"
+    "model": "gpt-6.2-sol"
   },
   "tools": [{ "type": "web_search_preview" }]
 }
@@ -973,7 +973,7 @@ Some AI providers provide integrated server tools, such as web search.
 {
   "llm": {
     "type": "anthropic",
-    "model": "claude-sonnet-4-5"
+    "model": "claude-sonnet-5-5"
   },
   "tools": [
     {

@@ -28,7 +28,7 @@ Add the server under `mcpServers` in your `.gsloth.config.json`:
 {
   "llm": {
     "type": "vertexai",
-    "model": "gemini-2.5-pro",
+    "model": "gemini-4-argon",
     "temperature": 0
   },
   "mcpServers": {
@@ -133,7 +133,7 @@ launch it. For example, the reference sequential-thinking MCP:
 {
   "llm": {
     "type": "vertexai",
-    "model": "gemini-2.5-pro"
+    "model": "gemini-4-argon"
   },
   "mcpServers": {
     "sequential-thinking": {
@@ -159,7 +159,7 @@ every invocation:
 
 ```jsonc
 {
-  "llm": { "type": "vertexai", "model": "gemini-3.5-flash" },
+  "llm": { "type": "vertexai", "model": "gemini-3.8-flash" },
   "tls": {
     // CA cert file(s) to trust IN ADDITION to Node's built-in roots.
     // Paths resolve relative to the project dir, or use ~ / an absolute path.
@@ -205,7 +205,7 @@ file:
 {
   "llm": {
     "type": "anthropic",
-    "model": "claude-sonnet-4-5"
+    "model": "claude-sonnet-5-5"
   },
   "a2aAgents": {
     "myAgent": {
@@ -225,7 +225,7 @@ keeps an interactive experiment from writing every run out to a file:
 {
   "llm": {
     "type": "vertexai",
-    "model": "gemini-3-pro-preview",
+    "model": "gemini-4-argon",
     "location": "global"
   },
   "a2aAgents": {

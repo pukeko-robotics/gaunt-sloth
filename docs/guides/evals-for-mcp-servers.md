@@ -26,7 +26,7 @@ identity's bearer token. The server sees a genuinely different caller per profil
 
 ```json
 {
-  "llm": { "type": "vertexai", "model": "gemini-3.5-flash" },
+  "llm": { "type": "vertexai", "model": "gemini-3.8-flash" },
   "tls": { "extraCaCerts": ["org/our-dev-ca.crt"] },
   "mcpServers": {
     "unimarket": {
