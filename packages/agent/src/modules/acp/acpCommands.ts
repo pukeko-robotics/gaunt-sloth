@@ -116,6 +116,8 @@ export const ACP_SESSION_COMMANDS: readonly AcpSessionCommand[] = [
  * the one field they spell differently, so it is left to the two builders below.
  */
 export interface AcpAvailableCommand {
+  /** v2 only: the command variant's discriminator, always `command`. v1 has no such field. */
+  type?: 'command';
   name: string;
   description: string;
   input?: Record<string, unknown>;
@@ -148,8 +150,10 @@ export function acpAvailableCommandsV1(): AcpAvailableCommand[] {
 /**
  * The `availableCommands` payload for a **v2** `available_commands_update`.
  *
- * v2 turned the input into a discriminated union — `TextCommandInput & { type: 'text' }`, plus an
- * open arm for variants that postdate this build — so the tag is required. **Measured, because the
+ * v2 tags the command itself as well as its input. The command is a discriminated union —
+ * `Command & { type: 'command' }`, plus an open arm for variants that postdate this build — and an
+ * entry without the tag does not parse, so the client's schema skips it and the whole list arrives
+ * empty. The input is a union too — `TextCommandInput & { type: 'text' }` — so its tag is required. **Measured, because the
  * direction is not symmetric:** the v1 payload sent on v2 arrives at the client with `input`
  * **absent altogether**, dropped by the schema rather than degraded to the open arm, so the user
  * loses the hint that says the command takes a number. The other direction is harmless — v1's
@@ -157,6 +161,7 @@ export function acpAvailableCommandsV1(): AcpAvailableCommand[] {
  */
 export function acpAvailableCommandsV2(): AcpAvailableCommand[] {
   return ACP_SESSION_COMMANDS.map((command) => ({
+    type: 'command' as const,
     name: command.name,
     description: command.description,
     ...(command.inputHint === undefined
